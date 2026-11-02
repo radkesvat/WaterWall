@@ -1499,6 +1499,9 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 
 #include "splice_stream_cases.h"
 
+/* Frame-reader cases reuse the stream source and byte-check fixtures. */
+#include "splice_frame_reader_cases.h"
+
 /* Uses the preceding splice source and syscall-probe fixtures. */
 #include "buffer_queue_range_cases.h"
 #include "buffer_stream_accessor_cases.h"
@@ -1589,6 +1592,7 @@ int main(void)
     testInvalidViewsAbort(pool);
 
     testUnifiedPush();
+    testSpliceFrameReader();
     testCoalescingOneByteFragmentsAndDequeBack();
     testCoalescingCopyAndInputBoundaries();
     testCoalescingConsumedTailAndFitPolicy();

@@ -280,7 +280,7 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
         decode(node, l, oversized);
         twfRequire(lineIsAlive(l), "nested input was refused before beneficial charge settlement");
         nodeState *ls = lineGetState(l, node);
-        twfRequire(plain_calls == 1 && splicestreamCharge(ls->read_stream) <= readChargeLimit,
+        twfRequire(plain_calls == 1 && spliceframereaderCharge(&ls->reader) <= readChargeLimit,
                    "nested input reentered delivery or retained oversized storage");
     }
     if (close_output)
@@ -811,6 +811,18 @@ static void testControlAndRejection(void)
 }
 
 #if WW_HAVE_SPLICE
+static void testPipeControlDiscard(void)
+{
+    setup();
+    const uint8_t frames[] = {0, 0, 0,   2,   2, 'P', 0, 0, 0, 2, 3, 'Q', 0, 0, 0,
+                              3, 9, 'X', 'Y', 0, 0,   0, 1, 1, 0, 0, 0,   2, 1, 'Z'};
+    decode(node, line, pipeBytes(frames, sizeof(frames), 0));
+    twfRequire(lineIsAlive(line) && wire_calls == 1 && wire_length == 5 && memoryCompare(wire, "\0\0\0\1\3", 5) == 0 &&
+                   plain_calls == 1 && plain_length == 1 && plain[0] == 'Z',
+               "discarded pipe control bodies changed replies or following frame delivery");
+    teardown();
+}
+
 static void testPipes(void)
 {
     setup();
@@ -917,6 +929,7 @@ int main(void)
     testEncodeCloseAndLimits();
     testNestedChargeSettlement();
 #if WW_HAVE_SPLICE
+    testPipeControlDiscard();
     testPipes();
     testLargePipeFrame();
 #endif

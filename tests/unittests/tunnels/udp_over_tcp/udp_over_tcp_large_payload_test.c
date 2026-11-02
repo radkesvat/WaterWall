@@ -56,6 +56,8 @@ static void testPayload(uint8_t source_protocol, uint32_t length)
     tunnel_t   *uot   = createUot(NULL);
     tunnel_t   *next  = twfCreateNextTunnel(&trace);
     twfRequire(uot != NULL, "could not create UOT");
+    tunnel_chain_t chain = {0};
+    uot->chain           = &chain;
     tunnelBind(prev, uot);
     tunnelBind(uot, next);
     line_t *line = twfLineCreate(uot->lstate_size);

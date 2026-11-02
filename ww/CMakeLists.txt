@@ -105,6 +105,7 @@ add_library(ww STATIC
     bufio/master_pool.c
     bufio/shiftbuffer.c
     bufio/splice_buffer.c
+    bufio/splice_frame_reader.c
     bufio/splice_stream.c
     
     # Utilities

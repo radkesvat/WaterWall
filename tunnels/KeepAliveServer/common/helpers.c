@@ -26,7 +26,7 @@ static bool keepaliveserverSendControlFrame(tunnel_t *t, line_t *l, uint8_t kind
 void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     keepaliveserver_lstate_t *ls = lineGetState(l, t);
-    assert(ls->read_stream != NULL);
+    assert(spliceframereaderIsAttached(&ls->reader));
     const uint32_t length = sbufGetLength(buf);
     if (length == 0)
     {
@@ -69,7 +69,8 @@ void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *bu
             frame = sbufMoveRangeTo(pool, source, destination, bytes, bytes, bufferpoolGetLargeBufferPadding(pool));
         }
         /* The untransferred suffix is published before any reentrant callback. */
-        if (! keepaliveserverSendFrame(t, l, frame, kKeepAliveServerFrameKindNormal) || ls->read_stream == NULL)
+        if (! keepaliveserverSendFrame(t, l, frame, kKeepAliveServerFrameKindNormal) ||
+            ! spliceframereaderIsAttached(&ls->reader))
         {
             lineUnref(l);
             return;
@@ -84,12 +85,10 @@ void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *bu
 void keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
 {
     keepaliveserver_lstate_t *ls = lineGetState(l, t);
-    assert(! ls->read_draining);
-    ls->read_draining = true;
     lineRef(l);
     for (;;)
     {
-        const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
+        const uint8_t *header = spliceframereaderPeekHeader(&ls->reader);
         if (header == NULL)
             break;
         uint32_t network_length;
@@ -104,36 +103,36 @@ void keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
             return;
         }
         const uint32_t bytes = body_length - kKeepAliveServerFrameTypeSize;
-        if (splicestreamBodyBytes(ls->read_stream) < bytes)
+        if (! spliceframereaderBodyReady(&ls->reader, bytes))
             break;
-        buffer_pool_t *pool = lineGetBufferPool(l);
-        sbuf_t *destination = bytes != 0 && tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(pool) : NULL;
-        sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, bytes);
-        bool    alive       = true;
+        bool alive = true;
         if (kind == kKeepAliveServerFrameKindNormal && bytes != 0)
+        {
+            sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, bytes);
             alive = lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, body);
+        }
         else
         {
-            lineReuseBuffer(l, body);
+            spliceframereaderDiscardFrame(&ls->reader, bytes);
             if (kind == kKeepAliveServerFrameKindPing)
                 alive = keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong);
         }
-        if (! alive || ls->read_stream == NULL)
+        if (! alive || ! spliceframereaderIsAttached(&ls->reader))
         {
             lineUnref(l);
             return;
         }
     }
     /* Draining leaves an incomplete validated frame; retained capacity still needs a bound. */
-    assert(splicestreamLength(ls->read_stream) < kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize);
-    if (! splicestreamSettleCharge(ls->read_stream, kKeepAliveServerReadChargeLimit))
+    assert(spliceframereaderLength(&ls->reader) <
+           kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFramePrefixSize);
+    if (! spliceframereaderEndDrain(&ls->reader))
     {
         LOGW("KeepAliveServer: incomplete frame storage limit exceeded");
         keepaliveserverCloseLineFromProtocolError(t, l);
         lineUnref(l);
         return;
     }
-    ls->read_draining = false;
     lineUnref(l);
 }
 

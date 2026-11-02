@@ -4,12 +4,11 @@
 
 typedef struct keepaliveserver_lstate_s
 {
-    splice_stream_t *read_stream;
-    buffer_pool_t   *pool;
-    buffer_queue_t   write_reentry;
-    sbuf_t          *write_active;
-    bool             read_draining;
-    bool             write_draining;
+    splice_frame_reader_t reader;
+    buffer_pool_t        *pool;
+    buffer_queue_t        write_reentry;
+    sbuf_t               *write_active;
+    bool                  write_draining;
 } keepaliveserver_lstate_t;
 
 enum
@@ -39,7 +38,7 @@ void keepaliveserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void keepaliveserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void keepaliveserverLinestateInitialize(keepaliveserver_lstate_t *ls, line_t *l);
+void keepaliveserverLinestateInitialize(keepaliveserver_lstate_t *ls, line_t *l, bool splice_output);
 void keepaliveserverLinestateDestroy(keepaliveserver_lstate_t *ls);
 
 void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *buf);

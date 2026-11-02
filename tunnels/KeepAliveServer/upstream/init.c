@@ -5,7 +5,7 @@
 void keepaliveserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     keepaliveserver_lstate_t *ls = lineGetState(l, t);
-    keepaliveserverLinestateInitialize(ls, l);
+    keepaliveserverLinestateInitialize(ls, l, tunnelGetChain(t)->supports_splice);
 
     tunnelNextUpStreamInit(t, l);
 }

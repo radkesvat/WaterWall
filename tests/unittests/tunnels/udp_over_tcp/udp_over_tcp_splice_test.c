@@ -13,6 +13,7 @@
 #define nodeCreate      udpovertcpserverTunnelCreate
 #define encode(t, l, b) udpovertcpserverTunnelDownStreamPayload(t, l, b)
 #define decode(t, l, b) udpovertcpserverTunnelUpStreamPayload(t, l, b)
+typedef udpovertcpserver_lstate_t node_state_t;
 #else
 #include "UdpOverTcpClient/interface.h"
 #include "UdpOverTcpClient/structure.h"
@@ -20,6 +21,7 @@
 #define nodeCreate      udpovertcpclientTunnelCreate
 #define encode(t, l, b) udpovertcpclientTunnelUpStreamPayload(t, l, b)
 #define decode(t, l, b) udpovertcpclientTunnelDownStreamPayload(t, l, b)
+typedef udpovertcpclient_lstate_t node_state_t;
 #endif
 
 #include <unistd.h>
@@ -36,6 +38,7 @@ static uint32_t         datagrams[256];
 static unsigned         wire_calls, plain_calls, inits, finishes, pauses, resumes;
 static bool             measuring, require_splice, close_output, inject_encode, inject_decode;
 static bool             pause_output, startup_payload, startup_pause, close_init, fail_queue;
+static bool             inject_large_decode;
 static unsigned         decode_overflow;
 static sbuf_t          *expected_identity;
 
@@ -218,6 +221,19 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
         const uint8_t nested[] = {0, 1, 'N'};
         decode(node, l, ordinary(nested, sizeof(nested)));
     }
+    if (inject_large_decode)
+    {
+        inject_large_decode     = false;
+        const uint8_t nested[]  = {0, 1, 'N'};
+        sbuf_t       *oversized = bufferpoolGetBestFit(env.pool, kReadChargeLimit + 1, 128);
+        memoryCopy(sbufGetMutablePtr(oversized), nested, sizeof(nested));
+        sbufSetLength(oversized, sizeof(nested));
+        decode(node, l, oversized);
+        twfRequire(lineIsAlive(l), "nested input was refused before beneficial charge settlement");
+        node_state_t *ls = lineGetState(l, node);
+        twfRequire(plain_calls == 1 && spliceframereaderCharge(&ls->reader) <= kReadChargeLimit,
+                   "nested input reentered delivery or retained oversized storage");
+    }
     if (decode_overflow != 0)
     {
         decode_overflow = 0;
@@ -234,6 +250,7 @@ static void setup(uint8_t source_protocol)
     wire_length = plain_length = measured_reads = 0;
     wire_calls = plain_calls = inits = finishes = pauses = resumes = 0;
     measuring = require_splice = close_output = inject_encode = inject_decode = pause_output = false;
+    inject_large_decode                                                                      = false;
     expected_identity                                                                        = NULL;
     twfWorkerEnvSetupWithBufferSizes(&env, 8192, 1024, 128, 65536, 65536);
     decode_overflow = 0;
@@ -408,6 +425,21 @@ static void testMalformed(void)
 
 static void testAdmission(void)
 {
+    twfSetCase("nested oversized storage settles before return and follows older frames");
+    setup(IP_PROTO_UDP);
+    checkInitialized();
+    inject_large_decode        = true;
+    const uint8_t  coalesced[] = {0, 1, 'A', 0, 1, 'B'};
+    sbuf_t        *older       = ordinary(coalesced, sizeof(coalesced));
+    const uint32_t unused      = sbufGetTailCapacity(older);
+    sbufSetLength(older, unused + sizeof(coalesced));
+    sbufShiftRight(older, unused);
+    memoryCopy(sbufGetMutablePtr(older), coalesced, sizeof(coalesced));
+    twfRequire(sbufGetTailCapacity(older) == 0, "fixture must require compaction instead of tail merging");
+    decode(node, line, older);
+    twfRequire(lineIsAlive(line) && plain_calls == 3 && plain_length == 3 && memcmp(plain, "ABN", 3) == 0,
+               "nested charge settlement lost FIFO order or closed the carrier");
+    teardown();
     twfSetCase("decoder reentry byte overflow closes without delivering newer bytes");
     setup(IP_PROTO_TCP);
     checkInitialized();

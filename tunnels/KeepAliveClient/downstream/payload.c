@@ -6,25 +6,18 @@ void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     keepaliveclient_lstate_t *ls = lineGetState(l, t);
 
-    assert(ls->read_stream != NULL);
-    if (ls->read_draining && (splicestreamLength(ls->read_stream) > kKeepAliveMaxReentryBytes ||
-                              sbufGetLength(buf) > kKeepAliveMaxReentryBytes - splicestreamLength(ls->read_stream)))
+    switch (spliceframereaderAdmit(&ls->reader, buf))
     {
-        lineReuseBuffer(l, buf);
+    case kSpliceFrameDrain:
+        keepaliveclientConsumeDownstreamFrames(t, l);
+        return;
+    case kSpliceFrameQueued:
+    case kSpliceFrameEmpty:
+        return;
+    case kSpliceFrameByteLimit:
+    case kSpliceFrameChargeLimit:
+    case kSpliceFramePushFailed:
         keepaliveclientCloseLineFromProtocolError(t, l);
         return;
     }
-    if (! splicestreamPush(ls->read_stream, buf))
-    {
-        keepaliveclientCloseLineFromProtocolError(t, l);
-        return;
-    }
-    if (ls->read_draining)
-    {
-        if (! splicestreamSettleCharge(ls->read_stream, kKeepAliveReadChargeLimit))
-            keepaliveclientCloseLineFromProtocolError(t, l);
-        return;
-    }
-
-    keepaliveclientConsumeDownstreamFrames(t, l);
 }

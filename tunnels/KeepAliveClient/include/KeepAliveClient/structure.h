@@ -22,20 +22,19 @@ typedef struct keepaliveclient_tstate_s
 
 struct keepaliveclient_lstate_s
 {
-    splice_stream_t   *read_stream;
-    buffer_pool_t     *pool;
-    buffer_queue_t     write_reentry;
-    sbuf_t            *write_active;
-    bool               read_draining;
-    bool               write_draining;
-    bool               established;
-    bool               awaiting_pong;
-    uint64_t           next_ping_at_ms;
-    uint64_t           pong_deadline_ms;
-    line_t            *line;
-    tunnel_t          *tunnel;
-    local_idle_item_t *ping_item;
-    local_idle_item_t *pong_deadline_item;
+    splice_frame_reader_t reader;
+    buffer_pool_t        *pool;
+    buffer_queue_t        write_reentry;
+    sbuf_t               *write_active;
+    bool                  write_draining;
+    bool                  established;
+    bool                  awaiting_pong;
+    uint64_t              next_ping_at_ms;
+    uint64_t              pong_deadline_ms;
+    line_t               *line;
+    tunnel_t             *tunnel;
+    local_idle_item_t    *ping_item;
+    local_idle_item_t    *pong_deadline_item;
 };
 
 enum
@@ -72,7 +71,7 @@ void keepaliveclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void keepaliveclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void keepaliveclientTunnelDownStreamEst(tunnel_t *t, line_t *l);
 
-void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l);
+void keepaliveclientLinestateInitialize(keepaliveclient_lstate_t *ls, line_t *l, bool splice_output);
 void keepaliveclientLinestateDestroy(keepaliveclient_lstate_t *ls);
 
 void keepaliveclientTrackLine(tunnel_t *t, line_t *l);

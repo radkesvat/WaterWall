@@ -2,13 +2,13 @@
 
 #include "loggers/network_logger.h"
 
-void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool)
+void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool, bool splice_output)
 {
-    *ls = (udpovertcpserver_lstate_t) {.read_stream = splicestreamCreate(pool, kHeaderSize)};
+    spliceframereaderInit(&ls->reader, pool, kHeaderSize, kMaxReentryBytes, kReadChargeLimit, splice_output);
 }
 
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls)
 {
-    splicestreamDestroy(ls->read_stream);
+    spliceframereaderDestroy(&ls->reader);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(udpovertcpserver_lstate_t)));
 }

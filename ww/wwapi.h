@@ -21,6 +21,7 @@
 #include "bufio/buffer_queue_range.h"
 #include "bufio/context_queue.h"
 #include "bufio/splice_buffer.h"
+#include "bufio/splice_frame_reader.h"
 #include "bufio/splice_stream.h"
 
 #include "instance/global_state.h"

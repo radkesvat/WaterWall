@@ -47,6 +47,7 @@ typedef struct next_state_s
 typedef struct fixture_s
 {
     node_t          metadata;
+    tunnel_chain_t *chain;
     tunnel_t       *owner, *client, *next;
     twf_line_pool_t lines;
 } fixture_t;
@@ -94,10 +95,11 @@ static void setupWorkers(void)
                                            kKeepAliveFramePrefixSize);
 }
 
-static void bindFixture(tunnel_t *owner, tunnel_t *client, tunnel_t *next)
+static void bindFixture(tunnel_t *owner, tunnel_t *client, tunnel_t *next, tunnel_chain_t *chain)
 {
     tunnelBind(owner, client);
     tunnelBind(client, next);
+    client->chain                                                           = chain;
     owner->fnFinD                                                           = ownerFinish;
     owner->fnEstD                                                           = noop;
     next->fnInitU                                                           = noop;
@@ -109,11 +111,12 @@ static void fixtureSetup(fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
     setupWorkers();
+    fixture->chain  = memoryAllocateZero(sizeof(*fixture->chain));
     fixture->owner  = tunnelCreate(NULL, sizeof(owner_state_t), 0);
     fixture->client = keepaliveclientTunnelCreate(&fixture->metadata);
     fixture->next   = tunnelCreate(NULL, sizeof(next_state_t), 0);
     twfRequire(fixture->owner != NULL && fixture->client != NULL && fixture->next != NULL, "construct idle fixture");
-    bindFixture(fixture->owner, fixture->client, fixture->next);
+    bindFixture(fixture->owner, fixture->client, fixture->next, fixture->chain);
     twfLinePoolSetup(&fixture->lines, fixture->client->lstate_size, 4);
 }
 
@@ -130,6 +133,7 @@ static void fixtureTeardown(fixture_t *fixture)
     keepaliveclientTunnelDestroy(fixture->client, wwLifecycleProcessShutdown());
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->owner);
+    memoryFree(fixture->chain);
     tosWorkerEnvTeardown(&g_env);
 }
 
@@ -256,6 +260,7 @@ static void caseWorkerAndInstanceIsolation(void)
         kLinesPerWorker = 3
     };
     node_t                    metadata[kInstances] = {0};
+    tunnel_chain_t           *chains[kInstances];
     tunnel_t                 *owners[kInstances], *clients[kInstances], *nexts[kInstances];
     keepaliveclient_tstate_t *states[kInstances];
     line_t                   *lines[kInstances][kTestWorkerCount][kLinesPerWorker];
@@ -264,12 +269,13 @@ static void caseWorkerAndInstanceIsolation(void)
     twfRequire(master != NULL, "create isolation line master pool");
     for (unsigned instance = 0; instance < kInstances; ++instance)
     {
+        chains[instance]  = memoryAllocateZero(sizeof(*chains[instance]));
         owners[instance]  = tunnelCreate(NULL, sizeof(owner_state_t), 0);
         clients[instance] = keepaliveclientTunnelCreate(&metadata[instance]);
         nexts[instance]   = tunnelCreate(NULL, sizeof(next_state_t), 0);
         twfRequire(owners[instance] != NULL && clients[instance] != NULL && nexts[instance] != NULL,
                    "construct isolation tunnels");
-        bindFixture(owners[instance], clients[instance], nexts[instance]);
+        bindFixture(owners[instance], clients[instance], nexts[instance], chains[instance]);
         states[instance] = tunnelGetState(clients[instance]);
     }
     for (wid_t wid = 0; wid < kTestWorkerCount; ++wid)
@@ -361,6 +367,7 @@ static void caseWorkerAndInstanceIsolation(void)
         keepaliveclientTunnelDestroy(clients[instance], wwLifecycleProcessShutdown());
         tunnelDestroy(nexts[instance]);
         tunnelDestroy(owners[instance]);
+        memoryFree(chains[instance]);
     }
     for (wid_t wid = 0; wid < kTestWorkerCount; ++wid)
         genericpoolDestroy(pools[wid]);

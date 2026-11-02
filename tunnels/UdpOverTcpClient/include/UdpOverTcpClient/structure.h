@@ -4,8 +4,7 @@
 
 typedef struct udpovertcpclient_lstate_s
 {
-    splice_stream_t *read_stream;
-    bool             read_draining;
+    splice_frame_reader_t reader;
 } udpovertcpclient_lstate_t;
 
 enum
@@ -29,5 +28,5 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
 void udpovertcpclientCloseLine(tunnel_t *t, line_t *l);
 
-void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls, buffer_pool_t *pool);
+void udpovertcpclientLinestateInitialize(udpovertcpclient_lstate_t *ls, buffer_pool_t *pool, bool splice_output);
 void udpovertcpclientLinestateDestroy(udpovertcpclient_lstate_t *ls);

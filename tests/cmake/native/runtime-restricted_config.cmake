@@ -287,6 +287,7 @@
     waterwall_add_native_executable(bufio_contract_no_splice_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/bufio/bufio_contract_test.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue_range.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
+      ${CMAKE_SOURCE_DIR}/ww/bufio/splice_frame_reader.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c
       ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_pool.c

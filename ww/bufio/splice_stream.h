@@ -25,6 +25,12 @@ typedef struct splice_stream_s
 splice_stream_t *splicestreamCreate(buffer_pool_t *pool, uint32_t header_size);
 void             splicestreamDestroy(splice_stream_t *stream);
 
+/* Borrowed owner-worker pool, also used to recycle input refused before Push. */
+static inline buffer_pool_t *splicestreamGetPool(const splice_stream_t *stream)
+{
+    return stream->pool;
+}
+
 /* Takes input on every result. False recycles only this input and leaves existing
  * bytes/costs intact. Reserve precedes header consumption. Empty inputs recycle.
  * No callback or representation conversion occurs. */

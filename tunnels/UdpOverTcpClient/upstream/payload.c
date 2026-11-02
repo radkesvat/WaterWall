@@ -14,7 +14,7 @@ void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 #endif
-    assert(((udpovertcpclient_lstate_t *) lineGetState(l, t))->read_stream != NULL);
+    assert(spliceframereaderIsAttached(&((udpovertcpclient_lstate_t *) lineGetState(l, t))->reader));
     const uint32_t length = sbufGetLength(buf);
     if (length == 0 || length > kMaxAllowedUDPPacketLength)
     {

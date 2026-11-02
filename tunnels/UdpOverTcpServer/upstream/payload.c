@@ -5,34 +5,29 @@
 void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     udpovertcpserver_lstate_t *ls = lineGetState(l, t);
-    assert(ls->read_stream != NULL);
-    if (sbufGetLength(buf) == 0)
+    switch (spliceframereaderAdmit(&ls->reader, buf))
     {
-        lineReuseBuffer(l, buf);
+    case kSpliceFrameDrain:
+        break;
+    case kSpliceFrameQueued:
+    case kSpliceFrameEmpty:
         return;
-    }
-    if (ls->read_draining)
-    {
-        if (! splicestreamCanAdmit(ls->read_stream, buf, kMaxReentryBytes, kReadChargeLimit))
-        {
-            lineReuseBuffer(l, buf);
-            LOGW("UdpOverTcpServer: decoder reentry limit exceeded");
-            udpovertcpserverCloseLine(t, l);
-            return;
-        }
-    }
-    if (! splicestreamPush(ls->read_stream, buf))
-    {
+    case kSpliceFrameByteLimit:
+        LOGW("UdpOverTcpServer: decoder reentry byte limit exceeded");
+        udpovertcpserverCloseLine(t, l);
+        return;
+    case kSpliceFrameChargeLimit:
+        LOGW("UdpOverTcpServer: decoder reentry storage limit exceeded");
+        udpovertcpserverCloseLine(t, l);
+        return;
+    case kSpliceFramePushFailed:
         udpovertcpserverCloseLine(t, l);
         return;
     }
-    if (ls->read_draining)
-        return;
-    ls->read_draining = true;
     lineRef(l);
     for (;;)
     {
-        const uint8_t *header = splicestreamPeekHeader(ls->read_stream);
+        const uint8_t *header = spliceframereaderPeekHeader(&ls->reader);
         if (header == NULL)
             break;
         uint16_t network_length;
@@ -45,27 +40,24 @@ void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineUnref(l);
             return;
         }
-        if (splicestreamBodyBytes(ls->read_stream) < length)
+        if (! spliceframereaderBodyReady(&ls->reader, length))
             break;
-        sbuf_t *destination =
-            tunnelGetChain(t)->supports_splice ? bufferpoolGetSpliceBuffer(lineGetBufferPool(l)) : NULL;
-        sbuf_t *body        = splicestreamMoveFrame(ls->read_stream, destination, length);
+        sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, length);
         tunnelNextUpStreamPayload(t, l, body);
-        if (! lineIsAlive(l) || ls->read_stream == NULL)
+        if (! lineIsAlive(l) || ! spliceframereaderIsAttached(&ls->reader))
         {
             lineUnref(l);
             return;
         }
     }
     /* Draining leaves at most 65,536 bytes in an incomplete frame, including its two-byte header. */
-    assert(splicestreamLength(ls->read_stream) < kHeaderSize + UINT16_MAX);
-    if (! splicestreamSettleCharge(ls->read_stream, kReadChargeLimit))
+    assert(spliceframereaderLength(&ls->reader) < kHeaderSize + UINT16_MAX);
+    if (! spliceframereaderEndDrain(&ls->reader))
     {
         LOGW("UdpOverTcpServer: incomplete frame storage limit exceeded");
         udpovertcpserverCloseLine(t, l);
         lineUnref(l);
         return;
     }
-    ls->read_draining = false;
     lineUnref(l);
 }
