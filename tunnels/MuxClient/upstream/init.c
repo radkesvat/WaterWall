@@ -31,7 +31,7 @@ void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
     muxclientJoinConnection(parent_ls, child_ls);
     parent_ls->connection_id = new_cid;
 
-    child_ls->source_starting = true;
+    child_ls->child_flow.source_starting = true;
     lineRef(parent_l);
     tunnelPrevDownStreamEst(t, child_l);
     if (lineIsAlive(child_l) && ((muxclient_lstate_t *) lineGetState(child_l, t))->is_child)

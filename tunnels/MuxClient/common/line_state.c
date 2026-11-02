@@ -17,36 +17,31 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
         bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map = muxclient_child_map_t_init();
     }
-    *ls = (muxclient_lstate_t) {.l                     = l,
-                                .parent                = NULL,
-                                .child_prev            = NULL,
-                                .child_next            = NULL,
-                                .pending_child_data    = bufferqueueCreate(kMuxChildBufferQueueCap),
-                                .creation_epoch        = is_child ? 0 : wloopNowMonotonicMS(getWorkerLoop(wid)),
-                                .connection_id         = connection_id,
-                                .close_state           = kMuxClientChildCloseOpen,
-                                .children_count        = 0,
-                                .parent_state          = parent_state,
-                                .is_child              = is_child,
-                                .paused                = false,
-                                .flow_paused_sent      = false,
-                                .peer_flow_paused      = false,
-                                .parent_write_paused   = false,
-                                .local_hold_prev       = NULL,
-                                .local_hold_next       = NULL,
-                                .source_pause_notified = false,
-                                .source_starting       = false,
-                                .parent_finishing      = false,
-                                .open_frame_submitted  = ! is_child,
-                                .selection_retired     = false};
+    *ls = (muxclient_lstate_t) {.l                    = l,
+                                .parent               = NULL,
+                                .child_prev           = NULL,
+                                .child_next           = NULL,
+                                .pending_child_data   = bufferqueueCreate(kMuxChildBufferQueueCap),
+                                .creation_epoch       = is_child ? 0 : wloopNowMonotonicMS(getWorkerLoop(wid)),
+                                .connection_id        = connection_id,
+                                .close_state          = kMuxClientChildCloseOpen,
+                                .children_count       = 0,
+                                .parent_state         = parent_state,
+                                .is_child             = is_child,
+                                .paused               = false,
+                                .child_flow           = {0},
+                                .flow_paused_sent     = false,
+                                .parent_finishing     = false,
+                                .open_frame_submitted = ! is_child,
+                                .selection_retired    = false};
 }
 
 void muxclientLinestateDestroy(muxclient_lstate_t *ls)
 {
-    if (UNLIKELY(ls->parent_write_paused || ls->local_hold_prev || ls->local_hold_next ||
+    if (UNLIKELY(ls->child_flow.parent_write_paused || ls->child_flow.hold_prev || ls->child_flow.hold_next ||
                  (! ls->is_child && ls->parent_state &&
-                  (ls->parent_state->local_hold_count || ls->parent_state->local_hold_head ||
-                   ls->parent_state->local_hold_tail))))
+                  (ls->parent_state->local_holds.count || ls->parent_state->local_holds.head ||
+                   ls->parent_state->local_holds.tail))))
     {
         LOGF("MuxClient: destroying state with local source holds still linked");
         abortProgramNow(1);

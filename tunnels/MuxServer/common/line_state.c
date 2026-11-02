@@ -31,13 +31,8 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
                                 .child_idle_item            = NULL,
                                 .is_child                   = is_child,
                                 .paused                     = false,
+                                .child_flow                 = {0},
                                 .flow_paused_sent           = false,
-                                .peer_flow_paused           = false,
-                                .parent_write_paused        = false,
-                                .local_hold_prev            = NULL,
-                                .local_hold_next            = NULL,
-                                .source_pause_notified      = false,
-                                .source_starting            = false,
                                 .parent_finishing           = false,
                                 .detached_registered        = false,
                                 .child_slot_reserved        = false,
@@ -46,10 +41,10 @@ void muxserverLinestateInitialize(tunnel_t *t, muxserver_lstate_t *ls, line_t *l
 
 void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
 {
-    if (UNLIKELY(ls->parent_write_paused || ls->local_hold_prev || ls->local_hold_next ||
+    if (UNLIKELY(ls->child_flow.parent_write_paused || ls->child_flow.hold_prev || ls->child_flow.hold_next ||
                  (! ls->is_child && ls->parent_state &&
-                  (ls->parent_state->local_hold_count || ls->parent_state->local_hold_head ||
-                   ls->parent_state->local_hold_tail))))
+                  (ls->parent_state->local_holds.count || ls->parent_state->local_holds.head ||
+                   ls->parent_state->local_holds.tail))))
     {
         LOGF("MuxServer: destroying state with local source holds still linked");
         abortProgramNow(1);

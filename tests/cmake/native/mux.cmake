@@ -1,4 +1,12 @@
 # Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
+if(TARGET MuxCommon)
+  waterwall_add_native_executable(muxcommon_child_flow_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/mux/muxcommon_child_flow_test.c)
+  target_link_libraries(muxcommon_child_flow_test PRIVATE MuxCommon ww)
+  add_waterwall_unit_test(waterwall.muxcommon_child_flow_unit muxcommon_child_flow_test
+    "unit;tunnels;mux;flow;reentrant;lifetime")
+endif()
+
 foreach(mux_side Client Server)
   string(TOLOWER "${mux_side}" mux_side_lower)
   set(mux_target "Mux${mux_side}")

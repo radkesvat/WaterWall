@@ -412,7 +412,7 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
     }
 
     twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
-    twfRequire(! child->child_has_payload_activity && ! child->peer_flow_paused && child->paused == paused,
+    twfRequire(! child->child_has_payload_activity && ! child->child_flow.peer_flow_paused && child->paused == paused,
                "quiesced payload refreshed idle or flow-control state");
     twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0 &&
                    bufferbudgetGetUsage(&child->parent->parent_state->child_queue_budget).charge == 0 &&

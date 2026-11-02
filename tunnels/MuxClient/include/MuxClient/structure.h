@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MuxCommon/mux_child_flow.h"
 #include "MuxCommon/mux_limits.h"
 #include "MuxCommon/mux_parent_output.h"
 #include "MuxCommon/mux_retention.h"
@@ -22,9 +23,7 @@ typedef struct muxclient_parent_state_s
     line_t              **selection_slot;
     local_idle_item_t    *ping_item;
     local_idle_item_t    *pong_deadline_item;
-    muxclient_lstate_t   *local_hold_head;
-    muxclient_lstate_t   *local_hold_tail;
-    uint32_t              local_hold_count;
+    mux_hold_list_t       local_holds;
     mux_parent_output_t   output;
     buffer_budget_t       child_queue_budget;
     unsigned              receive_depth;     // Nonzero defers enforcement and Resume's kept-byte reparse.
@@ -109,8 +108,7 @@ struct muxclient_lstate_s
     struct muxclient_lstate_s *parent;             // the parent  f is_child is true
     struct muxclient_lstate_s *child_prev;         // previous child in the parent connection
     struct muxclient_lstate_s *child_next;         // next child in the parent connection
-    muxclient_lstate_t        *local_hold_prev;
-    muxclient_lstate_t        *local_hold_next;
+    mux_child_flow_t              child_flow;
     buffer_queue_t                pending_child_data;         // ordered decoded byte chunks retained while paused
     uint64_t  creation_epoch;             // monotonic creation time in milliseconds, used for timer mode
     mux_cid_t connection_id;              // unique connection id, used for multiplexing
@@ -120,10 +118,6 @@ struct muxclient_lstate_s
     bool                      is_child : 1;         // immutable line role: this line is a Mux child
     bool                      paused : 1;           // child: local child write side is paused
     bool                      flow_paused_sent : 1; // child: FlowPause was sent to the peer for this cid
-    bool                      peer_flow_paused : 1; // child: peer sent FlowPause for this cid
-    bool                      source_pause_notified : 1; // Effective producer permission already emitted.
-    bool                      source_starting : 1;  // child: producer Init/Est callback is still on the stack
-    bool parent_write_paused : 1; // child: local hold registry membership (writer or aggregate pressure)
     bool parent_finishing : 1;                      // parent: main FIN is being handled, suppress parent writes
     bool                      open_frame_submitted : 1; // child: Open has entered ordered parent output for this cid
     bool                      selection_retired : 1;    // Never selected for another child, in any mode.

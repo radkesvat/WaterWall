@@ -1,4 +1,5 @@
 add_library(MuxCommon STATIC
+    src/mux_child_flow.c
     src/mux_wire.c
 )
 

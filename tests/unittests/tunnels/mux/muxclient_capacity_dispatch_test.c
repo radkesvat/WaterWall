@@ -840,7 +840,7 @@ static void outputEstProducer(tunnel_t *prev, line_t *child_l)
     {
         muxclient_lstate_t *child  = lineGetState(child_l, g_client_fixture->mux);
         muxclientTunnelDownStreamResume(g_client_fixture->mux, child->parent->l);
-        twfRequire(child->parent_write_paused, "starting child was visited during release fanout");
+        twfRequire(child->child_flow.parent_write_paused, "starting child was visited during release fanout");
     }
     if (output_close_in_est)
     {
@@ -883,7 +883,8 @@ static void caseNewChildInheritsOutputGate(bool close_in_est, bool release_in_es
     else
     {
         muxclient_lstate_t *second_state = lineGetState(second, f.mux);
-        twfRequire(second_state->parent == child->parent && second_state->parent_write_paused == ! release_in_est,
+        twfRequire(second_state->parent == child->parent &&
+                       second_state->child_flow.parent_write_paused == ! release_in_est,
                    "new child missed parent gate");
         twfRequire(f.quiet_pauses == (release_in_est ? 1U : 2U), "new child received incorrect Pause count");
     }

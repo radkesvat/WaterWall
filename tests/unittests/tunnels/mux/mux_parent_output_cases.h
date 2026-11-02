@@ -344,13 +344,13 @@ static void caseBlockedWriterBelowHighWater(void)
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
     pq_state_t *writer = lineGetState(f.child_l, f.mux);
     pq_state_t *idle   = lineGetState(sibling, f.mux);
-    twfRequire(pqPauses == 1 && writer->parent_write_paused && ! idle->parent_write_paused &&
+    twfRequire(pqPauses == 1 && writer->child_flow.parent_write_paused && ! idle->child_flow.parent_write_paused &&
                    ! pqOutput(&f)->sources_throttled && pqDeliveries == 0,
                "small blocked writer was not paused independently");
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 0));
     twfRequire(pqPauses == 1, "duplicate writer hold repeated Pause");
     pqParentResume(&f);
-    twfRequire(pqResumes == 1 && ! writer->parent_write_paused && pqOutput(&f)->charge == 0,
+    twfRequire(pqResumes == 1 && ! writer->child_flow.parent_write_paused && pqOutput(&f)->charge == 0,
                "local-only writer hold was stranded");
     pqDestroySibling(&f, sibling);
     fixtureTeardown(&f);
@@ -504,7 +504,8 @@ static void caseParentFairness(void)
             twfRequire(pqFairSeen[i] == round + 1, "list position starved a stable eligible child");
     }
     /* Remove the cursor target and replace it while pressure remains active. */
-    pq_state_t *target = parent->parent_state->local_hold_head;
+    pq_state_t *target = (pq_state_t *) ((uint8_t *) parent->parent_state->local_holds.head -
+                                         offsetof(pq_state_t, child_flow));
     if (target == fixture_child)
         target = target->child_next ? target->child_next : parent->child_next;
     const unsigned removed = target->connection_id - 100;
@@ -513,13 +514,13 @@ static void caseParentFairness(void)
     discard pqPeerPause(f.mux, f.parent_l, lineGetState(children[removed], f.mux), false, true);
     pqFairRefill                                                                 = false;
     pqParentResume(&f);
-    twfRequire(! pqOutput(&f)->sources_throttled && fixture_child->peer_flow_paused &&
-                   ! fixture_child->parent_write_paused,
+    twfRequire(! pqOutput(&f)->sources_throttled && fixture_child->child_flow.peer_flow_paused &&
+                   ! fixture_child->child_flow.parent_write_paused,
                "final release erased peer gate or stranded output");
     for (unsigned i = 0; i < 2000; ++i)
         pqDestroySibling(&f, children[i]);
     memoryFree(children);
-    twfRequire(parent->parent_state->local_hold_head == NULL && parent->parent_state->local_hold_count == 0,
+    twfRequire(parent->parent_state->local_holds.head == NULL && parent->parent_state->local_holds.count == 0,
                "local hold list retained a removed child");
     fixtureTeardown(&f);
 }
@@ -620,7 +621,7 @@ static void caseWriterDirectPause(bool transient)
         pqPauseAt = 1;
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 0));
     pq_state_t *child = lineGetState(f.child_l, f.mux);
-    twfRequire(pqPauses == (transient ? 0U : 1U) && child->parent_write_paused == ! transient &&
+    twfRequire(pqPauses == (transient ? 0U : 1U) && child->child_flow.parent_write_paused == ! transient &&
                    ! pqOutput(&f)->sources_throttled,
                "direct write left incorrect local permission");
     pqParentResume(&f);
@@ -639,7 +640,7 @@ static void caseControlIsNotWriter(void)
     for (size_t i = 0; i < ARRAY_SIZE(flags); ++i)
         twfRequire(pqControl(f.mux, f.parent_l, parent, f.child_l, kTestChildCid, flags[i]),
                    "control admission failed");
-    twfRequire(pqPauses == 0 && parent->parent_state->local_hold_count == 0 && pqDeliveries == 0,
+    twfRequire(pqPauses == 0 && parent->parent_state->local_holds.count == 0 && pqDeliveries == 0,
                "control was misattributed as child production");
     pqParentResume(&f);
     twfRequire(pqResumes == 0 && pqDeliveries == 3, "control FIFO did not settle");
@@ -679,7 +680,7 @@ static void caseSparseWriters(void)
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 0));
     pqSend(f.mux, children[0], makePatternPayload(&f, 1));
     pqSend(f.mux, children[1998], makePatternPayload(&f, 2));
-    twfRequire(pqPauses == 3 && parent->parent_state->local_hold_count == 3 && ! pqOutput(&f)->sources_throttled,
+    twfRequire(pqPauses == 3 && parent->parent_state->local_holds.count == 3 && ! pqOutput(&f)->sources_throttled,
                "sparse writers paused idle children");
     pqObserveSnapshot     = true;
     pqSnapshotBytes       = 0;
@@ -687,7 +688,7 @@ static void caseSparseWriters(void)
     pqParentResume(&f);
     pqObserveSnapshot = false;
     twfRequire(pqSnapshotAllocations == 1 && pqSnapshotBytes == 3 * sizeof(line_t *) && pqResumes == 3 &&
-                   parent->parent_state->local_hold_count == 0,
+                   parent->parent_state->local_holds.count == 0,
                "individual release scanned the all-child population");
     for (unsigned i = 0; i < 1999; ++i)
         pqDestroySibling(&f, children[i]);
@@ -731,7 +732,7 @@ static void caseWriterSiblingDeath(bool detach_only)
     pqDetachOnly               = detach_only;
     pqSource(&f)->pqResumeSlot = pqKillLaterWaiters;
     pqParentResume(&f);
-    twfRequire(pqResumes == 1 && parent->children_count == 1 && parent->parent_state->local_hold_count == 0 &&
+    twfRequire(pqResumes == 1 && parent->children_count == 1 && parent->parent_state->local_holds.count == 0 &&
                    pqOutput(&f)->charge == 0,
                "sibling removal left registry, buffer, or callback ownership");
 #ifdef MUX_OUTPUT_CLIENT
@@ -786,7 +787,7 @@ static void caseWriterPauseDeath(bool parent_death)
     if (! parent_death)
     {
         pq_state_t *parent = lineGetState(f.parent_l, f.mux);
-        twfRequire(parent->parent_state->local_hold_count == 0 && parent->children_count == 0,
+        twfRequire(parent->parent_state->local_holds.count == 0 && parent->children_count == 0,
                    "writer close retained membership");
         pqParentResume(&f);
     }
@@ -822,7 +823,7 @@ static void caseWriterRefillAboveLowWater(void)
     twfRequire(! pqOutput(&f)->sources_throttled, "fixture unexpectedly reached aggregate threshold");
     pqSource(&f)->pqResumeSlot = pqLowWaterRefill;
     pqParentResume(&f);
-    twfRequire(pqResumes == 3 && pqDeliveries == 4 && parent->parent_state->local_hold_count == 0,
+    twfRequire(pqResumes == 3 && pqDeliveries == 4 && parent->parent_state->local_holds.count == 0,
                "local release lost a waiter after interrupted fanout");
     frame_view_t frames[5];
     unsigned     count = parseFrames(f.capture, f.trace.capture_len, frames, 5);
@@ -922,10 +923,11 @@ static void caseParentGateMutation(void)
     pqParentPause(&f);
     pqSend(f.mux, f.child_l, makePatternPayload(&f, 1));
     discard pqPeerResume(f.mux, f.parent_l, child, true, false);
-    twfRequire(child->parent_write_paused, "peer Resume bypassed local gate");
+    twfRequire(child->child_flow.parent_write_paused, "peer Resume bypassed local gate");
     discard pqPeerPause(f.mux, f.parent_l, child, true, false);
     pqParentResume(&f);
-    twfRequire(child->peer_flow_paused && ! child->parent_write_paused, "local release erased peer pressure");
+    twfRequire(child->child_flow.peer_flow_paused && ! child->child_flow.parent_write_paused,
+               "local release erased peer pressure");
     discard pqPeerResume(f.mux, f.parent_l, child, true, false);
     pqDestroySibling(&f, survivor);
     fixtureTeardown(&f);

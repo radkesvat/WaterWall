@@ -921,7 +921,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     twfRequire(child_ls->close_state == kMuxClientChildClosePeerDraining,
                "same-batch Close did not retain the terminal cid for ordered draining");
     twfRequire(child_ls->parent == parent_ls, "same-batch Close removed the blocked cid from routing");
-    twfRequire(! child_ls->peer_flow_paused && ! child_ls->parent_write_paused,
+    twfRequire(! child_ls->child_flow.peer_flow_paused && ! child_ls->child_flow.parent_write_paused,
                "late flow-control frames changed terminal child source state");
     twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
                        kFirst,
@@ -1470,7 +1470,8 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
     twfRequireEqualU32(fixture.trace.len, 0, "quiesced payload emitted MUX callbacks");
     twfRequire(child_ls->l == fixture.child_l && child_ls->parent == parent_ls,
                "quiesced payload changed child membership before Finish");
-    twfRequire(! child_ls->open_frame_submitted && ! child_ls->peer_flow_paused && child_ls->paused == paused,
+    twfRequire(! child_ls->open_frame_submitted && ! child_ls->child_flow.peer_flow_paused &&
+                   child_ls->paused == paused,
                "quiesced payload changed wire or flow-control state");
     requireEqualCharge(
         bufferqueueGetCharge(&child_ls->pending_child_data), 0, "quiesced payload retained child charge");

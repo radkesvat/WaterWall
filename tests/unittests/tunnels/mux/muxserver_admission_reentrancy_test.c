@@ -825,7 +825,7 @@ static void parentOutputInit(tunnel_t *next, line_t *child)
     {
         muxserver_lstate_t *state  = lineGetState(child, g_server_fixture->mux);
         muxserverTunnelUpStreamResume(g_server_fixture->mux, state->parent->l);
-        twfRequire(state->parent_write_paused, "starting child was visited during release fanout");
+        twfRequire(state->child_flow.parent_write_paused, "starting child was visited during release fanout");
     }
     if (parent_output_close_in_init)
         muxserverTunnelDownStreamFinish(g_server_fixture->mux, child);
@@ -890,7 +890,7 @@ static void caseParentGateDuringInit(bool close_in_init, bool loss_in_pause, boo
         if (release_in_init)
         {
             muxserver_lstate_t *second = muxserverFindChildByConnectionId(state, 102);
-            twfRequire(second != NULL && ! second->parent_write_paused,
+            twfRequire(second != NULL && ! second->child_flow.parent_write_paused,
                        "Init completion retained obsolete parent gate");
         }
         else

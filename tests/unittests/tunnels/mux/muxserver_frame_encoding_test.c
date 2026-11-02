@@ -774,7 +774,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     twfRequire(child_ls->close_state == kMuxServerChildClosePeerDraining,
                "same-batch Close did not retain the server cid for ordered draining");
     twfRequire(child_ls->parent == parent_ls, "same-batch Close removed the blocked server cid from routing");
-    twfRequire(! child_ls->peer_flow_paused && ! child_ls->parent_write_paused,
+    twfRequire(! child_ls->child_flow.peer_flow_paused && ! child_ls->child_flow.parent_write_paused,
                "late server flow-control frames changed terminal child source state");
     twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
                        kFirst,
