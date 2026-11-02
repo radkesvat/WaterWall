@@ -105,7 +105,9 @@ static inline uint32_t spliceframereaderFrameRemaining(const splice_frame_reader
 
 static inline uint32_t spliceframereaderFrameAvailable(const splice_frame_reader_t *reader)
 {
-    return reader->frame_active ? (uint32_t) min(reader->frame_remaining, splicestreamBodyBytes(reader->stream)) : 0;
+    return reader->frame_active
+               ? (uint32_t) min((size_t) reader->frame_remaining, splicestreamBodyBytes(reader->stream))
+               : 0;
 }
 
 static inline size_t spliceframereaderLength(const splice_frame_reader_t *reader)

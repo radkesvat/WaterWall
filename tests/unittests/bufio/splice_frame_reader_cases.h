@@ -312,6 +312,27 @@ static void testFrameReaderIncrementalRetirement(buffer_pool_t *pool)
     }
 }
 
+static void testFrameReaderAvailableWidth(void)
+{
+#if SIZE_MAX > UINT32_MAX
+    testCaseSet("frame reader: wide stream lengths are capped before narrowing");
+    /* Exercise only the non-consuming length query without allocating gigabytes. */
+    splice_stream_t       stream       = {.header_size = 2, .header_filled = 2};
+    splice_frame_reader_t reader       = {.stream = &stream, .frame_remaining = 32, .frame_active = true};
+    const size_t          body_bytes[] = {UINT32_MAX, (size_t) UINT32_MAX + 1, (size_t) UINT32_MAX + 8};
+    for (unsigned i = 0; i < ARRAY_SIZE(body_bytes); ++i)
+    {
+        stream.total = body_bytes[i] + stream.header_size;
+        require(spliceframereaderFrameAvailable(&reader) == 32,
+                "wide stream length was truncated before applying the frame limit");
+        reader.frame_remaining = UINT32_MAX;
+        require(spliceframereaderFrameAvailable(&reader) == UINT32_MAX,
+                "maximum frame length was truncated by a wider stream length");
+        reader.frame_remaining = 32;
+    }
+#endif
+}
+
 static void testSpliceFrameReader(void)
 {
     pool_fixture_t fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
@@ -322,5 +343,6 @@ static void testSpliceFrameReader(void)
     testFrameReaderIncremental(fixture.pool);
     testFrameReaderIncrementalNested(fixture.pool);
     testFrameReaderIncrementalRetirement(fixture.pool);
+    testFrameReaderAvailableWidth();
     poolFixtureDestroy(&fixture);
 }
