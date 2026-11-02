@@ -6,14 +6,12 @@ void headerserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
     headerserver_lstate_t *ls = lineGetState(l, t);
 
-    if (ls->phase == kHeaderServerPhaseWaitHeader)
+    if (ls->phase == kHeaderServerPhaseNone)
     {
-        ls->pending_next_pause = true;
         return;
     }
-    if (ls->phase == kHeaderServerPhaseEstablished)
+    if (nextinitgateSignal(&ls->gate, true))
     {
-        ls->pending_next_pause = false;
         tunnelNextUpStreamPause(t, l);
     }
 }

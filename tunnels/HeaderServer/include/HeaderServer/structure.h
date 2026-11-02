@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NextInitGate/next_init_gate.h"
 #include "wwapi.h"
 
 typedef enum headerserver_override_mode_e
@@ -27,10 +28,8 @@ typedef struct headerserver_tstate_s
 typedef struct headerserver_lstate_s
 {
     headerserver_phase_e phase;
-    bool                 pending_next_pause;
     buffer_stream_t      read_stream;
-    /* Nested input received while next Init/initial replay is on the stack. */
-    buffer_queue_t initial_reentry;
+    next_init_gate_t     gate;
 } headerserver_lstate_t;
 
 enum

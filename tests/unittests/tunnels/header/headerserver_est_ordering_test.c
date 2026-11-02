@@ -257,7 +257,7 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     sbufSetLength(large, kHeaderServerMaxReentryBytes);
     tunnelUpStreamPayload(f->node, l, large);
     headerserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufLen(&ls->initial_reentry) == kHeaderServerMaxReentryBytes,
+    twfRequire(bufferqueueGetBufLen(&ls->gate.pending) == kHeaderServerMaxReentryBytes,
                "HeaderServer rejected exact transient reentry byte limit");
     tunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
@@ -269,7 +269,7 @@ static void overflowReentryCharge(est_fixture_t *f, line_t *l)
     twfRequire(sbufGetQueueCharge(retained) == kHeaderServerMaxReentryCharge, "charge fixture geometry changed");
     tunnelUpStreamPayload(f->node, l, retained);
     headerserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetCharge(&ls->initial_reentry) == kHeaderServerMaxReentryCharge,
+    twfRequire(bufferqueueGetCharge(&ls->gate.pending) == kHeaderServerMaxReentryCharge,
                "exact reentry charge limit rejected");
     tunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
 }

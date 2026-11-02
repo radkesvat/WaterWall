@@ -345,6 +345,12 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
     }
 }
 
+static bool headerserverStartupStillActive(tunnel_t *t, line_t *l)
+{
+    headerserver_lstate_t *ls = lineGetState(l, t);
+    return ls->phase == kHeaderServerPhaseEstablished;
+}
+
 void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     headerserver_lstate_t *ls = lineGetState(l, t);
@@ -358,14 +364,15 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->phase == kHeaderServerPhaseEstablished)
     {
         /* Established state exists only until the initial replay retires it. */
-        if (UNLIKELY(sbufGetLength(buf) > kHeaderServerMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                     bufferqueueGetCharge(&ls->initial_reentry) > kHeaderServerMaxReentryCharge ||
-                     sbufGetQueueCharge(buf) >
-                         kHeaderServerMaxReentryCharge - bufferqueueGetCharge(&ls->initial_reentry) ||
-                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
+        next_init_gate_input_t result = nextinitgateSubmit(&ls->gate, &buf);
+        if (UNLIKELY(result == kNextInitGateRejected))
         {
             lineReuseBuffer(l, buf);
             headerserverCloseLineFromProtocolError(t, l);
+        }
+        else if (result == kNextInitGateForward)
+        {
+            tunnelNextUpStreamPayload(t, l, buf);
         }
         return;
     }
@@ -385,37 +392,11 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    buffer_pool_t *pool  = lineGetBufferPool(l);
-    sbuf_t        *first = bufferstreamFullRead(&ls->read_stream);
-    ls->phase            = kHeaderServerPhaseEstablished;
-    lineRef(l);
-    tunnelNextUpStreamInit(t, l);
-    if (lineIsAlive(l) && ls->phase == kHeaderServerPhaseEstablished && ls->pending_next_pause)
+    sbuf_t *first = bufferstreamFullRead(&ls->read_stream);
+    ls->phase     = kHeaderServerPhaseEstablished;
+    if (nextinitgateOpen(&ls->gate, t, l, first, headerserverStartupStillActive) == kNextInitGateReady)
     {
-        /* Init reentry may already have replaced the remembered receiver signal. */
-        ls->pending_next_pause = false;
-        tunnelNextUpStreamPause(t, l);
+        headerserverLinestateDestroy(lineGetState(l, t));
+        tunnelBypassLine(t, l);
     }
-    while (lineIsAlive(l))
-    {
-        ls = lineGetState(l, t);
-        if (UNLIKELY(ls->phase != kHeaderServerPhaseEstablished))
-        {
-            break;
-        }
-        sbuf_t *out = first != NULL ? first : bufferqueuePopFront(&ls->initial_reentry);
-        first       = NULL;
-        if (out == NULL)
-        {
-            headerserverLinestateDestroy(ls);
-            tunnelBypassLine(t, l);
-            break;
-        }
-        tunnelNextUpStreamPayload(t, l, out);
-    }
-    if (first != NULL)
-    {
-        bufferpoolReuseBuffer(pool, first);
-    }
-    lineUnref(l);
 }

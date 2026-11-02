@@ -19,7 +19,7 @@ add_library(HeaderServer STATIC
 target_include_directories(HeaderServer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(HeaderServer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/HeaderServer)
 
-target_link_libraries(HeaderServer ww)
+target_link_libraries(HeaderServer ww NextInitGate)
 if(NOT APPLE)
     target_precompile_headers(HeaderServer REUSE_FROM ww)
 endif()

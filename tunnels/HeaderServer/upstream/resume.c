@@ -6,8 +6,11 @@ void headerserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
     headerserver_lstate_t *ls = lineGetState(l, t);
 
-    ls->pending_next_pause = false;
-    if (ls->phase == kHeaderServerPhaseEstablished)
+    if (ls->phase == kHeaderServerPhaseNone)
+    {
+        return;
+    }
+    if (nextinitgateSignal(&ls->gate, false))
     {
         tunnelNextUpStreamResume(t, l);
     }
