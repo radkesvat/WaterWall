@@ -21,7 +21,7 @@ add_library(SoftIpLimiter STATIC
 target_include_directories(SoftIpLimiter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(SoftIpLimiter PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/SoftIpLimiter)
 
-target_link_libraries(SoftIpLimiter ww)
+target_link_libraries(SoftIpLimiter ww NextInitGate)
 if(NOT APPLE)
     target_precompile_headers(SoftIpLimiter REUSE_FROM ww)
 endif()

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "NextInitGate/next_init_gate.h"
 #include "wwapi.h"
 
 enum
@@ -114,11 +115,8 @@ typedef struct softiplimiter_lstate_s
     bool                   closing;
     bool                   admitted;
     bool                   next_init_sent;
-    bool                   pending_next_pause; /* Latest receiver Pause before next Init. */
     bool                   ip_key_valid;
-    /* Nested input received while next Init/initial replay is on the stack. */
-    buffer_queue_t initial_reentry;
-    bool           initial_forwarding;
+    next_init_gate_t       gate;
     bool           transport_est_sent;
 } softiplimiter_lstate_t;
 

@@ -27,18 +27,16 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
     }
-    if (ls->initial_forwarding)
+    switch (nextinitgateSubmit(&ls->gate, &buf))
     {
-        if (UNLIKELY(sbufGetLength(buf) > kSoftIpLimiterMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                     bufferqueueGetCharge(&ls->initial_reentry) > kSoftIpLimiterMaxReentryCharge ||
-                     sbufGetQueueCharge(buf) >
-                         kSoftIpLimiterMaxReentryCharge - bufferqueueGetCharge(&ls->initial_reentry) ||
-                     ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
-        {
-            lineReuseBuffer(l, buf);
-            softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
-        }
+    case kNextInitGateQueued:
+        return;
+    case kNextInitGateRejected:
+        lineReuseBuffer(l, buf);
+        softiplimiterCloseLine(t, l, kSoftIpLimiterCloseInternal);
+        return;
+    case kNextInitGateForward:
+        tunnelNextUpStreamPayload(t, l, buf);
         return;
     }
-    tunnelNextUpStreamPayload(t, l, buf);
 }

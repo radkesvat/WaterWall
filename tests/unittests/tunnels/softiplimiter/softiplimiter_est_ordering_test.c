@@ -100,7 +100,7 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     sbufSetLength(large, kSoftIpLimiterMaxReentryBytes);
     softiplimiterTunnelUpStreamPayload(f->node, l, large);
     softiplimiter_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufLen(&ls->initial_reentry) == kSoftIpLimiterMaxReentryBytes,
+    twfRequire(bufferqueueGetBufLen(&ls->gate.pending) == kSoftIpLimiterMaxReentryBytes,
                "SoftIpLimiter rejected exact transient reentry byte limit");
     softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
@@ -112,7 +112,7 @@ static void overflowReentryCharge(est_fixture_t *f, line_t *l)
     twfRequire(sbufGetQueueCharge(retained) == kSoftIpLimiterMaxReentryCharge, "charge fixture geometry changed");
     softiplimiterTunnelUpStreamPayload(f->node, l, retained);
     softiplimiter_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetCharge(&ls->initial_reentry) == kSoftIpLimiterMaxReentryCharge,
+    twfRequire(bufferqueueGetCharge(&ls->gate.pending) == kSoftIpLimiterMaxReentryCharge,
                "exact reentry charge limit rejected");
     softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
 }
@@ -201,7 +201,7 @@ static void pressurePause(tunnel_t *t, line_t *l)
     if (pressure_action == kPressureNestedPayload || pressure_action == kPressureCloseInPause ||
         pressure_action == kPressureFinishInPause)
     {
-        twfRequire(((softiplimiter_lstate_t *) lineGetState(l, f->node))->initial_forwarding,
+        twfRequire(((softiplimiter_lstate_t *) lineGetState(l, f->node))->gate.phase == kNextInitGateStarting,
                    "SoftIpLimiter released startup FIFO guard before pending Pause");
         softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "B", 1));
     }
@@ -281,7 +281,7 @@ static void testStartupPressure(bool passthrough, startup_pressure_action_t acti
                    "SoftIpLimiter pending Pause changed startup FIFO ordering");
         softiplimiter_lstate_t *ls = lineGetState(f.line, f.node);
         twfRequire(ls->phase == (passthrough ? kSoftIpLimiterPhasePassthrough : kSoftIpLimiterPhaseEstablished) &&
-                       ! ls->initial_forwarding && ! ls->pending_next_pause,
+                       ls->gate.phase == kNextInitGateOpen && ! ls->gate.pause_latched,
                    "SoftIpLimiter retained startup state after pressure replay");
         pressure_action       = kPressureRetained;
         pressure_trace_length = 0;
