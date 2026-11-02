@@ -168,4 +168,6 @@ int iowatcherPollEvents(wloop_t* loop, int timeout) {
     }
     return nevents;
 }
+#else
+typedef int ww_epoll_dummy_t;
 #endif
