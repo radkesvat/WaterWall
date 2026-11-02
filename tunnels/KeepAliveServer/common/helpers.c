@@ -98,26 +98,32 @@ void keepaliveserverConsumeUpstreamFrames(tunnel_t *t, line_t *l)
         sbufByteCopy(&network_length, header, sizeof(network_length));
         const uint32_t body_length = ntohl(network_length);
         const uint8_t  kind        = header[kKeepAliveServerFrameLengthSize];
-        if (body_length < kKeepAliveServerFrameTypeSize || body_length > kKeepAliveServerMaxFrameBodyLength)
+        if (! spliceframereaderFrameActive(&ls->reader))
         {
-            LOGW("KeepAliveServer: invalid keepalive frame length");
-            keepaliveserverCloseLineFromProtocolError(t, l);
-            lineUnref(l);
-            return;
+            if (body_length < kKeepAliveServerFrameTypeSize || body_length > kKeepAliveServerMaxFrameBodyLength)
+            {
+                LOGW("KeepAliveServer: invalid keepalive frame length");
+                keepaliveserverCloseLineFromProtocolError(t, l);
+                lineUnref(l);
+                return;
+            }
+            spliceframereaderBeginFrame(&ls->reader, body_length - kKeepAliveServerFrameTypeSize);
         }
-        const uint32_t bytes = body_length - kKeepAliveServerFrameTypeSize;
-        if (! spliceframereaderBodyReady(&ls->reader, bytes))
+        const uint32_t bytes    = spliceframereaderFrameAvailable(&ls->reader);
+        const bool     finished = bytes == spliceframereaderFrameRemaining(&ls->reader);
+        if (bytes == 0 && ! finished)
             break;
         bool alive = true;
         if (kind == kKeepAliveServerFrameKindNormal && bytes != 0)
         {
-            sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, bytes);
+            /* Commit frame progress before forwarding: nested input joins this drain. */
+            sbuf_t *body = spliceframereaderTakeChunk(&ls->reader, bytes);
             alive = lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, body);
         }
         else
         {
-            spliceframereaderDiscardFrame(&ls->reader, bytes);
-            if (kind == kKeepAliveServerFrameKindPing)
+            spliceframereaderDiscardChunk(&ls->reader, bytes);
+            if (finished && kind == kKeepAliveServerFrameKindPing)
                 alive = keepaliveserverSendControlFrame(t, l, kKeepAliveServerFrameKindPong);
         }
         if (! alive || ! spliceframereaderIsAttached(&ls->reader))

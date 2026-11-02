@@ -62,6 +62,7 @@ static sbuf_t          *expected_identity;
 static bool             pause_output;
 static unsigned         encode_overflow;
 static bool             inject_large_decode;
+static bool             inject_stream_suffix;
 static bool             inject_ping;
 static unsigned         up_pauses, up_resumes, down_pauses, down_resumes;
 static unsigned         pause_wire_at;
@@ -277,6 +278,13 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
         const uint8_t nested[] = {0, 0, 0, 2, 1, 'B'};
         decode(node, l, ordinary(nested, sizeof(nested)));
     }
+    if (inject_stream_suffix)
+    {
+        inject_stream_suffix   = false;
+        const uint8_t suffix[] = {'B', 'C', 0, 0, 0, 2, 1, 'D'};
+        decode(node, l, ordinary(suffix, sizeof(suffix)));
+        twfRequire(plain_calls == 1, "partial-frame reentry recursively delivered data");
+    }
     if (inject_large_decode)
     {
         inject_large_decode     = false;
@@ -304,6 +312,7 @@ static void setupWithSettings(const char *settings)
     encode_overflow                                                           = 0;
     inject_ping                                                               = false;
     inject_large_decode                                                       = false;
+    inject_stream_suffix                                                      = false;
     up_pauses = up_resumes = down_pauses = down_resumes                       = 0;
     pause_wire_at                                                             = 0;
     expected_identity                                                         = NULL;
@@ -666,8 +675,8 @@ static void testLargeFrameBoundaries(void)
             decode(node, line, ordinary(wire + cursor, count));
             cursor += count;
         }
-        twfRequire(plain_length == length && plain_calls == frames && memoryCompare(plain, payload, length) == 0,
-                   "fragmented large frames changed payload or frame boundaries");
+        twfRequire(plain_length == length && plain_calls > frames && memoryCompare(plain, payload, length) == 0,
+                   "fragmented large frames failed to stream exact payload bytes");
         memoryFree(payload);
         teardown();
     }
@@ -730,6 +739,66 @@ static void testNestedChargeSettlement(void)
     decode(node, line, ordinary(first, sizeof(first)));
     twfRequire(lineIsAlive(line) && plain_calls == 2 && plain_length == 2 && memoryCompare(plain, "AB", 2) == 0,
                "nested charge settlement changed ordered delivery");
+    teardown();
+}
+
+static void testIncrementalDelivery(void)
+{
+    const uint8_t first[] = {0, 0, 0, 4, 1, 'A'};
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        setup();
+        inject_stream_suffix = mode == 1;
+        close_output         = mode == 2;
+#if WW_HAVE_SPLICE
+        require_splice = mode != 1;
+        measuring      = true;
+        decode(node, line, pipeBytes(first, sizeof(first), 0));
+#else
+        decode(node, line, ordinary(first, sizeof(first)));
+#endif
+        if (mode == 0)
+        {
+            nodeState *ls = lineGetState(line, node);
+            twfRequire(plain_calls == 1 && plain_length == 1 && plain[0] == 'A' &&
+                           spliceframereaderFrameRemaining(&ls->reader) == 2 &&
+                           spliceframereaderLength(&ls->reader) == framePrefix &&
+                           spliceframereaderCharge(&ls->reader) == 0,
+                       "partial normal data waited for the rest of its frame or retained its source");
+            /* Finishing now preserves the delivered prefix and releases the unfinished frame. */
+        }
+        else if (mode == 1)
+        {
+            nodeState *ls = lineGetState(line, node);
+            twfRequire(plain_calls == 3 && plain_length == 4 && memoryCompare(plain, "ABCD", 4) == 0 &&
+                           ! spliceframereaderFrameActive(&ls->reader) && spliceframereaderLength(&ls->reader) == 0 &&
+                           spliceframereaderCharge(&ls->reader) == 0,
+                       "reentrant suffix lost current-frame progress or following-frame order");
+        }
+        else
+            twfRequire(! lineIsAlive(line) && plain_calls == 1 && plain_length == 1 && plain[0] == 'A',
+                       "closure during partial delivery continued parsing or lost the delivered prefix");
+#if WW_HAVE_SPLICE
+        twfRequire(measured_reads == framePrefix, "incremental delivery materialized its pipe body");
+#endif
+        teardown();
+    }
+}
+
+static void testFragmentedControl(void)
+{
+    setup();
+    const uint8_t first[] = {0, 0, 0, 3, 2, 'X'};
+    decode(node, line, ordinary(first, sizeof(first)));
+    nodeState *ls = lineGetState(line, node);
+    twfRequire(wire_calls == 0 && plain_calls == 0 && spliceframereaderFrameRemaining(&ls->reader) == 1 &&
+                   spliceframereaderCharge(&ls->reader) == 0,
+               "partial Ping replied early or retained its discarded body");
+    const uint8_t last[] = {'Y', 0, 0, 0, 2, 1, 'Z'};
+    decode(node, line, ordinary(last, sizeof(last)));
+    twfRequire(wire_calls == 1 && wire_length == 5 && memoryCompare(wire, "\0\0\0\1\3", 5) == 0 && plain_calls == 1 &&
+                   plain_length == 1 && plain[0] == 'Z',
+               "completed fragmented control lost its effect or following data");
     teardown();
 }
 
@@ -885,7 +954,8 @@ static void testPipes(void)
 
     setup();
     decode(node, line, pipeBytes(fragments, 6, 0));
-    twfRequire(plain_calls == 0, "incomplete splice body escaped");
+    twfRequire(plain_calls == 1 && plain_length == 1 && plain[0] == 'A',
+               "available splice body waited for frame completion");
     teardown();
 }
 
@@ -904,15 +974,14 @@ static void testLargePipeFrame(void)
         uint32_t bytes = (uint32_t) min(wire_length - offset, 8192U);
         decode(node, line, pipeBytes(wire + offset, bytes, 0));
         offset += bytes;
-        if (offset != wire_length)
-            twfRequire(plain_calls == 0 && lineIsAlive(line), "partial maximum pipe frame escaped or closed");
+        twfRequire(plain_length == offset - framePrefix && lineIsAlive(line),
+                   "available maximum-frame pipe bytes did not stream immediately");
     }
-    twfRequire(plain_calls == 1 && plain_length == kExpectedChunkBytes &&
+    twfRequire(plain_calls > 1 && plain_length == kExpectedChunkBytes &&
                    memoryCompare(plain, payload, kExpectedChunkBytes) == 0,
                "maximum frame from many pipes changed bytes");
     independent_sources = false;
-    /* The split source pages exceed the full-size destination pipe's slot capacity. */
-    twfRequire(measured_reads == wire_length, "large pipe-pressure fallback did not settle all bytes exactly once");
+    twfRequire(measured_reads == framePrefix, "streamed pipe fragments materialized application bytes");
     memoryFree(payload);
     teardown();
 }
@@ -920,6 +989,8 @@ static void testLargePipeFrame(void)
 
 int main(void)
 {
+    testIncrementalDelivery();
+    testFragmentedControl();
     testAdvisoryControlReplies();
 #ifndef TEST_KEEPALIVE_SERVER
     testFirstPingInterval(false);

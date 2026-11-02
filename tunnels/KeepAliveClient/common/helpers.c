@@ -142,28 +142,37 @@ void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
         sbufByteCopy(&network_length, header, sizeof(network_length));
         const uint32_t body_length = ntohl(network_length);
         const uint8_t  kind        = header[kKeepAliveFrameLengthSize];
-        if (body_length < kKeepAliveFrameTypeSize || body_length > kKeepAliveMaxFrameBodyLength)
+        if (! spliceframereaderFrameActive(&ls->reader))
         {
-            LOGW("KeepAliveClient: invalid keepalive frame length");
-            keepaliveclientCloseLineFromProtocolError(t, l);
-            lineUnref(l);
-            return;
+            if (body_length < kKeepAliveFrameTypeSize || body_length > kKeepAliveMaxFrameBodyLength)
+            {
+                LOGW("KeepAliveClient: invalid keepalive frame length");
+                keepaliveclientCloseLineFromProtocolError(t, l);
+                lineUnref(l);
+                return;
+            }
+            spliceframereaderBeginFrame(&ls->reader, body_length - kKeepAliveFrameTypeSize);
         }
-        const uint32_t bytes = body_length - kKeepAliveFrameTypeSize;
-        if (! spliceframereaderBodyReady(&ls->reader, bytes))
+        const uint32_t bytes    = spliceframereaderFrameAvailable(&ls->reader);
+        const bool     finished = bytes == spliceframereaderFrameRemaining(&ls->reader);
+        if (bytes == 0 && ! finished)
             break;
         bool alive = true;
         if (kind == kKeepAliveFrameKindNormal && bytes != 0)
         {
-            sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, bytes);
+            /* Commit frame progress before forwarding: nested input joins this drain. */
+            sbuf_t *body = spliceframereaderTakeChunk(&ls->reader, bytes);
             alive = lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, body);
         }
         else
         {
-            spliceframereaderDiscardFrame(&ls->reader, bytes);
+            spliceframereaderDiscardChunk(&ls->reader, bytes);
+            if (! finished)
+                continue;
             if (kind == kKeepAliveFrameKindPing)
                 alive = keepaliveclientSendControlFrame(t, l, kKeepAliveFrameKindPong);
-            else if (kind == kKeepAliveFrameKindPong && bytes == 0 && ts->sensitive_mode && ls->awaiting_pong)
+            else if (kind == kKeepAliveFrameKindPong && body_length == kKeepAliveFrameTypeSize && ts->sensitive_mode &&
+                     ls->awaiting_pong)
             {
                 const uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
                 alive              = keepaliveclientCheckPongDeadline(t, l, now);

@@ -74,11 +74,17 @@ larger than 1 MiB are split with representation-aware range operations.
 Pipe allocation or capacity pressure may select complete ordinary fallback.
 Pong control frames use ordinary buffers.
 
+Normal application bytes are forwarded as they arrive after the header is
+validated; the decoder does not wait for the complete normal body. A frame can
+produce several Payload callbacks. If the connection ends midway through it,
+its already delivered prefix stays delivered. Control bodies are discarded as
+they arrive, but Ping/Pong actions occur only when the declared body ends.
+
 Nested encoder input stays behind the active payload under a shared 8 MiB
-logical-byte and 1,024-buffer reentry bound, counting the active suffix. The decoder serializes nested input,
+logical-byte and 16 MiB retained-charge reentry bound, counting the active suffix. The decoder serializes nested input,
 limits nested retained bytes to 8 MiB, and limits retained allocation charge to
 16 MiB, attempting beneficial ordinary compaction before refusing excess charge.
-Complete frames drain before the retained-charge check. Validated frame lengths
+Available body bytes drain before the retained-charge check. Validated frame lengths
 guarantee an incomplete remainder smaller than 1 MiB + 5 bytes, including the header.
 Pause is forwarded promptly and does not interrupt
 that synchronous batch. Pause and Resume relay transparently, including repeats;
