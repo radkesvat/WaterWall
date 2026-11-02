@@ -41,14 +41,15 @@ frame buffers before any callback; pipe creation or transfer pressure selects co
 ordinary best-fit fallback for the affected frame. There is no whole-delivery
 ordinary aggregate.
 
-The decoder caches the 19-byte marker/length/type header and extracts one exact
-body at a time. The server inspects only the ten fixed OPEN bytes and at most
-255 optional bytes, preserving the remaining application's representation. The
+The decoder caches the 19-byte marker/length/type header and forwards available
+application body bytes incrementally. The server first gathers and validates the
+ten fixed OPEN bytes, then consumes at most 255 optional bytes before releasing
+application bytes. The remaining application's representation is preserved. The
 client generates 3–10 optional bytes and subtracts the actual OPEN overhead from
 its first frame's payload room. Empty deliveries emit nothing and do not consume
 OPEN state. Exactly one OPEN is admitted per client line.
 
-The shared fixed-header frame reader drains complete frames from a top-level
+The shared fixed-header frame reader drains available body bytes from a top-level
 receive batch before checking the incomplete remainder. That batch can exceed
 **2,162,705 bytes** (`2 MiB + 65,553`). During a delivery callback, nested input
 must fit that logical-byte limit together with older retained wire bytes,
@@ -58,24 +59,26 @@ limit applies to the incomplete remainder when the outer drain ends. Coalescing
 or one beneficial compaction may release oversized backing storage before
 refusal. Compaction may copy pipe-backed bytes into ordinary memory; the charge
 limit bounds retained storage accounting, not process memory or transient peaks.
-Incoming fragments have no entry-count cap. After complete frames drain, the
+Incoming fragments have no entry-count cap. After available body bytes drain, the
 incomplete remainder is smaller than 65,553 logical bytes.
 
 Encoded output keeps its independent **2,162,705-byte limit**, including generated
-headers, and **1,024-frame FIFO cap**. These limits are independent of RAM profile,
+headers, and **8 MiB retained-buffer charge limit**. These limits are independent of RAM profile,
 pools, pipe capacity, platform and `misc.splice`. The maximum complete wire frame
 is 65,553 bytes, and a non-OPEN frame carries at most 65,534 application bytes.
 
-Each decoded frame produces its own callback. Both nodes borrow the normal line
-and transform every payload, so neither can permanently bypass itself. Pause and
-Resume use transparent default forwarding in both directions, including repeated
-notifications. Complete admitted frames drain immediately without waiting for
+A decoded frame can produce several Payload callbacks; frame boundaries are not
+application callback boundaries. If the connection ends during a frame, its
+already delivered application prefix stays delivered. Both nodes borrow the
+normal line and transform every payload, so neither can permanently bypass itself.
+Pause and Resume use transparent default forwarding in both directions, including repeated
+notifications. Available admitted bytes drain immediately without waiting for
 Resume. A pump guard per direction preserves FIFO during reentrant callbacks;
 the frame reader retains incomplete input, and the bounded output FIFO keeps
 complete encoded batches ahead of reentrant input. The decoder validates any
 complete FIFO-head header immediately after admission, including nested input;
-only the outer drain delivers frames. Encoded batches pass their byte and frame
-checks before their first callback.
+only the outer drain delivers application bytes. Encoded batches pass their byte
+and charge checks before their first callback.
 Malformed data, retention-limit overflow or queue-capacity refusal closes only
 the borrowed connection through its owner. Finish releases queued buffers and
 pipes before forwarding away from the sender. These behaviors do not guarantee

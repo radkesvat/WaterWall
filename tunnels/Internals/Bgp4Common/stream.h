@@ -18,6 +18,7 @@ typedef struct bgp_stream_s
 {
     splice_frame_reader_t reader;
     buffer_queue_t        output;
+    uint8_t               open_optional_remaining;
     bool                  encode_pumping : 1;
     bool                  client : 1;
     bool                  open : 1; // Client OPEN admitted, or server OPEN validated.
@@ -52,6 +53,10 @@ static inline void bgpClose(tunnel_t *t, line_t *l, bgp_stream_t *s, const char 
 /* The header cache is borrowed only until extraction mutates the stream. */
 static inline bool bgpHeaderValid(const bgp_stream_t *s)
 {
+    /* The active header was validated before BeginFrame. In particular, the
+     * initial OPEN stays cached while its application bytes stream onward. */
+    if (spliceframereaderFrameActive(&s->reader))
+        return true;
     const uint8_t *h = spliceframereaderPeekHeader(&s->reader);
     if (h == NULL)
         return true;
@@ -68,35 +73,53 @@ static inline bool bgpHeaderValid(const bgp_stream_t *s)
 
 /* A valid incomplete frame is necessarily smaller than kBgpMaxWireFrame;
  * input retained during reentry shares the independent receive budget. */
-static inline sbuf_t *bgpReadFrame(line_t *l, bgp_stream_t *s, bool *valid)
+static inline sbuf_t *bgpReadChunk(line_t *l, bgp_stream_t *s, bool *valid)
 {
-    *valid           = bgpHeaderValid(s);
-    const uint8_t *h = spliceframereaderPeekHeader(&s->reader);
-    if (! *valid || h == NULL)
+    *valid = bgpHeaderValid(s);
+    if (! *valid)
         return NULL;
-    const uint32_t bytes = (((uint32_t) h[16] << 8) | h[17]) - 1;
-    if (! spliceframereaderBodyReady(&s->reader, bytes))
-        return NULL;
-    sbuf_t *body = spliceframereaderTakeFrame(&s->reader, bytes);
+    if (! spliceframereaderFrameActive(&s->reader))
+    {
+        const uint8_t *h = spliceframereaderPeekHeader(&s->reader);
+        if (h == NULL)
+            return NULL;
+        const uint32_t bytes      = (((uint32_t) h[16] << 8) | h[17]) - 1;
+        const bool     first_open = ! s->client && ! s->open;
+        if (first_open && ! spliceframereaderBodyReady(&s->reader, 10))
+            return NULL;
+        spliceframereaderBeginFrame(&s->reader, bytes);
+        if (first_open)
+        {
+            uint8_t open[10];
+            sbuf_t *prefix = spliceframereaderTakeChunk(&s->reader, sizeof(open));
+            sbufReadRangeToMemory(prefix, open, sizeof(open));
+            lineReuseBuffer(l, prefix);
+            if (open[0] != 4 || spliceframereaderFrameRemaining(&s->reader) <= open[9])
+            {
+                *valid = false;
+                return NULL;
+            }
+            s->open_optional_remaining = open[9];
+        }
+    }
     if (! s->client && ! s->open)
     {
-        uint8_t open[10];
-        sbufReadRangeToMemory(body, open, sizeof(open));
-        if (open[0] != 4 || sbufGetLength(body) <= open[9])
+        const uint32_t skip = min((uint32_t) s->open_optional_remaining, spliceframereaderFrameAvailable(&s->reader));
+        if (skip != 0)
         {
-            lineReuseBuffer(l, body);
-            *valid = false;
-            return NULL;
+            spliceframereaderDiscardChunk(&s->reader, skip);
+            s->open_optional_remaining -= skip;
         }
-        uint8_t optional[255];
-        sbufReadRangeToMemory(body, optional, open[9]);
+        if (s->open_optional_remaining != 0)
+            return NULL;
         s->open = true;
     }
-    return body;
+    const uint32_t bytes = spliceframereaderFrameAvailable(&s->reader);
+    return bytes == 0 ? NULL : spliceframereaderTakeChunk(&s->reader, bytes);
 }
 
-/* Complete ready frames through advisory Pause. Nested input joins the FIFO;
- * the active pump owns delivery until no complete frame remains. A reference
+/* Deliver available application chunks through advisory Pause. Nested input joins
+ * the FIFO; the active pump owns delivery until more wire bytes are needed. A reference
  * protects storage, while the attached reader detects retired borrowed-line state.
  * Decode entry belongs to the caller that received kSpliceFrameDrain. */
 static inline void bgpPump(tunnel_t *t, line_t *l, bgp_stream_t *s, bool encode)
@@ -117,7 +140,7 @@ static inline void bgpPump(tunnel_t *t, line_t *l, bgp_stream_t *s, bool encode)
         else
         {
             bool valid;
-            buf = bgpReadFrame(l, s, &valid);
+            buf = bgpReadChunk(l, s, &valid);
             if (! valid)
             {
                 bgpClose(t, l, s, "invalid marker, length, type or OPEN fields");

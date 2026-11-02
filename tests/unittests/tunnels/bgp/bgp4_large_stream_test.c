@@ -272,6 +272,8 @@ typedef struct bgp_fixture_s
     unsigned         action, admission_mode, deliveries, ordinary_deliveries, pauses, resumes, finishes;
     size_t           length, reads_at_delivery;
     uint8_t         *bytes;
+    const uint8_t   *reentry_bytes;
+    uint32_t         reentry_length;
     sbuf_t          *last_buffer;
     int              last_pipe;
     uint32_t         headroom;
@@ -382,6 +384,11 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
         fixtureSubmit(f, fixtureBytes(f, "x", f->admission_mode, false));
         twfRequire(! lineIsAlive(l) && f->finishes == 1,
                    "nested admission returned before rejecting the malformed head");
+    }
+    if (action == 14)
+    {
+        fixtureSubmit(f, fixtureBytes(f, f->reentry_bytes, f->reentry_length, WW_HAVE_SPLICE));
+        twfRequire(lineIsAlive(l) && f->deliveries == 1, "partial-frame reentry recursively delivered or closed");
     }
 }
 static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t large)
@@ -522,7 +529,7 @@ static void testDecodeIdentity(void)
             twfRequire(f.length == 1000 && f.deliveries == 1, "direct decode lost a body");
 #if WW_HAVE_SPLICE
             if (enabled)
-                twfRequire(f.last_buffer == input && f.last_pipe == fd && f.reads_at_delivery == (client ? 19U : 32U),
+                twfRequire(f.last_buffer == input && f.last_pipe == fd && f.reads_at_delivery == (client ? 19U : 29U),
                            "direct decoder unnecessarily materialized application bytes");
             else
                 twfRequire(f.last_pipe == -1, "disabled chain selected private-pipe output");
@@ -629,9 +636,12 @@ static void testDecodeFragments(void)
                 bgp_fixture_t f;
                 fixtureBegin(&f, client, false, 8192);
                 fixtureSubmit(&f, fixtureBytes(&f, bytes, split, WW_HAVE_SPLICE && split % 2));
-                twfRequire(f.deliveries == 0, "incomplete frame escaped");
+                const uint32_t metadata = kBgpFramePrefix + (client ? 0 : 10 + optional);
+                const uint32_t early    = split > metadata ? split - metadata : 0;
+                twfRequire(f.length == early && f.deliveries == (early != 0),
+                           "decoder retained available application bytes or exposed OPEN metadata");
                 fixtureSubmit(&f, fixtureBytes(&f, bytes + split, n - split, WW_HAVE_SPLICE && ! (split % 2)));
-                twfRequire(f.length == 100 && f.deliveries == 1, "split header/OPEN lost bytes");
+                twfRequire(f.length == 100 && f.deliveries == 1 + (early != 0), "split header/OPEN lost bytes");
                 for (unsigned i = 0; i < 100; ++i)
                     twfRequire(f.bytes[i] == pattern(i), "split OPEN bytes changed");
                 fixtureEnd(&f);
@@ -644,7 +654,9 @@ static void testDecodeFragments(void)
         uint32_t n = makeWire(bytes, kBgpMaxApplication - (client ? 0 : 265), ! client, 255);
         for (uint32_t i = 0; i < n; ++i)
             fixtureSubmit(&f, fixtureBytes(&f, bytes + i, 1, false));
-        twfRequire(f.deliveries == 1, "byte-at-a-time maximum frame failed with small pools");
+        const uint32_t application = kBgpMaxApplication - (client ? 0 : 265);
+        twfRequire(f.length == application && f.deliveries == application,
+                   "byte-at-a-time maximum frame did not deliver each available application byte");
         fixtureEnd(&f);
     }
 }
@@ -680,19 +692,19 @@ static void testDecodeAdvisoryAndFallback(void)
             {
                 if (mode < 2)
                 {
-                    twfRequire(f.ordinary_deliveries == 2,
-                               "decoder did not use ordinary fallback for both complete frames");
+                    twfRequire(f.ordinary_deliveries != 0,
+                               "decoder did not preserve ordinary delivery during fragmented input");
 #if WW_HAVE_SPLICE
                     if (mode == 1)
                         twfRequire(pipe_moves >= 2, "fallback did not follow partial pipe progress");
 #endif
                 }
-                twfRequire(f.length == 60099 && f.deliveries == 2 && f.pauses == 2,
-                           "decoder stranded complete frames or suppressed advisory Pause");
+                twfRequire(f.length == 60099 && f.deliveries == 16 && f.pauses == 2,
+                           "decoder stranded available chunks or suppressed advisory Pause");
                 const unsigned resumes = f.resumes;
                 fixtureSignal(&f, false);
                 fixtureSignal(&f, false);
-                twfRequire(f.resumes == resumes + 2 && f.deliveries == 2,
+                twfRequire(f.resumes == resumes + 2 && f.deliveries == 16,
                            "duplicate Resume was suppressed or drained retained output");
                 for (unsigned i = 0; i < 60000; ++i)
                     twfRequire(f.bytes[i] == pattern(i), "mixed fallback changed bytes");
@@ -717,6 +729,34 @@ static void testDecoderReentry(void)
                    "reentrant decode overtook older frames");
         for (unsigned i = 0; i < 99; ++i)
             twfRequire(f.bytes[100 + i] == pattern(i), "older frame reordered");
+        fixtureEnd(&f);
+    }
+}
+
+static void testPartialDecoderReentry(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        bgp_fixture_t f;
+        fixtureBegin(&f, client, false, 8192);
+        uint8_t  wire_bytes[256];
+        uint32_t length = makeWire(wire_bytes, 100, ! client, 3);
+        length += makeWire(wire_bytes + length, 3, false, 0);
+        const uint32_t first = kBgpFramePrefix + (client ? 0 : 13) + 7;
+        f.action             = 14;
+        f.reentry_bytes      = wire_bytes + first;
+        f.reentry_length     = length - first;
+        fixtureSubmit(&f, fixtureBytes(&f, wire_bytes, first, false));
+        twfRequire(lineIsAlive(f.line) && f.deliveries == 3 && f.length == 103,
+                   "partial-frame reentry lost the original OPEN, continuation or next frame");
+        for (unsigned i = 0; i < 100; ++i)
+            twfRequire(f.bytes[i] == pattern(i), "reentrant continuation changed byte order");
+        for (unsigned i = 0; i < 3; ++i)
+            twfRequire(f.bytes[100 + i] == pattern(i), "next frame overtook the partial frame");
+        const bgp_stream_t *s = lineGetState(f.line, f.t);
+        twfRequire(! spliceframereaderFrameActive(&s->reader) && spliceframereaderLength(&s->reader) == 0 &&
+                       spliceframereaderCharge(&s->reader) == 0,
+                   "reentrant continuation retained a completed frame");
         fixtureEnd(&f);
     }
 }
@@ -823,13 +863,17 @@ static void testDecodeStorage(void)
         twfRequire(sbufGetQueueCharge(input) > kBgpReadChargeLimit,
                    "incomplete storage case did not exceed the charge limit");
         fixtureSubmit(&f, input);
-        twfRequire(lineIsAlive(f.line) && f.deliveries == 0, "incomplete frame escaped or was refused");
+        twfRequire(lineIsAlive(f.line) && f.deliveries == client && f.length == client,
+                   "incomplete input did not deliver available application bytes or exposed OPEN metadata");
         const bgp_stream_t *s = lineGetState(f.line, f.t);
         twfRequire(spliceframereaderCharge(&s->reader) <= kBgpReadChargeLimit &&
-                       spliceframereaderLength(&s->reader) == 20,
+                       spliceframereaderLength(&s->reader) == (client ? 19U : 20U),
                    "incomplete top-level input returned without settling retained storage");
+        if (client)
+            twfRequire(spliceframereaderCharge(&s->reader) == 0 && spliceframereaderFrameRemaining(&s->reader) == 99,
+                       "delivered partial body still retained its oversized source allocation");
         fixtureSubmit(&f, fixtureBytes(&f, bytes + 20, length - 20, false));
-        twfRequire(lineIsAlive(f.line) && f.deliveries == 1 && f.length == 100,
+        twfRequire(lineIsAlive(f.line) && f.deliveries == 1 + client && f.length == 100,
                    "compacted incomplete frame did not complete");
         for (unsigned i = 0; i < 100; ++i)
             twfRequire(f.bytes[i] == pattern(i), "incomplete compaction changed application bytes");
@@ -978,6 +1022,8 @@ static void testMalformed(void)
                 bytes[17] = 11;
                 n         = 29;
             }
+            if (kind >= 4 && kind <= 6)
+                n = 29; // Reject invalid OPEN fields before receiving optional/application bytes.
             fixtureSubmit(&f, fixtureBytes(&f, bytes, n, WW_HAVE_SPLICE));
             twfRequire(! lineIsAlive(f.line) && f.finishes == 1 && f.deliveries == 0,
                        "malformed input escaped validation");
@@ -1108,6 +1154,7 @@ int main(void)
     testDecodeFragments();
     testDecodeAdvisoryAndFallback();
     testDecoderReentry();
+    testPartialDecoderReentry();
     testDecodeLargeBatch();
     testDecodeStorage();
     testNestedMalformed();
