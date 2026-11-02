@@ -1190,6 +1190,10 @@ if(INCLUDE_REVERSE_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} ReverseServer)
 endif()
 
+if(INCLUDE_HEADER_SERVER OR INCLUDE_SOFT_IP_LIMITER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/NextInitGate)
+endif()
+
 #header server
 if(INCLUDE_HEADER_SERVER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_HEADER_SERVER=1)
