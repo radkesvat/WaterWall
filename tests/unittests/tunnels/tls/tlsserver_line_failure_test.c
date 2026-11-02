@@ -240,7 +240,7 @@ static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
     const uint32_t refs      = twfLineRefCount(l);
     tlsserverTunnelUpStreamInit(fixture.tls, l);
     tlsserver_lstate_t *ls     = lineGetState(l, fixture.tls);
-    const unsigned      count  = dimension == 0 ? 1 : 1024;
+    const unsigned      count  = dimension == 0 ? 1 : 2048;
     const uint32_t      length = dimension == 0 ? 2 * 1024 * 1024 : dimension == 1 ? 0 : 1;
     twfRequire(fixture.trace.next_init == 1 && ! ls->handshake_completed,
                "backend must open before the client TLS handshake");
@@ -254,7 +254,31 @@ static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
     twfRequire(fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0 &&
                    bufferqueueGetBufLen(&ls->pending_down) == (size_t) count * length &&
                    bufferqueueGetBufCount(&ls->pending_down) == count,
-               "exact pending plaintext limit was refused or altered");
+               "pending plaintext was refused before its byte or charge limit");
+    const buffer_budget_cost_t limits = bufferbudgetGetLimits(&ls->pending_down_budget);
+    if (dimension != 0)
+    {
+        /* Empty and one-byte buffers may exceed the former entry cap. Fill the
+         * remaining charge with a large allocation carrying the same tiny payload. */
+        const size_t remaining = limits.charge - bufferqueueGetCharge(&ls->pending_down);
+        const size_t overhead  = sizeof(sbuf_t) + kSbufAllocationAlignment;
+        twfRequire(remaining > overhead && remaining <= UINT32_MAX, "exact charge fixture geometry");
+        sbuf_t *buf = bufferpoolGetBestFit(fixture.env.pool, (uint32_t) (remaining - overhead), 0);
+        sbufSetLength(buf, length);
+        memorySet(sbufGetMutablePtr(buf), 0x71, length);
+        twfRequire(sbufGetQueueCharge(buf) == remaining, "filler did not reach exact pending charge limit");
+        tlsserverTunnelDownStreamPayload(fixture.tls, l, buf);
+        twfRequire(fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0 &&
+                       bufferqueueGetBufLen(&ls->pending_down) == (size_t) (count + 1) * length &&
+                       bufferqueueGetBufCount(&ls->pending_down) == count + 1 &&
+                       bufferbudgetGetUsage(&ls->pending_down_budget).charge == limits.charge,
+                   "exact pending plaintext charge limit was refused or altered");
+    }
+    else
+    {
+        twfRequire(bufferbudgetGetUsage(&ls->pending_down_budget).bytes == limits.bytes,
+                   "pending plaintext did not reach its exact byte limit");
+    }
     if (overflow)
     {
         const uint32_t extra_length = dimension == 0 ? 1 : length;

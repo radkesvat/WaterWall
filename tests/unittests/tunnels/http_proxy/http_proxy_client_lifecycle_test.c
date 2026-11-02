@@ -916,14 +916,21 @@ static void additionalBoundaries(void)
 static void limitsAndTimers(void)
 {
     openLine(connect_settings);
-    hpc_lstate_t *ls       = lineGetState(line, proxy);
-    unsigned      admitted = 0;
-    while (lineIsAlive(line) && admitted < 2000)
-    {
+    hpc_lstate_t              *ls     = lineGetState(line, proxy);
+    const buffer_budget_cost_t limits = bufferbudgetGetLimits(&ls->budgets[0]);
+    sbuf_t                    *sample = input("x", 1);
+    const size_t               charge = sbufGetQueueCharge(sample);
+    lineReuseBuffer(line, sample);
+    const size_t admitted = limits.charge / charge;
+    require(admitted > 1024 && admitted < limits.bytes, "small-buffer charge boundary fixture");
+    for (size_t i = 0; i < admitted; ++i)
         sendText(false, "x");
-        ++admitted;
-    }
-    require(! lineIsAlive(line) && admitted == 1025, "queue entry cap");
+    require(lineIsAlive(line) && bufferqueueGetBufCount(&ls->pending[0]) == admitted &&
+                bufferbudgetGetUsage(&ls->budgets[0]).charge == admitted * charge,
+            "small-buffer retention was capped before its charge budget");
+    sendText(false, "x");
+    require(! lineIsAlive(line) && finishes == 1 && previous_finishes == 1,
+            "small-buffer charge overflow did not close both sides");
     closeLine();
     openLine(connect_settings);
     buffer_pool_t *pool = lineGetBufferPool(line);
