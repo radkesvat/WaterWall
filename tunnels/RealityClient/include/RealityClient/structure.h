@@ -77,7 +77,6 @@ enum realityclient_frame_e
     kRealityClientMaxTlsRecordBody     = kRealityV2MaxTlsRecordBody,
     kRealityClientDefaultKdfIterations = 12000,
     kRealityClientPendingBytes         = 2U * 1024U * 1024U,
-    kRealityClientPendingBuffers       = 1024U,
 };
 
 enum

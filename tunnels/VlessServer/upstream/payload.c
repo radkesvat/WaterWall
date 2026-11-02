@@ -36,7 +36,7 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->input_dispatching)
     {
         if ((ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished) &&
-            ! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge, kVlessServerMaxInputBuffers))
+            ! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge))
             vlessserverCloseLineBidirectional(t, l);
         return;
     }

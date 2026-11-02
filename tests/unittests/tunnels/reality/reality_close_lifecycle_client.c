@@ -357,7 +357,8 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             ls->pending_active != NULL && sbufGetLength(ls->pending_active) == 16384 &&
                 ls->pending_reservation.budget == &ls->pending_budget && ls->pending_reservation.cost.bytes == 16384 &&
                 bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetBufLen(&ls->pending_up) &&
-                bufferbudgetGetUsage(&ls->pending_budget).entries == 1 + bufferqueueGetBufCount(&ls->pending_up),
+                bufferbudgetGetUsage(&ls->pending_budget).charge ==
+                    ls->pending_reservation.cost.charge + bufferqueueGetCharge(&ls->pending_up),
             "active plaintext consumption was not published before reentrant wire output");
         realityclientTunnelDownStreamPause(context->reality, l);
         if (context->active_overflow_mode != 0)
@@ -375,14 +376,16 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             else
             {
-                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kRealityClientPendingBuffers)
-                {
-                    sbuf_t *nested = bufferpoolGetSmallBuffer(context->pool);
-                    sbufSetLength(nested, 0);
-                    realityclientTunnelUpStreamPayload(context->reality, l, nested);
-                }
-                requireClient(bufferqueueGetBufCount(&ls->pending_up) == kRealityClientPendingBuffers - 1,
-                              "Reality active entry was not charged at equality");
+                const size_t allowance = bufferbudgetGetLimits(&ls->pending_budget).charge -
+                                         bufferbudgetGetUsage(&ls->pending_budget).charge;
+                const uint32_t capacity = (uint32_t) (allowance - sizeof(sbuf_t) - kSbufAllocationAlignment);
+                const uint16_t padding  = (uint16_t) (capacity % kCpuLineCacheSize);
+                sbuf_t        *nested   = sbufCreateWithPadding(capacity - padding, padding);
+                requireClient(sbufGetQueueCharge(nested) == allowance, "Reality charge boundary geometry changed");
+                realityclientTunnelUpStreamPayload(context->reality, l, nested);
+                requireClient(bufferbudgetGetUsage(&ls->pending_budget).charge ==
+                                  bufferbudgetGetLimits(&ls->pending_budget).charge,
+                              "Reality queue plus active exact charge cap refused");
             }
             sbuf_t *overflow = bufferpoolGetSmallBuffer(context->pool);
             sbufSetLength(overflow, 1);
@@ -1504,7 +1507,7 @@ static sbuf_t *clientRepeatedPayload(client_lifecycle_fixture_t *fixture, uint32
 
 static void testClientEarlyPlaintextBounds(void)
 {
-    for (unsigned by_entries = 0; by_entries < 2; ++by_entries)
+    for (unsigned by_charge = 0; by_charge < 2; ++by_charge)
     {
         client_lifecycle_fixture_t fixture;
         clientFixtureInitialize(&fixture);
@@ -1512,14 +1515,14 @@ static void testClientEarlyPlaintextBounds(void)
         ls->phase                  = kRealityClientPhaseTlsHandshake;
         ls->downstream_est_sent    = false;
         ls->session_keys_ready     = false;
-        if (by_entries)
+        if (by_charge)
         {
-            for (unsigned i = 0; i < kRealityClientPendingBuffers; ++i)
-            {
-                realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientRepeatedPayload(&fixture, 0));
-            }
-            requireClient(bufferqueueGetBufCount(&ls->pending_up) == kRealityClientPendingBuffers,
-                          "Reality exact early entry limit was refused");
+            const size_t charge = bufferbudgetGetLimits(&ls->pending_budget).charge;
+            sbuf_t      *empty  = sbufCreate((uint32_t) (charge - sizeof(sbuf_t) - kSbufAllocationAlignment));
+            requireClient(sbufGetQueueCharge(empty) == charge, "Reality early charge boundary geometry changed");
+            realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, empty);
+            requireClient(bufferbudgetGetUsage(&ls->pending_budget).charge == charge,
+                          "Reality exact early charge limit was refused");
         }
         else
         {
@@ -1608,7 +1611,7 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     else if (mode >= 4)
     {
         requireClient(ls->pending_active == NULL && ls->pending_reservation.budget == NULL &&
-                          bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                          bufferbudgetGetUsage(&ls->pending_budget).charge == 0 &&
                           strcmp(fixture.context.events, "ERCQUD") == 0,
                       "Reality active overflow did not settle reservation and queued input");
     }

@@ -104,8 +104,7 @@ static void idleFixtureSetup(muxserver_idle_fixture_t *fixture)
     ts->memory_high_watermark_percent     = 85;
     ts->memory_low_watermark_percent      = 75;
     ts->workers_count                     = 1;
-    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
-                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->mux->lstate_size;
@@ -577,7 +576,7 @@ static void caseWorkerDrainIsLocal(void)
     for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
     {
         bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
-                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
     }
     ts->max_live_children             = 2;
     ts->initial_child_idle_timeout_ms = 60000;

@@ -7,7 +7,7 @@ enum
 {
     kIpv4StreamNestedBytes      = 128U * 1024U,
     kIpv4StreamNestedCharge     = 2U * 1024U * 1024U,
-    kIpv4StreamNestedEntries    = 1024,
+
     kIpv4StreamIncompleteCharge = 128U * 1024U
 };
 

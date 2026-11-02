@@ -1,5 +1,5 @@
 /*
- * Covers: Verify owned ciphertext buffers, partial reads, FIFO order, padding, byte/entry limits,
+ * Covers: Verify owned ciphertext buffers, partial reads, FIFO order, padding, byte/charge limits,
  * reset/EOF and real TLS 1.2/1.3 round trips over fragmented input. The BoringSSL case also verifies
  * direct encryption into reserved pooled output, independent lifetime after `SSL_free()`, partial commit
  * and cancellation, padding callback counts, reservation fallback, partial-write retries, KeyUpdate
@@ -193,7 +193,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
 
 static void caseBoundsAndReset(SSL_CTX *ctx, buffer_pool_t *pool)
 {
-    twfSetCase("BIO byte/entry bounds, refusal ownership, reset and EOF");
+    twfSetCase("BIO byte/charge bounds, refusal ownership, reset and EOF");
     BIO *bio = tlsbufferbioNew(ctx, pool);
     twfRequire(bio != NULL, "create BIO");
     uint8_t block[65536];
@@ -210,19 +210,23 @@ static void caseBoundsAndReset(SSL_CTX *ctx, buffer_pool_t *pool)
     twfRequire(BIO_reset(bio) == 1 && BIO_ctrl_pending(bio) == 0, "reset releases full input");
     twfRequireNoLeakedBuffers();
 
-    for (size_t i = 0; i < kTlsBufferBioMaxBuffers; ++i)
-        twfRequire(tlsbufferbioFeed(bio, input(pool, block, 1)), "entry limit accepts equality");
-    twfRequire(tlsbufferbioFeed(bio, input(pool, block, 0)), "empty input consumes no entry");
-    twfRequire(! tlsbufferbioFeed(bio, input(pool, block, 1)), "entry overflow refuses and consumes input");
-#ifdef OPENSSL_IS_BORINGSSL
-    twfRequire(tlsbufferbioReserveWrite(bio, bufferpoolGetLargeBufferSize(pool) + 64U, 8, 5) == NULL &&
-                   BIO_ctrl_pending(bio) == kTlsBufferBioMaxBuffers,
-               "reservation needing another entry respects the entry bound");
-#endif
-    twfRequire(BIO_read(bio, block, kTlsBufferBioMaxBuffers) == kTlsBufferBioMaxBuffers,
-               "one read spans all tiny input fragments");
-    for (size_t i = 0; i < kTlsBufferBioMaxBuffers; ++i)
+    for (size_t i = 0; i < 2048; ++i)
+        twfRequire(tlsbufferbioFeed(bio, input(pool, block, 1)), "tiny input within charge rejected");
+    twfRequire(BIO_read(bio, block, 2048) == 2048, "read spans more than the former entry limit");
+    for (size_t i = 0; i < 2048; ++i)
         twfRequire(block[i] == 0x37, "fragment contents preserved");
+    sbuf_t *large = twfTrackAcquired(sbufCreateWithPadding(kTlsBufferBioMaxCharge - 128, 64));
+    sbufSetLength(large, 1);
+    sbufWrite(large, block, 1);
+    twfRequire(sbufGetQueueCharge(large) == kTlsBufferBioMaxCharge, "charge fixture geometry changed");
+    twfRequire(tlsbufferbioFeed(bio, large), "charge limit accepts equality");
+    twfRequire(tlsbufferbioFeed(bio, input(pool, block, 0)), "empty input is consumed without retention");
+    twfRequire(! tlsbufferbioFeed(bio, input(pool, block, 1)), "charge overflow consumes refused input");
+    twfRequire(BIO_read(bio, block, 1) == 1, "final read releases the entire allocation charge");
+#ifdef OPENSSL_IS_BORINGSSL
+    twfRequire(tlsbufferbioReserveWrite(bio, 1, 8, 5) != NULL, "draining restored output charge allowance");
+    tlsbufferbioFinishWrite(bio, 0);
+#endif
     twfRequireNoLeakedBuffers();
     twfRequire(BIO_set_mem_eof_return(bio, 0) == 1 && BIO_read(bio, block, 1) == 0 && ! BIO_should_retry(bio),
                "explicit EOF differs from retry");

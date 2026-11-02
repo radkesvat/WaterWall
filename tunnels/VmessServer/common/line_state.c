@@ -12,7 +12,7 @@ void vmessserverLinestateInitialize(vmessserver_lstate_t *ls, tunnel_t *t, line_
     };
     bufferqueueInitEmpty(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_down);
-    buffer_budget_cost_t limits = {kVmessServerMaxPendingBytes, 8U * 1024U * 1024U, kVmessServerMaxPendingBuffers};
+    buffer_budget_cost_t limits = {kVmessServerMaxPendingBytes, 8U * 1024U * 1024U};
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->response_budget, limits);
     bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&

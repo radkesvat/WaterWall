@@ -212,12 +212,19 @@ static void runtimeInitialize(tunnel_t *t, line_t *l)
     if (r.mode >= 10 && r.mode <= 13 && r.init_count == 1)
     {
         bool     entries = r.mode >= 12;
-        unsigned count   = entries ? kHalfDuplexClientMaxPendingBuffers : 1;
+        unsigned count   = 1;
         uint32_t length  = entries ? 0 : kHalfDuplexClientMaxPendingBytes;
         uint8_t *data    = memoryAllocate(length + 1);
         memset(data, 'x', length);
         for (unsigned i = 0; i < count; ++i)
-            halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload(data, length));
+        {
+            sbuf_t *pending = entries
+                                  ? twfTrackAcquired(sbufCreateWithPadding(kHalfDuplexClientMaxPendingCharge - 128, 64))
+                                  : runtimePayload(data, length);
+            if (entries)
+                sbufSetLength(pending, 0);
+            halfduplexclientTunnelUpStreamPayload(r.client, r.main, pending);
+        }
         twfRequire(lineIsAlive(r.main), "exact temporary input bound refused");
         if (r.mode == 11 || r.mode == 13)
             halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("x", 1));
@@ -367,7 +374,7 @@ static void runRuntimeCase(unsigned mode)
                            &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 0,
                        "first-intro nested batch stranded behind Pause");
         if (mode == 12)
-            twfRequire(r.upload_callbacks == 1024, "temporary entry equality lost empty admitted inputs");
+            twfRequire(r.upload_callbacks == 1, "temporary charge equality lost empty admitted inputs");
         halfduplexclientTunnelUpStreamFinish(r.client, r.main);
         lineDestroy(r.main);
     }

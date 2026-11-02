@@ -143,8 +143,7 @@ static void fixtureSetup(muxserver_fixture_t *fixture, uint32_t capture_capacity
     ts->detached_buffer_limit         = kMuxMinimumDetachedBufferLimit;
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
-    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
-                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
 
     twfLinePoolSetup(&fixture->lines, fixture->mux->lstate_size, 8);
     fixture->parent_l = twfLinePoolCreateLine(&fixture->lines);

@@ -126,7 +126,7 @@ enum
     kAuthenticationServerMaxResponsePayload         = kAuthenticationMaxResponsePayload,
     kAuthenticationServerMaxResponseQueue   = 16U * 1024U * 1024U + kAuthenticationServerResponseEnvelopeHeaderSize,
     kAuthenticationServerMaxResponseCharge  = 32U * 1024U * 1024U,
-    kAuthenticationServerMaxResponseEntries = 1024,
+
     kAuthenticationServerOutputChunkSize    = 16U * 1024U,
     kAuthenticationServerMaxBatchEntries            = kAuthenticationMaxBatchEntries,
     kAuthenticationServerMaxFramesPerEnvelope = 64,

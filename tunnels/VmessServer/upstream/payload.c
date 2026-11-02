@@ -23,8 +23,7 @@ void vmessserverTunnelUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         return;
     }
     if (ls->phase == kVmessServerPhaseWaitInitial &&
-        (size > 65536 - ls->unauth_bytes || bufferqueueGetBufCount(&ls->pending_up) + (ls->input_head != NULL) >= 256 ||
-         ! vmessserverAuthAdmitInput(ls, size)))
+        (size > 65536 - ls->unauth_bytes || ! vmessserverAuthAdmitInput(ls, size)))
         goto refused;
     if (size > kVmessServerMaxPendingBytes - ls->input_bytes || ! bufferqueueTryPushBack(&ls->pending_up, &buf))
         goto refused;

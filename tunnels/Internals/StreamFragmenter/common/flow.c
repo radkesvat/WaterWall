@@ -8,9 +8,9 @@ bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l)
     streamfragmenter_lstate_t *ls    = lineGetState(l, t);
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&ls->budget);
     bool                       paused = ls->source_paused;
-    if (usage.charge >= kStreamFragmenterHighCharge || usage.entries >= kStreamFragmenterHighJobs)
+    if (usage.charge >= kStreamFragmenterHighCharge || ls->job_count >= kStreamFragmenterHighJobs)
         paused = true;
-    else if (usage.charge <= kStreamFragmenterLowCharge && usage.entries <= kStreamFragmenterLowJobs)
+    else if (usage.charge <= kStreamFragmenterLowCharge && ls->job_count <= kStreamFragmenterLowJobs)
         paused = false;
     if (paused == ls->source_paused)
         return true;
@@ -23,6 +23,8 @@ bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l)
 bool streamfragmenterEnqueue(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t cuts, streamfragmenter_job_kind_t kind)
 {
     streamfragmenter_lstate_t *ls  = lineGetState(l, t);
+    if (ls->job_count >= kStreamFragmenterHardJobs)
+        return false;
     streamfragmenter_job_t    *job = memoryAllocateZero(sizeof(*job));
     if (! bufferbudgetTryReserve(&ls->budget, buf, &job->reservation))
     {
@@ -37,6 +39,7 @@ bool streamfragmenterEnqueue(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t cuts,
     else
         ls->head = job;
     ls->tail = job;
+    ++ls->job_count;
     return true;
 }
 
@@ -184,6 +187,8 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             if (ls->head == NULL)
                 ls->tail = NULL;
             bufferbudgetReservationRelease(&job->reservation);
+            assert(ls->job_count != 0);
+            --ls->job_count;
             memoryFree(job->mapped_cuts);
             memoryFree(job);
         }

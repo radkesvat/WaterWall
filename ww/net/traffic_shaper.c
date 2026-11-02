@@ -13,15 +13,14 @@ struct traffic_shaper_continuation_s
 
 static bool trafficshaperCostEmpty(buffer_budget_cost_t cost)
 {
-    return cost.bytes == 0 && cost.charge == 0 && cost.entries == 0;
+    return cost.bytes == 0 && cost.charge == 0;
 }
 
 static buffer_budget_cost_t trafficshaperCost(const traffic_shaper_t *shaper, const sbuf_t *buffer)
 {
     return (buffer_budget_cost_t) {sbufGetLength(buffer),
                                    shaper->allocation_charge ? sbufGetAllocationCharge(buffer)
-                                                             : sbufGetQueueCharge(buffer),
-                                   1};
+                                                             : sbufGetQueueCharge(buffer)};
 }
 
 static bool trafficshaperReserve(traffic_shaper_t *shaper, buffer_budget_cost_t cost)
@@ -35,17 +34,14 @@ static bool trafficshaperReserve(traffic_shaper_t *shaper, buffer_budget_cost_t 
     }
     shaper->retained_cost.bytes += cost.bytes;
     shaper->retained_cost.charge += cost.charge;
-    shaper->retained_cost.entries += cost.entries;
     return true;
 }
 
 static void trafficshaperRelease(traffic_shaper_t *shaper, buffer_budget_cost_t cost)
 {
-    assert(shaper->retained_cost.bytes >= cost.bytes && shaper->retained_cost.charge >= cost.charge &&
-           shaper->retained_cost.entries >= cost.entries);
+    assert(shaper->retained_cost.bytes >= cost.bytes && shaper->retained_cost.charge >= cost.charge);
     shaper->retained_cost.bytes -= cost.bytes;
     shaper->retained_cost.charge -= cost.charge;
-    shaper->retained_cost.entries -= cost.entries;
     bufferbudgetRelease(shaper->budget, cost);
     if (shaper->ops->release != NULL && ! trafficshaperCostEmpty(cost))
         shaper->ops->release(shaper->context, cost);
@@ -310,7 +306,7 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
     if (! bufferpoolQueryBestFit(pool, bytes, padding, &fit))
         return false;
     sbuf_t              *destination = NULL;
-    buffer_budget_cost_t extra       = {0, fit.allocation_charge, 1};
+    buffer_budget_cost_t extra       = {0, fit.allocation_charge};
     if (! trafficshaperReserve(shaper, extra))
         return false;
     if (sbufIsSplice(source))
@@ -320,8 +316,8 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
         // fallback allowance. Refused wrapper credit can use that fallback.
         const buffer_budget_cost_t wrapper = {0,
                                               sizeof(sbuf_t) + (size_t) bufferpoolGetSpliceBufferPadding(pool) +
-                                                  bufferpoolGetSpliceBufferStorageSize(pool) + kSbufAllocationAlignment,
-                                              1};
+                                                  bufferpoolGetSpliceBufferStorageSize(pool) +
+                                                  kSbufAllocationAlignment};
         if (trafficshaperReserve(shaper, wrapper))
         {
             destination = bufferpoolGetSpliceBuffer(pool);
@@ -331,7 +327,6 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
             {
                 assert(trafficshaperCost(shaper, destination).charge == wrapper.charge);
                 extra.charge += wrapper.charge;
-                extra.entries += wrapper.entries;
             }
         }
     }
@@ -345,9 +340,8 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
     assert(after.bytes + output.bytes == before.bytes && after.charge <= before.charge);
     assert(output.charge <= extra.charge);
     bufferqueuePushFront(&shaper->queue, source);
-    trafficshaperRelease(
-        shaper,
-        (buffer_budget_cost_t) {0, extra.charge - output.charge + before.charge - after.charge, extra.entries - 1});
+    trafficshaperRelease(shaper,
+                         (buffer_budget_cost_t) {0, extra.charge - output.charge + before.charge - after.charge});
     return true;
 }
 

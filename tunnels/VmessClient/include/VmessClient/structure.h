@@ -31,7 +31,7 @@ typedef enum vmessclient_close_origin_e
 enum
 {
     kVmessClientMaxOrderBytes   = 2 * 1024 * 1024,
-    kVmessClientMaxOrderEntries = 1024,
+
     kVmessClientMaxOrderCharge  = 8 * 1024 * 1024,
     kVmessClientUuidLen         = 16,
     kVmessClientTcpRecordSize   = 16384

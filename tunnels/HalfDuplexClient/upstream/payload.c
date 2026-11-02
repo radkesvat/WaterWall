@@ -86,7 +86,9 @@ void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *main, sbuf_t *bu
         size_t length = sbufGetLength(buf);
         if (UNLIKELY(length > kHalfDuplexClientMaxPendingBytes ||
                      bufferqueueGetBufLen(&ls->pending_up) > kHalfDuplexClientMaxPendingBytes - length ||
-                     bufferqueueGetBufCount(&ls->pending_up) >= kHalfDuplexClientMaxPendingBuffers ||
+                     bufferqueueGetCharge(&ls->pending_up) > kHalfDuplexClientMaxPendingCharge ||
+                     sbufGetQueueCharge(buf) >
+                         kHalfDuplexClientMaxPendingCharge - bufferqueueGetCharge(&ls->pending_up) ||
                      ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
         {
             lineReuseBuffer(main, buf);

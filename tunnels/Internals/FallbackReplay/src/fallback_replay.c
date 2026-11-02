@@ -49,11 +49,10 @@ static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *p
 
     buffer_budget_t available = {.limits = bufferbudgetGetLimits(budget), .used = bufferbudgetGetUsage(budget)};
     if (replay->pending.budget == budget)
-        bufferbudgetRelease(&available,
-                            (buffer_budget_cost_t) {bufferqueueGetBufLen(&replay->pending),
-                                                    bufferqueueGetCharge(&replay->pending),
-                                                    bufferqueueGetBufCount(&replay->pending)});
-    if (! bufferbudgetTryAcquire(&available, (buffer_budget_cost_t) {total, fit.allocation_charge, 1}) ||
+        bufferbudgetRelease(
+            &available,
+            (buffer_budget_cost_t) {bufferqueueGetBufLen(&replay->pending), bufferqueueGetCharge(&replay->pending)});
+    if (! bufferbudgetTryAcquire(&available, (buffer_budget_cost_t) {total, fit.allocation_charge}) ||
         ! bufferqueueReserveExtra(&replay->pending, 1))
         return false;
 

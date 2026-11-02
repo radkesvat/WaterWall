@@ -20,7 +20,7 @@ enum
     kKeepAliveServerMaxFrameBodyLength  = kKeepAliveServerMaxPayloadChunkSize + kKeepAliveServerFrameTypeSize,
     kKeepAliveServerReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveServerMaxReentryBytes     = 8U * 1024U * 1024U,
-    kKeepAliveServerMaxReentryBuffers   = 1024U,
+    kKeepAliveServerMaxReentryCharge    = 16U * 1024U * 1024U,
     kKeepAliveServerFrameKindNormal     = 1,
     kKeepAliveServerFrameKindPing       = 2,
     kKeepAliveServerFrameKindPong       = 3,

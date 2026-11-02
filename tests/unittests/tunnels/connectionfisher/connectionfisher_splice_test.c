@@ -11,7 +11,7 @@
 #define nodeGet     nodeConnectionFisherServerGet
 #define nodeCreate  connectionfisherserverTunnelCreate
 #define MAX_PENDING kConnectionFisherServerMaxPendingBytes
-#define MAX_BUFFERS kConnectionFisherServerMaxPendingBuffers
+#define MAX_CHARGE  kConnectionFisherServerMaxPendingCharge
 #define MARKER      "FISH?"
 #else
 #include "ConnectionFisherClient/interface.h"
@@ -19,7 +19,7 @@
 #define nodeGet     nodeConnectionFisherClientGet
 #define nodeCreate  connectionfisherclientTunnelCreate
 #define MAX_PENDING kConnectionFisherMaxPendingUpBytes
-#define MAX_BUFFERS kConnectionFisherMaxPendingBuffers
+#define MAX_CHARGE  kConnectionFisherMaxPendingCharge
 #define MARKER      "FISH!"
 #endif
 
@@ -209,9 +209,17 @@ static void init(tunnel_t *t, line_t *l)
     tunnelDownStreamEst(node, l);
     if (overflow_init)
     {
-        for (unsigned i = 0; i < MAX_BUFFERS - 1; ++i)
-            upstream(input("N", 1, false));
-        twfRequire(lineIsAlive(l), "exact entry allowance rejected");
+#ifdef TEST_FISHER_SERVER
+        connectionfisherserver_lstate_t *ls = lineGetState(l, node);
+        const size_t remaining = MAX_CHARGE - ls->init_payload_charge - bufferqueueGetCharge(&ls->pending_up) -
+                                 bufferstreamGetCharge(&ls->in_stream);
+        sbuf_t *retained_input = twfTrackAcquired(sbufCreateWithPadding(remaining - 128, 64));
+        sbufSetLength(retained_input, 1);
+        sbufWrite(retained_input, "N", 1);
+        twfRequire(sbufGetQueueCharge(retained_input) == remaining, "charge fixture geometry changed");
+        upstream(retained_input);
+#endif
+        twfRequire(lineIsAlive(l), "exact charge allowance rejected");
         upstream(input("X", 1, false));
     }
 }
@@ -395,18 +403,20 @@ static void testLimitsAndClose(void)
 #endif
     twfRequire(! lineIsAlive(main_line), "queue refusal retained live line");
     teardown();
-    twfSetCase("pending entry limit includes the body retained across Init");
+    twfSetCase("pending charge limit includes the body retained across Init");
     setup();
 #ifdef TEST_FISHER_SERVER
     overflow_init = true;
     handshake(input("FISH?A", 6, false));
 #else
-    for (unsigned i = 0; i < MAX_BUFFERS; ++i)
-        upstream(input("Q", 1, false));
-    twfRequire(lineIsAlive(main_line), "exact pending entry allowance rejected");
+    sbuf_t *pending = twfTrackAcquired(sbufCreateWithPadding(MAX_CHARGE - 128, 64));
+    sbufSetLength(pending, 1);
+    sbufWrite(pending, "Q", 1);
+    upstream(pending);
+    twfRequire(lineIsAlive(main_line), "exact pending charge allowance rejected");
     upstream(input("X", 1, false));
 #endif
-    twfRequire(! lineIsAlive(main_line), "pending entry overflow survived");
+    twfRequire(! lineIsAlive(main_line), "pending charge overflow survived");
     teardown();
     for (unsigned direction = 0; direction < 2; ++direction)
     {

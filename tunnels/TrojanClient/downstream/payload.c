@@ -28,7 +28,7 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->receiving)
     {
         /* Nested input must settle while the outer callback owns the parser. */
-        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge, kTrojanClientMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge))
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         return;
     }
@@ -58,7 +58,7 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (trojanclientAssociationAlive(t, l, application))
     {
         /* Complete frames drain first; only incomplete input survives return. */
-        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge, kTrojanClientMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge))
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         else
             ls->receiving = false;

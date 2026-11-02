@@ -43,7 +43,7 @@ enum
     kHeaderServerProxyProtocolV2BaseHeaderSize  = 16,
     kHeaderServerProxyProtocolV2Ipv4AddressSize = 12,
     kHeaderServerMaxReentryBytes                = 2U * 1024U * 1024U,
-    kHeaderServerMaxReentryBuffers              = 1024U,
+    kHeaderServerMaxReentryCharge               = 8U * 1024U * 1024U,
     kTunnelStateSize                            = sizeof(headerserver_tstate_t),
     kLineStateSize                              = sizeof(headerserver_lstate_t)
 };

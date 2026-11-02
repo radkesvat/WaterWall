@@ -124,7 +124,6 @@ enum
     kVlessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,
     kVlessServerMaxPendingBytes        = 2 * 1024 * 1024,
     kVlessServerMaxInputCharge         = 8 * 1024 * 1024,
-    kVlessServerMaxInputBuffers        = 1024,
+
     kVlessServerMaxFallbackCharge      = 8 * 1024 * 1024,
-    kVlessServerMaxPendingBuffers      = 1024
 };

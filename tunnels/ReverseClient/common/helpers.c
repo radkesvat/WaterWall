@@ -173,9 +173,7 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
 
     *pair = (reverseclient_pair_t) {.t = t, .u = ul, .d = dl, .phase = kReverseClientPairConnecting};
     bufferbudgetInit(&pair->activation_budget,
-                     (buffer_budget_cost_t) {.bytes   = kReverseClientPendingBytes,
-                                             .charge  = SIZE_MAX,
-                                             .entries = kReverseClientPendingBuffers});
+                     (buffer_budget_cost_t) {.bytes = kReverseClientPendingBytes, .charge = 8U * 1024U * 1024U});
     bufferqueueInitEmpty(&pair->activation_pending);
     bool attached = bufferqueueTryAttachBudget(&pair->activation_pending, &pair->activation_budget);
     assert(attached);

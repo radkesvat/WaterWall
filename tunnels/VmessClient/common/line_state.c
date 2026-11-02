@@ -5,7 +5,7 @@ void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l)
     *ls = (vmessclient_lstate_t) {.line = l, .phase = kVmessClientPhaseIdle};
     bufferqueueInitEmpty(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_down);
-    buffer_budget_cost_t limits = {kVmessClientMaxOrderBytes, kVmessClientMaxOrderCharge, kVmessClientMaxOrderEntries};
+    buffer_budget_cost_t limits = {kVmessClientMaxOrderBytes, kVmessClientMaxOrderCharge};
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->downstream_budget, limits);
     bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&

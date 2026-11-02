@@ -372,7 +372,7 @@ static void testAuthenticateValidation(void)
             server, line, envelope(kAuthenticationServerRequestTypeAuthenticate, invalid[i], strlen(invalid[i]), 1));
         authenticationserver_tstate_t *ts = tunnelGetState(server);
         twfRequire(lineIsAlive(line) && ls->reject_further_input && callbacks == 0 && ts->sessions_count == 0 &&
-                       bufferbudgetGetUsage(&ls->response_budget).entries == 1,
+                       bufferbudgetGetUsage(&ls->response_budget).charge != 0,
                    "failed authentication did not latch admission before paused response");
         if (i == 0)
             nested_after_auth = true;
@@ -471,19 +471,17 @@ static void testSessionAtEnvelopeEntry(void)
 
 static void testTinyRequestsAndBounds(void)
 {
-    for (unsigned bound = 0; bound < 3; ++bound)
+    for (unsigned bound = 0; bound < 2; ++bound)
     {
         authenticationserver_lstate_t *ls = setup();
         tunnelUpStreamPause(server, line);
         request(1);
         buffer_budget_cost_t cost = bufferbudgetGetUsage(&ls->response_budget);
-        twfRequire(cost.entries == 1 && cost.charge < 8192, "tiny response retained a large allocation");
+        twfRequire(cost.charge < 8192, "tiny response retained a large allocation");
         if (bound == 0)
             ls->response_budget.limits.bytes = 2 * cost.bytes;
         if (bound == 1)
             ls->response_budget.limits.charge = 2 * cost.charge;
-        if (bound == 2)
-            ls->response_budget.limits.entries = 2;
         request(2);
         twfRequire(lineIsAlive(line), "equality at the response budget was refused");
         request(3);
@@ -492,11 +490,11 @@ static void testTinyRequestsAndBounds(void)
     }
     authenticationserver_lstate_t *ls = setup();
     tunnelUpStreamPause(server, line);
-    for (unsigned i = 0; i < 1024; ++i)
+    for (unsigned i = 0; i < 1025; ++i)
         request(i + 1);
-    twfRequire(bufferbudgetGetUsage(&ls->response_budget).entries == 1024, "documented entry bound was not reached");
-    request(1025);
-    twfRequire(! lineIsAlive(line) && closes == 1, "tiny unauthenticated requests bypassed entry bound");
+    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(&ls->response_queue) == 1025 &&
+                   bufferbudgetGetUsage(&ls->response_budget).charge <= kAuthenticationServerMaxResponseCharge,
+               "small responses within charge allowance hit a buffer-count cap");
     teardown();
 }
 

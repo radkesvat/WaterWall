@@ -62,7 +62,6 @@ enum
     kSpeedLimitQueueCap        = 4,
     kSpeedLimitMaxQueueBytes   = 16U * 1024U * 1024U,
     kSpeedLimitMaxQueueCharge  = 32U * 1024U * 1024U,
-    kSpeedLimitMaxQueueBuffers = 1024,
     kSpeedLimitImmediateMs     = 1,
     kSpeedLimitDefaultTickMs   = 10,
     kSpeedLimitUnitsPerByte    = 1000

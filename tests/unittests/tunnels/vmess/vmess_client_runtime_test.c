@@ -156,22 +156,36 @@ static void act(unsigned boundary)
     {
         vmessclient_lstate_t      *ls      = lineGetState(f.carrier, f.client);
         const buffer_budget_cost_t initial = bufferbudgetGetUsage(&ls->upstream_budget);
-        twfRequire(initial.entries >= 1, "active transmit head escaped its budget");
-        for (size_t i = initial.entries; i < kVmessClientMaxOrderEntries; ++i)
-            sendApplication("x", 1);
-        twfRequire(lineIsAlive(f.application), "inclusive queue entry bound refused");
-        twfRequire(bufferbudgetGetUsage(&ls->upstream_budget).entries == kVmessClientMaxOrderEntries,
+        twfRequire(initial.charge >= 1, "active transmit head escaped its budget");
+        uint8_t chunk[513];
+        memorySet(chunk, 'x', sizeof(chunk));
+        buffer_pool_fit_t fit;
+        twfRequire(bufferpoolQueryBestFit(lineGetBufferPool(f.application), sizeof(chunk), 64, &fit),
+                   "nested transmit fixture geometry");
+        const size_t count = (kVmessClientMaxOrderCharge - initial.charge) / fit.allocation_charge;
+        for (size_t i = 0; i < count; ++i)
+            sendApplication(chunk, sizeof(chunk));
+        twfRequire(lineIsAlive(f.application), "inclusive queue charge bound refused");
+        twfRequire(bufferbudgetGetUsage(&ls->upstream_budget).charge == initial.charge + count * fit.allocation_charge,
                    "nested transmit reservations omit an active head");
         if (action == 8)
-            sendApplication("x", 1);
+            sendApplication(chunk, sizeof(chunk));
     }
     if (action == 9)
     {
         vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
-        twfRequire(bufferbudgetGetUsage(&ls->downstream_budget).entries >= 1, "active receive head escaped its budget");
-        for (unsigned i = 0; i < kVmessClientMaxOrderEntries && lineIsAlive(f.application); ++i)
-            reply("x");
+        twfRequire(bufferbudgetGetUsage(&ls->downstream_budget).charge >= 1, "active receive head escaped its budget");
+        char body[601];
+        memorySet(body, 'x', sizeof(body) - 1);
+        body[sizeof(body) - 1] = '\0';
+        buffer_pool_fit_t fit;
+        twfRequire(bufferpoolQueryBestFit(lineGetBufferPool(f.carrier), sizeof(body), 64, &fit),
+                   "nested receive fixture geometry");
+        const size_t count = kVmessClientMaxOrderCharge / fit.allocation_charge + 1;
+        for (size_t i = 0; i < count && lineIsAlive(f.application); ++i)
+            reply(body);
     }
+
     if (action == 10 || action == 11)
     {
         vmessclient_lstate_t *ls       = lineGetState(f.carrier, f.client);
@@ -605,7 +619,7 @@ static void reentryAndPressure(void)
             size += response(wire + size, sizeof(wire) - size, "tail", 4, false);
             sendWire(wire, size);
         }
-        twfRequire(lineIsAlive(f.application) == (action == 7), "retention entry limit did not settle correctly");
+        twfRequire(lineIsAlive(f.application) == (action == 7), "retention charge limit did not settle correctly");
         end();
     }
 }
@@ -847,8 +861,7 @@ static void retainedBytesAndAllocation(void)
         {
             vmessclient_lstate_t *ls   = lineGetState(f.carrier, f.client);
             buffer_budget_cost_t  used = bufferbudgetGetUsage(&ls->upstream_budget);
-            twfRequire(used.bytes == 0 && used.charge == 0 && used.entries == 0,
-                       "transmit reservations survived drain");
+            twfRequire(used.bytes == 0 && used.charge == 0, "transmit reservations survived drain");
         }
         end();
     }

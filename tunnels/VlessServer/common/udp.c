@@ -101,7 +101,7 @@ bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls
             return true;
         if (! bufferreaderBodyReady(&ls->reader, packet_size))
         {
-            if (! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge, kVlessServerMaxInputBuffers))
+            if (! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge))
             {
                 vlessserverCloseLineBidirectional(t, l);
                 return false;

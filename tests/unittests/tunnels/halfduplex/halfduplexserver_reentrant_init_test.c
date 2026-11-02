@@ -1180,8 +1180,7 @@ static void budgetInit(tunnel_t *t, line_t *line)
     halfduplexserver_protocol_fixture_t *f      = g_protocol_fixture;
     halfduplexserver_lstate_t           *ls     = lineGetState(line, f->halfduplex);
     buffer_budget_cost_t                 limits = bufferbudgetGetLimits(&ls->startup_budget);
-    twfRequire(limits.bytes == 2 * 1024 * 1024 && limits.charge == 2 * 1024 * 1024 && limits.entries == 1024,
-               "startup policy limits changed");
+    twfRequire(limits.bytes == 2 * 1024 * 1024 && limits.charge == 2 * 1024 * 1024, "startup policy limits changed");
     if (budget_dimension == 0)
     {
         // Isolate the configured byte limit before any admission. In production
@@ -1189,13 +1188,13 @@ static void budgetInit(tunnel_t *t, line_t *line)
         limits.charge = SIZE_MAX;
         bufferbudgetInit(&ls->startup_budget, limits);
     }
-    unsigned count = budget_dimension == 2 ? 1024 : 1;
+    unsigned count = 1;
     for (unsigned i = 0; i < count; ++i)
     {
         uint32_t size = budget_dimension == 0 || budget_dimension == 3 ? 2 * 1024 * 1024
                         : budget_dimension == 1                        ? 2 * 1024 * 1024 - 128
                                                                        : 0;
-        sbuf_t  *buf  = twfTrackAcquired(sbufCreateWithPadding(size, 64));
+        sbuf_t *buf = twfTrackAcquired(sbufCreateWithPadding(budget_dimension == 2 ? 2 * 1024 * 1024 - 128 : size, 64));
         sbufSetLength(buf, size);
         memorySet(sbufGetMutablePtr(buf), 0x71, size);
         if (budget_dimension == 1)
@@ -1208,7 +1207,7 @@ static void budgetInit(tunnel_t *t, line_t *line)
         buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->startup_budget);
         twfRequire((budget_dimension != 0 || used.bytes == limits.bytes) &&
                        (budget_dimension != 1 || used.charge == limits.charge) &&
-                       (budget_dimension != 2 || used.entries == limits.entries),
+                       (budget_dimension != 2 || used.charge == limits.charge),
                    "equality accounting mismatch");
         if (budget_overflow)
         {
@@ -1234,7 +1233,7 @@ static void refusalInit(tunnel_t *t, line_t *line)
 }
 static void caseStartupBudget(void)
 {
-    twfSetCase("HalfDuplexServer independent startup byte/charge/entry admission and refusal");
+    twfSetCase("HalfDuplexServer independent startup byte/charge admission and refusal");
     for (budget_dimension = 0; budget_dimension < 4; ++budget_dimension)
         for (unsigned overflow = 0; overflow < 2; ++overflow)
         {

@@ -9,7 +9,6 @@ typedef struct buffer_budget_cost_s
 {
     size_t bytes;
     size_t charge;
-    size_t entries;
 } buffer_budget_cost_t;
 
 typedef struct buffer_budget_s
@@ -39,7 +38,7 @@ void bufferbudgetAssertEmpty(const buffer_budget_t *budget);
 bool bufferbudgetTryReserve(buffer_budget_t *budget, const sbuf_t *buf, buffer_budget_reservation_t *reservation);
 /* Each component of remaining must be <= its previous value. */
 void bufferbudgetReservationReduce(buffer_budget_reservation_t *reservation, buffer_budget_cost_t remaining);
-/* Consumes logical bytes only; preserves the original charge and entry. */
+/* Consumes logical bytes only; preserves the original charge. */
 void bufferbudgetReservationSetBytes(buffer_budget_reservation_t *reservation, size_t remaining);
 /* Empty release is a no-op; live release clears the record. */
 void bufferbudgetReservationRelease(buffer_budget_reservation_t *reservation);

@@ -65,7 +65,7 @@ void mxbMuxClientCreate(mxb_fixture_t *fixture)
     ts->detached_child_limit          = kMuxMinimumDetachedChildLimit;
     ts->workers_count                 = 1;
     bufferbudgetInit(&ts->worker_states[0].detached_queue_budget,
-                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX});
 }
 
 void mxbMuxClientInitializeLines(mxb_fixture_t *fixture)

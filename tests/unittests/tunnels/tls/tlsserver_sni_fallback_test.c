@@ -343,8 +343,7 @@ static void reentrantInitCase(uint32_t delay_ms, int action, bool plaintext)
     {
         const buffer_budget_cost_t limits =
             bufferbudgetGetLimits(&((tlsserver_lstate_t *) lineGetState(f.line, f.tls))->fallback_budget);
-        twfRequire(limits.charge == (delay_ms != 0 ? kTlsServerMaxFallbackCharge : SIZE_MAX) &&
-                       limits.entries == (delay_ms != 0 ? kTlsServerMaxFallbackBuffers : SIZE_MAX),
+        twfRequire(limits.charge == (delay_ms != 0 ? kTlsServerMaxFallbackCharge : SIZE_MAX),
                    "TLS fallback retention policy changed outside delayed replay");
         if (g_fallback_finish_task.pending)
         {

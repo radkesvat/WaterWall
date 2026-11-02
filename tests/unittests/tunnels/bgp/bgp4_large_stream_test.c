@@ -1004,12 +1004,14 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
         }
         else
         {
-            const unsigned count = mode == 1 ? kBgpOutputEntries : kBgpOutputEntries - 1;
-            for (unsigned i = 0; i < count; ++i)
-                fixtureSubmit(f, fixtureBytes(f, "x", 1, false));
+            sbuf_t *pending = twfTrackAcquired(sbufCreateWithPadding(kBgpOutputChargeLimit - 128, 64));
+            sbufSetLength(pending, 1);
+            sbufWrite(pending, "x", 1);
+            fixtureSubmit(f, pending);
             twfRequire(lineIsAlive(f->line) &&
-                           bufferqueueGetBufCount(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) == count,
-                       "valid output-entry boundary refused");
+                           bufferqueueGetCharge(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) ==
+                               kBgpOutputChargeLimit,
+                       "valid output charge boundary refused");
         }
         const uint32_t extra = mode == 2 ? 65535 : 1;
         sbuf_t        *b     = bufferpoolGetBestFit(f->env.pool, extra, 128);
@@ -1037,7 +1039,7 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
 
 static void testAdmission(void)
 {
-    twfRequire(kBgpPendingBytes == 2162705 && kBgpMaxWireFrame == 65553 && kBgpOutputEntries == 1024,
+    twfRequire(kBgpPendingBytes == 2162705 && kBgpMaxWireFrame == 65553 && kBgpOutputChargeLimit == 8U * 1024U * 1024U,
                "fixed BGP bounds changed");
     for (unsigned client = 0; client < 2; ++client)
         for (unsigned mode = 0; mode < 3; ++mode)

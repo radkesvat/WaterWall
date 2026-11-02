@@ -200,5 +200,4 @@ enum
     kVmessServerBufferQueueCap         = 8,
     kVmessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,
     kVmessServerMaxPendingBytes        = 2 * 1024 * 1024,
-    kVmessServerMaxPendingBuffers      = 1024
 };

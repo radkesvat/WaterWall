@@ -107,7 +107,7 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
     ts->max_children                  = 16;
     ts->workers_count                 = 1;
     bufferbudgetInit(&ts->worker_states[0].detached_queue_budget,
-                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
+                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX});
 
     if (mode == kConcurrencyModeFixedConnectionsCount)
     {
@@ -302,8 +302,7 @@ static void caseEmbeddedWorkerStates(void)
                "inline worker array does not fit the tunnel allocation");
     muxclient_worker_state_t zero;
     memoryZero(&zero, sizeof(zero));
-    bufferbudgetInit(&zero.detached_queue_budget,
-                     (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
+    bufferbudgetInit(&zero.detached_queue_budget, (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX});
     for (wid_t wid = 0; wid < 4; ++wid)
         twfRequire(memcmp(&ts->worker_states[wid], &zero, sizeof(zero)) == 0,
                    "constructor did not initialize an embedded worker state");
@@ -732,7 +731,7 @@ static void caseWorkerDrainIsLocal(void)
         states[instance]->workers_count                 = 2;
         for (wid_t wid = 0; wid < 2; ++wid)
             bufferbudgetInit(&states[instance]->worker_states[wid].detached_queue_budget,
-                             (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
+                             (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX});
         states[instance]->concurrency_mode              = kConcurrencyModeCounter;
         states[instance]->concurrency_capacity          = UINT32_MAX;
         states[instance]->keepalive                     = true;

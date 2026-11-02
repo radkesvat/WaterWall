@@ -6,7 +6,6 @@ enum
 {
     kHpcRequiredPaddingLeft = 10,
     kHpcDeliveryLimit       = 2 * 1024 * 1024,
-    kHpcPendingEntries      = 1024
 };
 typedef enum
 {

@@ -96,7 +96,7 @@ static bool feedCandidate(tunnel_t *t, line_t *l, sbuf_t *input)
         }
         if (! growCandidate(t, l, job, old_length + count))
             return false;
-        if (! bufferbudgetTryAcquire(&ls->budget, (buffer_budget_cost_t) {count, 0, 0}))
+        if (! bufferbudgetTryAcquire(&ls->budget, (buffer_budget_cost_t) {count, 0}))
             return false;
         job->reservation.cost.bytes += count;
         uint8_t *destination = sbufGetMutablePtr(job->buf) + old_length;

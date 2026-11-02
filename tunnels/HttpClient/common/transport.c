@@ -1166,7 +1166,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         size_t bytes  = sbufGetLength(payload);
         size_t charge = sbufGetAllocationCharge(payload);
         if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
-            bufferqueueGetBufCount(&ls->pending_up) >= kHttpClientHttp1NestedMaxBuffers ||
+
             bufferqueueGetBufLen(&ls->pending_up) > kHttpClientHttp1NestedMaxBytes - bytes ||
             bufferqueueGetCharge(&ls->pending_up) > kHttpClientHttp1NestedMaxCharge - charge)
         {
@@ -2301,11 +2301,11 @@ bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool 
         return true;
     }
     size_t charge = sbufGetAllocationCharge(buf);
-    size_t count  = upstream ? bufferqueueGetBufCount(&ls->pending_up) : bufferstreamGetEntryCount(&ls->in_stream);
+
     size_t pending_bytes  = upstream ? bufferqueueGetBufLen(&ls->pending_up) : bufferstreamGetBufLen(&ls->in_stream);
     size_t pending_charge = upstream ? bufferqueueGetCharge(&ls->pending_up) : bufferstreamGetCharge(&ls->in_stream);
     if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
-        count >= kHttpClientHttp1NestedMaxBuffers || pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
+        pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
         pending_charge > kHttpClientHttp1NestedMaxCharge - charge)
     {
         lineReuseBuffer(l, buf);

@@ -1,6 +1,6 @@
 /*
  * SpeedLimit byte/order, private-pipe splitting, consumer Pause, combined source
- * holds, reentrant close/input and finite byte/charge/entry admission.
+ * holds, reentrant close/input and finite byte/charge admission.
  * Uses real worker-local pools and timers; callbacks are driven with a fixed
  * cached clock. No throughput claims. Both build variants compile the actual
  * tunnel and representation helpers, including WW_HAVE_SPLICE=0 fallback.
@@ -17,8 +17,7 @@ enum
 {
     kPadding         = 256,
     kExpectedBytes   = 16U * 1024U * 1024U,
-    kExpectedCharge  = 32U * 1024U * 1024U,
-    kExpectedEntries = 1024
+    kExpectedCharge  = 32U * 1024U * 1024U
 };
 
 static twf_worker_env_t env;
@@ -352,47 +351,40 @@ static void testFallback(bool up)
 static void testBudgetedSpliceFallback(bool up)
 {
 #if WW_HAVE_SPLICE
-    for (unsigned dimension = 0; dimension < 2; ++dimension)
-    {
-        setup(up, "pause", "per-line");
-        tokens(0);
-        uint8_t bytes[4096];
-        for (unsigned i = 0; i < sizeof(bytes); ++i)
-            bytes[i] = (uint8_t) i;
-        sbuf_t           *source = pipeBytes(bytes, sizeof(bytes), 7);
-        buffer_pool_fit_t fit;
-        twfRequire(bufferpoolQueryBestFit(env.pool, 2048, bufferpoolGetLargeBufferPadding(env.pool), &fit),
-                   "query partial-output fallback geometry");
-        buffer_budget_t     *budget = up ? &state()->up_budget : &state()->down_budget;
-        buffer_budget_cost_t limits = bufferbudgetGetLimits(budget);
-        if (dimension == 0)
-            limits.charge = sbufGetQueueCharge(source) + fit.allocation_charge;
-        else
-            limits.entries = 2;
-        // The source plus one ordinary candidate fits exactly. A simultaneous
-        // splice wrapper and ordinary fallback cannot enter the retained turn.
-        bufferbudgetInit(budget, limits);
-        submit(source);
-        expect_ordinary = measuring = true;
-        tokens(2048);
-        tick();
-        twfRequire(lineIsAlive(line) && received_length == 2048 && payloads == 1,
-                   "refused temporary wrapper budget prevented ordinary partial progress");
-        twfRequire(materialized == 2048 - 7, "budget fallback did not consume the exact granted pipe range");
-        const buffer_budget_cost_t usage = bufferbudgetGetUsage(budget);
-        twfRequire(usage.bytes == 2048 && usage.entries == 1 &&
-                       usage.charge == sbufGetQueueCharge(bufferqueueFront(queue())),
-                   "budget fallback retained temporary output/wrapper costs after handoff");
-        expect_ordinary = false;
-        tokens(2048);
-        tick();
-        twfRequire(received_length == sizeof(bytes) && memoryCompare(received, bytes, sizeof(bytes)) == 0,
-                   "budget fallback damaged the accepted FIFO remainder");
-        twfRequire(bufferbudgetGetUsage(budget).bytes == 0 && bufferbudgetGetUsage(budget).charge == 0 &&
-                       bufferbudgetGetUsage(budget).entries == 0,
-                   "budget fallback did not settle all retained costs");
-        teardown();
-    }
+    setup(up, "pause", "per-line");
+    tokens(0);
+    uint8_t bytes[4096];
+    for (unsigned i = 0; i < sizeof(bytes); ++i)
+        bytes[i] = (uint8_t) i;
+    sbuf_t           *source = pipeBytes(bytes, sizeof(bytes), 7);
+    buffer_pool_fit_t fit;
+    twfRequire(bufferpoolQueryBestFit(env.pool, 2048, bufferpoolGetLargeBufferPadding(env.pool), &fit),
+               "query partial-output fallback geometry");
+    buffer_budget_t     *budget = up ? &state()->up_budget : &state()->down_budget;
+    buffer_budget_cost_t limits = bufferbudgetGetLimits(budget);
+    limits.charge               = sbufGetQueueCharge(source) + fit.allocation_charge;
+    // The source plus one ordinary candidate fits exactly. A simultaneous
+    // splice wrapper and ordinary fallback cannot enter the retained turn.
+    bufferbudgetInit(budget, limits);
+    submit(source);
+    expect_ordinary = measuring = true;
+    tokens(2048);
+    tick();
+    twfRequire(lineIsAlive(line) && received_length == 2048 && payloads == 1,
+               "refused temporary wrapper budget prevented ordinary partial progress");
+    twfRequire(materialized == 2048 - 7, "budget fallback did not consume the exact granted pipe range");
+    const buffer_budget_cost_t usage = bufferbudgetGetUsage(budget);
+    twfRequire(usage.bytes == 2048 && bufferqueueGetBufCount(queue()) == 1 &&
+                   usage.charge == sbufGetQueueCharge(bufferqueueFront(queue())),
+               "budget fallback retained temporary output/wrapper costs after handoff");
+    expect_ordinary = false;
+    tokens(2048);
+    tick();
+    twfRequire(received_length == sizeof(bytes) && memoryCompare(received, bytes, sizeof(bytes)) == 0,
+               "budget fallback damaged the accepted FIFO remainder");
+    twfRequire(bufferbudgetGetUsage(budget).bytes == 0 && bufferbudgetGetUsage(budget).charge == 0,
+               "budget fallback did not settle all retained costs");
+    teardown();
 #else
     discard up;
 #endif
@@ -443,7 +435,6 @@ static void testClose(bool up, bool from_resume)
 static void testLimits(bool up, unsigned dimension)
 {
     setup(up, "pause", "per-line");
-    independent_sources = dimension == 2;
     pauseConsumer();
     tokens(0);
     if (dimension == 0)
@@ -454,7 +445,7 @@ static void testLimits(bool up, unsigned dimension)
         twfRequire(lineIsAlive(line) && bufferqueueGetBufLen(queue()) == kExpectedBytes,
                    "refused exact payload-byte limit");
     }
-    else if (dimension == 1)
+    else
     {
         const uint32_t capacity = kExpectedCharge - sizeof(sbuf_t) - kSbufAllocationAlignment - kPadding;
         sbuf_t        *buf      = bufferpoolGetBestFit(env.pool, capacity, kPadding);
@@ -464,15 +455,27 @@ static void testLimits(bool up, unsigned dimension)
         twfRequire(lineIsAlive(line) && bufferqueueGetCharge(queue()) == kExpectedCharge,
                    "refused exact retained-capacity limit");
     }
-    else
-    {
-        for (unsigned i = 0; i < kExpectedEntries; ++i)
-            submit(input("", 0, WW_HAVE_SPLICE, 0));
-        twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(queue()) == kExpectedEntries,
-                   "refused exact entry limit, including empty private pipes");
-    }
     submit(input("X", 1, WW_HAVE_SPLICE, 0));
     twfRequire(! lineIsAlive(line) && finishes == 2 && payloads == 0, "overflow did not close and discard owned data");
+    teardown();
+}
+
+static void testManyBuffersWithinCharge(bool up, bool splice)
+{
+    setup(up, "pause", "per-line");
+    pauseConsumer();
+    tokens(0);
+    independent_sources = splice;
+    size_t charge       = 0;
+    for (unsigned i = 0; i < 1025; ++i)
+    {
+        sbuf_t *buf = input("", 0, splice, 0);
+        charge += sbufGetQueueCharge(buf);
+        submit(buf);
+    }
+    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(queue()) == 1025 &&
+                   bufferqueueGetCharge(queue()) == charge && charge < kExpectedCharge,
+               "count alone refused empty buffers within retained-charge allowance");
     independent_sources = false;
     teardown();
 }
@@ -626,7 +629,7 @@ int main(void)
         testPausedTimer(up);
         testClose(up, true);
         testClose(up, false);
-        for (unsigned dimension = 0; dimension < 3; ++dimension)
+        for (unsigned dimension = 0; dimension < 2; ++dimension)
             testLimits(up, dimension);
         const char *modes[] = {"per-line", "per-worker", "all-lines"};
         for (unsigned mode = 0; mode < 3; ++mode)
@@ -643,6 +646,10 @@ int main(void)
 #endif
         testFallback(up);
         testBudgetedSpliceFallback(up);
+        testManyBuffersWithinCharge(up, false);
+#if WW_HAVE_SPLICE
+        testManyBuffersWithinCharge(up, true);
+#endif
     }
     testEmpty();
     metadata = nodeSpeedLimitGet();

@@ -17,9 +17,11 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
         ls->phase == kConnectionFisherServerPhaseWaitPing ? kConnectionFisherServerHandshakeLength : 0;
     const size_t retained_bytes =
         ls->init_payload_bytes + bufferqueueGetBufLen(&ls->pending_up) + bufferstreamGetBufLen(&ls->in_stream);
+    const size_t retained_charge =
+        ls->init_payload_charge + bufferqueueGetCharge(&ls->pending_up) + bufferstreamGetCharge(&ls->in_stream);
     if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherServerMaxPendingBytes + handshake_bytes - retained_bytes ||
-                 bufferqueueGetBufCount(&ls->pending_up) + (ls->init_payload_bytes != 0) >=
-                     kConnectionFisherServerMaxPendingBuffers ||
+                 retained_charge > kConnectionFisherServerMaxPendingCharge ||
+                 sbufGetQueueCharge(buf) > kConnectionFisherServerMaxPendingCharge - retained_charge ||
                  ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
     {
         lineReuseBuffer(l, buf);
@@ -46,6 +48,7 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
              * buf is older than every reentrant input in pending_up. */
             ls->phase              = kConnectionFisherServerPhaseEstablished;
             ls->init_payload_bytes = sbufGetLength(buf);
+            ls->init_payload_charge = sbufGetQueueCharge(buf);
             tunnelNextUpStreamInit(t, l);
             if (UNLIKELY(! lineIsAlive(l) || ls->phase == kConnectionFisherServerPhaseClosing))
             {
@@ -64,6 +67,7 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
             }
         }
         ls->init_payload_bytes = 0;
+        ls->init_payload_charge = 0;
         tunnelNextUpStreamPayload(t, l, buf);
     }
     if (lineIsAlive(l) && ls->phase != kConnectionFisherServerPhaseClosing)

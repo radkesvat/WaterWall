@@ -8,9 +8,8 @@ void authenticationserverLinestateInitialize(authenticationserver_lstate_t *ls, 
                                            .response_queue = bufferqueueCreate(kAuthenticationServerResponseQueueCap),
                                            .pool           = pool};
     bufferbudgetInit(&ls->response_budget,
-                     (buffer_budget_cost_t) {.bytes   = kAuthenticationServerMaxResponseQueue,
-                                             .charge  = kAuthenticationServerMaxResponseCharge,
-                                             .entries = kAuthenticationServerMaxResponseEntries});
+                     (buffer_budget_cost_t) {.bytes  = kAuthenticationServerMaxResponseQueue,
+                                             .charge = kAuthenticationServerMaxResponseCharge});
     const bool attached = bufferqueueTryAttachBudget(&ls->response_queue, &ls->response_budget);
     assert(attached);
     discard attached;

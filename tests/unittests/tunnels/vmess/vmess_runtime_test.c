@@ -498,8 +498,10 @@ static void udpBackendRecreation(void)
 static void overflowResponses(est_fixture_t *f, line_t *line)
 {
     f->on_est = NULL;
-    for (unsigned i = 0; i <= kVmessServerMaxPendingBuffers && lineIsAlive(line); ++i)
-        tunnelDownStreamPayload(f->node, line, estBytes(line, "X", 1));
+    sbuf_t *retained = twfTrackAcquired(sbufCreateWithPadding(8U * 1024U * 1024U, 64));
+    sbufSetLength(retained, 1);
+    sbufWrite(retained, "X", 1);
+    tunnelDownStreamPayload(f->node, line, retained);
 }
 
 static void queuedResponseLimit(void)
@@ -509,7 +511,7 @@ static void queuedResponseLimit(void)
     sendRequest(&f, false);
     f.on_est = overflowResponses;
     tunnelDownStreamEst(f.node, f.line);
-    twfRequire(! lineIsAlive(f.line), "reentrant response queue exceeded its entry limit");
+    twfRequire(! lineIsAlive(f.line), "reentrant response queue exceeded its charge limit");
     twfRequire(f.up_finish_count == 1 && f.down_finish_count == 1, "queue refusal did not close both directions");
     closeFixture(&f);
 }

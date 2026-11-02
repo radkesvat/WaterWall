@@ -1858,7 +1858,7 @@ static void testBandwidthSharedTurnsAndMigration(void)
                 userBandwidthPreview(user, kUserBandwidthUpload, 22, 1, false).decision == kUserDeliveryForward,
             "successful turn did not rotate");
     userBandwidthSetEligible(user, kUserBandwidthUpload, 22, false);
-    buffer_budget_cost_t cost = {123, 256, 1};
+    buffer_budget_cost_t cost = {123, 256};
     require(userBandwidthReserve(user, kUserBandwidthUpload, 11, cost), "queue reservation");
     uint64_t credit    = user->runtime.bandwidth[0].bucket.credit;
     uint16_t remainder = user->runtime.bandwidth[0].bucket.remainder;

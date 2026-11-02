@@ -19,7 +19,7 @@
 enum
 {
     kTlsBufferBioMaxBytes   = 8U * 1024U * 1024U,
-    kTlsBufferBioMaxBuffers = 1024U
+    kTlsBufferBioMaxCharge  = 32U * 1024U * 1024U
 };
 
 /* The caller serializes ctx and pool access on their owner worker. ctx must

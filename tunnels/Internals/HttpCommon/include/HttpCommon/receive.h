@@ -8,7 +8,7 @@ enum
     kHttpReceiveSliceBytes    = 16 * 1024,
     kHttpReceiveNestedBytes   = 1024 * 1024,
     kHttpReceiveNestedCharge  = 2 * 1024 * 1024,
-    kHttpReceiveNestedEntries = 1024,
+
     kHttpReceiveStreamBytes   = 64 * 1024,
     kHttpReceiveStreamCharge  = 2 * 1024 * 1024
 };
@@ -40,7 +40,7 @@ http_receive_result_t httpReceiveAdmit(http_receive_t *receive, buffer_pool_t *p
 /* Transfers the next <=16 KiB slice, publishing consumption before return.
  * NULL ends the drain. Call only while the node's state is still live. */
 sbuf_t *httpReceiveNext(http_receive_t *receive, buffer_pool_t *pool);
-/* Enforce retained logical bytes, compact excessive allocation/entry retention.
+/* Enforce retained logical bytes, compact excessive allocation retention.
  * Waiting split uploads supply their separate existing logical-byte allowance.
  * Empty input retains no allocation. No callbacks. */
 bool httpReceiveSettle(buffer_stream_t *stream, size_t max_bytes);

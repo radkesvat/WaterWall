@@ -98,9 +98,9 @@ size_t bufferstreamGetCharge(const buffer_stream_t *self)
     return charge;
 }
 
-bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge, size_t max_entries)
+bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge)
 {
-    assert(self != NULL && self->pool != NULL && max_entries != 0);
+    assert(self != NULL && self->pool != NULL);
     const size_t bytes = bufferstreamGetBufLen(self);
     if (bytes == 0)
     {
@@ -113,7 +113,7 @@ bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge, size_t
     if (! bufferpoolQueryBestFit(self->pool, bytes, padding, &fit))
         return false;
     const size_t charge_limit = max(max_charge, fit.allocation_charge);
-    if (bufferstreamGetCharge(self) > charge_limit || bufferstreamGetEntryCount(self) > max_entries)
+    if (bufferstreamGetCharge(self) > charge_limit)
     {
         sbuf_t *compact = bufferpoolGetBestFit(self->pool, (uint32_t) bytes, padding);
         bufferstreamMoveExactBytesTo(self, compact, bytes);

@@ -26,7 +26,7 @@ typedef enum callback_action_e
     kActionInject,
     kActionByteOverflow,
     kActionChargeOverflow,
-    kActionEntryOverflow,
+    kActionAggregateChargeOverflow,
     kActionActiveOverflow,
     kActionClose
 } callback_action_t;
@@ -175,14 +175,18 @@ static void recordPacket(tunnel_t *t, line_t *line, sbuf_t *buf)
         buildPacket(sbufGetMutablePtr(large), 2);
         receive(large);
     }
-    else if (action == kActionEntryOverflow)
+    else if (action == kActionAggregateChargeOverflow)
     {
-        for (uint32_t i = 0; i < kIpv4StreamNestedEntries; ++i)
+        size_t charge = 0;
+        for (uint32_t i = 0;; ++i)
         {
-            receive(makeInput(2, i, 1));
-            twfRequire(lineIsAlive(f.stream_line), "nested entry limit rejected its equality boundary");
+            sbuf_t *input = makeInput(2, i, 1);
+            charge += sbufGetQueueCharge(input);
+            receive(input);
+            if (charge > kIpv4StreamNestedCharge)
+                break;
+            twfRequire(lineIsAlive(f.stream_line), "nested charge limit rejected an admitted prefix");
         }
-        receive(makeInput(2, kIpv4StreamNestedEntries, 1));
     }
     else if (action == kActionActiveOverflow)
     {
@@ -362,7 +366,7 @@ int main(void)
     testNestedFifo();
     testNestedRefusal(kActionByteOverflow);
     testNestedRefusal(kActionChargeOverflow);
-    testNestedRefusal(kActionEntryOverflow);
+    testNestedRefusal(kActionAggregateChargeOverflow);
     testNestedRefusal(kActionActiveOverflow);
     testCloseDuringDelivery();
     testEmptyInput();

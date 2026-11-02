@@ -575,7 +575,8 @@ static void limitsAndCleanup(void)
     sendText("abcd");
     for (unsigned i = 1; i < kStreamFragmenterHighJobs; ++i)
         sendText("");
-    require(source_paused && pauses == 1, "job high watermark");
+    require(source_paused && pauses == 1 && state()->job_count == kStreamFragmenterHighJobs,
+            "job high watermark includes the active remainder");
     consumerPause();
     require(pauses == 2, "local pressure swallowed advisory Pause");
     on_resume = inject;
@@ -588,7 +589,7 @@ static void limitsAndCleanup(void)
     sendText("abcd");
     for (unsigned i = 1; i < kStreamFragmenterHardJobs; ++i)
         sendText("");
-    require(lineIsAlive(line), "inclusive entry hard limit");
+    require(lineIsAlive(line) && state()->job_count == kStreamFragmenterHardJobs, "inclusive job hard limit");
     sendText("");
     require(! lineIsAlive(line) && finish_count == 2 && finishes[0] == 'U' && finishes[1] == 'D',
             "overflow close order");
@@ -1271,15 +1272,19 @@ static void tlsHelloSelectionAndOwnership(void)
     requireBypassed();
     closeLine();
 
-    /* A replacement must fit alongside the candidate, including a second job
-     * entry. Earlier empty arrivals can consume that final entry. */
+    /* Replacing a candidate reserves both allocations, but keeps one job. */
     defer_est = true;
     openLine("{\"mode\":\"counter\",\"count\":1024,\"tls-hello-fragment\":true,"
              "\"cuts\":[[25,0,100]]}");
     for (unsigned i = 0; i < 1023; ++i)
         sendText("");
     sendBytes(hello_wire, length);
-    require(! lineIsAlive(line) && ! writes && finish_count == 2, "replacement reservation bypassed entry budget");
+    require(lineIsAlive(line) && ! writes && state()->job_count == kStreamFragmenterHardJobs &&
+                state()->tail->kind == kStreamFragmenterJobHello,
+            "replacement incorrectly needed an additional job slot");
+    sendText("");
+    require(! lineIsAlive(line) && ! writes && finish_count == 2,
+            "completed replacement allowed another job beyond the hard limit");
     closeLine();
 
     /* A coalesced suffix still enters the same hard budget before handoff. */

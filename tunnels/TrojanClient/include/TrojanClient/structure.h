@@ -53,7 +53,6 @@ enum
     kTrojanClientInitialPadding      = 68 + kTrojanClientUdpHeaderMaxLen,
     kTrojanClientMaxUdpBufferedBytes = 2 * 1024 * 1024 + kTrojanClientUdpHeaderMaxLen + kTrojanClientUdpMaxPacket,
     kTrojanClientMaxInputCharge      = 8 * 1024 * 1024,
-    kTrojanClientMaxInputBuffers     = 1024
 };
 
 typedef struct trojanclient_tstate_s

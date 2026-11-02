@@ -209,7 +209,8 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                              ls->pending_reservation.budget == &ls->pending_budget &&
                              ls->pending_reservation.cost.bytes == 16384 &&
                              bufferbudgetGetUsage(&ls->pending_budget).bytes == 16385 &&
-                             bufferbudgetGetUsage(&ls->pending_budget).entries == 2,
+                             bufferbudgetGetUsage(&ls->pending_budget).charge ==
+                                 ls->pending_reservation.cost.charge + bufferqueueGetCharge(&ls->bq),
                          "TLS active plaintext consumption was not published before the wire callback");
         if (mode == 1)
         {
@@ -241,14 +242,16 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             }
             else
             {
-                while (bufferbudgetGetUsage(&ls->pending_budget).entries < kTlsClientPendingPlaintextBuffers)
-                {
-                    nested = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
-                    sbufSetLength(nested, 0);
-                    tlsclientTunnelUpStreamPayload(t->prev, l, nested);
-                }
-                requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers - 1,
-                                 "TLS active entry was not charged at equality");
+                const size_t allowance = bufferbudgetGetLimits(&ls->pending_budget).charge -
+                                         bufferbudgetGetUsage(&ls->pending_budget).charge;
+                const uint32_t capacity = (uint32_t) (allowance - sizeof(sbuf_t) - kSbufAllocationAlignment);
+                const uint16_t padding  = (uint16_t) (capacity % kCpuLineCacheSize);
+                nested                  = sbufCreateWithPadding(capacity - padding, padding);
+                requireTlsClient(sbufGetQueueCharge(nested) == allowance, "TLS charge boundary geometry changed");
+                tlsclientTunnelUpStreamPayload(t->prev, l, nested);
+                requireTlsClient(bufferbudgetGetUsage(&ls->pending_budget).charge ==
+                                     bufferbudgetGetLimits(&ls->pending_budget).charge,
+                                 "TLS queue plus active exact charge cap refused");
             }
             nested = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
             sbufSetLength(nested, 1);
@@ -1347,20 +1350,20 @@ static sbuf_t *makeRepeatedPlaintext(tlsclient_lifecycle_fixture_t *fixture, uin
 
 static void testPendingPlaintextLimits(void)
 {
-    for (unsigned by_entries = 0; by_entries < 2; ++by_entries)
+    for (unsigned by_charge = 0; by_charge < 2; ++by_charge)
     {
         tlsclient_lifecycle_fixture_t fixture;
         fixtureInitialize(&fixture);
         ((tlsclient_tstate_t *) tunnelGetState(fixture.tls))->handshake_takeover_enabled = false;
         tlsclient_lstate_t *ls = lineGetState(fixture.line, fixture.tls);
-        if (by_entries)
+        if (by_charge)
         {
-            for (unsigned i = 0; i < kTlsClientPendingPlaintextBuffers; ++i)
-            {
-                tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 0, 0));
-            }
-            requireTlsClient(bufferqueueGetBufCount(&ls->bq) == kTlsClientPendingPlaintextBuffers,
-                             "TLS exact plaintext entry limit was refused");
+            const size_t charge = bufferbudgetGetLimits(&ls->pending_budget).charge;
+            sbuf_t      *empty  = sbufCreate((uint32_t) (charge - sizeof(sbuf_t) - kSbufAllocationAlignment));
+            requireTlsClient(sbufGetQueueCharge(empty) == charge, "TLS early charge boundary geometry changed");
+            tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, empty);
+            requireTlsClient(bufferbudgetGetUsage(&ls->pending_budget).charge == charge,
+                             "TLS exact plaintext charge limit was refused");
         }
         else
         {
@@ -1441,7 +1444,7 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     else if (mode >= 4)
     {
         requireTlsClient(ls->pending_plaintext == NULL && ls->pending_reservation.budget == NULL &&
-                             bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
+                             bufferbudgetGetUsage(&ls->pending_budget).charge == 0 &&
                              strcmp(fixture.context.events, "UD") == 0,
                          "TLS active overflow did not settle reservation and queued input");
     }
@@ -1559,11 +1562,11 @@ static void testReceiveRetirementDrainsPendingPlaintext(bool finish_on_resume)
     {
         requireTlsClient(lineIsAlive(fixture.line) && ls->shaping_retired && ls->shaping_output_timer == NULL,
                          "TLS receive path did not retire its final shaped records and timer");
-        requireTlsClient(
-            ls->pending_plaintext == NULL && bufferqueueGetBufCount(&ls->bq) == 0 &&
-                ls->pending_reservation.budget == NULL && bufferbudgetGetUsage(&ls->pending_budget).entries == 0 &&
-                ! ls->plaintext_producer_paused && ! ls->source_paused && fixture.context.source_resume_count == 1,
-            "TLS receive-path retirement stranded queued plaintext or its source pressure");
+        requireTlsClient(ls->pending_plaintext == NULL && bufferqueueGetBufCount(&ls->bq) == 0 &&
+                             ls->pending_reservation.budget == NULL &&
+                             bufferbudgetGetUsage(&ls->pending_budget).charge == 0 && ! ls->plaintext_producer_paused &&
+                             ! ls->source_paused && fixture.context.source_resume_count == 1,
+                         "TLS receive-path retirement stranded queued plaintext or its source pressure");
     }
 
     uint8_t plaintext[81921];

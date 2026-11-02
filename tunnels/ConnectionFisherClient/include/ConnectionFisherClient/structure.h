@@ -41,7 +41,7 @@ enum
     kConnectionFisherHandshakeLength             = 5,
     kConnectionFisherTimeoutMs                   = 5000,
     kConnectionFisherMaxPendingUpBytes           = 2 * 1024 * 1024,
-    kConnectionFisherMaxPendingBuffers           = 1024,
+    kConnectionFisherMaxPendingCharge            = 8U * 1024U * 1024U,
     kConnectionFisherPendingQueueInitialCapacity = 8,
     kTunnelStateSize                             = sizeof(connectionfisherclient_tstate_t),
     kLineStateSize                               = sizeof(connectionfisherclient_lstate_t)

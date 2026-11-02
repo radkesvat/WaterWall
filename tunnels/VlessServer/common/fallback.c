@@ -34,9 +34,7 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
          * response budget and authenticated TCP retention keep their policy. */
         bufferbudgetAssertEmpty(&ls->upstream_budget);
         bufferbudgetInit(&ls->upstream_budget,
-                         (buffer_budget_cost_t) {kVlessServerMaxPendingBytes,
-                                                 kVlessServerMaxFallbackCharge,
-                                                 kVlessServerMaxPendingBuffers});
+                         (buffer_budget_cost_t) {kVlessServerMaxPendingBytes, kVlessServerMaxFallbackCharge});
     }
     if (fallbackReplayBegin(&ls->fallback,
                             l,

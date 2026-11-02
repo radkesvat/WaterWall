@@ -1887,8 +1887,7 @@ void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf,
      * The original input suffix stays ahead of this bounded reentry queue. */
     buffer_queue_t *queue  = upstream ? &ls->split_pending_up : &ls->pending_down;
     const size_t    charge = bufferqueueGetCharge(queue);
-    if (bufferqueueGetBufCount(queue) >= kHttpServerUpgradeQueueCountLimit ||
-        charge > kHttpServerUpgradeQueueChargeLimit ||
+    if (charge > kHttpServerUpgradeQueueChargeLimit ||
         sbufGetQueueCharge(buf) > kHttpServerUpgradeQueueChargeLimit - charge)
     {
         lineReuseBuffer(l, buf);

@@ -1,6 +1,6 @@
 /* HeaderServer Est ordering with a worker-zero loop/pool, an owning previous
  * mock and borrowing node/next mocks. Checks synchronous Est, nested ABC order,
- * close during Est, exact byte/entry reentry limits, state/buffer reclamation,
+ * close during Est, exact byte/charge reentry limits, state/buffer reclamation,
  * protocol markers, metadata preservation and (WW_HAVE_SPLICE) split headers,
  * identity and PROXY modes via private pipes.
  * Failures use _Exit(1); requires the fixture's GNU wrappers.
@@ -262,13 +262,15 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     tunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
 
-static void overflowReentryEntries(est_fixture_t *f, line_t *l)
+static void overflowReentryCharge(est_fixture_t *f, line_t *l)
 {
-    for (unsigned i = 0; i < kHeaderServerMaxReentryBuffers; ++i)
-        tunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
+    sbuf_t *retained = twfTrackAcquired(sbufCreateWithPadding(kHeaderServerMaxReentryCharge - 128, 64));
+    sbufSetLength(retained, 0);
+    twfRequire(sbufGetQueueCharge(retained) == kHeaderServerMaxReentryCharge, "charge fixture geometry changed");
+    tunnelUpStreamPayload(f->node, l, retained);
     headerserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufCount(&ls->initial_reentry) == kHeaderServerMaxReentryBuffers,
-               "HeaderServer rejected exact transient reentry entry limit");
+    twfRequire(bufferqueueGetCharge(&ls->initial_reentry) == kHeaderServerMaxReentryCharge,
+               "exact reentry charge limit rejected");
     tunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
 }
 
@@ -584,8 +586,8 @@ int main(void)
     TEST_RUN_CASE(testHeaderProtocol);
     twfSetCase("reentry byte limit");
     testReentryLimit(overflowReentryBytes);
-    twfSetCase("reentry entry limit");
-    testReentryLimit(overflowReentryEntries);
+    twfSetCase("reentry charge limit");
+    testReentryLimit(overflowReentryCharge);
     twfSetCase("initial Est with nested input");
     testInitialOrder(false);
     twfSetCase("owner closes during Est");

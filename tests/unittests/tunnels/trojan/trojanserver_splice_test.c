@@ -216,8 +216,7 @@ static uint32_t frame(uint8_t *out, unsigned form, uint16_t port, const void *bo
 static void requireUdpRetention(void)
 {
     trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
-    twfRequire(lineIsAlive(f.line) && bufferreaderCharge(&ls->reader) <= kTrojanServerMaxInputCharge &&
-                   bufferreaderEntryCount(&ls->reader) <= kTrojanServerMaxInputBuffers,
+    twfRequire(lineIsAlive(f.line) && bufferreaderCharge(&ls->reader) <= kTrojanServerMaxInputCharge,
                "UDP retained fragmented input beyond its storage compaction thresholds");
 }
 static void act(unsigned boundary, line_t *l)
@@ -278,7 +277,12 @@ static void act(unsigned boundary, line_t *l)
         twfRequire(lineIsAlive(f.line), "exact reentry retention budget rejected");
         if (f.overflow_admission)
         {
-            tunnelUpStreamPayload(f.t, f.line, bytes(data, f.admission_bytes == 0 ? 0 : 1, false, 320));
+            sbuf_t *extra = f.admission_bytes == 0
+                                ? twfTrackAcquired(sbufCreateWithPadding(kTrojanServerMaxInputCharge, 320))
+                                : bytes(data, 1, false, 320);
+            if (f.admission_bytes == 0)
+                sbufSetLength(extra, 0);
+            tunnelUpStreamPayload(f.t, f.line, extra);
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
@@ -1232,14 +1236,15 @@ static void testLimitsAndFailures(void)
             twfRequire(bufferbudgetGetLimits(&ls->output_budget).charge == kTrojanServerMaxFallbackCharge,
                        "delayed fallback did not apply its charge limit");
             twfRequire(ls->pending_up.budget == NULL && ls->fallback.pending.budget == &ls->output_budget &&
-                           bufferbudgetGetUsage(&ls->output_budget).entries == count + 1 &&
+                           bufferbudgetGetUsage(&ls->output_budget).charge <= kTrojanServerMaxFallbackCharge &&
                            bufferbudgetGetUsage(&ls->output_budget).bytes ==
                                (entries ? 0 : kTrojanServerMaxPendingBytes),
                        "fallback transition did not account the complete replay FIFO");
             tunnelUpStreamPayload(f.t, f.line, bytes(data, entries ? 0 : 1, false, 320));
             if (entries)
-                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(&ls->output_budget).entries == 1,
-                           "delayed entry pressure did not compact ordinary replay");
+                twfRequire(lineIsAlive(f.line) &&
+                               bufferbudgetGetUsage(&ls->output_budget).charge <= kTrojanServerMaxFallbackCharge,
+                           "delayed replay rejected fragments within its charge allowance");
             else
                 twfRequire(! lineIsAlive(f.line), "delayed byte backlog overflow accepted");
             end();
@@ -1442,7 +1447,7 @@ static void testAdmittedBatches(void)
 
 static void testRetentionAndIndependentDelay(void)
 {
-    twfSetCase("branch Init reentry uses the 2 MiB and 1,024-entry retention budgets");
+    twfSetCase("branch Init reentry uses the 2 MiB byte and 8 MiB charge retention budgets");
     uint8_t *wire = memoryAllocateZero(kTrojanServerMaxWireBytes + 320);
     for (unsigned entries = 0; entries < 2; ++entries)
     {

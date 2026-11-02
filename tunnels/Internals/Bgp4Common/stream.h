@@ -11,7 +11,7 @@ enum
     kBgpMaxWireFrame    = 65553,
     kBgpPendingBytes    = 2 * 1024 * 1024 + kBgpMaxWireFrame,
     kBgpReadChargeLimit = 2 * kBgpPendingBytes,
-    kBgpOutputEntries   = 1024
+    kBgpOutputChargeLimit = 8U * 1024U * 1024U
 };
 
 typedef struct bgp_stream_s
@@ -224,11 +224,10 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     const uint64_t wire_bytes = (uint64_t) length + frames * kBgpFramePrefix + open_length;
     const size_t   queued     = bufferqueueGetBufCount(&s->output);
     const bool     direct     = frames == 1 && queued == 0 && ! s->encode_pumping;
-    if (wire_bytes > kBgpPendingBytes - bufferqueueGetBufLen(&s->output) ||
-        (! direct && frames > kBgpOutputEntries - queued))
+    if (wire_bytes > kBgpPendingBytes - bufferqueueGetBufLen(&s->output))
     {
         bufferpoolReuseBuffer(pool, input);
-        bgpClose(t, l, s, "encoded byte/entry limit exceeded");
+        bgpClose(t, l, s, "encoded byte limit exceeded");
         return;
     }
     if (direct)
@@ -250,12 +249,12 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
         lineUnref(l);
         return;
     }
-    // The admitted output count is at most 1,024, so deque geometry is representable.
+    // The finite output charge bounds existing storage; wire bytes bound this batch.
     const bool reserved = bufferqueueReserveExtra(&s->output, (size_t) frames);
     assert(reserved);
     discard reserved;
 
-    /* Reservation and byte/entry admission precede consumption. No callbacks
+    /* Reservation and logical-byte admission precede consumption. No callbacks
      * observe this batch until all its independently owned frames are queued. */
     for (uint64_t i = 0; i < frames; ++i)
     {
@@ -272,7 +271,16 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
             frame = sbufMoveRangeTo(pool, input, frame, count, count, bufferpoolGetLargeBufferPadding(pool));
         }
         bgpPrepend(frame, open, open_length);
-        discard bufferqueuePushBack(&s->output, frame);
+        const size_t charge = bufferqueueGetCharge(&s->output);
+        if (charge > kBgpOutputChargeLimit || sbufGetQueueCharge(frame) > kBgpOutputChargeLimit - charge ||
+            ! bufferqueueTryPushBack(&s->output, &frame))
+        {
+            bufferpoolReuseBuffer(pool, frame);
+            if (input != NULL)
+                bufferpoolReuseBuffer(pool, input);
+            bgpClose(t, l, s, "encoded charge limit exceeded");
+            return;
+        }
         open_length = 0;
     }
     if (input != NULL)

@@ -131,7 +131,7 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     }
     if (! bufferreaderBodyReady(&ls->reader, ls->body_length))
     {
-        if (! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge, kTrojanServerMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge))
             trojanserverCloseLineBidirectional(t, l);
         return false;
     }

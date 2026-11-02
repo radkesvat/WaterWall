@@ -168,8 +168,7 @@ static void requireUdpRetention(void)
 {
     twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier), "UDP retention closed a valid association");
     trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-    twfRequire(bufferreaderCharge(&ls->reader) <= kTrojanClientMaxInputCharge &&
-                   bufferreaderEntryCount(&ls->reader) <= kTrojanClientMaxInputBuffers,
+    twfRequire(bufferreaderCharge(&ls->reader) <= kTrojanClientMaxInputCharge,
                "UDP retained input beyond storage compaction thresholds");
 }
 

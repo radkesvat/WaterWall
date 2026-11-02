@@ -663,19 +663,19 @@ static void testActivationBufferLimit(bool overflow, bool empty)
 {
     reverseclient_fixture_t fixture;
     fixtureSetup(&fixture, kEndpointEstablish);
-    fixture.nested_count = kReverseClientPendingBuffers - (overflow ? 0 : 1);
+    fixture.nested_count = kReverseClientActivationDeliveries + (overflow ? 1 : 0);
     fixture.nested_size  = empty ? 0 : 1;
     createFirstPair(&fixture);
     const uint8_t bytes[] = {0, 0, 0, 4, 'h', 'e', 'a', 'd'};
     reverseclientTunnelDownStreamPayload(fixture.reverse, fixture.upstream_line, activationPart(bytes, sizeof(bytes)));
     if (overflow && ! empty)
         require(reverseclientOwnedPairCount(fixture.reverse, 0) == 0 && fixture.delivered_buffers == 0,
-                "activation accepted more than 1024 retained buffers or leaked data after refusal");
+                "activation accepted more than 1024 nested activation deliveries or leaked data after refusal");
     else
         require(reverseclientOwnedPairCount(fixture.reverse, 0) == 1 &&
-                    fixture.delivered_buffers == (empty ? 1 : kReverseClientPendingBuffers) &&
-                    fixture.delivered_bytes == (empty ? 4 : 4 + kReverseClientPendingBuffers - 1),
-                "activation refused the inclusive buffer limit, counted empty input, or lost FIFO bytes");
+                    fixture.delivered_buffers == (empty ? 1 : 1 + kReverseClientActivationDeliveries) &&
+                    fixture.delivered_bytes == (empty ? 4 : 4 + kReverseClientActivationDeliveries),
+                "activation refused the inclusive activation delivery limit, counted empty input, or lost FIFO bytes");
     quiesceAndDrain(&fixture);
     fixtureTeardown(&fixture);
 }

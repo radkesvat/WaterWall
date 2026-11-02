@@ -204,7 +204,7 @@ size_t bufferqueueGetCharge(const buffer_queue_t *self);
  * entries; refusal leaves both objects unchanged. Empty attachment cannot fail. */
 bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget);
 /** Requires a bound queue and live, stable budgets on the owning worker.
- * Transfers only the queue's current bytes, charge and entries to destination;
+ * Transfers only the queue's current bytes and charge to destination;
  * previously popped reservations remain with their original budget.
  * Same-budget rebinding succeeds without admission. Refusal changes nothing.
  * Success changes even an empty queue's binding, preserving buffers and FIFO

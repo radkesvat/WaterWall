@@ -2761,23 +2761,20 @@ void userBandwidthSetEligible(User *user, user_bandwidth_direction_t direction, 
 
 static bool userBandwidthCostFits(buffer_budget_cost_t used, buffer_budget_cost_t cost, buffer_budget_cost_t limit)
 {
-    return cost.bytes <= limit.bytes - used.bytes && cost.charge <= limit.charge - used.charge &&
-           cost.entries <= limit.entries - used.entries;
+    return cost.bytes <= limit.bytes - used.bytes && cost.charge <= limit.charge - used.charge;
 }
 
 static void userBandwidthAddCost(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
 {
     used->bytes += cost.bytes;
     used->charge += cost.charge;
-    used->entries += cost.entries;
 }
 
 static void userBandwidthSubtractCost(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
 {
-    assert(cost.bytes <= used->bytes && cost.charge <= used->charge && cost.entries <= used->entries);
+    assert(cost.bytes <= used->bytes && cost.charge <= used->charge);
     used->bytes -= cost.bytes;
     used->charge -= cost.charge;
-    used->entries -= cost.entries;
 }
 
 bool userBandwidthReserve(User *user, user_bandwidth_direction_t direction, uint64_t ticket, buffer_budget_cost_t cost)
@@ -2786,7 +2783,7 @@ bool userBandwidthReserve(User *user, user_bandwidth_direction_t direction, uint
     rwlockWriteLock(&user->stats_lock);
     user_bandwidth_waiter_t *waiter = userBandwidthFind(&user->runtime.bandwidth[direction], ticket);
     bool                     ok     = waiter != NULL &&
-              userBandwidthCostFits(user->runtime.queued_cost, cost, (buffer_budget_cost_t) {4U << 20, 8U << 20, 1024});
+              userBandwidthCostFits(user->runtime.queued_cost, cost, (buffer_budget_cost_t) {4U << 20, 8U << 20});
     if (ok)
     {
         userBandwidthAddCost(&user->runtime.queued_cost, cost);

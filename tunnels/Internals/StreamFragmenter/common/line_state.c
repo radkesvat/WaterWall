@@ -16,9 +16,7 @@ void streamfragmenterLinestateInitialize(streamfragmenter_lstate_t *ls, tunnel_t
     ls->exhausted   = ! shaping_enabled;
     ls->protocol = shaping_enabled && ts->tls_hello_fragment ? kStreamFragmenterAwaitingData : kStreamFragmenterOpaque;
     ls->waiting_for_est = ts->wait_for_est;
-    bufferbudgetInit(
-        &ls->budget,
-        (buffer_budget_cost_t) {kStreamFragmenterHardCharge, kStreamFragmenterHardCharge, kStreamFragmenterHardJobs});
+    bufferbudgetInit(&ls->budget, (buffer_budget_cost_t) {kStreamFragmenterHardCharge, kStreamFragmenterHardCharge});
 }
 
 void streamfragmenterLinestateDestroy(streamfragmenter_lstate_t *ls)
@@ -33,12 +31,15 @@ void streamfragmenterLinestateDestroy(streamfragmenter_lstate_t *ls)
     {
         streamfragmenter_job_t *job = ls->head;
         ls->head                    = job->next;
+        assert(ls->job_count != 0);
+        --ls->job_count;
         lineReuseBuffer(ls->line, job->buf);
         bufferbudgetReservationRelease(&job->reservation);
         memoryFree(job->mapped_cuts);
         memoryFree(job);
     }
     bufferbudgetAssertEmpty(&ls->budget);
+    assert(ls->job_count == 0);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 

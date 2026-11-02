@@ -9,7 +9,7 @@ void quicPressure(quic_context_t *context)
     ww_quic_engine_storage(context->engine, &storage);
     buffer_budget_cost_t queued       = bufferbudgetGetUsage(&context->application_budget);
     size_t               bytes        = queued.bytes + storage.send_bytes;
-    size_t               entries      = queued.entries + storage.send_entries;
+    size_t               entries      = quicApplicationEntries(context) + storage.send_entries;
     size_t               charge       = queued.charge + storage.send_allocation;
     size_t               charge_limit = (size_t) state->max_bytes * 2;
     /* A small socket read can retain a large pool allocation. Apply pressure
@@ -132,7 +132,7 @@ static bool quicWriteApplication(quic_context_t *context, bool finishing)
     ww_quic_engine_storage(context->engine, &storage);
     buffer_budget_cost_t pending = bufferbudgetGetUsage(&context->application_budget);
     /* The original allocation remains charged until its suffix is consumed. */
-    if (storage.send_entries + pending.entries + (length > chunk ? 1 : 0) > state->max_buffers ||
+    if (storage.send_entries + quicApplicationEntries(context) + (length > chunk ? 1 : 0) > state->max_buffers ||
         storage.send_allocation + pending.charge + chunk > (size_t) state->max_bytes * 2)
     {
         if (storage.send_entries == 0 && ! finishing)

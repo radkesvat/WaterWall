@@ -178,8 +178,8 @@ enum
     kTrojanServerMaxPendingBytes  = 2 * 1024 * 1024,
     kTrojanServerMaxFallbackCharge = 8 * 1024 * 1024,
     kTrojanServerUdpHeaderMaxLen  = 1 + 1 + UINT8_MAX + 2 + 2 + 2,
-    kTrojanServerMaxQueuedBuffers = 1024,
+
     kTrojanServerMaxInputCharge    = 8 * 1024 * 1024,
-    kTrojanServerMaxInputBuffers   = 1024,
+
     kTrojanServerMaxWireBytes = kTrojanServerMaxPendingBytes + kTrojanServerUdpHeaderMaxLen + kTrojanServerUdpMaxPacket
 };

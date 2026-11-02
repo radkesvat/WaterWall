@@ -23,6 +23,7 @@
 #define nodeState       keepaliveserver_lstate_t
 #define framePrefix     kKeepAliveServerFramePrefixSize
 #define reentryBytes    kKeepAliveServerMaxReentryBytes
+#define reentryCharge   kKeepAliveServerMaxReentryCharge
 #define readChargeLimit kKeepAliveServerReadChargeLimit
 #define encode(t, l, b) keepaliveserverTunnelDownStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveserverTunnelUpStreamPayload(t, l, b)
@@ -34,6 +35,7 @@
 #define nodeState       keepaliveclient_lstate_t
 #define framePrefix     kKeepAliveFramePrefixSize
 #define reentryBytes    kKeepAliveMaxReentryBytes
+#define reentryCharge   kKeepAliveMaxReentryCharge
 #define readChargeLimit kKeepAliveReadChargeLimit
 #define encode(t, l, b) keepaliveclientTunnelUpStreamPayload(t, l, b)
 #define decode(t, l, b) keepaliveclientTunnelDownStreamPayload(t, l, b)
@@ -230,11 +232,16 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         else
         {
-            unsigned queued = mode == 3 ? 1023 : 1024;
-            for (unsigned i = 0; i < queued; ++i)
-                encode(node, l, ordinary("Q", 1));
-            twfRequire(bufferqueueGetBufCount(&ls->write_reentry) == queued && (mode != 3 || ls->write_active != NULL),
-                       "encoder refused exact reentry entry limit");
+            const size_t active    = ls->write_active != NULL ? sbufGetQueueCharge(ls->write_active) : 0;
+            const size_t available = reentryCharge - active;
+            sbuf_t      *pending   = twfTrackAcquired(sbufCreateWithPadding(available - 128, 64));
+            sbufSetLength(pending, 1);
+            sbufWrite(pending, "Q", 1);
+            twfRequire(sbufGetQueueCharge(pending) == available, "charge fixture geometry changed");
+            encode(node, l, pending);
+            twfRequire(bufferqueueGetCharge(&ls->write_reentry) + active == reentryCharge &&
+                           (mode != 3 || ls->write_active != NULL),
+                       "encoder refused exact reentry charge limit");
         }
         encode(node, l, ordinary("X", 1));
     }

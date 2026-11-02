@@ -12,7 +12,7 @@ static void queueActivationPayload(reverseclient_pair_t *pair, sbuf_t *buf)
         return;
     }
     if ((uint64_t) pair->activation_reentry_bytes + length > kReverseClientPendingBytes ||
-        pair->activation_reentry_buffers >= kReverseClientPendingBuffers ||
+        pair->activation_reentry_buffers >= kReverseClientActivationDeliveries ||
         ! bufferqueueTryPushBack(&pair->activation_pending, &buf))
     {
         bufferpoolReuseBuffer(pool, buf);

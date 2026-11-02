@@ -46,8 +46,7 @@ void muxserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_cont
     }
 
     const buffer_budget_cost_t retained = bufferbudgetGetUsage(&registry->queue_budget);
-    if (UNLIKELY(registry->head != NULL || registry->count != 0 || retained.bytes != 0 || retained.charge != 0 ||
-                 retained.entries != 0))
+    if (UNLIKELY(registry->head != NULL || registry->count != 0 || retained.bytes != 0 || retained.charge != 0))
     {
         LOGF("MuxServer: worker %d detached registry accounting remained after drain "
              "(count=%u retained-charge=%zu)",

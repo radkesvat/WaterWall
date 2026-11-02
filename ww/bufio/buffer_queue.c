@@ -78,8 +78,7 @@ void bufferqueueDestroy(buffer_queue_t *self)
     }
 
     if (self->budget != NULL)
-        bufferbudgetRelease(self->budget,
-                            (buffer_budget_cost_t) {self->total_len, self->total_charge, bufferqueueGetBufCount(self)});
+        bufferbudgetRelease(self->budget, (buffer_budget_cost_t) {self->total_len, self->total_charge});
     ww_sbuffer_queue_t_drop(&self->q);
     bufferqueueInitEmpty(self);
 }
@@ -116,8 +115,7 @@ static sbuf_t *bufferqueueTakeBuffer(sbuf_t *buf)
 bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget)
 {
     assert(self->budget == NULL && budget != NULL);
-    if (! bufferbudgetTryAcquire(
-            budget, (buffer_budget_cost_t) {self->total_len, self->total_charge, bufferqueueGetBufCount(self)}))
+    if (! bufferbudgetTryAcquire(budget, (buffer_budget_cost_t) {self->total_len, self->total_charge}))
         return false;
     self->budget = budget;
     return true;
@@ -128,7 +126,7 @@ bool bufferqueueTryRebindBudget(buffer_queue_t *self, buffer_budget_t *destinati
     assert(self->budget != NULL && destination != NULL);
     if (self->budget == destination)
         return true;
-    const buffer_budget_cost_t cost = {self->total_len, self->total_charge, bufferqueueGetBufCount(self)};
+    const buffer_budget_cost_t cost = {self->total_len, self->total_charge};
     if (! bufferbudgetTryAcquire(destination, cost))
         return false;
     bufferbudgetRelease(self->budget, cost);
@@ -145,8 +143,7 @@ static bool bufferqueueTryInsert(buffer_queue_t *self, sbuf_t **b, bool front, b
     if (reservation != NULL)
     {
         assert(self->budget != NULL && reservation->budget == self->budget);
-        assert(reservation->cost.bytes == cost.bytes && reservation->cost.charge == cost.charge &&
-               reservation->cost.entries == cost.entries);
+        assert(reservation->cost.bytes == cost.bytes && reservation->cost.charge == cost.charge);
     }
     else if (self->budget != NULL && ! bufferbudgetTryAcquire(self->budget, cost))
         return false;
@@ -226,7 +223,7 @@ static sbuf_t *bufferqueuePop(buffer_queue_t *self, buffer_budget_reservation_t 
     self->total_charge -= charge;
     if (self->budget != NULL)
     {
-        buffer_budget_cost_t cost = {sbufGetLength(b), charge, 1};
+        buffer_budget_cost_t cost = {sbufGetLength(b), charge};
         if (reservation != NULL)
             *reservation = (buffer_budget_reservation_t) {self->budget, cost};
         else

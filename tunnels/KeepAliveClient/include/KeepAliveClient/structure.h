@@ -46,7 +46,7 @@ enum
     kKeepAliveMaxFrameBodyLength  = kKeepAliveMaxPayloadChunkSize + kKeepAliveFrameTypeSize,
     kKeepAliveReadChargeLimit     = 16U * 1024U * 1024U,
     kKeepAliveMaxReentryBytes     = 8U * 1024U * 1024U,
-    kKeepAliveMaxReentryBuffers   = 1024U,
+    kKeepAliveMaxReentryCharge    = 16U * 1024U * 1024U,
     kKeepAliveFrameKindNormal     = 1,
     kKeepAliveFrameKindPing       = 2,
     kKeepAliveFrameKindPong       = 3,

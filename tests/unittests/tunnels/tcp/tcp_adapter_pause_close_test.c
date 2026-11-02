@@ -805,7 +805,7 @@ static void runActiveWriteChargeCase(bool overflow)
                "real socket write did not retain the partial active allocation");
     twfRequire(ls->write_queue.active.budget == &ls->write_queue.budget &&
                    bufferbudgetGetUsage(&ls->write_queue.budget).bytes == pending_bytes &&
-                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 1,
+                   bufferbudgetGetUsage(&ls->write_queue.budget).charge == active_charge,
                "direct WIO return did not reconcile active logical bytes");
     const size_t suffix_capacity = kAwqMaxRetained - active_charge - sizeof(sbuf_t) - kSbufAllocationAlignment;
     sbuf_t      *suffix          = twfTrackAcquired(sbufCreate((uint32_t) suffix_capacity));
@@ -823,7 +823,7 @@ static void runActiveWriteChargeCase(bool overflow)
                "partial WIO progress released allocation charge before completion");
     twfRequire(ls->write_queue.active.cost.bytes == wioGetWriteBufSize(fixture.io) &&
                    bufferbudgetGetUsage(&ls->write_queue.budget).bytes == wioGetWriteBufSize(fixture.io) + 2 &&
-                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 2,
+                   bufferbudgetGetUsage(&ls->write_queue.budget).charge == kAwqMaxRetained,
                "partial callback did not release only consumed logical bytes");
     if (overflow)
     {
@@ -841,8 +841,7 @@ static void runActiveWriteChargeCase(bool overflow)
                "bounded partial-write fixture did not complete all surviving bytes");
     twfRequire(fixture.resumes == (overflow ? 0U : 1U), "partial-write drain repeated or omitted Resume");
     if (! overflow)
-        twfRequire(ls->write_queue.active.budget == NULL &&
-                       bufferbudgetGetUsage(&ls->write_queue.budget).entries == 0 &&
+        twfRequire(ls->write_queue.active.budget == NULL && bufferbudgetGetUsage(&ls->write_queue.budget).charge == 0 &&
                        bufferqueueGetCharge(&ls->write_queue.queue) == 0,
                    "completed write leaked capacity charge");
     progressTeardown(&fixture);
@@ -936,8 +935,7 @@ static void runDirectWriteFailureReentryCase(void)
                    ls->write_queue.active.cost.charge == active_charge &&
                    bufferqueueGetBufCount(&ls->write_queue.queue) == 1 &&
                    bufferbudgetGetUsage(&ls->write_queue.budget).charge == active_charge + queued_charge &&
-                   bufferbudgetGetUsage(&ls->write_queue.budget).entries == 2 && pause_calls == 0 &&
-                   fixture.resumes == 0,
+                   pause_calls == 0 && fixture.resumes == 0,
                "input following a failed direct write retried I/O or replaced the active reservation");
     for (unsigned i = 0; i < 8 && lineIsAlive(fixture.line); ++i)
         discard wloopProcessEvents(fixture.env.loop, 0);

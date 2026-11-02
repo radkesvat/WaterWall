@@ -27,11 +27,12 @@ static sbuf_t *ordinary(uint32_t capacity, const char *data, uint32_t length)
     return buf;
 }
 
-static void requireUsage(const adapter_write_queue_t *q, size_t bytes, size_t charge, size_t entries)
+static void requireUsage(adapter_write_queue_t *q, size_t bytes, size_t charge, size_t entries)
 {
     const buffer_budget_cost_t usage = awqGetUsage(q);
-    twfRequire(usage.bytes == bytes && usage.charge == charge && usage.entries == entries,
-               "retained byte/charge/entry accounting differs from ownership");
+    twfRequire(usage.bytes == bytes && usage.charge == charge &&
+                   bufferqueueGetBufCount(&q->queue) + (q->active.budget != NULL) == entries,
+               "retained accounting or owned buffer count differs");
 }
 
 static void completeOwned(adapter_write_queue_t *q, sbuf_t *buf, const char *expected, uint32_t bytes)

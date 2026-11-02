@@ -176,7 +176,7 @@ enum
     kHttpClientBufferQueueCap   = 8,
     kHttpClientMaxHeaderBytes   = 64 * 1024,
     kHttpClientHttp1ChunkBodyBytes   = 16 * 1024 - 12,
-    kHttpClientHttp1NestedMaxBuffers = 8,
+
     kHttpClientHttp1NestedMaxBytes   = 1024 * 1024,
     kHttpClientHttp1NestedMaxCharge  = 2 * 1024 * 1024,
     kHttpClientHttp2DataBytes        = 16 * 1024 - 9,

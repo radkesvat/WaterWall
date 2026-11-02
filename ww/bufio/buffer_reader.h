@@ -46,13 +46,13 @@ sbuf_t *bufferreaderTakeBody(buffer_reader_t *reader, uint32_t bytes);
  * when absent; storage boundaries need not coincide with original admissions. */
 sbuf_t *bufferreaderTakeChunk(buffer_reader_t *reader);
 /* Settle after incomplete parsing or nested admission. Within the inclusive
- * charge/entry bounds this is a no-op; otherwise coalesce unread sources in FIFO
+ * charge bound this is a no-op; otherwise coalesce unread sources in FIFO
  * order, reusing append room and growing assembly geometrically within max_charge.
  * Preserves feasible splice representation with complete ordinary fallback.
  * False means ordinary fallback cannot fit max_charge, leaves input unchanged,
- * and requires caller cleanup. max_entries must be nonzero. Cached metadata and
+ * and requires caller cleanup. Cached metadata and
  * logical-byte accounting stay intact; charge excludes the fixed header cache. */
-bool bufferreaderSettle(buffer_reader_t *reader, size_t max_charge, size_t max_entries);
+bool bufferreaderSettle(buffer_reader_t *reader, size_t max_charge);
 
 /* Transfer to an initialized empty unbound queue before output-budget attachment
  * or fallback replay. restore_header prepends the inspected prefix; otherwise

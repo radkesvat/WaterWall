@@ -82,16 +82,16 @@ static bool quicAdmitApplication(quic_context_t *context, sbuf_t *buffer)
         return false;
     }
     size_t marker = state->client && storage.send_bytes == 0 && ! ww_quic_engine_ready(context->engine) ? 1 : 0;
+    size_t entries = quicApplicationEntries(context);
     if (cost.bytes + used.bytes + storage.send_bytes + marker > state->max_bytes ||
-        cost.entries + used.entries + storage.send_entries + marker > state->max_buffers ||
+        1 + entries + storage.send_entries + marker > state->max_buffers ||
         cost.charge + used.charge + storage.send_allocation > (size_t) state->max_bytes * 2)
     {
-        LOGD("QUIC send admission refused: bytes=%zu+%zu+%zu entries=%zu+%zu+%zu charge=%zu+%zu+%zu limits=%u/%u",
+        LOGD("QUIC send admission refused: bytes=%zu+%zu+%zu entries=1+%zu+%zu charge=%zu+%zu+%zu limits=%u/%u",
              cost.bytes,
              used.bytes,
              storage.send_bytes,
-             cost.entries,
-             used.entries,
+             entries,
              storage.send_entries,
              cost.charge,
              used.charge,
@@ -124,7 +124,8 @@ static void quicSubmit(tunnel_t *t, line_t *l, sbuf_t *buffer, quic_input_kind_t
     {
         size_t retained = ww_quic_carrier_retained(&context->carrier);
         size_t queued   = bufferbudgetGetUsage(&context->input_budget).bytes;
-        admitted        = retained + queued + sbufGetLength(buffer) <= state->max_bytes &&
+        admitted        = quicInputEntries(context) < state->max_buffers &&
+                   retained + queued + sbufGetLength(buffer) <= state->max_bytes &&
                    bufferqueueTryPushBack(&context->input, &buffer);
     }
     if (! admitted)

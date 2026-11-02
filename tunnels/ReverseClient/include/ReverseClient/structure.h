@@ -76,7 +76,7 @@ enum
     kLineStateSize                  = sizeof(reverseclient_lstate_t),
     kConnectionStarvationTimeOutSec = 30,
     kReverseClientPendingBytes      = 2 * 1024 * 1024,
-    kReverseClientPendingBuffers    = 1024
+    kReverseClientActivationDeliveries = 1024
 };
 
 WW_EXPORT void         reverseclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

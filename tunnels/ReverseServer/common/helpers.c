@@ -143,9 +143,9 @@ bool reverseserverRetainPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         return true;
     }
     const buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->pending_budget);
-    if (length > kReverseServerPendingBytes - used.bytes || used.entries >= kReverseServerPendingBuffers ||
+    if (length > kReverseServerPendingBytes - used.bytes ||
         (ls->replaying && (ls->replay_admitted + length > kReverseServerPendingBytes ||
-                           ls->replay_admitted_buffers >= kReverseServerPendingBuffers)))
+                           ls->replay_admitted_buffers >= kReverseServerReplayDeliveries)))
     {
         lineReuseBuffer(line, buf);
         reverseserverCloseLine(t, line);
@@ -154,7 +154,7 @@ bool reverseserverRetainPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     buf = sbufEnsureOrdinary(lineGetBufferPool(line), buf);
     if (! bufferqueueTryPushBack(&ls->pending, &buf))
     {
-        LOGD("ReverseServer: application backlog exceeds its byte or buffer limit");
+        LOGD("ReverseServer: application backlog exceeds its byte or charge limit");
         lineReuseBuffer(line, buf);
         reverseserverCloseLine(t, line);
         return false;

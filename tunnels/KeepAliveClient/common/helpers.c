@@ -81,8 +81,11 @@ void keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         const size_t pending =
             bufferqueueGetBufLen(&ls->write_reentry) + (ls->write_active != NULL ? sbufGetLength(ls->write_active) : 0);
+        const size_t active_charge = ls->write_active != NULL ? sbufGetQueueCharge(ls->write_active) : 0;
+        const size_t queued_charge = bufferqueueGetCharge(&ls->write_reentry);
         if (pending > kKeepAliveMaxReentryBytes || length > kKeepAliveMaxReentryBytes - pending ||
-            bufferqueueGetBufCount(&ls->write_reentry) + (ls->write_active != NULL) >= kKeepAliveMaxReentryBuffers ||
+            active_charge > kKeepAliveMaxReentryCharge || queued_charge > kKeepAliveMaxReentryCharge - active_charge ||
+            sbufGetQueueCharge(buf) > kKeepAliveMaxReentryCharge - active_charge - queued_charge ||
             ! bufferqueueTryPushBack(&ls->write_reentry, &buf))
         {
             lineReuseBuffer(l, buf);

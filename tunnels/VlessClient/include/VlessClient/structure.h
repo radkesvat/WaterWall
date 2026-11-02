@@ -36,7 +36,7 @@ typedef enum vlessclient_close_origin_e
 enum
 {
     kVlessClientMaxOrderBytes       = 2 * 1024 * 1024,
-    kVlessClientMaxOrderEntries     = 1024,
+    kVlessClientMaxOrderCharge      = 8U * 1024U * 1024U,
     kVlessClientUuidLen             = 16,
     kVlessClientResponseLen         = 2,
     kVlessClientUdpHeaderLen        = kVlessUdpHeaderLen,
@@ -47,7 +47,6 @@ enum
     kVlessClientMaxTcpWireBytes     = 2097409,
     kVlessClientMaxUdpBufferedBytes = 2162689,
     kVlessClientMaxInputCharge      = 8 * 1024 * 1024,
-    kVlessClientMaxInputBuffers     = 1024,
 };
 
 typedef struct vlessclient_tstate_s

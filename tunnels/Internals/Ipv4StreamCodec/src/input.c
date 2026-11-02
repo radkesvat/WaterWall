@@ -5,11 +5,7 @@ void ipv4streamInputInit(ipv4stream_input_t *input)
     *input = (ipv4stream_input_t) {0};
     bufferqueueInitEmpty(&input->pending);
     bufferbudgetInit(&input->budget,
-                     (buffer_budget_cost_t) {
-                         .bytes   = kIpv4StreamNestedBytes,
-                         .charge  = kIpv4StreamNestedCharge,
-                         .entries = kIpv4StreamNestedEntries,
-                     });
+                     (buffer_budget_cost_t) {.bytes = kIpv4StreamNestedBytes, .charge = kIpv4StreamNestedCharge});
     const bool attached = bufferqueueTryAttachBudget(&input->pending, &input->budget);
     assert(attached);
     discard attached;
@@ -52,7 +48,7 @@ bool ipv4streamInputAdvance(ipv4stream_input_t *input, buffer_stream_t *stream)
 {
     assert(input->draining);
     assert(bufferstreamGetBufLen(stream) < kMaxAllowedPacketLength);
-    const bool settled = bufferstreamSettleRetained(stream, kIpv4StreamIncompleteCharge, kIpv4StreamNestedEntries);
+    const bool settled = bufferstreamSettleRetained(stream, kIpv4StreamIncompleteCharge);
     assert(settled);
     discard settled;
     bufferbudgetReservationRelease(&input->active);

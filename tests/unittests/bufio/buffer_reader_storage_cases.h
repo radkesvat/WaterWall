@@ -257,14 +257,14 @@ static void testBufferReaderRetainedStorage(buffer_pool_t *pool)
     bufferreaderConsumeHeader(&reader);
     readerTestPush(&reader, streamTestBytes(pool, "cd", 2));
     const size_t charge = bufferreaderCharge(&reader);
-    require(bufferreaderSettle(&reader, charge, 2) && bufferreaderHeadLength(&reader) == 2 &&
+    require(bufferreaderSettle(&reader, charge) && bufferreaderHeadLength(&reader) == 2 &&
                 bufferreaderEntryCount(&reader) == 2 && bufferreaderCharge(&reader) == charge,
             "settling within the exact limits changed storage");
-    require(bufferreaderSettle(&reader, charge, 1) && bufferreaderHeadLength(&reader) == 4 &&
+    require(bufferreaderSettle(&reader, charge - 1U) && bufferreaderHeadLength(&reader) == 4 &&
                 bufferreaderEntryCount(&reader) == 1,
-            "entry pressure did not combine input");
+            "charge pressure did not combine input");
     sbuf_t *body = bufferreaderTakeChunk(&reader);
-    require(body == head, "entry pressure discarded existing append room");
+    require(body == head, "charge pressure discarded existing append room");
     streamCheckBytes(pool, body, "abcd", 4);
     bufferreaderDestroy(&reader);
 
@@ -280,7 +280,7 @@ static void testBufferReaderRetainedStorage(buffer_pool_t *pool)
         head = readerTestPush(&reader, input);
         require(bufferreaderGather(&reader, 1), "oversized-head fixture could not gather metadata");
         bufferreaderConsumeHeader(&reader);
-        require(bufferreaderSettle(&reader, fit.allocation_charge - ! fits, 1) == (fits != 0),
+        require(bufferreaderSettle(&reader, fit.allocation_charge - ! fits) == (fits != 0),
                 "retained storage accepted an impossible budget or refused fitting storage");
         require(bufferreaderLength(&reader) == 4 && bufferreaderEntryCount(&reader) == 1,
                 "settlement changed logical bytes or input ownership");
@@ -306,9 +306,14 @@ static void testBufferReaderRetainedStorage(buffer_pool_t *pool)
     unsigned replacements = 0;
     for (uint32_t offset = 0; offset < sizeof(expected); offset += 256)
     {
-        readerTestPush(&reader, streamTestBytes(pool, expected + offset, 256));
+        sbuf_t *fragment = bufferpoolGetLargeBuffer(pool);
+        sbufSetLength(fragment, 256);
+        sbufWrite(fragment, expected + offset, 256);
+        readerTestPush(&reader, fragment);
         sbuf_t *saved = reader.head;
-        require(bufferreaderSettle(&reader, 128 * 1024, 1), "bounded fragmented body could not compact");
+        require(bufferpoolQueryBestFit(pool, offset + 256U, bufferpoolGetLargeBufferPadding(pool), &fit),
+                "fragmented-body fixture geometry failed");
+        require(bufferreaderSettle(&reader, fit.allocation_charge), "bounded fragmented body could not compact");
         if (reader.head != NULL && saved != reader.head)
             ++replacements;
         require(bufferreaderEntryCount(&reader) == 1 && bufferreaderLength(&reader) == offset + 256U,
@@ -332,9 +337,15 @@ static void testBufferReaderRetainedSplice(buffer_pool_t *pool)
             require(bufferreaderGather(&reader, 1), "splice retention fixture could not activate its head");
             bufferreaderConsumeHeader(&reader);
             readerTestPush(&reader, readerTestInput(pool, (const uint8_t *) "def", 3, 1));
+            /* Retained empty storage creates real charge pressure while keeping
+             * the body split across both splice sources. */
+            readerTestPush(&reader, bufferpoolGetLargeBuffer(pool));
+            buffer_pool_fit_t fit;
+            require(bufferpoolQueryBestFit(pool, 6, bufferpoolGetLargeBufferPadding(pool), &fit),
+                    "splice retention fixture geometry failed");
             streamProbe         = true;
             streamTransferFault = fault ? 3 : 0;
-            require(bufferreaderSettle(&reader, 128 * 1024, 1), "splice retention could not compact");
+            require(bufferreaderSettle(&reader, fit.allocation_charge), "splice retention could not compact");
             streamProbe         = false;
             streamTransferFault = 0;
             require(bufferreaderEntryCount(&reader) == 1, "splice compaction retained multiple entries");
@@ -359,8 +370,7 @@ static void testBufferReaderRetainedSplice(buffer_pool_t *pool)
     buffer_pool_fit_t fit;
     require(bufferpoolQueryBestFit(fixture.pool, 80, 0, &fit) && sbufGetQueueCharge(head) <= fit.allocation_charge,
             "differing splice padding fixture does not fit its initial head");
-    require(bufferreaderSettle(&reader, fit.allocation_charge, 1) &&
-                bufferreaderCharge(&reader) <= fit.allocation_charge,
+    require(bufferreaderSettle(&reader, fit.allocation_charge) && bufferreaderCharge(&reader) <= fit.allocation_charge,
             "splice append bypassed the final retained charge limit");
     sbuf_t *body = bufferreaderTakeChunk(&reader);
     require(! sbufIsSplice(body), "pipe charge pressure did not select fitting ordinary storage");

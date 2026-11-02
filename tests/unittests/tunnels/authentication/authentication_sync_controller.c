@@ -212,6 +212,21 @@ static void controllerConsumerPressure(tunnel_t *t, line_t *l, bool upstream, bo
         tunnelUpStreamResume(t, l);
 }
 
+static size_t controllerDatagramAllowance(tunnel_t *t, line_t *l, size_t *charge)
+{
+    usercontroller_lstate_t   *ls     = lineGetState(l, t);
+    const buffer_budget_cost_t limits = bufferbudgetGetLimits(&ls->budget);
+    const buffer_budget_cost_t used   = bufferbudgetGetUsage(&ls->budget);
+    require(used.bytes == 0 && used.charge == 0, "datagram allowance fixture retained earlier input");
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(lineGetBufferPool(l), 1, 0, &fit), "datagram fixture allocation geometry");
+    *charge            = fit.allocation_charge;
+    const size_t count = min(limits.bytes, limits.charge / *charge);
+    require(count > 256 && count + 1 <= ARRAY_SIZE(frame_lengths),
+            "datagram fixture must exceed the former count cap within trace capacity");
+    return count;
+}
+
 static void controllerDatagramPressureCases(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned))
 {
     for (unsigned direction = 0; direction < 2; ++direction)
@@ -225,25 +240,28 @@ static void controllerDatagramPressureCases(tunnel_t *auth, tunnel_chain_t *chai
         line_t *first                                                       = authTestControllerOpen(a, chain);
         controllerSend(a, first, 100, 'b', upstream);
         require(delivered[direction] == 100, "datagram initial burst");
-        for (unsigned i = 0; i < 256; ++i)
+        size_t       charge;
+        const size_t allowance = controllerDatagramAllowance(a, first, &charge);
+        for (size_t i = 0; i < allowance; ++i)
             controllerSend(a, first, 1, 'q', upstream);
         controllerSend(a, first, 1, 'x', upstream);
         usercontroller_lstate_t *ls = lineGetState(first, a);
-        require(lineIsAlive(first) && trafficshaperPending(&ls->directions[direction].shaper) == 256 && pauses == 0 &&
-                    resumes == 0,
+        require(lineIsAlive(first) && trafficshaperPending(&ls->directions[direction].shaper) == allowance &&
+                    ls->budget.used.bytes == allowance && ls->budget.used.charge == allowance * charge &&
+                    ls->budget.limits.charge - ls->budget.used.charge < charge && pauses == 0 && resumes == 0,
                 "local datagram backlog must admit up to its bound without pausing the producer");
         user_stat_t stats = controllerStats(auth);
         require((upstream ? stats.traffic.u : stats.traffic.d) == 100, "retained or overflow datagram charged quota");
         controllerPolicy(auth, 0, 0, 0);
         advance(100);
-        for (unsigned i = 0; i < 256; ++i)
+        for (size_t i = 0; i < allowance; ++i)
             advance(0);
-        require(frames == 257 && delivered[direction] == 356 && pauses == 0 && resumes == 0,
+        require(frames == allowance + 1 && delivered[direction] == allowance + 100 && pauses == 0 && resumes == 0,
                 "datagram drain lost accepted packets or emitted a local Resume");
         for (unsigned i = 1; i < frames; ++i)
             require(frame_lengths[i] == 1 && frame_marks[i] == 'q', "overflow changed the accepted datagram FIFO");
         require(trafficshaperPending(&ls->directions[direction].shaper) == 0 && ls->directions[direction].ticket == 0 &&
-                    ls->budget.used.entries == 0,
+                    ls->budget.used.bytes == 0 && ls->budget.used.charge == 0,
                 "final datagram handoff retained its waiter or buffer budget");
         controllerClose(a, first);
         authTestControllerDestroy(a);
@@ -374,11 +392,15 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     advance(1000);
     require(delivered[0] == 4 && frames == 3 && frame_marks[2] == 'y', "1 byte/s datagram progress");
     usercontrollerTunnelDownStreamPause(a, first);
+    size_t       charge;
+    const size_t allowance = controllerDatagramAllowance(a, first, &charge);
     controllerSend(a, first, 1, 'q', true);
-    for (unsigned i = 0; i < 300; ++i)
+    for (size_t i = 1; i < allowance; ++i)
         controllerSend(a, first, 1, 'z', true);
+    controllerSend(a, first, 1, 'x', true);
     usercontroller_lstate_t *ls = lineGetState(first, a);
-    require(lineIsAlive(first) && trafficshaperPending(&ls->directions[0].shaper) == 256,
+    require(lineIsAlive(first) && trafficshaperPending(&ls->directions[0].shaper) == allowance &&
+                ls->budget.used.bytes == allowance && ls->budget.used.charge == allowance * charge,
             "datagram overflow did not preserve bounded accepted FIFO");
     require(controllerStats(auth).traffic.u == 4, "overflow datagram charged quota");
     usercontrollerTunnelOnQuiesceRequest(a, wwLifecycleProcessShutdown());

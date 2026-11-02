@@ -365,7 +365,12 @@ static void     fillBacklog(tunnel_t *t, line_t *l, sbuf_t *b)
     uint8_t *data = memoryAllocate(nested_bytes ? nested_bytes : 1);
     memset(data, 'B', nested_bytes ? nested_bytes : 1);
     for (unsigned i = 0; i < nested_entries && lineIsAlive(l); ++i)
-        deliver(data, nested_bytes);
+    {
+        sbuf_t *input = twfTrackAcquired(sbufCreateWithPadding(nested_bytes, 300));
+        sbufWrite(input, data, nested_bytes);
+        sbufSetLength(input, nested_bytes);
+        tunnelDownStreamPayload(client, control, input);
+    }
     memoryFree(data);
     socks5client_lstate_t *ls = lineGetState(control, client);
     twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_down) == nested_entries &&
@@ -375,17 +380,23 @@ static void     fillBacklog(tunnel_t *t, line_t *l, sbuf_t *b)
         deliver(NULL, 0);
     twfRequire(bufferqueueGetBufCount(&ls->pending_down) == nested_entries, "empty TCP consumed retained entries");
     if (overflow_backlog)
-        deliver("X", 1);
+    {
+        sbuf_t *extra = nested_entries > 1 ? twfTrackAcquired(sbufCreateWithPadding(kSocks5ClientMaxPendingCharge, 300))
+                                           : bytes("X", 1);
+        sbufSetLength(extra, 1);
+        sbufWrite(extra, "X", 1);
+        tunnelDownStreamPayload(client, control, extra);
+    }
 }
 static void boundaries(void)
 {
     for (unsigned scenario = 0; scenario < 4; ++scenario)
     {
-        twfSetCase("downstream retained byte/entry equality and refusal");
+        twfSetCase("downstream retained byte/charge equality and refusal");
         setup(false, false);
         negotiate();
         prev->fnPayloadD = fillBacklog;
-        nested_entries   = scenario & 1 ? kSocks5ClientMaxPendingBuffers : 1;
+        nested_entries   = scenario & 1 ? 2048 : 1;
         nested_bytes     = scenario & 1 ? 1 : kSocks5ClientMaxPendingDownBytes;
         overflow_backlog = (scenario & 2) != 0;
         uint8_t wire[sizeof(command_reply) + 1];

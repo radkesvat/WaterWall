@@ -359,7 +359,9 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* Established state exists only until the initial replay retires it. */
         if (UNLIKELY(sbufGetLength(buf) > kHeaderServerMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                     bufferqueueGetBufCount(&ls->initial_reentry) >= kHeaderServerMaxReentryBuffers ||
+                     bufferqueueGetCharge(&ls->initial_reentry) > kHeaderServerMaxReentryCharge ||
+                     sbufGetQueueCharge(buf) >
+                         kHeaderServerMaxReentryCharge - bufferqueueGetCharge(&ls->initial_reentry) ||
                      ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
         {
             lineReuseBuffer(l, buf);

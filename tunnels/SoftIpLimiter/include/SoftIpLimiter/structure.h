@@ -125,7 +125,7 @@ typedef struct softiplimiter_lstate_s
 enum
 {
     kSoftIpLimiterMaxReentryBytes   = 2U * 1024U * 1024U,
-    kSoftIpLimiterMaxReentryBuffers = 1024U,
+    kSoftIpLimiterMaxReentryCharge  = 8U * 1024U * 1024U,
     kTunnelStateSize                = sizeof(softiplimiter_tstate_t),
     kLineStateSize                  = sizeof(softiplimiter_lstate_t)
 };

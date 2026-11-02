@@ -131,7 +131,7 @@ enum
     kLineStateSize                     = sizeof(socks5server_lstate_t),
     kSocks5ServerMaxControlPrefixBytes = 3 + 2 * UINT8_MAX, // RFC 1929 username/password request.
     kSocks5ServerMaxPendingBytes       = 1024 * 1024,
-    kSocks5ServerMaxPendingBuffers     = 1024,
+    kSocks5ServerMaxPendingCharge      = 8U * 1024U * 1024U,
     kSocks5ServerUdpHeaderMaxLen       = 4 + 1 + UINT8_MAX + 2
 };
 

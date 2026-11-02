@@ -12,7 +12,7 @@ void muxclientLinestateInitialize(tunnel_t *t, muxclient_lstate_t *ls, line_t *l
         parent_state              = memoryAllocateZero(sizeof(*parent_state));
         parent_state->t           = t;
         bufferbudgetInit(&parent_state->child_queue_budget,
-                         (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX, .entries = SIZE_MAX});
+                         (buffer_budget_cost_t) {.bytes = SIZE_MAX, .charge = SIZE_MAX});
         parent_state->read_stream = splicestreamCreate(lineGetBufferPool(l), kMuxFrameLength);
         bufferqueueInitEmpty(&parent_state->output.pending);
         parent_state->child_map = muxclient_child_map_t_init();
@@ -78,7 +78,7 @@ void muxclientLinestateDestroy(muxclient_lstate_t *ls)
             abortProgramNow(1);
         }
         const buffer_budget_cost_t usage = bufferbudgetGetUsage(&ls->parent_state->child_queue_budget);
-        if (UNLIKELY(usage.bytes != 0 || usage.charge != 0 || usage.entries != 0))
+        if (UNLIKELY(usage.bytes != 0 || usage.charge != 0))
         {
             LOGF("MuxClient: Trying to destroy parent line state with retained child-queue budget usage");
             abortProgramNow(1);

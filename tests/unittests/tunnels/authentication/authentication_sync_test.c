@@ -2679,15 +2679,16 @@ static void testSharedBandwidthReservations(void)
     uint64_t first  = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
     uint64_t second = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthDownload);
     require(first != 0 && second > first, "client tickets not unique");
-    buffer_budget_cost_t cost = {3U << 20, 3U << 20, 100};
+    buffer_budget_cost_t cost = {3U << 20, 3U << 20};
     require(authenticationclientUserBandwidthReserve(clients[0], &handle, first, cost), "shared user reservation");
     require(! authenticationclientUserBandwidthReserve(
-                clients[0], &handle, second, (buffer_budget_cost_t) {2U << 20, 2U << 20, 1}),
+                clients[0], &handle, second, (buffer_budget_cost_t) {2U << 20, 2U << 20}),
             "shared user byte limit bypassed");
-    require(! authenticationclientUserBandwidthReserve(clients[0], &handle, second, (buffer_budget_cost_t) {0, 0, 925}),
-            "shared user empty-entry limit bypassed");
+    require(! authenticationclientUserBandwidthReserve(
+                clients[0], &handle, second, (buffer_budget_cost_t) {0, (5U << 20) + 1}),
+            "shared user retained-charge limit bypassed");
     require(state(0)->bandwidth_queued_cost.bytes == cost.bytes &&
-                state(0)->bandwidth_queued_cost.entries == cost.entries,
+                state(0)->bandwidth_queued_cost.charge == cost.charge,
             "refused reservation changed client totals");
     users_t *replacement = memoryAllocateAligned(sizeof(*replacement), 32);
     require(usersCreate(replacement), "replacement users");
@@ -2709,9 +2710,8 @@ static void testSharedBandwidthReservations(void)
         "recreated user accepted stale waiter");
     uint64_t recreated = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
     require(recreated > second, "recreated account reused ticket");
-    require(
-        authenticationclientUserBandwidthReserve(clients[0], &handle, recreated, (buffer_budget_cost_t) {10, 100, 1}),
-        "recreated account reservation");
+    require(authenticationclientUserBandwidthReserve(clients[0], &handle, recreated, (buffer_budget_cost_t) {10, 100}),
+            "recreated account reservation");
     authenticationclientUserBandwidthRelease(clients[0], &handle, first, cost);
     require(usersLookupByIdentifier(replacement, 42)->runtime.queued_cost.bytes == 10 &&
                 state(0)->bandwidth_queued_cost.bytes == 10,
@@ -3763,7 +3763,7 @@ static void testPagingPreservesRuntimeAndFractionalCarry(void)
     require(authenticationclientUserTryAdmitConnection(clients[0], &handle, &ip, 100000) == kUserAdmissionOk,
             "page runtime admission fixture");
     const uint64_t ticket = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
-    const buffer_budget_cost_t cost = {.bytes = 12, .charge = 64, .entries = 1};
+    const buffer_budget_cost_t cost = {.bytes = 12, .charge = 64};
     require(ticket != 0 && authenticationclientUserBandwidthReserve(clients[0], &handle, ticket, cost),
             "page runtime queue fixture");
     authenticationclientUserBandwidthSetEligible(clients[0], &handle, kUserBandwidthUpload, ticket, true);
@@ -3849,7 +3849,7 @@ static void testOrphanDebtAndProvedBatchRejection(void)
         require(authenticationclientUserTryAdmitConnection(clients[0], &removed, &ip, 100000) == kUserAdmissionOk,
                 "removed-account reservation fixture");
         const uint64_t ticket = authenticationclientUserBandwidthRegister(clients[0], &removed, kUserBandwidthUpload);
-        const buffer_budget_cost_t cost = {.bytes = 1, .charge = 64, .entries = 1};
+        const buffer_budget_cost_t cost = {.bytes = 1, .charge = 64};
         require(ticket != 0 && authenticationclientUserBandwidthReserve(clients[0], &removed, ticket, cost),
                 "removed-account shaping fixture");
         require(authenticationclientUserAddTraffic(clients[0], &removed, 7, 0) &&

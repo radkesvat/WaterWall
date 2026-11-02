@@ -105,13 +105,15 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
 
-static void overflowReentryEntries(est_fixture_t *f, line_t *l)
+static void overflowReentryCharge(est_fixture_t *f, line_t *l)
 {
-    for (unsigned i = 0; i < kSoftIpLimiterMaxReentryBuffers; ++i)
-        softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
+    sbuf_t *retained = twfTrackAcquired(sbufCreateWithPadding(kSoftIpLimiterMaxReentryCharge - 128, 64));
+    sbufSetLength(retained, 0);
+    twfRequire(sbufGetQueueCharge(retained) == kSoftIpLimiterMaxReentryCharge, "charge fixture geometry changed");
+    softiplimiterTunnelUpStreamPayload(f->node, l, retained);
     softiplimiter_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufCount(&ls->initial_reentry) == kSoftIpLimiterMaxReentryBuffers,
-               "SoftIpLimiter rejected exact transient reentry entry limit");
+    twfRequire(bufferqueueGetCharge(&ls->initial_reentry) == kSoftIpLimiterMaxReentryCharge,
+               "exact reentry charge limit rejected");
     softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "", 0));
 }
 
@@ -300,7 +302,7 @@ static void testStartupPressure(bool passthrough, startup_pressure_action_t acti
 int main(void)
 {
     testReentryLimit(overflowReentryBytes);
-    testReentryLimit(overflowReentryEntries);
+    testReentryLimit(overflowReentryCharge);
     testInitialOrder(false, false);
     testInitialOrder(true, false);
     testInitialOrder(false, true);

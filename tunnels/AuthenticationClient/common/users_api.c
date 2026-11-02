@@ -872,10 +872,9 @@ void authenticationclientUserBandwidthSetEligible(tunnel_t *t, const user_handle
 
 static void authenticationclientBandwidthCostSubtract(buffer_budget_cost_t *used, buffer_budget_cost_t cost)
 {
-    assert(used->bytes >= cost.bytes && used->charge >= cost.charge && used->entries >= cost.entries);
+    assert(used->bytes >= cost.bytes && used->charge >= cost.charge);
     used->bytes -= cost.bytes;
     used->charge -= cost.charge;
-    used->entries -= cost.entries;
 }
 
 void authenticationclientUserBandwidthCancel(tunnel_t *t, const user_handle_t *handle,
@@ -910,8 +909,7 @@ bool authenticationclientUserBandwidthReserve(tunnel_t *t, const user_handle_t *
     mutexLock(&ts->control_mutex);
     authenticationclient_bandwidth_ticket_t *record = authenticationclientBandwidthTicket(ts, handle->user_id, ticket);
     buffer_budget_cost_t                    *used   = &ts->bandwidth_queued_cost;
-    if (record == NULL || cost.bytes > (64U << 20) - used->bytes || cost.charge > (128U << 20) - used->charge ||
-        cost.entries > 16384 - used->entries)
+    if (record == NULL || cost.bytes > (64U << 20) - used->bytes || cost.charge > (128U << 20) - used->charge)
         goto done;
     rwlockReadLock(&ts->users_lock);
     ok = authenticationclientHandleCurrentLocked(ts, handle) &&
@@ -922,10 +920,8 @@ bool authenticationclientUserBandwidthReserve(tunnel_t *t, const user_handle_t *
     {
         used->bytes += cost.bytes;
         used->charge += cost.charge;
-        used->entries += cost.entries;
         record->cost.bytes += cost.bytes;
         record->cost.charge += cost.charge;
-        record->cost.entries += cost.entries;
     }
 done:
     mutexUnlock(&ts->control_mutex);

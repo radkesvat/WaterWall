@@ -159,11 +159,14 @@ static void receiveBody(tunnel_t *t, line_t *line, sbuf_t *buf)
         }
         else
         {
-            for (unsigned i = 0; i <= kHttpReceiveNestedEntries; ++i)
+            size_t charge = 0;
+            do
             {
-                twfRequire(state()->tunnel == f.http, "nested input entry limit rejected an admitted prefix");
-                httpReceive(f.http, f.line, allocateInput(1));
-            }
+                twfRequire(state()->tunnel == f.http, "nested input charge limit rejected a fitting prefix");
+                sbuf_t *nested = allocateInput(1);
+                charge += sbufGetQueueCharge(nested);
+                httpReceive(f.http, f.line, nested);
+            } while (charge <= kHttpReceiveNestedCharge);
         }
     }
     if (f.close)
@@ -257,8 +260,6 @@ static void requireBounded(void)
                "HTTP retained too many undecoded bytes");
     twfRequire(bufferstreamGetCharge(&state()->in_stream) <= kHttpReceiveStreamCharge,
                "HTTP retained too much input allocation charge");
-    twfRequire(bufferstreamGetEntryCount(&state()->in_stream) <= kHttpReceiveNestedEntries,
-               "HTTP retained too many input allocations");
 }
 
 static void caseLargeBody(bool websocket, bool coalesced)
@@ -375,7 +376,7 @@ static void caseSmallRetainedTail(bool websocket)
 
 static void caseNestedOverflow(bool websocket, unsigned mode)
 {
-    twfSetCase("HTTP nested input rejects bytes, charge or entry overflow and closes one line");
+    twfSetCase("HTTP nested input rejects byte or allocation-charge overflow and closes one line");
     setup(websocket);
     startBody();
     f.overflow = mode;

@@ -22,12 +22,12 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     size_t limit = ls->kind == kVlessClientLineKindDirect
                        ? (ls->response_complete ? kVlessClientMaxOrderBytes : kVlessClientMaxTcpWireBytes)
                        : kVlessClientMaxUdpBufferedBytes;
-    /* A completed TCP response leaves body-ordering storage, not UDP parser
-     * fragments. Count every still-local head once; handoff removes it before
-     * callbacks can admit more input. Ready synchronous forwarding stays above. */
-    bool entries_full = ls->kind == kVlessClientLineKindDirect && ls->response_complete &&
-                        bufferreaderEntryCount(&ls->reader) >= kVlessClientMaxOrderEntries;
-    if (UNLIKELY(entries_full || ! bufferreaderTryPush(&ls->reader, &buf, limit)))
+    /* Nested TCP output retains allocation capacity until its ordered handoff. */
+    const size_t retained_charge = bufferreaderCharge(&ls->reader);
+    const bool   charge_full     = ls->kind == kVlessClientLineKindDirect && ls->response_complete &&
+                             (retained_charge > kVlessClientMaxOrderCharge ||
+                              sbufGetQueueCharge(buf) > kVlessClientMaxOrderCharge - retained_charge);
+    if (UNLIKELY(charge_full || ! bufferreaderTryPush(&ls->reader, &buf, limit)))
     {
         lineReuseBuffer(l, buf);
         vlessclientCloseLine(t, l, kVlessClientCloseInternal);
@@ -36,8 +36,7 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->receiving)
     {
         /* UDP input must settle while the outer callback owns the parser. */
-        if (ls->kind == kVlessClientLineKindUdpCarrier &&
-            ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge, kVlessClientMaxInputBuffers))
+        if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge))
             vlessclientCloseLine(t, l, kVlessClientCloseInternal);
         return;
     }
@@ -79,8 +78,7 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (vlessclientAssociationAlive(t, l, application))
     {
         /* Complete frames drain first, including after response metadata. */
-        if (ls->kind == kVlessClientLineKindUdpCarrier &&
-            ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge, kVlessClientMaxInputBuffers))
+        if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge))
             vlessclientCloseLine(t, l, kVlessClientCloseInternal);
         else
         {

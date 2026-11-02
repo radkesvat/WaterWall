@@ -30,15 +30,13 @@ static bool readerGatherPrefix(buffer_pool_t *pool, sbuf_t **active_head, buffer
     return true;
 }
 
-static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buffer_queue_t *tail, size_t max_charge,
-                                 size_t max_entries)
+static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buffer_queue_t *tail, size_t max_charge)
 {
-    assert(pool != NULL && active_head != NULL && tail != NULL && max_entries != 0);
+    assert(pool != NULL && active_head != NULL && tail != NULL);
     assert(tail->budget == NULL);
     sbuf_t      *head        = *active_head;
     const size_t head_charge = head == NULL ? 0 : sbufGetQueueCharge(head);
-    if (head_charge <= max_charge && bufferqueueGetCharge(tail) <= max_charge - head_charge &&
-        bufferqueueGetBufCount(tail) <= max_entries - (head != NULL))
+    if (head_charge <= max_charge && bufferqueueGetCharge(tail) <= max_charge - head_charge)
         return true;
 
     const uint32_t head_bytes = head == NULL ? 0 : sbufGetLength(head);
@@ -243,9 +241,9 @@ sbuf_t *bufferreaderTakeChunk(buffer_reader_t *reader)
     return body;
 }
 
-bool bufferreaderSettle(buffer_reader_t *reader, size_t max_charge, size_t max_entries)
+bool bufferreaderSettle(buffer_reader_t *reader, size_t max_charge)
 {
-    return readerSettleRetained(reader->pool, &reader->head, &reader->pending, max_charge, max_entries);
+    return readerSettleRetained(reader->pool, &reader->head, &reader->pending, max_charge);
 }
 
 bool bufferreaderMoveToQueue(buffer_reader_t *reader, buffer_queue_t *destination, bool restore_header)

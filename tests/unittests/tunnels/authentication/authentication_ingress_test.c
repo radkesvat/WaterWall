@@ -623,8 +623,7 @@ static void testPreauthRetention(void)
     {
         size_t bytes, charge, entries;
         authTestPeerInputRetention(server, observed_line, &bytes, &charge, &entries);
-        require(bytes == 68 + i && charge <= 128 * 1024 && entries <= 64,
-                "pre-auth incomplete input retained oversized backing charge or tiny-fragment runs");
+        require(bytes == 68 + i && charge <= 128 * 1024, "pre-auth incomplete input retained oversized backing charge");
         tunnelUpStreamPayload(server, observed_line, bytesBuffer((const uint8_t *) sbufGetRawPtr(message) + 68 + i, 1));
     }
     tunnelUpStreamPayload(server,

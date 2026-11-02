@@ -20,7 +20,7 @@ void domainresolverLinestateInitialize(tunnel_t *t, domainresolver_lstate_t *ls)
     };
 
     bufferbudgetInit(&ls->pending_budget,
-                     (buffer_budget_cost_t) {kDomainResolverMaxPendingBytes, kDomainResolverMaxPendingBytes, SIZE_MAX});
+                     (buffer_budget_cost_t) {kDomainResolverMaxPendingBytes, kDomainResolverMaxPendingBytes});
     const bool attached = bufferqueueTryAttachBudget(&ls->pending, &ls->pending_budget);
     assert(attached);
     discard attached;

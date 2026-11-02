@@ -49,7 +49,7 @@ void awqDestroy(adapter_write_queue_t *q);
 
 /* Refresh before admission, after a live write return, and on partial completion.
  * pending is WIO's byte count, not an observation of the transferred buffer.
- * Only bytes decrease; original allocation charge and entry remain reserved. */
+ * Only bytes decrease; original allocation charge remains reserved. */
 static inline void awqRefreshPending(adapter_write_queue_t *q, size_t pending)
 {
     assert(q != NULL);

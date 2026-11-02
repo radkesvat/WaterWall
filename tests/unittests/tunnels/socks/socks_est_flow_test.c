@@ -482,11 +482,11 @@ static void pendingBoundary(bool entries)
 #else
     socks5clientLinestateInitialize(
         ls, node, application, entries ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect);
-    // Empty UDP is valid and must consume an entry even though its byte cost is zero.
+    // Empty UDP is valid and must consume charge even though its byte cost is zero.
     ls->kind                  = entries ? kSocks5ClientLineKindUdpApplication : kSocks5ClientLineKindDirect;
     const uint32_t byte_limit = 2U * 1024U * 1024U;
 #endif
-    const unsigned count = entries ? 1024 : 1;
+    const unsigned count = 1;
     for (unsigned i = 0; i < count; ++i)
     {
 #ifdef SOCKS_EST_SERVER
@@ -494,7 +494,8 @@ static void pendingBoundary(bool entries)
 #else
         const uint32_t length = entries ? 0 : byte_limit;
 #endif
-        sbuf_t *buf = bufferpoolGetBestFit(env.pool, length, 300);
+        sbuf_t *buf = entries ? twfTrackAcquired(sbufCreateWithPadding(8U * 1024U * 1024U - 128, 64))
+                              : bufferpoolGetBestFit(env.pool, length, 300);
         sbufSetLength(buf, length);
         tunnelUpStreamPayload(node, application, buf);
     }

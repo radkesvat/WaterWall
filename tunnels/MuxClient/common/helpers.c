@@ -1113,8 +1113,7 @@ static void muxclientRemoveDetachedChild(muxclient_tstate_t *ts, line_t *child_l
 
     /* A paused detached child may validly have an empty queue. */
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&ts->worker_states[wid].detached_queue_budget);
-    if (UNLIKELY(ts->worker_states[wid].detached_child_count == 0 &&
-                 (usage.bytes != 0 || usage.charge != 0 || usage.entries != 0)))
+    if (UNLIKELY(ts->worker_states[wid].detached_child_count == 0 && (usage.bytes != 0 || usage.charge != 0)))
     {
         LOGF("MuxClient: detached queue charge remained without a child on worker %d", (int) wid);
         abortProgramNow(1);
@@ -1353,7 +1352,7 @@ void muxclientHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
 
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget);
     if (UNLIKELY(parent_ls->children_count != 0 || parent_ls->child_next != NULL || usage.bytes != 0 ||
-                 usage.charge != 0 || usage.entries != 0))
+                 usage.charge != 0))
     {
         LOGF("MuxClient: parent-loss transfer left attached child state behind");
         abortProgramNow(1);

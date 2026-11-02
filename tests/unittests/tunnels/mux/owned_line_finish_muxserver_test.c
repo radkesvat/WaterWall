@@ -94,8 +94,7 @@ static void fixtureSetup(muxserver_fixture_t *fixture)
     ts->initial_child_idle_timeout_ms     = 60000;
     ts->active_child_idle_timeout_ms      = 60000;
     ts->workers_count                     = 1;
-    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget,
-                     (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    bufferbudgetInit(&ts->worker_states[0].detached_registry.queue_budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the
     // postcondition cannot be driven with a bare allocation.
@@ -539,7 +538,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
                "attached owned child queue was not bound to its parent");
     const buffer_budget_cost_t attached = bufferbudgetGetUsage(child_ls->pending_child_data.budget);
     requireEqualCharge(attached.bytes, kFirst + kSecond, "attached parent budget lost logical bytes");
-    requireEqualCharge(attached.entries, 2, "attached parent budget lost queue entries");
+    requireEqualCharge(bufferqueueGetBufCount(&child_ls->pending_child_data), 2, "attached child queue lost entries");
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
@@ -560,7 +559,8 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
                "detached owned queue still borrows its former parent budget");
     requireEqualCharge(detached.charge, 2U * entry_charge, "detached owned registry charge is wrong");
     requireEqualCharge(detached.bytes, attached.bytes, "detachment changed retained logical bytes");
-    requireEqualCharge(detached.entries, attached.entries, "detachment changed retained entry count");
+    requireEqualCharge(
+        bufferqueueGetBufCount(&child_ls->pending_child_data), 2, "detachment changed retained entry count");
     requireLiveChildResources(&fixture, 1, "attached-to-detached transfer released the live slot or timer");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "parent loss finished a blocked owned child early");
@@ -577,7 +577,6 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     const buffer_budget_cost_t settled = bufferbudgetGetUsage(&registry->queue_budget);
     requireEqualCharge(settled.charge, 0, "detached registry charge survived completion");
     requireEqualCharge(settled.bytes, 0, "detached registry bytes survived completion");
-    requireEqualCharge(settled.entries, 0, "detached registry entries survived completion");
     twfRequire(registry->head == NULL, "detached registry head survived completion");
     requireLiveChildResources(&fixture, 0, "detached Resume finalization did not release slot and timer once");
     for (uint32_t i = 0; i < kFirst; ++i)
@@ -913,7 +912,8 @@ static void pauseServerChildAfterFirstPayload(tunnel_t *next, line_t *child_l, s
     requireEqualCharge(retained.charge,
                        bufferqueueGetCharge(&child->pending_child_data),
                        "detached budget retained popped charge during Payload");
-    requireEqualCharge(retained.entries, 1, "detached budget retained popped entry during Payload");
+    requireEqualCharge(
+        bufferqueueGetBufCount(&child->pending_child_data), 1, "detached queue retained popped entry during Payload");
     twfNextPayload(next, child_l, buf);
     if (g_reentrant_pause_mux != NULL)
     {

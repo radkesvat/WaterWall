@@ -289,14 +289,14 @@ static void overflowResponseBytes(est_fixture_t *f, line_t *l)
     tunnelDownStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
 
-static void overflowResponseEntries(est_fixture_t *f, line_t *l)
+static void overflowResponseCharge(est_fixture_t *f, line_t *l)
 {
-    tunnelUpStreamPause(f->node, l);
-    for (unsigned i = 0; i < kVlessServerMaxPendingBuffers; ++i)
-        tunnelDownStreamPayload(f->node, l, estBytes(l, "", 0));
+    sbuf_t *retained = twfTrackAcquired(sbufCreateWithPadding(8U * 1024U * 1024U - 128, 64));
+    sbufSetLength(retained, 0);
+    twfRequire(sbufGetQueueCharge(retained) == 8U * 1024U * 1024U, "charge fixture geometry changed");
+    tunnelDownStreamPayload(f->node, l, retained);
     vlessserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufCount(&ls->pending_down) == kVlessServerMaxPendingBuffers,
-               "VlessServer refused exact response FIFO entry limit");
+    twfRequire(bufferqueueGetCharge(&ls->pending_down) == 8U * 1024U * 1024U, "exact reentry charge limit rejected");
     tunnelDownStreamPayload(f->node, l, estBytes(l, "", 0));
 }
 
@@ -440,7 +440,7 @@ int main(void)
     testPauseBeforeBranchInit(false, true);
     testPauseBeforeBranchInit(true, true);
     testResponseLimit(overflowResponseBytes);
-    testResponseLimit(overflowResponseEntries);
+    testResponseLimit(overflowResponseCharge);
     testEarlyReplyAndEstOrdering(false, false);
     testEarlyReplyAndEstOrdering(false, true);
     testEarlyReplyAndEstOrdering(true, false);

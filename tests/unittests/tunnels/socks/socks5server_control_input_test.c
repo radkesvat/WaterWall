@@ -224,8 +224,16 @@ static void initNext(tunnel_t *t, line_t *l)
             tunnelDownStreamEst(server, l);
         twfRequire(lineIsAlive(l) && captured_len == 0, "request tail escaped its Init ordering barrier");
         if (retained_mode == 2)
-            for (unsigned i = 1; i < kSocks5ServerMaxPendingBuffers; ++i)
-                sendBytes("B", 1);
+        {
+            socks5server_lstate_t *ls        = lineGetState(control, server);
+            const size_t           remaining = kSocks5ServerMaxPendingCharge - bufferstreamGetCharge(&ls->in_stream) -
+                                     bufferqueueGetCharge(&ls->pending_up);
+            sbuf_t *nested = twfTrackAcquired(sbufCreateWithPadding(remaining - 128, 64));
+            sbufSetLength(nested, 1);
+            sbufWrite(nested, "B", 1);
+            twfRequire(sbufGetQueueCharge(nested) == remaining, "charge fixture geometry changed");
+            tunnelUpStreamPayload(server, control, nested);
+        }
         else if (retained_mode == 3)
         {
             uint8_t chunk[4096];
@@ -364,7 +372,7 @@ static void body(unsigned mode)
 }
 static void retainedLimits(bool entries)
 {
-    twfSetCase("retained tail and nested entries share one budget");
+    twfSetCase("retained tail and nested charge share one budget");
     setup(false);
     method(false);
     retained_mode         = entries ? 2 : 1;

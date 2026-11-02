@@ -43,11 +43,13 @@ void quicLeave(quic_context_t *context)
 static void *quicCarrierAllocate(void *owner, size_t length)
 {
     quic_context_t      *context = owner;
-    buffer_budget_cost_t cost    = {.charge = length, .entries = 1};
-    if (! bufferbudgetTryAcquire(&context->input_budget, cost))
+    quic_tstate_t       *state   = tunnelGetState(context->tunnel);
+    buffer_budget_cost_t cost    = {.charge = length};
+    if (quicInputEntries(context) >= state->max_buffers || ! bufferbudgetTryAcquire(&context->input_budget, cost))
     {
         return NULL;
     }
+    ++context->carrier_allocations;
     return memoryAllocate(length);
 }
 
@@ -55,7 +57,9 @@ static void quicCarrierDeallocate(void *owner, void *pointer, size_t length)
 {
     quic_context_t *context = owner;
     memoryFree(pointer);
-    bufferbudgetRelease(&context->input_budget, (buffer_budget_cost_t) {.charge = length, .entries = 1});
+    assert(context->carrier_allocations != 0);
+    --context->carrier_allocations;
+    bufferbudgetRelease(&context->input_budget, (buffer_budget_cost_t) {.charge = length});
 }
 
 static void quicDetach(quic_context_t *context)
@@ -84,6 +88,7 @@ static void quicDetach(quic_context_t *context)
     bufferqueueDestroy(&context->application);
     bufferqueueDestroy(&context->input);
     ww_quic_carrier_destroy(&context->carrier);
+    assert(context->carrier_allocations == 0);
     bufferbudgetAssertEmpty(&context->application_budget);
     bufferbudgetAssertEmpty(&context->input_budget);
     if (! context->driving)
@@ -136,8 +141,7 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     context->attached       = true;
     context->carrier =
         (ww_quic_carrier_t) {.context = context, .allocate = quicCarrierAllocate, .deallocate = quicCarrierDeallocate};
-    buffer_budget_cost_t limits = {
-        .bytes = state->max_bytes, .charge = (size_t) state->max_bytes * 2, .entries = state->max_buffers};
+    buffer_budget_cost_t limits = {.bytes = state->max_bytes, .charge = (size_t) state->max_bytes * 2};
     bufferbudgetInit(&context->application_budget, limits);
     bufferbudgetInit(&context->input_budget, limits);
     bufferqueueInitEmpty(&context->application);

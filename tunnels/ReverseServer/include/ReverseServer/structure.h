@@ -44,7 +44,7 @@ enum
     kTunnelStateSize = sizeof(reverseserver_tstate_t),
     kLineStateSize   = sizeof(reverseserver_lstate_t),
     kReverseServerPendingBytes   = 2 * 1024 * 1024,
-    kReverseServerPendingBuffers = 1024
+    kReverseServerReplayDeliveries = 1024
 };
 
 WW_EXPORT void         reverseserverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);

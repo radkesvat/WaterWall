@@ -57,14 +57,14 @@ size_t bufferstreamGetCharge(const buffer_stream_t *self);
 
 /** Settle retained ordinary storage on the pool's owner worker, without callbacks.
  * Empty logical input releases all retained buffers. Otherwise leaves storage
- * unchanged when charge <= max(max_charge, best-fit allocation charge) and entry
- * count <= max_entries; pressure compacts bytes in FIFO order into one best-fit
- * buffer with full pool large-buffer padding. max_entries must be nonzero.
+ * unchanged when charge <= max(max_charge, best-fit allocation charge); pressure
+ * compacts bytes in FIFO order into one best-fit buffer with full pool large-buffer
+ * padding.
  * max_charge is a compaction threshold, not a hard admission limit. Logical-byte
  * limits remain with the caller. use_left_padding is not consumed by compaction.
  * False means unrepresentable best-fit geometry; bytes and ownership are unchanged.
  */
-bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge, size_t max_entries);
+bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge);
 
 /** Current storage entries after coalescing, including empty entries. */
 static inline size_t bufferstreamGetEntryCount(const buffer_stream_t *self)

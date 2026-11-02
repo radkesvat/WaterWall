@@ -33,7 +33,7 @@ typedef struct halfduplexclient_lstate_s
 enum
 {
     kHalfDuplexClientMaxPendingBytes   = 2 * 1024 * 1024,
-    kHalfDuplexClientMaxPendingBuffers = 1024,
+    kHalfDuplexClientMaxPendingCharge  = 8U * 1024U * 1024U,
     kTunnelStateSize                   = 0,
     kLineStateSize                     = sizeof(halfduplexclient_lstate_t)
 };

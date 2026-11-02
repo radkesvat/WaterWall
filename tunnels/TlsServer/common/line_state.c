@@ -12,11 +12,9 @@ bool tlsserverLinestateInitialize(tlsserver_lstate_t *ls, SSL_CTX *ssl_ctx, buff
         .shaping_retired         = false,
         .verbose                 = verbose,
     };
-    bufferbudgetInit(
-        &ls->pending_down_budget,
-        (buffer_budget_cost_t) {kTlsServerPendingPlaintextBytes, SIZE_MAX, kTlsServerPendingPlaintextBuffers});
-    bufferbudgetInit(&ls->fallback_budget,
-                     (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes, SIZE_MAX, SIZE_MAX});
+    bufferbudgetInit(&ls->pending_down_budget,
+                     (buffer_budget_cost_t) {kTlsServerPendingPlaintextBytes, 8U * 1024U * 1024U});
+    bufferbudgetInit(&ls->fallback_budget, (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes, SIZE_MAX});
     const bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->pending_down_budget);
     assert(attached);
     discard attached;

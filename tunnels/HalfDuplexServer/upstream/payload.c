@@ -166,10 +166,9 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
         ls->startup_initial = NULL;
         bufferpoolReuseBuffer(ls->startup_pool, initial);
     }
-    bufferbudgetInit(&ls->startup_budget,
-                     (buffer_budget_cost_t) {.bytes   = kHalfDuplexServerStartupBytes,
-                                             .charge  = kHalfDuplexServerStartupCharge,
-                                             .entries = kHalfDuplexServerStartupEntries});
+    bufferbudgetInit(
+        &ls->startup_budget,
+        (buffer_budget_cost_t) {.bytes = kHalfDuplexServerStartupBytes, .charge = kHalfDuplexServerStartupCharge});
     bufferqueueInitEmpty(&ls->startup_pending);
     bool attached = bufferqueueTryAttachBudget(&ls->startup_pending, &ls->startup_budget);
     assert(attached);

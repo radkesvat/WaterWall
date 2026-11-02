@@ -5,11 +5,7 @@ void httpReceiveInit(http_receive_t *receive)
     *receive = (http_receive_t) {0};
     bufferqueueInitEmpty(&receive->pending);
     bufferbudgetInit(&receive->budget,
-                     (buffer_budget_cost_t) {
-                         .bytes   = kHttpReceiveNestedBytes,
-                         .charge  = kHttpReceiveNestedCharge,
-                         .entries = kHttpReceiveNestedEntries,
-                     });
+                     (buffer_budget_cost_t) {.bytes = kHttpReceiveNestedBytes, .charge = kHttpReceiveNestedCharge});
     const bool attached = bufferqueueTryAttachBudget(&receive->pending, &receive->budget);
     assert(attached);
     discard attached;
@@ -73,5 +69,5 @@ bool httpReceiveSettle(buffer_stream_t *stream, size_t max_bytes)
 {
     if (bufferstreamGetBufLen(stream) > max_bytes)
         return false;
-    return bufferstreamSettleRetained(stream, kHttpReceiveStreamCharge, kHttpReceiveNestedEntries);
+    return bufferstreamSettleRetained(stream, kHttpReceiveStreamCharge);
 }

@@ -6,6 +6,7 @@
  * CTest: waterwall.quic_node_unit, Debug and optimized Release/no-LTO. */
 
 #include "quic_common.h"
+#include "runtime.h"
 
 #if QUIC_TEST_HAS_CLIENT
 #include "QuicClient/interface.h"
@@ -408,6 +409,46 @@ static void testQuiescenceBeforeOwnerDrain(void)
     }
 }
 
+static void testCarrierResourceEntries(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        for (unsigned queued = 7; queued <= 8; ++queued)
+        {
+            est_fixture_t f;
+            setupQuic(&f, client != 0, true);
+            tunnelUpStreamInit(f.node, f.line);
+            quic_context_t *context = quicGetContext(f.node, f.line);
+            twfRequire(quicEnter(context), "fixture could not retain the QUIC driver");
+            /* Serialize nested carrier arrivals before one input is popped.
+             * A partial frame then needs a separate carrier body allocation. */
+            const uint8_t prefix[] = {0, 0, 0, 32, 1};
+            quicSubmitCarrier(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
+            for (unsigned i = 1; i < queued; ++i)
+                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+            twfRequire(lineIsAlive(f.line) && quicInputEntries(context) == queued,
+                       "carrier queue refused configured entry equality");
+            twfRequire(quicFeedInput(context), "queued carrier prefix was not processed");
+            if (queued == 7)
+            {
+                twfRequire(lineIsAlive(f.line) && context->carrier_allocations == 1 && context->active_input == NULL &&
+                               quicInputEntries(context) == 7,
+                           "partial carrier body lost its resource slot after active input settled");
+                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+                twfRequire(lineIsAlive(f.line) && quicInputEntries(context) == 8,
+                           "carrier allocation and queued entries did not admit equality");
+                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+            }
+            twfRequire(! lineIsAlive(f.line) && f.up_finish_count == 1 && f.down_finish_count == 1,
+                       "active input or retained carrier allocation escaped the resource limit");
+            quicLeave(context);
+            destroyQuic(&f);
+        }
+    }
+}
+
 static void testCooperativeResourcePressure(void)
 {
     for (unsigned client = 0; client < 2; ++client)
@@ -611,6 +652,7 @@ int main(void)
 #endif
     TEST_RUN_CASE(testMalformedCarrierAndBudgets);
     TEST_RUN_CASE(testQuiescenceBeforeOwnerDrain);
+    TEST_RUN_CASE(testCarrierResourceEntries);
     TEST_RUN_CASE(testCooperativeResourcePressure);
 #if QUIC_TEST_HAS_SERVER
     TEST_RUN_CASE(testNestedFinalReply);

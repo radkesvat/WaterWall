@@ -18,6 +18,7 @@ typedef struct connectionfisherserver_lstate_s
     /* Holds older coalesced body across reply/Init and serializes nested input. */
     buffer_queue_t  pending_up;
     size_t          init_payload_bytes;
+    size_t          init_payload_charge;
     buffer_stream_t in_stream;
 } connectionfisherserver_lstate_t;
 
@@ -25,7 +26,7 @@ enum
 {
     kConnectionFisherServerHandshakeLength   = 5,
     kConnectionFisherServerMaxPendingBytes   = 2 * 1024 * 1024,
-    kConnectionFisherServerMaxPendingBuffers = 1024,
+    kConnectionFisherServerMaxPendingCharge  = 8U * 1024U * 1024U,
     kTunnelStateSize                         = 0,
     kLineStateSize                           = sizeof(connectionfisherserver_lstate_t)
 };

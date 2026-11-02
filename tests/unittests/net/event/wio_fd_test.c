@@ -1441,18 +1441,18 @@ static void testSpliceBufferQueue(void)
     require(bufferqueueGetCharge(&queue) == charge, "mixed queue omitted ordinary, empty or splice charge");
 
     buffer_budget_t budget;
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {16, charge, 4});
-    require(bufferqueueTryAttachBudget(&queue, &budget) && budget.used.charge == charge && budget.used.entries == 4,
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {16, charge});
+    require(bufferqueueTryAttachBudget(&queue, &budget) && budget.used.charge == charge &&
+                bufferqueueGetBufCount(&queue) == 4,
             "populated mixed queue exact attachment failed");
     buffer_budget_t destination;
-    bufferbudgetInit(&destination, (buffer_budget_cost_t) {16, charge, 4});
+    bufferbudgetInit(&destination, (buffer_budget_cost_t) {16, charge});
     require(bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &destination &&
-                budget.used.bytes == 0 && budget.used.charge == 0 && budget.used.entries == 0 &&
-                destination.used.bytes == 16 && destination.used.charge == charge && destination.used.entries == 4 &&
+                budget.used.bytes == 0 && budget.used.charge == 0 && destination.used.bytes == 16 &&
+                destination.used.charge == charge && bufferqueueGetBufCount(&queue) == 4 &&
                 bufferqueueFront(&queue) == a,
             "mixed queue rebinding lost retained identity or accounting");
-    require(bufferqueueTryRebindBudget(&queue, &budget) && destination.used.bytes == 0 &&
-                destination.used.charge == 0 && destination.used.entries == 0,
+    require(bufferqueueTryRebindBudget(&queue, &budget) && destination.used.bytes == 0 && destination.used.charge == 0,
             "mixed queue return rebinding retained destination usage");
     buffer_budget_reservation_t active = {0};
     charge -= sbufGetQueueCharge(a);
@@ -1463,7 +1463,9 @@ static void testSpliceBufferQueue(void)
     sbufSpliceReadToBuffer(a, dest, 3);
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "a:A", 3),
             "queued splice lost its real prefix or body");
-    require(budget.used.bytes == 16 && budget.used.entries == 4, "mixed active retention disappeared");
+    require(budget.used.bytes == 16 && budget.used.charge == charge + active.cost.charge &&
+                bufferqueueGetBufCount(&queue) == 3,
+            "mixed active retention disappeared");
     buffer_budget_cost_t remainder_cost;
     require(bufferbudgetTryGetCost(a, &remainder_cost), "splice remainder cost");
     bufferbudgetReservationReduce(&active, remainder_cost);
@@ -2413,7 +2415,7 @@ static void testSharedBudget(void)
     sbufWrite(input, "ab", 2);
     const size_t    charge = sbufGetQueueCharge(input);
     buffer_budget_t budget;
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {2, charge, 1});
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {2, charge});
     require(bufferqueueTryAttachBudget(&a, &budget) && bufferqueueTryAttachBudget(&b, &budget), "empty attach");
     require(bufferqueueTryPushBack(&a, &input), "exact admission");
     sbuf_t *extra    = sbufCreate(1);
@@ -2421,7 +2423,8 @@ static void testSharedBudget(void)
     require(! bufferqueueTryPushFront(&b, &extra) && extra == original, "shared refusal changed ownership");
     buffer_budget_reservation_t active = {0};
     input                              = bufferqueuePopFrontReserved(&a, &active);
-    require(budget.used.charge == charge && budget.used.entries == 1 && a.total_charge == 0, "reserved pop uncharged");
+    require(budget.used.charge == charge && bufferqueueGetBufCount(&a) == 0 && a.total_charge == 0,
+            "reserved pop uncharged");
     require(! bufferqueueTryPushBack(&b, &extra), "active allowance disappeared");
     sbufShiftRight(input, 1);
     bufferbudgetReservationSetBytes(&active, 1);
@@ -2447,7 +2450,8 @@ static void testSharedBudget(void)
     buffer_queue_t moved = b;
     bufferqueueInitEmpty(&b);
     bufferqueueDestroy(&b);
-    require(moved.budget == &budget && budget.used.entries == 1, "move lost binding");
+    require(moved.budget == &budget && budget.used.charge == charge && bufferqueueGetBufCount(&moved) == 1,
+            "move lost binding");
     bufferqueueDestroy(&moved);
     bufferbudgetAssertEmpty(&budget);
     require(moved.budget == NULL, "destroy retained binding");
@@ -2456,13 +2460,14 @@ static void testSharedBudget(void)
     buffer_queue_t refused = bufferqueueCreate(1);
     extra                  = sbufCreate(1);
     require(bufferqueueTryPushBack(&refused, &extra), "unbound second insertion");
-    require(! bufferqueueTryAttachBudget(&refused, &budget) && refused.budget == NULL && budget.used.entries == 1,
+    require(! bufferqueueTryAttachBudget(&refused, &budget) && refused.budget == NULL &&
+                budget.used.charge == bufferqueueGetCharge(&b) && bufferqueueGetBufCount(&b) == 1,
             "populated attach ignored sibling");
     bufferqueueDestroy(&refused);
     bufferqueueDestroy(&b);
     bufferbudgetAssertEmpty(&budget);
 
-    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, 2});
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {SIZE_MAX, 2 * charge});
     require(bufferqueueTryAttachBudget(&a, &budget) && bufferqueueTryAttachBudget(&b, &budget), "reattach");
     input = sbufCreateWithPadding(64, 32);
     extra = sbufCreate(1);
@@ -2472,15 +2477,14 @@ static void testSharedBudget(void)
         sbuf_t *before        = input;
         fail_queue_allocation = true;
         bool accepted         = front ? bufferqueueTryPushFront(&a, &input) : bufferqueueTryPushBack(&a, &input);
-        require(! accepted && input == before && ! fail_queue_allocation && budget.used.entries == 0 &&
-                    budget.used.charge == 0,
+        require(! accepted && input == before && ! fail_queue_allocation && budget.used.charge == 0,
                 "deque refusal leaked tentative acquisition");
     }
 #endif
     require(bufferqueueTryPushBack(&a, &input) && bufferqueueTryPushBack(&b, &extra), "two sibling admission");
     const size_t sibling_charge = sbufGetQueueCharge(extra);
     bufferqueueDestroy(&a);
-    require(budget.used.charge == sibling_charge && budget.used.entries == 1, "destroy erased nonempty sibling");
+    require(budget.used.charge == sibling_charge && bufferqueueGetBufCount(&b) == 1, "destroy erased nonempty sibling");
     bufferqueueDestroy(&b);
     bufferbudgetAssertEmpty(&budget);
     teardown(&env);
@@ -2494,7 +2498,7 @@ static void testBudgetRebinding(void)
     bufferqueueInitEmpty(&queue);
     bufferqueueInitEmpty(&sibling);
     buffer_budget_t source, destination;
-    bufferbudgetInit(&source, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+    bufferbudgetInit(&source, (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
     require(bufferqueueTryAttachBudget(&queue, &source) && bufferqueueTryAttachBudget(&sibling, &source),
             "rebind source attachment failed");
     sbuf_t *held = sbufCreate(1);
@@ -2516,61 +2520,58 @@ static void testBudgetRebinding(void)
     require((uintptr_t) first == first_address, "ordinary Release insertion replaced its allocation");
 #endif
     sbuf_t                    *sibling_buffer = bufferqueuePushBack(&sibling, sbufCreate(1));
-    const buffer_budget_cost_t queued         = {5, sbufGetQueueCharge(first) + sbufGetQueueCharge(second), 2};
+    const buffer_budget_cost_t queued         = {5, sbufGetQueueCharge(first) + sbufGetQueueCharge(second)};
     const buffer_budget_cost_t original_usage = bufferbudgetGetUsage(&source);
-    for (unsigned dimension = 0; dimension < 3; ++dimension)
+    for (unsigned dimension = 0; dimension < 2; ++dimension)
     {
-        buffer_budget_cost_t limits = {queued.bytes + 1, queued.charge + 1, queued.entries + 1};
+        buffer_budget_cost_t limits = {queued.bytes + 1, queued.charge + 1};
         if (dimension == 0)
             --limits.bytes;
-        else if (dimension == 1)
-            --limits.charge;
         else
-            --limits.entries;
+            --limits.charge;
         bufferbudgetInit(&destination, limits);
-        require(bufferbudgetTryAcquire(&destination, (buffer_budget_cost_t) {1, 1, 1}), "rebind refusal setup failed");
+        require(bufferbudgetTryAcquire(&destination, (buffer_budget_cost_t) {1, 1}), "rebind refusal setup failed");
         require(! bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &source &&
                     source.used.bytes == original_usage.bytes && source.used.charge == original_usage.charge &&
-                    source.used.entries == original_usage.entries && destination.used.bytes == 1 &&
-                    destination.used.charge == 1 && destination.used.entries == 1 &&
-                    bufferqueueFront(&queue) == first && bufferqueueGetBufCount(&queue) == 2 &&
-                    bufferqueueGetBufLen(&queue) == queued.bytes && bufferqueueGetCharge(&queue) == queued.charge,
+                    destination.used.bytes == 1 && destination.used.charge == 1 && bufferqueueFront(&queue) == first &&
+                    bufferqueueGetBufCount(&queue) == 2 && bufferqueueGetBufLen(&queue) == queued.bytes &&
+                    bufferqueueGetCharge(&queue) == queued.charge,
                 "refused rebind changed a budget or queue ownership");
-        bufferbudgetRelease(&destination, (buffer_budget_cost_t) {1, 1, 1});
+        bufferbudgetRelease(&destination, (buffer_budget_cost_t) {1, 1});
     }
     bufferbudgetInit(&destination, queued);
     require(bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &destination &&
                 source.used.bytes == active.cost.bytes &&
                 source.used.charge == active.cost.charge + sbufGetQueueCharge(sibling_buffer) &&
-                source.used.entries == 2 && active.budget == &source && sibling.budget == &source &&
-                destination.used.bytes == queued.bytes && destination.used.charge == queued.charge &&
-                destination.used.entries == queued.entries,
+                active.budget == &source && sibling.budget == &source && bufferqueueGetBufCount(&sibling) == 1 &&
+                destination.used.bytes == queued.bytes && destination.used.charge == queued.charge,
             "rebind moved sibling or active reservation accounting");
     require(bufferqueueTryRebindBudget(&queue, &destination) && destination.used.bytes == queued.bytes &&
-                destination.used.charge == queued.charge && destination.used.entries == queued.entries,
+                destination.used.charge == queued.charge,
             "same-budget rebind readmitted or changed a full budget");
     require(bufferqueuePopFront(&queue) == first && memoryEqual(sbufGetRawPtr(first), "ab", 2) &&
                 bufferqueueFront(&queue) == second && memoryEqual(sbufGetRawPtr(second), "cde", 3) &&
                 destination.used.bytes == 3 && destination.used.charge == sbufGetQueueCharge(second) &&
-                destination.used.entries == 1 && source.used.entries == 2,
+                bufferqueueGetBufCount(&queue) == 1 &&
+                source.used.charge == active.cost.charge + sbufGetQueueCharge(sibling_buffer),
             "rebound pop changed FIFO, identity, payload or the source budget");
     bufferpoolReuseBuffer(env.buffers, first);
     bufferqueueDestroy(&queue);
-    require(destination.used.bytes == 0 && destination.used.charge == 0 && destination.used.entries == 0 &&
-                source.used.entries == 2,
+    require(destination.used.bytes == 0 && destination.used.charge == 0 &&
+                source.used.charge == active.cost.charge + sbufGetQueueCharge(sibling_buffer),
             "rebound destruction charged the former budget");
     bufferqueueDestroy(&sibling);
     require(source.used.bytes == active.cost.bytes && source.used.charge == active.cost.charge &&
-                source.used.entries == active.cost.entries && active.budget == &source,
+                active.budget == &source,
             "rebound queue cleanup settled an outstanding reservation");
     bufferbudgetReservationRelease(&active);
     bufferpoolReuseBuffer(env.buffers, held);
-    require(source.used.bytes == 0 && source.used.charge == 0 && source.used.entries == 0,
+    require(source.used.bytes == 0 && source.used.charge == 0,
             "original reservation did not settle its original budget");
 
     buffer_budget_t *former = memoryAllocate(sizeof(*former));
-    bufferbudgetInit(former, (buffer_budget_cost_t) {0, 0, 0});
-    bufferbudgetInit(&destination, (buffer_budget_cost_t) {0, 0, 0});
+    bufferbudgetInit(former, (buffer_budget_cost_t) {0, 0});
+    bufferbudgetInit(&destination, (buffer_budget_cost_t) {0, 0});
     require(bufferqueueTryAttachBudget(&queue, former) && bufferqueueTryRebindBudget(&queue, &destination) &&
                 queue.budget == &destination,
             "empty rebind retained the former owner's address");
@@ -2578,14 +2579,13 @@ static void testBudgetRebinding(void)
     testWorkerUnbindWID();
     bufferqueueDestroy(&queue);
     testWorkerBindWID(0);
-    require(destination.used.bytes == 0 && destination.used.charge == 0 && destination.used.entries == 0,
-            "empty rebound destruction changed usage");
+    require(destination.used.bytes == 0 && destination.used.charge == 0, "empty rebound destruction changed usage");
     teardown(&env);
 }
 
 static void testBudgetReleaseUnderflow(void)
 {
-    for (unsigned dimension = 0; dimension < 3; ++dimension)
+    for (unsigned dimension = 0; dimension < 2; ++dimension)
     {
         pid_t child = fork();
         require(child >= 0, "failed to fork budget underflow test");
@@ -2594,16 +2594,14 @@ static void testBudgetReleaseUnderflow(void)
             if (createInternalLogger(NULL, true) == NULL)
                 _Exit(66);
             buffer_budget_t budget;
-            bufferbudgetInit(&budget, (buffer_budget_cost_t) {1, 1, 1});
-            if (! bufferbudgetTryAcquire(&budget, (buffer_budget_cost_t) {1, 1, 1}))
+            bufferbudgetInit(&budget, (buffer_budget_cost_t) {1, 1});
+            if (! bufferbudgetTryAcquire(&budget, (buffer_budget_cost_t) {1, 1}))
                 _Exit(66);
-            buffer_budget_cost_t cost = {1, 1, 1};
+            buffer_budget_cost_t cost = {1, 1};
             if (dimension == 0)
                 ++cost.bytes;
-            else if (dimension == 1)
-                ++cost.charge;
             else
-                ++cost.entries;
+                ++cost.charge;
             bufferbudgetRelease(&budget, cost);
             _Exit(67);
         }

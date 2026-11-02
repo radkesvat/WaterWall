@@ -1830,8 +1830,7 @@ static void pqAccountingChildSink(tunnel_t *t, line_t *l, sbuf_t *buf)
                "popped child charge was not released before callback");
     twfRequire(child->pending_child_data.budget != NULL, "draining child lost its accounting owner");
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(child->pending_child_data.budget);
-    twfRequire(usage.bytes == 0 && usage.charge == 0 && usage.entries == 0,
-               "popped child budget usage was not released before callback");
+    twfRequire(usage.bytes == 0 && usage.charge == 0, "popped child budget usage was not released before callback");
     pqSpliceChildSink(t, l, buf);
 }
 

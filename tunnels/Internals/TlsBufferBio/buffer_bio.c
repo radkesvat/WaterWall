@@ -7,6 +7,7 @@ typedef struct tls_buffer_bio_s
     buffer_pool_t     *pool;
     ww_sbuffer_queue_t buffers;
     size_t             pending;
+    size_t             charge;
     int                eof_return;
 #ifdef OPENSSL_IS_BORINGSSL
     sbuf_t *reserved;
@@ -34,6 +35,7 @@ static sbuf_t *tlsbufferbioPop(tls_buffer_bio_t *state)
 
     sbuf_t *buf = ww_sbuffer_queue_t_pull_front(&state->buffers);
     state->pending -= sbufGetLength(buf);
+    state->charge -= sbufGetQueueCharge(buf);
     return buf;
 }
 
@@ -85,6 +87,7 @@ static int tlsbufferbioRead(BIO *bio, char *out, int length)
         if (sbufGetLength(buf) == 0)
         {
             discard ww_sbuffer_queue_t_pull_front(&state->buffers);
+            state->charge -= sbufGetQueueCharge(buf);
             bufferpoolReuseBuffer(state->pool, buf);
         }
     }
@@ -111,15 +114,19 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
         return length;
     }
 
-    if (UNLIKELY(ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
-        return -1;
-
     buf = bufferpoolGetLargeBuffer(state->pool);
     buf = sbufReserveSpace(buf, (uint32_t) length);
+    const size_t charge = sbufGetQueueCharge(buf);
+    if (UNLIKELY(charge > kTlsBufferBioMaxCharge - state->charge))
+    {
+        bufferpoolReuseBuffer(state->pool, buf);
+        return -1;
+    }
     sbufWriteLarge(buf, data, (uint32_t) length);
     sbufSetLength(buf, (uint32_t) length);
     discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     state->pending += (size_t) length;
+    state->charge += charge;
     return length;
 }
 
@@ -214,13 +221,14 @@ bool tlsbufferbioFeed(BIO *bio, sbuf_t *buf)
         return true;
     }
     if (UNLIKELY(length > kTlsBufferBioMaxBytes - state->pending ||
-                 ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
+                 sbufGetQueueCharge(buf) > kTlsBufferBioMaxCharge - state->charge))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return false;
     }
     discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     state->pending += length;
+    state->charge += sbufGetQueueCharge(buf);
     BIO_clear_retry_flags(bio);
     return true;
 }
@@ -260,11 +268,14 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
     bool    new_buffer = buf == NULL || capacity > sbufGetTailCapacity(buf);
     if (new_buffer)
     {
-        if (UNLIKELY(ww_sbuffer_queue_t_size(&state->buffers) >= kTlsBufferBioMaxBuffers))
-            return NULL;
-
         buf                   = bufferpoolGetLargeBuffer(state->pool);
         buf                   = sbufReserveSpace(buf, (uint32_t) (capacity + alignment - 1));
+        const size_t charge   = sbufGetQueueCharge(buf);
+        if (UNLIKELY(charge > kTlsBufferBioMaxCharge - state->charge))
+        {
+            bufferpoolReuseBuffer(state->pool, buf);
+            return NULL;
+        }
         const uint32_t offset = (uint32_t) ((0 - (uintptr_t) sbufGetMutablePtr(buf) - prefix_len) & (alignment - 1));
         /* Advance an empty cursor without spending the chain's left padding. */
         sbufSetLength(buf, offset);
@@ -272,6 +283,7 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
         /* Allocate the queue slot before encryption; publishing length later
          * must not fail after the TLS record sequence number has advanced. */
         discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
+        state->charge += charge;
     }
 
     state->reserved          = buf;
@@ -291,6 +303,7 @@ void tlsbufferbioFinishWrite(BIO *bio, size_t written)
     {
         assert(*ww_sbuffer_queue_t_back(&state->buffers) == buf);
         ww_sbuffer_queue_t_pop_back(&state->buffers);
+        state->charge -= sbufGetQueueCharge(buf);
         bufferpoolReuseBuffer(state->pool, buf);
     }
     else

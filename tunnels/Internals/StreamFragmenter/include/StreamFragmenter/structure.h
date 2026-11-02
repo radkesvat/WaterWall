@@ -107,6 +107,7 @@ typedef struct streamfragmenter_lstate_s
     uint64_t                      assembly_deadline_us;
     streamfragmenter_tls_parser_t tls_parser;
     uint32_t                      remaining;
+    uint32_t                      job_count; /* Queued jobs, including the active remainder. */
     streamfragmenter_protocol_t   protocol;
     streamfragmenter_timer_kind_t timer_kind;
     bool                          exhausted : 1;

@@ -288,7 +288,11 @@ static void testUnpairedClose(bool splice, unsigned mode)
         for (uint32_t total = 0; total < limit;)
         {
             uint32_t count = min((uint32_t) sizeof(bytes), limit - total);
-            sbuf_t  *buf   = payload(bytes, count, splice, 0);
+            /* Isolate logical-byte equality from splice materialization into
+             * this fixture's deliberately oversized 32 KiB pool tier. */
+            sbuf_t *buf = twfTrackAcquired(sbufCreateWithPadding(count, 96));
+            sbufWrite(buf, bytes, count);
+            sbufSetLength(buf, count);
             if (local)
                 reverseserverTunnelDownStreamPayload(f.reverse, line, buf);
             else
@@ -502,7 +506,7 @@ static void pauseUserConsumerOnEst(tunnel_t *t, line_t *u)
 
 static void testPendingBudget(bool user, bool entries, bool paired)
 {
-    twfSetCase("exact and overflow application byte/buffer budgets while waiting or paired");
+    twfSetCase("exact and overflow application byte/charge budgets while waiting or paired");
     reverse_fixture_t f;
     setup(&f);
     if (user)
@@ -510,11 +514,12 @@ static void testPendingBudget(bool user, bool entries, bool paired)
     else
         reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload(handshake, sizeof(handshake), false, 0));
     line_t        *line  = user ? f.u : f.d;
-    const uint32_t count = entries ? kReverseServerPendingBuffers : 1;
+    const uint32_t count = 1;
     const uint32_t size  = entries ? 1 : kReverseServerPendingBytes;
     for (uint32_t i = 0; i < count; ++i)
     {
-        sbuf_t *buf = bufferpoolGetBestFit(f.env.pool, size, 96);
+        sbuf_t *buf = entries ? twfTrackAcquired(sbufCreateWithPadding(8U * 1024U * 1024U - 128, 64))
+                              : bufferpoolGetBestFit(f.env.pool, size, 96);
         memorySet(sbufGetMutablePtr(buf), 'x', size);
         sbufSetLength(buf, size);
         if (user)
@@ -554,7 +559,7 @@ static void testPendingBudget(bool user, bool entries, bool paired)
         reverseserverTunnelDownStreamPayload(f.reverse, line, payload("x", 1, false, 0));
     else
         reverseserverTunnelUpStreamPayload(f.reverse, line, payload("x", 1, false, 0));
-    twfRequire(! lineIsAlive(line), "retention accepted bytes or buffers above its hard limit");
+    twfRequire(! lineIsAlive(line), "retention accepted bytes or charge above its hard limit");
     if (paired)
         twfRequire(! lineIsAlive(f.u) && ! lineIsAlive(f.d), "paired budget refusal left a live half");
     teardown(&f);

@@ -884,9 +884,7 @@ bool tlsserverStartFallback(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     {
         bufferbudgetAssertEmpty(&ls->fallback_budget);
         bufferbudgetInit(&ls->fallback_budget,
-                         (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes,
-                                                 kTlsServerMaxFallbackCharge,
-                                                 kTlsServerMaxFallbackBuffers});
+                         (buffer_budget_cost_t) {kTlsServerMaxFallbackPendingBytes, kTlsServerMaxFallbackCharge});
     }
 
     buffer_queue_t transcript = {0};

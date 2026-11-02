@@ -1066,7 +1066,7 @@ static void muxserverRemoveDetachedChild(tunnel_t *t, line_t *child_l, muxserver
     /* A paused detached child may validly have an empty queue. */
     const buffer_budget_cost_t retained = bufferbudgetGetUsage(&registry->queue_budget);
     if (UNLIKELY((registry->count == 0) != (registry->head == NULL) ||
-                 (registry->count == 0 && (retained.bytes != 0 || retained.charge != 0 || retained.entries != 0))))
+                 (registry->count == 0 && (retained.bytes != 0 || retained.charge != 0))))
     {
         LOGF("MuxServer: detached registry count/head/charge invariant failed");
         abortProgramNow(1);
@@ -1296,7 +1296,7 @@ void muxserverHandleParentLoss(tunnel_t *t, line_t *parent_l, bool notify_parent
 
     const buffer_budget_cost_t retained = bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget);
     if (UNLIKELY(parent_ls->children_count != 0 || parent_ls->child_next != NULL || retained.bytes != 0 ||
-                 retained.charge != 0 || retained.entries != 0))
+                 retained.charge != 0))
     {
         LOGF("MuxServer: parent-loss transfer left attached child state behind");
         abortProgramNow(1);

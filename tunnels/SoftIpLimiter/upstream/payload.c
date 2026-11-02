@@ -30,7 +30,9 @@ void softiplimiterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->initial_forwarding)
     {
         if (UNLIKELY(sbufGetLength(buf) > kSoftIpLimiterMaxReentryBytes - bufferqueueGetBufLen(&ls->initial_reentry) ||
-                     bufferqueueGetBufCount(&ls->initial_reentry) >= kSoftIpLimiterMaxReentryBuffers ||
+                     bufferqueueGetCharge(&ls->initial_reentry) > kSoftIpLimiterMaxReentryCharge ||
+                     sbufGetQueueCharge(buf) >
+                         kSoftIpLimiterMaxReentryCharge - bufferqueueGetCharge(&ls->initial_reentry) ||
                      ! bufferqueueTryPushBack(&ls->initial_reentry, &buf)))
         {
             lineReuseBuffer(l, buf);

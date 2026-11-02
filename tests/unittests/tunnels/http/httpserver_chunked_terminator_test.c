@@ -246,9 +246,10 @@ static void upgradeResponseSink(tunnel_t *prev, line_t *line, sbuf_t *buf)
         }
         if (upgrade_stop >= 2)
         {
-            for (unsigned i = 0; i <= kHttpServerUpgradeQueueCountLimit; ++i)
+            for (size_t charge = 0; charge <= kHttpServerUpgradeQueueChargeLimit;)
             {
                 sbuf_t *nested = upgradeBuffer(line, "x");
+                charge += sbufGetQueueCharge(nested);
                 if (upgrade_stop == 2)
                     tunnelUpStreamPayload(prev->next, line, nested);
                 else

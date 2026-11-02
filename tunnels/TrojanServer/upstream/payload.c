@@ -40,8 +40,7 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
         /* A nested delivery cannot drain yet, so settle its retained storage now. */
-        if (ls->pumping && trojanserverIsUdp(ls) &&
-            ! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge, kTrojanServerMaxInputBuffers))
+        if (ls->pumping && trojanserverIsUdp(ls) && ! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge))
         {
             trojanserverCloseLineBidirectional(t, l);
             return;

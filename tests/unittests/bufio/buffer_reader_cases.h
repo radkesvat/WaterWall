@@ -94,24 +94,52 @@ static void testBufferReaderRetention(buffer_pool_t *pool)
                 "reader retention fixture could not gather metadata");
         input = readerTestInput(pool, (const uint8_t *) "EF", 2, mode);
         require(bufferreaderTryPush(&reader, &input, 6), "reader retention fixture refused its tail");
-        require(bufferreaderSettle(&reader, fit.allocation_charge, 1) &&
+        require(bufferreaderSettle(&reader, fit.allocation_charge) &&
                     bufferreaderCharge(&reader) <= fit.allocation_charge && bufferreaderEntryCount(&reader) == 1 &&
                     bufferreaderLength(&reader) == 6 && bufferreaderBodyBytes(&reader) == 4 &&
                     memoryEqual(bufferreaderHeader(&reader), "ab", 2),
                 "settlement lost cached bytes, accounting or the retained-storage bound");
         streamCheckBytes(pool, bufferreaderTakeBody(&reader, 4), "CDEF", 4);
-        require(bufferreaderSettle(&reader, 0, 1), "empty retention failed a zero charge limit");
+        require(bufferreaderSettle(&reader, 0), "empty retention failed a zero charge limit");
 
         input = bufferpoolGetLargeBuffer(pool);
         sbufSetLength(input, 4);
         sbufWrite(input, "abCD", 4);
         require(bufferreaderTryPush(&reader, &input, 4) && bufferreaderGather(&reader, 2),
                 "settlement refusal fixture did not retain its body");
-        require(! bufferreaderSettle(&reader, fit.allocation_charge - 1U, 1) && bufferreaderLength(&reader) == 4 &&
+        require(! bufferreaderSettle(&reader, fit.allocation_charge - 1U) && bufferreaderLength(&reader) == 4 &&
                     bufferreaderHeaderLength(&reader) == 2,
                 "impossible retention geometry was accepted or lost logical bytes");
         bufferreaderDestroy(&reader);
     }
+}
+
+static void testBufferReaderManyFragments(buffer_pool_t *pool)
+{
+    testCaseSet("buffer reader: fitting charge retains more than 1024 fragments without copying");
+    uint8_t         header[1];
+    buffer_reader_t reader;
+    bufferreaderInit(&reader, pool, header, sizeof(header));
+    sbuf_t *fragments[1025];
+    for (size_t i = 0; i < ARRAY_SIZE(fragments); ++i)
+    {
+        const uint8_t byte = (uint8_t) i;
+        fragments[i]       = readerTestPush(&reader, streamTestBytes(pool, &byte, 1));
+    }
+    const size_t charge = bufferreaderCharge(&reader);
+    require(charge > 0 && charge < 8U * 1024U * 1024U && bufferreaderSettle(&reader, charge) &&
+                bufferreaderCharge(&reader) == charge && bufferreaderEntryCount(&reader) == ARRAY_SIZE(fragments),
+            "charge-fitting fragments were compacted or lost accounting");
+    for (size_t i = 0; i < ARRAY_SIZE(fragments); ++i)
+    {
+        const uint8_t byte = (uint8_t) i;
+        sbuf_t       *body = bufferreaderTakeChunk(&reader);
+        require(body == fragments[i], "charge-fitting settlement replaced retained storage");
+        streamCheckBytes(pool, body, &byte, 1);
+    }
+    require(bufferreaderLength(&reader) == 0 && bufferreaderCharge(&reader) == 0,
+            "fragment drain retained bytes or storage charge");
+    bufferreaderDestroy(&reader);
 }
 
 static void testBufferReaderQueueTransfer(buffer_pool_t *pool)
@@ -139,10 +167,7 @@ static void testBufferReaderQueueTransfer(buffer_pool_t *pool)
                         bufferreaderEntryCount(&reader) == 0 && bufferqueueGetBufLen(&destination) == expected_bytes,
                     "queue transfer lost bytes or left multiple input owners");
             buffer_budget_t budget;
-            bufferbudgetInit(&budget,
-                             (buffer_budget_cost_t) {expected_bytes,
-                                                     bufferqueueGetCharge(&destination),
-                                                     bufferqueueGetBufCount(&destination)});
+            bufferbudgetInit(&budget, (buffer_budget_cost_t) {expected_bytes, bufferqueueGetCharge(&destination)});
             require(bufferqueueTryAttachBudget(&destination, &budget),
                     "transferred input could not attach its independent exact output budget");
             input = streamTestBytes(pool, "NEW", 3);
@@ -212,6 +237,7 @@ static void testBufferReaderContracts(void)
     testBufferReaderFragments(fixture.pool);
     testBufferReaderAdmissionAndChunks(fixture.pool);
     testBufferReaderRetention(fixture.pool);
+    testBufferReaderManyFragments(fixture.pool);
     testBufferReaderQueueTransfer(fixture.pool);
     testBufferReaderCleanup(fixture.pool);
     workerUnbindCurrentThread();

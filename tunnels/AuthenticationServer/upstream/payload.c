@@ -44,8 +44,7 @@ void authenticationserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
                 &ls->read_stream,
                 buf,
                 valid_token ? max_message + kAuthenticationStreamReentryHeadroom : preauth_max,
-                valid_token ? kAuthenticationStreamChargeLimit : max((size_t) (128U * 1024U), fit.allocation_charge),
-                valid_token ? kAuthenticationStreamEntryLimit : 64U))
+                valid_token ? kAuthenticationStreamChargeLimit : max((size_t) (128U * 1024U), fit.allocation_charge)))
         {
             lineReuseBuffer(l, buf);
             authenticationserverCloseLine(t, l, ls, "request storage limit");
@@ -79,8 +78,7 @@ void authenticationserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
         authenticationStreamCompactIncompleteBounded(&ls->read_stream,
                                                      valid_token ? max_message : preauth_max,
                                                      valid_token ? kAuthenticationStreamChargeLimit
-                                                                 : max((size_t) (128U * 1024U), fit.allocation_charge),
-                                                     valid_token ? kAuthenticationStreamEntryLimit : 64U);
+                                                                 : max((size_t) (128U * 1024U), fit.allocation_charge));
     }
     lineUnref(l);
 }

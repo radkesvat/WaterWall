@@ -190,8 +190,7 @@ static void requireUdpRetention(void)
 {
     vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
     twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
-                   bufferreaderCharge(&ls->reader) <= kVlessServerMaxInputCharge &&
-                   bufferreaderEntryCount(&ls->reader) <= kVlessServerMaxInputBuffers,
+                   bufferreaderCharge(&ls->reader) <= kVlessServerMaxInputCharge,
                "UDP retained fragmented input beyond its storage compaction thresholds");
 }
 static void act(unsigned boundary, line_t *l)
@@ -252,7 +251,12 @@ static void act(unsigned boundary, line_t *l)
         twfRequire(lineIsAlive(f.line), "exact reentry retention budget rejected");
         if (f.overflow_admission)
         {
-            tunnelUpStreamPayload(f.t, f.line, bytes(data, f.admission_bytes == 0 ? 0 : 1, false, 320));
+            sbuf_t *extra = f.admission_bytes == 0
+                                ? twfTrackAcquired(sbufCreateWithPadding(kVlessServerMaxInputCharge, 320))
+                                : bytes(data, 1, false, 320);
+            if (f.admission_bytes == 0)
+                sbufSetLength(extra, 0);
+            tunnelUpStreamPayload(f.t, f.line, extra);
             twfRequire(! lineIsAlive(f.line), "reentry retention overflow accepted");
         }
         memoryFree(data);
@@ -1299,7 +1303,7 @@ static void testFallbackReceiverPressure(void)
 
 static void testLimits(void)
 {
-    twfSetCase("transactional byte/entry budgets and parser settlement");
+    twfSetCase("transactional byte/charge budgets and parser settlement");
     uint8_t *data = memoryAllocateZero(kVlessServerMaxBufferedBytes + 512);
     for (unsigned direction = 0; direction < 2; ++direction)
         for (unsigned entries = 0; entries < 2; ++entries)
@@ -1326,18 +1330,21 @@ static void testLimits(void)
                     tunnelUpStreamPayload(f.t, f.line, b);
             }
             buffer_budget_t *budget = direction ? &ls->response_budget : &ls->upstream_budget;
-            twfRequire(bufferbudgetGetLimits(budget).charge == (direction ? SIZE_MAX : kVlessServerMaxFallbackCharge),
+            twfRequire(bufferbudgetGetLimits(budget).charge ==
+                           (direction ? 8U * 1024U * 1024U : kVlessServerMaxFallbackCharge),
                        "fallback charge policy affected the wrong budget");
-            twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == (entries ? 1024 : 1),
+            twfRequire(lineIsAlive(f.line) &&
+                           bufferbudgetGetUsage(budget).charge <= bufferbudgetGetLimits(budget).charge,
                        "exact budget rejected or accounting lost");
             sbuf_t *extra = bytes(data, entries ? 0 : 1, false, 320);
             if (direction)
                 tunnelDownStreamPayload(f.t, f.line, extra);
             else
                 tunnelUpStreamPayload(f.t, f.line, extra);
-            if (direction == 0 && entries)
-                twfRequire(lineIsAlive(f.line) && bufferbudgetGetUsage(budget).entries == 1,
-                           "delayed entry pressure did not compact ordinary replay");
+            if (entries)
+                twfRequire(lineIsAlive(f.line) &&
+                               bufferbudgetGetUsage(budget).charge <= bufferbudgetGetLimits(budget).charge,
+                           "small fragments within charge allowance were refused");
             else
                 twfRequire(! lineIsAlive(f.line), "output budget overflow accepted");
             end();

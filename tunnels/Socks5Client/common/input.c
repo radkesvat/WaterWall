@@ -230,11 +230,12 @@ bool socks5clientQueueReplyInput(tunnel_t *t, line_t *l, sbuf_t *buf)
     socks5client_lstate_t *ls      = lineGetState(l, t);
     const size_t           length  = sbufGetLength(buf);
     const size_t           active  = bufferstreamGetBufLen(&ls->in_stream);
-    const size_t           entries = bufferstreamGetEntryCount(&ls->in_stream);
+    const size_t           charge  = bufferstreamGetCharge(&ls->in_stream);
     if (length > kSocks5ClientMaxPendingDownBytes || active > kSocks5ClientMaxPendingDownBytes - length ||
         bufferqueueGetBufLen(&ls->pending_down) > kSocks5ClientMaxPendingDownBytes - length - active ||
-        entries >= kSocks5ClientMaxPendingBuffers ||
-        bufferqueueGetBufCount(&ls->pending_down) >= kSocks5ClientMaxPendingBuffers - entries ||
+        charge > kSocks5ClientMaxPendingCharge ||
+        bufferqueueGetCharge(&ls->pending_down) > kSocks5ClientMaxPendingCharge - charge ||
+        sbufGetQueueCharge(buf) > kSocks5ClientMaxPendingCharge - charge - bufferqueueGetCharge(&ls->pending_down) ||
         ! bufferqueueTryPushBack(&ls->pending_down, &buf))
     {
         lineReuseBuffer(l, buf);

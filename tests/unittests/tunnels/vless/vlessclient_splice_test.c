@@ -6,7 +6,7 @@
  * Cases: testBaseline, testResponse, testTcp, testRequests, testUdp, testPressure, testLimits,
  * testNestedTcpRetention, testUdpRetention; the driver lists the remaining cases
  * Checks: Assertion labels include: inventory exhaustion; VlessClient destroyed a borrowed line;
- * exact retained entry bound was refused; nested FIFO accounting omitted or duplicated an active buffer
+ * fragments within charge allowance were refused; nested FIFO accounting omitted or duplicated an active buffer
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.vlessclient_no_splice_unit; waterwall.vlessclient_splice_unit
@@ -163,9 +163,7 @@ static sbuf_t *oversizedBytes(const void *data, uint32_t len)
 static void requireUdpRetentionSettled(vlessclient_lstate_t *ls)
 {
     size_t charge = bufferreaderCharge(&ls->reader);
-    size_t count  = bufferreaderEntryCount(&ls->reader);
-    twfRequire(charge <= kVlessClientMaxInputCharge && count <= kVlessClientMaxInputBuffers,
-               "UDP retained input exceeded its charge or fragment threshold");
+    twfRequire(charge <= kVlessClientMaxInputCharge, "UDP retained input exceeded its charge threshold");
 }
 
 static void performAction(unsigned boundary)
@@ -268,10 +266,10 @@ static void performAction(unsigned boundary)
             memset(data, (int) (i % 251), f.retention_size);
             if (f.retention_fault == 2 && i == 1023)
                 fail_queue = true;
-            tunnelDownStreamPayload(f.t, f.carrier, bytes(data, f.retention_size, f.retention_pipe, 320));
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(data, f.retention_size, f.retention_pipe, 384));
             if (! lineIsAlive(f.application))
             {
-                twfRequire(f.retention_fault == 2 && ! fail_queue, "exact retained entry bound was refused");
+                twfRequire(f.retention_fault == 2 && ! fail_queue, "fragments within charge allowance were refused");
                 return;
             }
         }
@@ -281,8 +279,8 @@ static void performAction(unsigned boundary)
                    "nested FIFO accounting omitted or duplicated an active buffer");
         if (f.retention_fault == 1)
         {
-            tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, f.retention_pipe, 320));
-            twfRequire(! lineIsAlive(f.application), "TCP retained entry overflow was accepted");
+            tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes("x", 1));
+            twfRequire(! lineIsAlive(f.application), "TCP retained charge overflow was accepted");
         }
         if (f.retention_fault == 3)
             tunnelDownStreamFin(f.t, f.carrier);
@@ -804,7 +802,7 @@ static void testUdpRetention(bool pipe)
     begin(true, "127.0.0.1", 128, 0, false);
     establish();
     response();
-    uint8_t payload[kVlessClientMaxInputBuffers + 2];
+    uint8_t payload[1026];
     uint8_t header[2];
     for (unsigned i = 0; i < sizeof(payload); ++i)
         payload[i] = (uint8_t) (i % 251);
@@ -908,7 +906,7 @@ static void testNestedTcpRetention(void)
         twfRequire(f.down[0] == 'A' && (extra || f.down[f.down_len - 1] == 'r'), "nested body bytes changed");
         end();
     }
-    twfSetCase("TCP nested body retention: 1024 entries, FIFO, overflow, refusal and Finish");
+    twfSetCase("TCP nested body retention: 1024 fragments, FIFO, charge overflow, refusal and Finish");
     for (unsigned pipe = 0; pipe < 2; ++pipe)
         for (unsigned size = 1; size <= 2048; size *= 2048)
             for (unsigned fault = 0; fault < 4; ++fault)

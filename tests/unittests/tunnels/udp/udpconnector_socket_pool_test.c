@@ -1280,11 +1280,12 @@ static void testCase21_PacketDnsFailurePreservesExistingBindings(void)
     twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue), 0, "failed peer queue must be dropped in full");
     twfRequire(! cache->has_context && ! cache->resolving, "failed peer cache must return to unresolved state");
     twfRequire(cache->pending_queue.budget == &ls->write_budget &&
-                   bufferbudgetGetUsage(&ls->write_budget).charge == sibling_charge &&
-                   bufferbudgetGetUsage(&ls->write_budget).entries == 1,
+                   bufferbudgetGetUsage(&ls->write_budget).charge == sibling_charge,
                "DNS failure/recreation lost the sibling budget or queue binding");
     testQueueWrite(ls, &cache->pending_queue, makeDatagram(&fixture, "recreated"));
-    twfRequire(bufferbudgetGetUsage(&ls->write_budget).entries == 2, "recreated DNS queue bypassed budget");
+    twfRequire(bufferbudgetGetUsage(&ls->write_budget).charge ==
+                   sibling_charge + bufferqueueGetCharge(&cache->pending_queue),
+               "recreated DNS queue bypassed budget");
     lineReuseBuffer(l, udpconnectorPopWrite(ls, &cache->pending_queue));
     lineReuseBuffer(l, udpconnectorPopWrite(ls, &ls->pause_queue));
     bufferbudgetAssertEmpty(&ls->write_budget);

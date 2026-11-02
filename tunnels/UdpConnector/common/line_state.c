@@ -26,8 +26,7 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         .route_destination_pinned         = false,
     };
 
-    bufferbudgetInit(&ls->write_budget,
-                     (buffer_budget_cost_t) {kUdpMaxPauseQueueSize, kUdpMaxPauseQueueSize, SIZE_MAX});
+    bufferbudgetInit(&ls->write_budget, (buffer_budget_cost_t) {kUdpMaxPauseQueueSize, kUdpMaxPauseQueueSize});
     const bool attached = bufferqueueTryAttachBudget(&ls->pause_queue, &ls->write_budget);
     assert(attached);
     discard                attached;

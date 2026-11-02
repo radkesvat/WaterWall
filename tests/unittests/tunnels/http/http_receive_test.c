@@ -1,8 +1,8 @@
 /*
  * Covers: HttpCommon receive serialization, nested budgets and stream retention.
  * Setup: Real standalone pools and a registered worker for pending-queue cleanup.
- * Checks: 16 KiB FIFO slices, byte/charge/entry boundaries, popped reservations,
- *         empty recycling, destruction and small-suffix/entry-count compaction.
+ * Checks: 16 KiB FIFO slices, byte/charge boundaries, popped reservations,
+ *         empty recycling, destruction, charge-driven compaction and many-fragment retention.
  * Limits: HTTP parser and callback-lifetime behavior belong to the node fixtures.
  * CTest: waterwall.http_receive_unit.
  */
@@ -36,11 +36,10 @@ static sbuf_t *makeBuffer(uint32_t capacity, uint32_t length, size_t offset)
     return buffer;
 }
 
-static void checkUsage(http_receive_t *receive, size_t bytes, size_t charge, size_t entries)
+static void checkUsage(http_receive_t *receive, size_t bytes, size_t charge)
 {
     buffer_budget_cost_t used = bufferbudgetGetUsage(&receive->budget);
-    require(used.bytes == bytes && used.charge == charge && used.entries == entries,
-            "receive budget usage changed unexpectedly");
+    require(used.bytes == bytes && used.charge == charge, "receive budget usage changed unexpectedly");
 }
 
 static void checkBody(sbuf_t *buffer, size_t offset)
@@ -67,7 +66,7 @@ static void caseFifoAndEmpty(buffer_pool_t *pool)
     const uint32_t nested = kHttpReceiveSliceBytes + 5;
     require(httpReceiveAdmit(&receive, pool, makeBuffer(outer, outer, 0)) == kHttpReceiveDrain,
             "first delivery did not start the drain");
-    checkUsage(&receive, 0, 0, 0);
+    checkUsage(&receive, 0, 0);
     sbuf_t *slice = httpReceiveNext(&receive, pool);
     checkBody(slice, 0);
     require(sbufGetLength(slice) == kHttpReceiveSliceBytes, "outer delivery was not sliced at 16 KiB");
@@ -94,7 +93,7 @@ static void caseFifoAndEmpty(buffer_pool_t *pool)
     }
     require(received == outer + nested + 7 && ! receive.draining && receive.active == NULL,
             "receive drain did not end after all bytes");
-    checkUsage(&receive, 0, 0, 0);
+    checkUsage(&receive, 0, 0);
     httpReceiveDestroy(&receive, pool);
 }
 
@@ -107,7 +106,7 @@ static void caseByteLimitAndPoppedReservation(buffer_pool_t *pool)
     sbuf_t      *nested = makeBuffer(kHttpReceiveNestedBytes, kHttpReceiveNestedBytes, 1);
     const size_t charge = sbufGetQueueCharge(nested);
     require(httpReceiveAdmit(&receive, pool, nested) == kHttpReceiveQueued, "exact nested byte allowance was rejected");
-    checkUsage(&receive, kHttpReceiveNestedBytes, charge, 1);
+    checkUsage(&receive, kHttpReceiveNestedBytes, charge);
     sbuf_t *rejected = makeBuffer(1, 1, 0);
     require(httpReceiveAdmit(&receive, pool, rejected) == kHttpReceiveRejected,
             "nested byte allowance plus one was accepted");
@@ -122,7 +121,7 @@ static void caseByteLimitAndPoppedReservation(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, slice);
     require(bufferqueueGetBufCount(&receive.pending) == 0 && receive.active != NULL,
             "nested input was not moved into the active position");
-    checkUsage(&receive, kHttpReceiveNestedBytes, charge, 1);
+    checkUsage(&receive, kHttpReceiveNestedBytes, charge);
     require(httpReceiveAdmit(&receive, pool, rejected) == kHttpReceiveRejected,
             "popping a nested buffer bypassed its budget");
     bufferpoolReuseBuffer(pool, rejected);
@@ -131,9 +130,9 @@ static void caseByteLimitAndPoppedReservation(buffer_pool_t *pool)
         checkBody(slice, 1 + received);
         received += sbufGetLength(slice);
         if (receive.active != NULL)
-            checkUsage(&receive, kHttpReceiveNestedBytes, charge, 1);
+            checkUsage(&receive, kHttpReceiveNestedBytes, charge);
         else
-            checkUsage(&receive, 0, 0, 0);
+            checkUsage(&receive, 0, 0);
         bufferpoolReuseBuffer(pool, slice);
     }
     require(received == kHttpReceiveNestedBytes, "nested active drain lost bytes");
@@ -156,32 +155,45 @@ static void caseChargeLimit(buffer_pool_t *pool)
     require(httpReceiveAdmit(&receive, pool, first) == kHttpReceiveQueued &&
                 httpReceiveAdmit(&receive, pool, second) == kHttpReceiveQueued,
             "exact nested charge allowance was rejected");
-    checkUsage(&receive, 2, kHttpReceiveNestedCharge, 2);
+    checkUsage(&receive, 2, kHttpReceiveNestedCharge);
     sbuf_t *extra = makeBuffer(1, 1, 3);
     require(httpReceiveAdmit(&receive, pool, extra) == kHttpReceiveRejected, "nested charge overflow was accepted");
     bufferpoolReuseBuffer(pool, extra);
     httpReceiveDestroy(&receive, pool);
-    checkUsage(&receive, 0, 0, 0);
+    checkUsage(&receive, 0, 0);
     require(receive.active == NULL && ! receive.draining && bufferqueueGetBufCount(&receive.pending) == 0,
             "destroy retained active or queued input");
 }
 
-static void caseEntryLimit(buffer_pool_t *pool)
+static void caseManyFragments(buffer_pool_t *pool)
 {
-    testCaseSet("HTTP nested queue entry limit is exact");
+    testCaseSet("HTTP nested queue accepts more than 1024 fragments within its charge allowance");
     http_receive_t receive;
     httpReceiveInit(&receive);
     require(httpReceiveAdmit(&receive, pool, makeBuffer(1, 1, 0)) == kHttpReceiveDrain, "outer input did not start");
-    for (size_t i = 0; i < kHttpReceiveNestedEntries; ++i)
-        require(httpReceiveAdmit(&receive, pool, makeBuffer(1, 1, i)) == kHttpReceiveQueued,
-                "entry allowance was rejected before the boundary");
-    require(bufferbudgetGetUsage(&receive.budget).entries == kHttpReceiveNestedEntries,
-            "nested entry accounting missed an input");
-    sbuf_t *extra = makeBuffer(1, 1, 0);
-    require(httpReceiveAdmit(&receive, pool, extra) == kHttpReceiveRejected, "entry allowance plus one was accepted");
-    bufferpoolReuseBuffer(pool, extra);
+    const size_t fragments = 1025;
+    size_t       charge    = 0;
+    for (size_t i = 0; i < fragments; ++i)
+    {
+        sbuf_t *input = makeBuffer(1, 1, i + 1);
+        charge += sbufGetQueueCharge(input);
+        require(httpReceiveAdmit(&receive, pool, input) == kHttpReceiveQueued,
+                "fitting fragment was rejected by count");
+    }
+    require(charge < kHttpReceiveNestedCharge && bufferqueueGetBufCount(&receive.pending) == fragments,
+            "nested fragment queue did not preserve admitted entries");
+    checkUsage(&receive, fragments, charge);
+    size_t  received = 0;
+    sbuf_t *slice;
+    while ((slice = httpReceiveNext(&receive, pool)) != NULL)
+    {
+        checkBody(slice, received);
+        received += sbufGetLength(slice);
+        bufferpoolReuseBuffer(pool, slice);
+    }
+    require(received == fragments + 1, "many-fragment drain lost input bytes");
     httpReceiveDestroy(&receive, pool);
-    checkUsage(&receive, 0, 0, 0);
+    checkUsage(&receive, 0, 0);
 }
 
 static void caseSettle(buffer_pool_t *pool)
@@ -197,7 +209,8 @@ static void caseSettle(buffer_pool_t *pool)
     checkBody(body, 0);
     bufferpoolReuseBuffer(pool, body);
 
-    for (size_t i = 0; i <= kHttpReceiveNestedEntries; ++i)
+    const size_t fragments = 1025;
+    for (size_t i = 0; i < fragments; ++i)
     {
         sbuf_t        *one  = makeBuffer(1, 0, 0);
         const uint32_t skip = sbufGetMaximumWriteableSize(one) - 1;
@@ -207,13 +220,14 @@ static void caseSettle(buffer_pool_t *pool)
         sbufGetMutablePtr(one)[0] = pattern(i);
         bufferstreamPush(&stream, one);
     }
-    require(bufferstreamGetEntryCount(&stream) == kHttpReceiveNestedEntries + 1,
-            "separate-entry fixture unexpectedly coalesced");
-    require(httpReceiveSettle(&stream, kHttpReceiveStreamBytes) && bufferstreamGetEntryCount(&stream) == 1,
-            "too many small entries were not compacted");
+    require(bufferstreamGetEntryCount(&stream) == fragments, "separate-entry fixture unexpectedly coalesced");
+    const size_t fragment_charge = bufferstreamGetCharge(&stream);
+    require(fragment_charge < kHttpReceiveStreamCharge && httpReceiveSettle(&stream, kHttpReceiveStreamBytes) &&
+                bufferstreamGetEntryCount(&stream) == fragments && bufferstreamGetCharge(&stream) == fragment_charge,
+            "charge-fitting fragments were compacted solely because of their count");
     body = bufferstreamFullRead(&stream);
     checkBody(body, 0);
-    require(sbufGetLength(body) == kHttpReceiveNestedEntries + 1, "entry compaction lost bytes");
+    require(sbufGetLength(body) == fragments, "many-fragment read lost bytes");
     bufferpoolReuseBuffer(pool, body);
 
     bufferstreamPush(&stream, makeBuffer(kHttpReceiveStreamBytes, kHttpReceiveStreamBytes, 0));
@@ -252,7 +266,7 @@ int main(void)
     caseFifoAndEmpty(pool);
     caseByteLimitAndPoppedReservation(pool);
     caseChargeLimit(pool);
-    caseEntryLimit(pool);
+    caseManyFragments(pool);
     caseSettle(pool);
     testWorkerUnbindWID();
     testWorkerRegistryRestore(&registry);

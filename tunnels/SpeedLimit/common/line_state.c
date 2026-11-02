@@ -7,8 +7,7 @@ void speedlimitLinestateInitialize(speedlimit_lstate_t *state, tunnel_t *tunnel,
                                .tunnel = tunnel, .line = line, .line_bucket = {.tokens_units = settings->bucket_capacity_units}};
     state->up_context                 = (speedlimit_direction_t) {state, true};
     state->down_context               = (speedlimit_direction_t) {state, false};
-    const buffer_budget_cost_t limits = {
-        kSpeedLimitMaxQueueBytes, kSpeedLimitMaxQueueCharge, kSpeedLimitMaxQueueBuffers};
+    const buffer_budget_cost_t limits = {kSpeedLimitMaxQueueBytes, kSpeedLimitMaxQueueCharge};
     bufferbudgetInit(&state->up_budget, limits);
     bufferbudgetInit(&state->down_budget, limits);
     trafficshaperInit(&state->up,

@@ -8,8 +8,7 @@ void httpproxyclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     for (unsigned d = 0; d < 2; ++d)
     {
         bufferqueueInitEmpty(&ls->pending[d]);
-        bufferbudgetInit(&ls->budgets[d],
-                         (buffer_budget_cost_t) {kHpcDeliveryLimit, kHpcDeliveryLimit, kHpcPendingEntries});
+        bufferbudgetInit(&ls->budgets[d], (buffer_budget_cost_t) {kHpcDeliveryLimit, kHpcDeliveryLimit});
         bool attached = bufferqueueTryAttachBudget(&ls->pending[d], &ls->budgets[d]);
         assert(attached);
         discard attached;

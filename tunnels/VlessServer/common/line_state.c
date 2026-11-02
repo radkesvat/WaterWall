@@ -12,7 +12,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
     bufferreaderInit(&ls->reader, lineGetBufferPool(l), ls->header, sizeof(ls->header));
     bufferqueueInitEmpty(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_down);
-    buffer_budget_cost_t limits = {kVlessServerMaxPendingBytes, SIZE_MAX, kVlessServerMaxPendingBuffers};
+    buffer_budget_cost_t limits = {kVlessServerMaxPendingBytes, 8U * 1024U * 1024U};
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->response_budget, limits);
     bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->response_budget);

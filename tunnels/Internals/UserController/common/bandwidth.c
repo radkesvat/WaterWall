@@ -171,8 +171,7 @@ static const traffic_shaper_ops_t usercontrollerBandwidthOps = {
 void usercontrollerBandwidthInitialize(tunnel_t *t, line_t *l)
 {
     usercontroller_lstate_t *ls = lineGetState(l, t);
-    bufferbudgetInit(&ls->budget,
-                     (buffer_budget_cost_t) {.bytes = 1024U * 1024U, .charge = 2U * 1024U * 1024U, .entries = 256});
+    bufferbudgetInit(&ls->budget, (buffer_budget_cost_t) {.bytes = 1024U * 1024U, .charge = 2U * 1024U * 1024U});
     for (unsigned i = 0; i < 2; ++i)
     {
         usercontroller_direction_t *direction = &ls->directions[i];

@@ -29,6 +29,7 @@ struct quic_context
     buffer_budget_reservation_t application_reservation;
     buffer_budget_reservation_t input_reservation;
     ww_quic_carrier_t           carrier;
+    size_t                      carrier_allocations;
     uint64_t                    input_generation;
     bool                        attached : 1;
     bool                        driving : 1;
@@ -38,6 +39,18 @@ struct quic_context
     bool                        finish_up : 1;
     bool                        finish_down : 1;
 };
+
+/* Engine descriptor admission includes queued and active work. These counts
+ * are QUIC resources, separate from retained bytes and allocation charge. */
+static inline size_t quicApplicationEntries(quic_context_t *context)
+{
+    return bufferqueueGetBufCount(&context->application) + (context->active_application != NULL);
+}
+
+static inline size_t quicInputEntries(quic_context_t *context)
+{
+    return bufferqueueGetBufCount(&context->input) + (context->active_input != NULL) + context->carrier_allocations;
+}
 
 quic_context_t *quicGetContext(tunnel_t *t, line_t *l);
 bool            quicEnter(quic_context_t *context);

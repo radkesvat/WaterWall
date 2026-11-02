@@ -3,8 +3,7 @@
 void trojanserverLinestateInitialize(trojanserver_lstate_t *ls, tunnel_t *t, line_t *l, trojanserver_line_kind_t kind)
 {
     *ls = (trojanserver_lstate_t) {.tunnel = t, .line = l, .phase = kTrojanServerPhaseWaitInitial, .line_kind = kind};
-    bufferbudgetInit(&ls->output_budget,
-                     (buffer_budget_cost_t) {kTrojanServerMaxPendingBytes, SIZE_MAX, kTrojanServerMaxQueuedBuffers});
+    bufferbudgetInit(&ls->output_budget, (buffer_budget_cost_t) {kTrojanServerMaxPendingBytes, 8U * 1024U * 1024U});
     bufferqueueInitEmpty(&ls->pending_up);
     bufferreaderInit(&ls->reader, lineGetBufferPool(l), ls->header, sizeof(ls->header));
 }

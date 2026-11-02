@@ -346,7 +346,7 @@ static void raceFixtureSetup(admission_race_fixture_t *fixture)
     for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
     {
         bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
-                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
     }
 
     fixture->chain                      = tunnelchainCreate(kRaceWorkers);

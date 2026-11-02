@@ -186,7 +186,6 @@ enum
     kHttpServerMaxHeaderBytes    = 64 * 1024,
     kHttpServerHttp2FrameBytes   = 32 * 1024,
     kHttpServerUpgradeQueueChargeLimit = 2 * 1024 * 1024,
-    kHttpServerUpgradeQueueCountLimit  = 1024,
     kHttpServerSplitMaxBuffering = 65535 * 2,
     kHttpServerDefaultHttp1Port  = 80,
     kHttpServerDefaultHttpsPort  = 443

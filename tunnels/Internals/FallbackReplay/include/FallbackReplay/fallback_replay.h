@@ -46,7 +46,7 @@ typedef struct fallback_replay_s
 /* Consumes transcript on every result, leaving it empty and unbound. Preserves
  * its existing budget accounting, rebinding to budget if necessary. Refusal
  * recycles the entire transcript. When enabled, positive-delay ordinary batches
- * retry charge/entry admission in best-fit storage. Publish the node's fallback phase before
+ * retry charge admission in best-fit storage. Publish the node's fallback phase before
  * calling branch Init after Begin succeeds. No callbacks run in Begin. */
 fallback_replay_result_e fallbackReplayBegin(fallback_replay_t *replay, line_t *line, tunnel_t *branch,
                                              const fallback_replay_config_t *config, buffer_budget_t *budget,

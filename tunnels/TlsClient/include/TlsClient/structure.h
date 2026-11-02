@@ -84,7 +84,6 @@ enum
     kTlsClientTunnelStateSize         = sizeof(tlsclient_tstate_t),
     kTlsClientLineStateSize           = sizeof(tlsclient_lstate_t),
     kTlsClientPendingPlaintextBytes   = 2U * 1024U * 1024U,
-    kTlsClientPendingPlaintextBuffers = 1024U
 };
 
 enum sslstatus

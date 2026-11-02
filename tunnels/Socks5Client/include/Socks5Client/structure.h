@@ -79,7 +79,7 @@ enum
     kLineStateSize                 = sizeof(socks5client_lstate_t),
     kSocks5ClientMaxPendingUpBytes = 2U * 1024U * 1024U,
     kSocks5ClientMaxPendingDownBytes = 2U * 1024U * 1024U,
-    kSocks5ClientMaxPendingBuffers = 1024,
+    kSocks5ClientMaxPendingCharge    = 8U * 1024U * 1024U,
     kSocks5ClientMaxHandshakeBytes = 4096,
     kSocks5ClientUdpHeaderMaxLen   = 4 + 1 + UINT8_MAX + 2
 };

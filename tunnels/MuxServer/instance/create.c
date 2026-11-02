@@ -279,7 +279,7 @@ tunnel_t *muxserverTunnelCreate(node_t *node)
     for (uint32_t wid = 0; wid < ts->workers_count; ++wid)
     {
         bufferbudgetInit(&ts->worker_states[wid].detached_registry.queue_budget,
-                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+                         (buffer_budget_cost_t) {SIZE_MAX, SIZE_MAX});
     }
     ts->log_main_line_stats               = log_main_line_stats;
 

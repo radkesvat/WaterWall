@@ -14,7 +14,6 @@ enum
     kMaxBuffering                   = (65535 * 2),
     kHalfDuplexServerStartupBytes   = 2 * 1024 * 1024,
     kHalfDuplexServerStartupCharge  = 2 * 1024 * 1024,
-    kHalfDuplexServerStartupEntries = 1024
 };
 
 typedef struct halfduplex_pair_id_s
