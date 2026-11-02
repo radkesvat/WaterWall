@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testBaseline, testResponse, testTcp, testRequests, testUdp, testPressure, testLimits,
- * testNestedTcpRetention; the driver lists the remaining cases
+ * testNestedTcpRetention, testUdpRetention; the driver lists the remaining cases
  * Checks: Assertion labels include: inventory exhaustion; VlessClient destroyed a borrowed line;
  * exact retained entry bound was refused; nested FIFO accounting omitted or duplicated an active buffer
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -151,6 +151,28 @@ static sbuf_t   *bytes(const void *data, uint32_t len, bool pipe, uint16_t paddi
     return b;
 }
 
+static sbuf_t *oversizedBytes(const void *data, uint32_t len)
+{
+    sbuf_t *b = twfTrackAcquired(sbufCreateWithPadding(kVlessClientMaxInputCharge + 1024, 320));
+    sbufWrite(b, data, len);
+    sbufSetLength(b, len);
+    twfRequire(sbufGetQueueCharge(b) > kVlessClientMaxInputCharge, "fixture did not exceed retained charge");
+    return b;
+}
+
+static void requireUdpRetentionSettled(vlessclient_lstate_t *ls)
+{
+    size_t charge = bufferqueueGetCharge(&ls->pending_down);
+    size_t count  = bufferqueueGetBufCount(&ls->pending_down);
+    if (ls->receive_head != NULL)
+    {
+        charge += sbufGetQueueCharge(ls->receive_head);
+        ++count;
+    }
+    twfRequire(charge <= kVlessClientMaxInputCharge && count <= kVlessClientMaxInputBuffers,
+               "UDP retained input exceeded its charge or fragment threshold");
+}
+
 static void performAction(unsigned boundary)
 {
     if (f.boundary != boundary)
@@ -215,6 +237,33 @@ static void performAction(unsigned boundary)
         tunnelUpStreamPayload(f.t, f.application, bytes("C", 1, false, 320));
         twfRequire(tunnelIsActiveForLine(f.t, f.application),
                    "request bypassed while an older response body was queued");
+    }
+    if (action == 16)
+    {
+        vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+        twfRequire(ls->receiving && ls->receive_head != NULL && f.down_len == 1,
+                   "nested retention fixture lost its active older input");
+        if (f.retention_fault)
+        {
+            const uint32_t length = kVlessClientUdpMaxPacket + 4;
+            uint8_t       *wire   = memoryAllocate(length);
+            memset(wire, 'C', length);
+            wire[0] = wire[1] = UINT8_MAX;
+            wire[length - 2] = wire[length - 1] = 0;
+            tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
+            memoryFree(wire);
+            twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier),
+                       "unrepresentable compact storage left the UDP association alive");
+            return;
+        }
+        twfRequire(sbufGetQueueCharge(ls->receive_head) > kVlessClientMaxInputCharge,
+                   "nested retention fixture did not keep oversized active storage");
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1C", 3, f.retention_pipe, 320));
+        twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.down_len == 1,
+                   "nested UDP admission closed or decoded before the outer callback returned");
+        requireUdpRetentionSettled(ls);
+        twfRequire(ls->receive_bytes == 6 && ls->header_filled == 0,
+                   "nested compaction changed cached-header or unread-body accounting");
     }
     if (action == 12)
     {
@@ -754,6 +803,76 @@ static void testPressure(void)
                "nested admitted batch overtook empty or older input");
     end();
 }
+static void testUdpRetention(bool pipe)
+{
+    twfSetCase("UDP incomplete body compacts excessive fragments without rejecting the datagram");
+    begin(true, "127.0.0.1", 128, 0, false);
+    establish();
+    response();
+    uint8_t payload[kVlessClientMaxInputBuffers + 2];
+    uint8_t header[2];
+    for (unsigned i = 0; i < sizeof(payload); ++i)
+        payload[i] = (uint8_t) (i % 251);
+    frame(header, NULL, sizeof(payload));
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(header, sizeof(header), pipe, 320));
+    for (unsigned i = 0; i + 1 < sizeof(payload); ++i)
+        tunnelDownStreamPayload(f.t, f.carrier, bytes(payload + i, 1, pipe, 320));
+    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.deliveries_down == 0,
+               "valid fragmented UDP body was rejected or delivered incomplete");
+    vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+    requireUdpRetentionSettled(ls);
+    twfRequire(ls->receive_bytes == sizeof(payload) + 1 && ls->header_filled == sizeof(header),
+               "fragment compaction changed parser accounting");
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(payload + sizeof(payload) - 1, 1, pipe, 320));
+    twfRequire(f.deliveries_down == 1 && f.down_len == sizeof(payload) &&
+                   memcmp(f.down, payload, sizeof(payload)) == 0 && f.headroom >= 320,
+               "fragment compaction lost FIFO bytes or onward padding");
+    end();
+
+    twfSetCase("UDP complete batch drains before compacting an oversized incomplete suffix");
+    begin(true, "127.0.0.1", 128, 0, false);
+    establish();
+    response();
+    tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes("\0\1A\0\3B", 6));
+    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.down_len == 1 && f.down[0] == 'A',
+               "oversized backing prevented complete UDP delivery");
+    ls = lineGetState(f.carrier, f.t);
+    requireUdpRetentionSettled(ls);
+    twfRequire(ls->receive_bytes == 3 && ls->header_filled == 2 && ls->body_length == 3,
+               "suffix compaction changed cached header or body length");
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("CD", 2, pipe, 320));
+    twfRequire(f.deliveries_down == 2 && f.down_len == 4 && memcmp(f.down, "ABCD", 4) == 0,
+               "suffix compaction lost the incomplete datagram");
+    end();
+
+    twfSetCase("nested UDP input settles the oversized active head before returning and preserves FIFO");
+    begin(true, "127.0.0.1", 128, 0, false);
+    establish();
+    response();
+    f.boundary       = 5;
+    f.action         = 16;
+    f.retention_pipe = pipe;
+    tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes("\0\1A\0\1B", 6));
+    twfRequire(f.deliveries_down == 3 && f.down_len == 3 && memcmp(f.down, "ABC", 3) == 0,
+               "nested retention settlement reordered or lost datagrams");
+    end();
+}
+
+static void testUdpRetentionRefusal(void)
+{
+    twfSetCase("nested UDP compact-storage refusal closes both lines and releases retained input");
+    begin(true, "127.0.0.1", 2 * kVlessClientMaxInputCharge, 0, false);
+    establish();
+    response();
+    f.boundary        = 5;
+    f.action          = 16;
+    f.retention_fault = 1;
+    tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1A\0\1B", 6, false, 320));
+    twfRequire(f.finishes == 1 && f.transport_finishes == 1 && f.deliveries_down == 1 && f.down[0] == 'A',
+               "compact-storage refusal duplicated Finish or delivered retained input after closure");
+    end();
+}
+
 static void testLimits(uint32_t pool_size)
 {
     twfSetCase("parser retained-byte equality and one-over refusal");
@@ -1476,6 +1595,9 @@ int main(void)
     testEmptyUdp(false);
     testEmptyUdp(true);
     testPressure();
+    testUdpRetention(false);
+    testUdpRetention(true);
+    testUdpRetentionRefusal();
     testNestedTcpRetention();
     testLimits(128);
     testLimits(128 * 1024);

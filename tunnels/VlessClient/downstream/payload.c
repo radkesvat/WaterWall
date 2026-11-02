@@ -37,7 +37,16 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     ls->receive_bytes += length;
     if (ls->receiving)
+    {
+        /* UDP input must settle while the outer callback owns the parser. */
+        if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferRangeSettleRetained(lineGetBufferPool(l),
+                                                                                      &ls->receive_head,
+                                                                                      &ls->pending_down,
+                                                                                      kVlessClientMaxInputCharge,
+                                                                                      kVlessClientMaxInputBuffers))
+            vlessclientCloseLine(t, l, kVlessClientCloseInternal);
         return;
+    }
     line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
     if (application != l)
@@ -75,8 +84,18 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     if (vlessclientAssociationAlive(t, l, application))
     {
-        ls->receiving = false;
-        vlessclientTryBypass(t, l, ls);
+        /* Complete frames drain first, including after response metadata. */
+        if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferRangeSettleRetained(lineGetBufferPool(l),
+                                                                                      &ls->receive_head,
+                                                                                      &ls->pending_down,
+                                                                                      kVlessClientMaxInputCharge,
+                                                                                      kVlessClientMaxInputBuffers))
+            vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+        else
+        {
+            ls->receiving = false;
+            vlessclientTryBypass(t, l, ls);
+        }
     }
     if (application != l)
         lineUnref(application);

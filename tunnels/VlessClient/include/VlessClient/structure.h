@@ -45,6 +45,8 @@ enum
     kVlessClientResponseMaxLen      = 257,
     kVlessClientMaxTcpWireBytes     = 2097409,
     kVlessClientMaxUdpBufferedBytes = 2162689,
+    kVlessClientMaxInputCharge      = 8 * 1024 * 1024,
+    kVlessClientMaxInputBuffers     = 1024,
 };
 
 typedef struct vlessclient_tstate_s
@@ -87,9 +89,10 @@ typedef struct vlessclient_lstate_s
     tunnel_t              *tunnel;
     first_payload_window_t first_payload;
 
-    /* Each FIFO entry is one admitted nested input batch. The outer parser
-     * completes these in order and retains only an incomplete wire suffix.
-     * No ready output or application payload is queued for Pause or Est. */
+    /* Admitted input follows the active head in FIFO order; pressure compaction
+     * may coalesce entries. The outer parser completes these batches in order
+     * and retains only an incomplete wire suffix. No ready output or application
+     * payload is queued for Pause or Est. */
     buffer_queue_t pending_down;
 
     /* Response decoder on direct/carrier lines, then UDP decoder on the carrier. The popped head is still owned here;

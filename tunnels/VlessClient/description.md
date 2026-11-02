@@ -291,6 +291,13 @@ This differs from [Xray's base VLESS implementation](https://github.com/XTLS/Xra
 Empty-datagram delivery requires a peer that supports it; nonempty framing is unchanged.
 Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.ietf.org/doc/html/rfc8085#section-5).
 
+UDP receive storage is compacted when the active head and queued input exceed
+8 MiB of queue-capacity charge or 1,024 retained buffers. Complete accepted frames
+drain first; incomplete input and nested input settle before returning. Compaction
+preserves byte order and cached headers. These thresholds do not limit how many
+fragments a valid datagram may contain. If compact storage cannot fit the charge
+allowance, the association closes and releases its retained input.
+
 Splice requires `misc.splice`, a supported build and support from every node in the
 final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`
 still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;

@@ -126,7 +126,7 @@ typedef struct fixture_s
     uint32_t         pauses, resumes;
     unsigned         action, boundary;
     bool             udp, paused_up, paused_down, last_splice;
-    sbuf_t          *last;
+    sbuf_t          *last, *nested;
     uint32_t         headroom;
 } fixture_t;
 static fixture_t f;
@@ -153,6 +153,26 @@ static sbuf_t   *bytes(const void *data, uint32_t len, bool pipe, uint16_t paddi
     }
     sbufSetLength(b, len);
     return b;
+}
+
+static sbuf_t *oversizedBytes(const void *data, uint32_t len)
+{
+    sbuf_t *b = twfTrackAcquired(sbufCreateWithPadding(kTrojanClientMaxInputCharge + 1U, 352));
+    sbufWrite(b, data, len);
+    sbufSetLength(b, len);
+    twfRequire(sbufGetQueueCharge(b) > kTrojanClientMaxInputCharge, "oversized input did not exceed charge limit");
+    return b;
+}
+
+static void requireUdpRetention(void)
+{
+    twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier), "UDP retention closed a valid association");
+    trojanclient_lstate_t *ls          = lineGetState(f.carrier, f.t);
+    const size_t           head_charge = ls->receive_head == NULL ? 0 : sbufGetQueueCharge(ls->receive_head);
+    twfRequire(head_charge + bufferqueueGetCharge(&ls->pending_down) <= kTrojanClientMaxInputCharge &&
+                   (ls->receive_head != NULL) + bufferqueueGetBufCount(&ls->pending_down) <=
+                       kTrojanClientMaxInputBuffers,
+               "UDP retained input beyond storage compaction thresholds");
 }
 
 static void performAction(unsigned boundary)
@@ -197,6 +217,20 @@ static void performAction(unsigned boundary)
         tunnelDownStreamEst(f.t, f.carrier);
     if (action == 10)
         tunnelDownStreamPayload(f.t, f.carrier, bytes("\1\177\0\0\1\1\xbb\0\1\r\nC", 12, false, 320));
+    if (action == 11 || action == 12)
+    {
+        trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+        twfRequire(ls->receive_head != NULL && sbufGetLength(ls->receive_head) != 0,
+                   "nested retention case lacks an older active suffix");
+        sbuf_t *nested = f.nested;
+        f.nested       = NULL;
+        tunnelDownStreamPayload(f.t, f.carrier, nested);
+        if (action == 11)
+            requireUdpRetention();
+        else
+            twfRequire(! lineIsAlive(f.application) && ! lineIsAlive(f.carrier),
+                       "nested compaction refusal left association alive");
+    }
 }
 static void ownerFinish(tunnel_t *t, line_t *l)
 {
@@ -713,6 +747,64 @@ static void testLimits(uint32_t pool_size)
         end();
     }
 }
+
+static void testUdpRetention(void)
+{
+    uint8_t wire[UINT16_MAX + kTrojanClientUdpHeaderMaxLen], body[UINT16_MAX];
+    for (unsigned i = 0; i < sizeof(body); ++i)
+        body[i] = (uint8_t) (i * 17U + 3U);
+
+    twfSetCase("incomplete UDP body releases oversized backing without losing metadata or bytes");
+    begin(true, "127.0.0.1", 128, 0, false);
+    uint32_t n = frame(wire, 0, body, 100);
+    tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes(wire, 12));
+    requireUdpRetention();
+    trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+    twfRequire(f.deliveries_down == 0 && ls->header_ready && ls->header_filled == 11 && ls->receive_bytes == 12 &&
+                   ls->receive_head != NULL && sbufGetLength(ls->receive_head) == 1,
+               "compaction changed cached metadata or retained-body accounting");
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + 12, n - 12, false, 320));
+    twfRequire(f.deliveries_down == 1 && f.down_len == 100 && memoryEqual(f.down, body, 100) && f.headroom >= 352,
+               "compacted partial UDP body changed bytes or onward padding");
+    end();
+
+    twfSetCase("nested oversized UDP input settles before returning and preserves active-head FIFO");
+    begin(true, "127.0.0.1", 128, 0, false);
+    n = frame(wire, 0, "A", 1);
+    n += frame(wire + n, 0, "B", 1);
+    f.nested   = oversizedBytes("\1\177\0\0\1\1\xbb\0\1\r\nC", 12);
+    f.boundary = 5;
+    f.action   = 11;
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, n, false, 320));
+    twfRequire(f.nested == NULL && f.deliveries_down == 3 && f.down_len == 3 && memoryEqual(f.down, "ABC", 3),
+               "nested compaction reordered or lost admitted datagrams");
+    requireUdpRetention();
+    end();
+
+    twfSetCase("nested UDP compaction refusal closes both lines and releases pending input");
+    begin(true, "127.0.0.1", 2 * kTrojanClientMaxInputCharge, 0, false);
+    const uint32_t nested_bytes = bufferpoolGetMediumBufferSize(f.env.pool) + 1U;
+    uint8_t       *nested_data  = memoryAllocateZero(nested_bytes);
+    f.nested                    = oversizedBytes(nested_data, nested_bytes);
+    memoryFree(nested_data);
+    f.boundary = 5;
+    f.action   = 12;
+    tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, n, false, 320));
+    twfRequire(f.nested == NULL && f.deliveries_down == 1 && f.down_len == 1 && f.down[0] == 'A' && f.finishes == 1 &&
+                   f.transport_finishes == 1,
+               "retention refusal delivered later input or omitted association cleanup");
+    end();
+
+    twfSetCase("complete UDP input drains before retained charge refusal");
+    begin(true, "127.0.0.1", 2 * kTrojanClientMaxInputCharge, 0, false);
+    n = frame(wire, 0, body, sizeof(body));
+    tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes(wire, n));
+    twfRequire(f.deliveries_down == 1 && f.down_len == sizeof(body) && memoryEqual(f.down, body, sizeof(body)),
+               "complete UDP frame was subjected to retained storage limits before draining");
+    requireUdpRetention();
+    end();
+}
+
 static void testFailuresAndClose(void)
 {
     twfSetCase("parser admission refusal and Finish at real callback boundaries");
@@ -829,14 +921,17 @@ static void testPrefixesAndFragments(void)
     twfRequire(memcmp(f.down + 7, "ABCD", 4) == 0, "mixed body bytes changed");
     twfRequire(f.last_splice ? f.parser_reads == 0 : f.parser_reads <= 4,
                "mixed extraction read beyond its body or materialized a preserved pipe");
-    /* The queue's 1,024-output-entry bound is not an input fragment bound. */
+    /* More than 1,024 fragments compact instead of rejecting a valid datagram. */
     memset(wire + 11, 'x', 1500);
     n = frame(wire, 0, NULL, 1500);
     memset(wire + 11, 'x', 1500);
     f.paused_down = true;
     tunnelUpStreamPause(f.t, f.application);
     for (unsigned i = 0; i < n; ++i)
+    {
         tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + i, 1, false, 320));
+        requireUdpRetention();
+    }
     twfRequire(lineIsAlive(f.application) && f.deliveries_down == 3, "valid fragment count rejected");
     f.paused_down = false;
     tunnelUpStreamResume(f.t, f.application);
@@ -1240,6 +1335,7 @@ int main(void)
     testPrefixesAndFragments();
     testReentrancy();
     testUdpPause();
+    testUdpRetention();
     testMalformed();
     testLimits(128);
     testLimits(128 * 1024);

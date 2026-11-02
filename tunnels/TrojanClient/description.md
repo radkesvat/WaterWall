@@ -267,6 +267,13 @@ options, and a path or peer may impose a lower limit. Each accepted payload rema
 one datagram: TCP may split the encoded frame into reads, but Trojan never truncates
 the payload or turns it into several application datagrams.
 
+UDP receive storage is compacted when the active head and queued input exceed
+8 MiB of queue-capacity charge or 1,024 retained buffers. Complete accepted frames
+drain first; incomplete input and nested input settle before returning. Compaction
+preserves byte order and cached headers. These thresholds do not limit how many
+fragments a valid datagram may contain. If compact storage cannot fit the charge
+allowance, the association closes and releases its retained input.
+
 Splice requires `misc.splice`, a supported build and support from every node in the
 final chain, including internal helpers. `DomainResolver` supports splice. `TlsClient`
 still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;
