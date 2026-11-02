@@ -329,8 +329,47 @@ static void caseCustomUpgradeBypassesAfterReentrantTails(unsigned stop)
     fixtureTeardown(&fixture);
 }
 
+static sbuf_t *pendingBuffer(line_t *line, uint32_t capacity, uint32_t length, char value)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(lineGetBufferPool(line), capacity, 0);
+    sbufSetLength(buf, length);
+    memorySet(sbufGetMutablePtr(buf), value, length);
+    return buf;
+}
+
+static void caseEmptyResponsePayloadDoesNotTerminate(bool queued)
+{
+    twfSetCase("HttpServer empty response payload is not a final chunk");
+    httpserver_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    uint8_t wire[128]              = {0};
+    fixture.trace.capture          = wire;
+    fixture.trace.capture_capacity = sizeof(wire) - 1;
+    httpserver_lstate_t *ls        = lineGetState(fixture.line, fixture.http);
+    ls->h1_response_headers_sent   = true;
+    ls->h1_headers_parsed          = ! queued;
+    const uint32_t lengths[]       = {1, 0, 1};
+    const char     values[]        = {'A', 'x', 'B'};
+    for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i)
+        tunnelDownStreamPayload(fixture.http, fixture.line, pendingBuffer(fixture.line, 1, lengths[i], values[i]));
+    if (queued)
+    {
+        twfRequire(fixture.trace.capture_len == 0, "waiting HTTP response leaked body bytes");
+        ls->h1_headers_parsed = true;
+        twfRequire(httpserverTransportFlushPendingDown(fixture.http, fixture.line, ls), "response drain failed");
+    }
+    twfRequireEqualText((char *) wire, "1\r\nA\r\n1\r\nB\r\n", "empty input ended the response");
+    tunnelDownStreamFin(fixture.http, fixture.line);
+    fixture.retired = true;
+    twfRequireEqualText((char *) wire, "1\r\nA\r\n1\r\nB\r\n0\r\n\r\n", "Finish did not emit one final chunk");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "response Finish was not forwarded");
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
+    caseEmptyResponsePayloadDoesNotTerminate(false);
+    caseEmptyResponsePayloadDoesNotTerminate(true);
     for (unsigned stop = 0; stop < 4; ++stop)
         caseCustomUpgradeBypassesAfterReentrantTails(stop);
     for (unsigned mode = 0; mode < 3; ++mode)

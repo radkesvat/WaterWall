@@ -789,6 +789,11 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
     }
 
     uint32_t payload_len = sbufGetLength(payload);
+    if (payload_len == 0)
+    {
+        lineReuseBuffer(l, payload);
+        return true;
+    }
 
     char chunk_prefix[32];
     int  prefix_len = snprintf(chunk_prefix, sizeof(chunk_prefix), "%x\r\n", payload_len);
