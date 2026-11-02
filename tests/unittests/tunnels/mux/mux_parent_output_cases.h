@@ -504,8 +504,8 @@ static void caseParentFairness(void)
             twfRequire(pqFairSeen[i] == round + 1, "list position starved a stable eligible child");
     }
     /* Remove the cursor target and replace it while pressure remains active. */
-    pq_state_t *target = (pq_state_t *) ((uint8_t *) parent->parent_state->local_holds.head -
-                                         offsetof(pq_state_t, child_flow));
+    pq_state_t *target =
+        (pq_state_t *) ((uint8_t *) parent->parent_state->local_holds.head - offsetof(pq_state_t, child_flow));
     if (target == fixture_child)
         target = target->child_next ? target->child_next : parent->child_next;
     const unsigned removed = target->connection_id - 100;

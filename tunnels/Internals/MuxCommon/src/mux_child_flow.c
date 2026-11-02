@@ -1,5 +1,6 @@
 #include "MuxCommon/mux_child_flow.h"
 
+#include "line.h"
 #include "loggers/network_logger.h"
 
 void muxHoldAdd(mux_hold_list_t *list, mux_child_flow_t *child)
@@ -51,4 +52,33 @@ bool muxChildSourcePaused(const mux_child_flow_t *child, bool child_open)
 {
     assert(child != NULL);
     return child->peer_flow_paused || child->parent_write_paused || ! child_open;
+}
+
+void muxChildFlowSync(tunnel_t *t, line_t *child_l, mux_child_flow_t *flow, bool child_open, bool quiescing,
+                      mux_orientation_t orientation)
+{
+    assert(t != NULL && child_l != NULL && flow != NULL && lineIsAlive(child_l));
+    assert(orientation == kMuxChildrenTowardPrev || orientation == kMuxChildrenTowardNext);
+    if (flow->source_starting || quiescing)
+        return;
+    const bool paused = muxChildSourcePaused(flow, child_open);
+    if (flow->source_pause_notified == paused)
+        return;
+    flow->source_pause_notified = paused;
+    lineRef(child_l);
+    if (orientation == kMuxChildrenTowardPrev)
+    {
+        if (paused)
+            tunnelPrevDownStreamPause(t, child_l);
+        else
+            tunnelPrevDownStreamResume(t, child_l);
+    }
+    else
+    {
+        if (paused)
+            tunnelNextUpStreamPause(t, child_l);
+        else
+            tunnelNextUpStreamResume(t, child_l);
+    }
+    lineUnref(child_l);
 }

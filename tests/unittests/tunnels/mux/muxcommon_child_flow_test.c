@@ -1,9 +1,11 @@
 /*
- * Covers: shared Mux child-source reasons and local-hold membership.
- * Setup: Stack-owned flow entries and parent lists; the helper borrows all entries.
+ * Covers: shared Mux child-source reasons, local-hold membership and notifications.
+ * Setup: Stack-owned flow entries, parent lists and a live line whose creator
+ * reference remains held. Stack tunnels register both directions of Pause/Resume.
  * Cases: all list positions, repeated add/remove, FIFO reinsertion, fatal count
- * underflow, and every peer/local/open combination. Node-specific attachment,
- * producer startup and Finish behavior remain in the frame-encoding fixtures.
+ * underflow, every peer/local/open combination, orientation, suppression, nested
+ * transitions and flow retirement. Node-specific attachment and Finish behavior
+ * remain in the frame-encoding fixtures.
  * CTest: waterwall.muxcommon_child_flow_unit
  */
 #include "MuxCommon/mux_child_flow.h"
@@ -138,11 +140,154 @@ static void testCountUnderflow(void)
 #endif
 }
 
+typedef struct notification_probe_s
+{
+    tunnel_t         *sender;
+    tunnel_t         *prev;
+    tunnel_t         *next;
+    line_t           *child;
+    mux_child_flow_t  flow;
+    mux_orientation_t orientation;
+    unsigned          pauses;
+    unsigned          resumes;
+    bool              reverse_transition;
+    bool              retire;
+} notification_probe_t;
+
+static notification_probe_t *probe;
+
+static void syncProbe(bool child_open, bool quiescing)
+{
+    const uint32_t references = atomicLoadU32Relaxed(&probe->child->refc);
+    muxChildFlowSync(probe->sender, probe->child, &probe->flow, child_open, quiescing, probe->orientation);
+    require(atomicLoadU32Relaxed(&probe->child->refc) == references,
+            "notification leaked its temporary child reference");
+}
+
+static void recordNotification(tunnel_t *t, line_t *child, bool pause, bool upstream)
+{
+    require(t == (probe->orientation == kMuxChildrenTowardPrev ? probe->prev : probe->next) &&
+                upstream == (probe->orientation == kMuxChildrenTowardNext),
+            "source notification used the wrong neighbor or direction");
+    require(child == probe->child && lineIsAlive(child), "source notification changed or destroyed the child");
+    require(atomicLoadU32Relaxed(&child->refc) >= 2, "source notification lacks a temporary child reference");
+    require(probe->flow.source_pause_notified == pause, "notification latch was not published before dispatch");
+    if (pause)
+        ++probe->pauses;
+    else
+        ++probe->resumes;
+    if (probe->reverse_transition)
+    {
+        probe->reverse_transition    = false;
+        probe->flow.peer_flow_paused = ! pause;
+        syncProbe(true, false);
+    }
+    if (probe->retire)
+        probe->flow = (mux_child_flow_t) {0}; // A borrowed line can outlive this tunnel's retired state.
+}
+
+static void recordPauseU(tunnel_t *t, line_t *child)
+{
+    recordNotification(t, child, true, true);
+}
+static void recordPauseD(tunnel_t *t, line_t *child)
+{
+    recordNotification(t, child, true, false);
+}
+static void recordResumeU(tunnel_t *t, line_t *child)
+{
+    recordNotification(t, child, false, true);
+}
+static void recordResumeD(tunnel_t *t, line_t *child)
+{
+    recordNotification(t, child, false, false);
+}
+
+static void testNotifications(void)
+{
+    const mux_orientation_t orientations[] = {kMuxChildrenTowardPrev, kMuxChildrenTowardNext};
+    for (size_t i = 0; i < ARRAY_SIZE(orientations); ++i)
+    {
+        tunnel_t             sender = {0}, prev = {0}, next = {0};
+        line_t               child = {.alive = true, .active_tunnels_mask = UINT64_MAX, .refc = 1};
+        notification_probe_t p     = {
+                .orientation = orientations[i], .sender = &sender, .prev = &prev, .next = &next, .child = &child};
+        probe         = &p;
+        sender.prev   = &prev;
+        sender.next   = &next;
+        prev.fnPauseU = next.fnPauseU = recordPauseU;
+        prev.fnPauseD = next.fnPauseD = recordPauseD;
+        prev.fnResumeU = next.fnResumeU = recordResumeU;
+        prev.fnResumeD = next.fnResumeD = recordResumeD;
+
+        syncProbe(true, false);
+        p.flow.peer_flow_paused = true;
+        syncProbe(true, false);
+        syncProbe(true, false);
+        p.flow.parent_write_paused = true;
+        p.flow.peer_flow_paused    = false;
+        syncProbe(true, false);
+        require(p.pauses == 1 && p.resumes == 0, "unchanged effective pressure emitted another notification");
+        p.flow.parent_write_paused = false;
+        syncProbe(true, false);
+        syncProbe(true, false);
+        syncProbe(false, false);
+        syncProbe(false, false);
+        syncProbe(true, false);
+        require(p.pauses == 2 && p.resumes == 2, "open/close transitions lost or duplicated a notification");
+
+        p.flow.source_starting  = true;
+        p.flow.peer_flow_paused = true;
+        syncProbe(true, false);
+        require(! p.flow.source_pause_notified, "startup changed the notification latch");
+        p.flow.peer_flow_paused = false;
+        p.flow.source_starting  = false;
+        syncProbe(true, false);
+        require(p.pauses == 2 && p.resumes == 2, "startup emitted an obsolete transition");
+        p.flow.peer_flow_paused = true;
+        syncProbe(true, true);
+        require(! p.flow.source_pause_notified, "quiescence changed the notification latch");
+        syncProbe(true, false);
+        p.flow.peer_flow_paused = false;
+        p.flow.source_starting  = true;
+        syncProbe(true, false);
+        require(p.flow.source_pause_notified, "startup released an emitted Pause");
+        p.flow.source_starting = false;
+        syncProbe(true, true);
+        require(p.flow.source_pause_notified && p.pauses == 3 && p.resumes == 2, "quiescence resumed a producer");
+        syncProbe(true, false);
+        require(p.resumes == 3, "suppression completion did not reconcile current pressure");
+
+        p.flow.peer_flow_paused = true;
+        p.reverse_transition    = true;
+        syncProbe(true, false);
+        require(! p.flow.source_pause_notified && p.pauses == 4 && p.resumes == 4,
+                "outer Pause overwrote the nested Resume");
+        p.flow.peer_flow_paused = true;
+        syncProbe(true, false);
+        p.flow.peer_flow_paused = false;
+        p.reverse_transition    = true;
+        syncProbe(true, false);
+        require(p.flow.source_pause_notified && p.pauses == 6 && p.resumes == 5,
+                "outer Resume overwrote the nested Pause");
+
+        p.flow.peer_flow_paused = false;
+        syncProbe(true, false);
+        p.flow.peer_flow_paused = true;
+        p.retire                = true;
+        syncProbe(true, false);
+        require(! p.flow.peer_flow_paused && ! p.flow.source_pause_notified,
+                "notification wrote flow state after callback retirement");
+    }
+    probe = NULL;
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testCountUnderflow);
     TEST_RUN_CASE(testHoldMembership);
     TEST_RUN_CASE(testEffectiveState);
+    TEST_RUN_CASE(testNotifications);
     puts("muxcommon_child_flow_test: all cases passed");
     return 0;
 }

@@ -722,29 +722,15 @@ void muxclientReleaseParentInputForChildClose(muxclient_lstate_t *parent_ls, mux
     bufferqueueDestroy(&child_ls->pending_child_data);
 }
 
-static bool muxclientChildSourcePaused(muxclient_lstate_t *child_ls)
-{
-    return muxChildSourcePaused(&child_ls->child_flow, child_ls->close_state == kMuxClientChildCloseOpen);
-}
-
-/* Publish permission before dispatch; nested reason changes remain authoritative.
- * No child state is accessed after the callback, only the owned reference. */
 static void muxclientSyncChildSource(tunnel_t *t, muxclient_lstate_t *child)
 {
     muxclient_tstate_t *ts = tunnelGetState(t);
-    if (child->child_flow.source_starting || ts->worker_states[lineGetWID(child->l)].quiescing)
-        return;
-    const bool paused = muxclientChildSourcePaused(child);
-    if (child->child_flow.source_pause_notified == paused)
-        return;
-    child->child_flow.source_pause_notified = paused;
-    line_t *child_l              = child->l;
-    lineRef(child_l);
-    if (paused)
-        tunnelPrevDownStreamPause(t, child_l);
-    else
-        tunnelPrevDownStreamResume(t, child_l);
-    lineUnref(child_l);
+    muxChildFlowSync(t,
+                     child->l,
+                     &child->child_flow,
+                     child->close_state == kMuxClientChildCloseOpen,
+                     ts->worker_states[lineGetWID(child->l)].quiescing,
+                     kMuxChildrenTowardPrev);
 }
 
 bool muxclientPauseChildSource(tunnel_t *t, line_t *parent_l, muxclient_lstate_t *child, bool peer_flow,
