@@ -17,6 +17,7 @@ typedef struct reverseserver_lstate_s
     uint32_t                       handshake_read;
     bool                           paired;
     bool                           handshaked;
+    bool                           handshake_mismatch;
     bool                           replaying;
     bool                           output_paused;
     bool                           source_paused;

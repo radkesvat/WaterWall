@@ -117,18 +117,20 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
     if (! dls->handshaked)
     {
         const uint32_t count = min(sbufGetLength(buf), ts->handshake_length - dls->handshake_read);
-        if (memoryCompare(sbufGetRawPtr(buf), ts->handshake_bytes + dls->handshake_read, count) != 0)
-        {
-            LOGD("ReverseServer: invalid reverse handshake");
-            lineReuseBuffer(d, buf);
-            reverseserverCloseLine(t, d);
-            return;
-        }
+        /* Compare every fragment, but reveal no match result before the complete handshake arrives. */
+        dls->handshake_mismatch |= ! wCryptoEqual(sbufGetRawPtr(buf), ts->handshake_bytes + dls->handshake_read, count);
         dls->handshake_read += count;
         sbufShiftRight(buf, count);
         if (dls->handshake_read != ts->handshake_length)
         {
             lineReuseBuffer(d, buf);
+            return;
+        }
+        if (dls->handshake_mismatch)
+        {
+            LOGD("ReverseServer: invalid reverse handshake");
+            lineReuseBuffer(d, buf);
+            reverseserverCloseLine(t, d);
             return;
         }
         dls->handshaked = true;

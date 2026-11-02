@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -98,8 +98,9 @@ with the secret bytes repeatedly.
 
 When payload arrives from the reverse side before pairing:
 
-- handshake bytes are compared incrementally; only the matched offset is retained
-- if the handshake is invalid, that half-connection is dropped
+- handshake bytes are compared incrementally in constant time; only the received offset and accumulated mismatch are retained
+- acceptance or rejection waits until the full configured handshake length arrives, so partial matching prefixes are not revealed through early closure
+- if the complete handshake is invalid, that half-connection is dropped
 - if the handshake is valid, the handshake bytes are removed
 - the reverse-side half is placed into a waiting list
 - any payload after the handshake is kept as buffered data until pairing happens

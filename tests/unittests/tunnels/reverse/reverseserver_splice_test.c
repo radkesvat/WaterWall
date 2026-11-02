@@ -310,6 +310,39 @@ static void testUnpairedClose(bool splice, unsigned mode)
     teardown(&f);
 }
 
+static void testFragmentedHandshakeRejection(bool splice, uint32_t mismatch_offset)
+{
+    twfSetCase("fragmented handshake rejects mismatches only after the configured length arrives");
+    reverse_fixture_t f;
+    setup(&f);
+    initUser(&f);
+    uint8_t candidate[sizeof(handshake)];
+    memoryCopy(candidate, handshake, sizeof(candidate));
+    candidate[mismatch_offset] ^= 0x80;
+
+    for (uint32_t i = 0; i < sizeof(candidate) - 1; ++i)
+    {
+        reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload(candidate + i, 1, splice, 0));
+        twfRequire(lineIsAlive(f.d), "partial handshake exposed a mismatching prefix through early close");
+        reverseserver_lstate_t *ls = lineGetState(f.d, f.reverse);
+        reverseserver_tstate_t *ts = tunnelGetState(f.reverse);
+        twfRequire(ls->handshake_read == i + 1 && ! ls->handshaked && ! ls->source_paused &&
+                       atomicLoad(&ts->threadlocal_pool[0].d_count) == 0,
+                   "partial handshake was admitted, paused or lost its received offset");
+        reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload("", 0, false, 0));
+        twfRequire(lineIsAlive(f.d) && f.activation_count == 0 && f.prev_trace.prev_finish == 0,
+                   "empty input exposed a partial handshake result");
+    }
+
+    const uint8_t final[] = {candidate[sizeof(candidate) - 1], 't', 'a', 'i', 'l'};
+    reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload(final, sizeof(final), splice, splice ? 1 : 0));
+    twfRequire(! lineIsAlive(f.d) && lineIsAlive(f.u) && f.prev_trace.prev_finish == 1 && f.next_trace.next_finish == 0,
+               "complete mismatching handshake did not close only its reverse owner");
+    twfRequire(f.activation_count == 0 && f.upstream_length == 0 && f.downstream_length == 0,
+               "invalid handshake activated a pair or forwarded its coalesced tail");
+    teardown(&f);
+}
+
 static void testSilentPairing(bool user_first, bool splice, bool paused)
 {
     twfSetCase("silent user pairs on Init and receives a server greeting");
@@ -678,6 +711,8 @@ int main(void)
         }
         for (unsigned mode = 0; mode < 4; ++mode)
             testUnpairedClose(splice != 0, mode);
+        for (uint32_t mismatch_offset = 0; mismatch_offset < sizeof(handshake); ++mismatch_offset)
+            testFragmentedHandshakeRejection(splice != 0, mismatch_offset);
         const uint32_t sizes[] = {kReverseActivationHeaderSize, 64, kReverseActivationMaxSize};
         for (unsigned i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
         {
