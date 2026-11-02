@@ -106,6 +106,24 @@ static uint32_t tcpoverudpserverGetNextKcpDelay(tcpoverudpserver_lstate_t *ls, u
     return delay <= 0 ? 1U : (uint32_t) delay;
 }
 
+// Queues the close frame, flushes it once, then destroys line state and finishes the prev side.
+void tcpoverudpserverSendCloseAndFinish(tcpoverudpserver_lstate_t *ls)
+{
+    line_t   *l = ls->line;
+    tunnel_t *t = ls->tunnel;
+
+    uint8_t close_buf[kFrameHeaderLength] = {kFrameFlagClose};
+    ikcp_send(ls->k_handle, (const char *) close_buf, (int) sizeof(close_buf));
+
+    if (! tcpoverudpserverUpdateKcp(ls, true))
+    {
+        return;
+    }
+
+    tcpoverudpserverLinestateDestroy(ls);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
 void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
 {
 
@@ -116,7 +134,30 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
     uint64_t                   current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
     tcpoverudpserver_tstate_t *ts           = tunnelGetState(ls->tunnel);
 
-    if ((current_time - ls->last_recv) > ts->ping_interval_ms)
+    // After a service-side close, the close frame goes out only once the peer has acknowledged all queued
+    // data, and the line then closes as at once when nothing is queued. Keeping the line until the close
+    // frame itself is acknowledged would hold it for peers that never acknowledge it, and a client that
+    // reuses its UDP port would reach that stale state. A peer silent for no-recv-timeout-ms releases it.
+    if (ls->closing)
+    {
+        if (ikcp_waitsnd(ls->k_handle) == 0)
+        {
+            ls->closing = false;
+            tcpoverudpserverSendCloseAndFinish(ls);
+            return;
+        }
+        if ((current_time - ls->last_recv) > ts->no_recv_timeout_ms)
+        {
+            line_t   *l = ls->line;
+            tunnel_t *t = ls->tunnel;
+
+            tcpoverudpserverLinestateDestroy(ls);
+            tunnelPrevDownStreamFinish(t, l);
+            return;
+        }
+    }
+
+    if (! ls->closing && (current_time - ls->last_recv) > ts->ping_interval_ms)
     {
         if (! ls->ping_sent)
         {

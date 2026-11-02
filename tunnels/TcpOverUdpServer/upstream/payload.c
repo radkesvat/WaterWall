@@ -38,8 +38,9 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     lineRef(l);
     bool close_line = false;
-    // A close-frame flush can reenter receive after its application side finished.
-    while (ls->can_upstream)
+    // While data queued before a service-side close is still being delivered, keep reading so that a close
+    // from the peer ends the wait.
+    while (ls->can_upstream || ls->closing)
     {
         sbuf_t *large_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
@@ -66,9 +67,9 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (frame_flag == kFrameFlagData)
         {
-            if (UNLIKELY(sbufGetLength(large_buf) == 0))
+            if (UNLIKELY(sbufGetLength(large_buf) == 0) || ! ls->can_upstream)
             {
-                // peers never send empty data frames, discard
+                // peers never send empty data frames, and after a service-side close nothing takes data; discard
                 lineReuseBuffer(l, large_buf);
                 continue;
             }
@@ -102,8 +103,12 @@ void tcpoverudpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (close_line)
     {
+        const bool forward = ls->can_upstream;
         tcpoverudpserverLinestateDestroy(ls);
-        tunnelNextUpStreamFinish(t, l);
+        if (forward)
+        {
+            tunnelNextUpStreamFinish(t, l);
+        }
         if (lineIsAlive(l))
         {
             tunnelPrevDownStreamFinish(t, l);

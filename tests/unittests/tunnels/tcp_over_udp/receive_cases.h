@@ -64,6 +64,23 @@ static void receiveAppendPush(sbuf_t *packet, uint32_t sequence, uint8_t fragmen
     sbufSetLength(packet, offset + 24U + length);
 }
 
+#if TEST_RECEIVE_SERVER
+static void receiveDeliverOpeningPing(line_t *line)
+{
+    receive_state_t *ls = lineGetState(line, g_receive_fixture->kcp);
+    twfRequire(tcpoverudpserverUpdateKcp(ls, true), "sending the opening ping closed the line");
+    sbuf_t *packet = bufferpoolGetLargeBuffer(lineGetBufferPool(line));
+    sbufSetLength(packet, 24);
+    uint8_t *bytes = sbufGetMutablePtr(packet);
+    memoryZero(bytes, 24);
+    bytes[4]  = 82; // KCP ACK of sequence 0 with una 1, conversation 0.
+    bytes[6]  = 128;
+    bytes[16] = 1;
+    receiveFeed(line, packet);
+    twfRequireEqualU32((uint32_t) ikcp_waitsnd(ls->k_handle), 0, "opening ping stayed unacknowledged");
+}
+#endif
+
 static void receiveSendCase(line_t *line)
 {
     buffer_pool_t *pool     = lineGetBufferPool(line);
@@ -186,6 +203,13 @@ static void caseReceiveMessages(void)
             fixture.next->fnPayloadU = TEST_RECEIVE_SERVER ? receiveDecoded : receiveWireOutput;
             if (closing)
             {
+#if TEST_RECEIVE_SERVER
+                // The server's line opens with a ping, and a service-side close waits until KCP has delivered
+                // what it queued; deliver the ping first, without the nested receive, so this close flushes at once.
+                g_receive_injected = true;
+                receiveDeliverOpeningPing(line);
+                g_receive_injected = false;
+#endif
                 receiveFinish(fixture.kcp, line);
                 twfRequire(g_receive_injected, "close flush did not exercise nested receive");
                 twfRequireEqualU32(

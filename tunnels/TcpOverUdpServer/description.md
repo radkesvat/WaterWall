@@ -223,7 +223,7 @@ Outgoing stream payload is split into KCP-friendly chunks, tagged as data frames
 
 If a close frame is received from the remote peer, `TcpOverUdpServer` destroys line state and finishes both directions.
 
-If the service-facing side finishes, `TcpOverUdpServer` sends a close frame over KCP, flushes KCP output, destroys line state, and finishes the previous side.
+If the service-facing side finishes while KCP still holds unacknowledged data, `TcpOverUdpServer` keeps the line until the peer has acknowledged all of it. It then sends the close frame, destroys line state and finishes the previous side, as it does at once when nothing is pending. A close frame from the peer ends the wait at once, and a peer that sends nothing for `no-recv-timeout-ms` ends it too. Data queued before the close, such as the end of a response, is therefore not discarded.
 
 Idle handling is the same basic model as the client side:
 
