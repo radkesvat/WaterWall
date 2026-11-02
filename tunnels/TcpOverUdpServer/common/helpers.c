@@ -133,6 +133,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
            lineIsAlive(ls->line));
     uint64_t                   current_time = wloopNowMS(getWorkerLoop(lineGetWID(ls->line)));
     tcpoverudpserver_tstate_t *ts           = tunnelGetState(ls->tunnel);
+    const uint64_t             idle_ms      = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(ls->line))) - ls->last_recv;
 
     // After a service-side close, the close frame goes out only once the peer has acknowledged all queued
     // data, and the line then closes as at once when nothing is queued. Keeping the line until the close
@@ -146,7 +147,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
             tcpoverudpserverSendCloseAndFinish(ls);
             return;
         }
-        if ((current_time - ls->last_recv) > ts->no_recv_timeout_ms)
+        if (idle_ms > ts->no_recv_timeout_ms)
         {
             line_t   *l = ls->line;
             tunnel_t *t = ls->tunnel;
@@ -157,7 +158,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
         }
     }
 
-    if (! ls->closing && (current_time - ls->last_recv) > ts->ping_interval_ms)
+    if (! ls->closing && idle_ms > ts->ping_interval_ms)
     {
         if (! ls->ping_sent)
         {
@@ -167,7 +168,7 @@ void tcpoverudpserverKcpLoopIntervalCallback(wtimer_t *timer)
             uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
             ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
         }
-        else if ((current_time - ls->last_recv) > ts->no_recv_timeout_ms)
+        else if (idle_ms > ts->no_recv_timeout_ms)
         {
             LOGW("TcpOverUdpServer -> KCP[%d]: no data received for too long, closing connection", ls->k_handle->conv);
 

@@ -83,7 +83,7 @@ bool tcpoverudpserverLinestateInitialize(tcpoverudpserver_lstate_t *ls, line_t *
                                        .fec_decoder   = fec_decoder,
                                        .tunnel        = t,
                                        .line          = l,
-                                       .last_recv     = wloopNowMS(getWorkerLoop(lineGetWID(l))),
+                                       .last_recv     = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))),
                                        .cq_d          = contextqueueCreate(),
                                        .source_paused = false,
                                        .can_upstream  = true,
