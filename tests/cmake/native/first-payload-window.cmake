@@ -1,4 +1,11 @@
 if(LINUX AND TARGET ProxyClientCommon)
+  waterwall_add_native_executable(proxy_client_destination_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/proxy_client/destination_test.c
+    LIBRARIES ProxyClientCommon ww)
+  add_dependencies(waterwall_unit_tests proxy_client_destination_test)
+  add_waterwall_unit_test(waterwall.proxy_client_destination_unit proxy_client_destination_test
+    "unit;tunnels;proxy;destination")
+
   waterwall_add_native_executable(first_payload_window_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/proxy_client/first_payload_window_test.c
     LIBRARIES ProxyClientCommon ww)

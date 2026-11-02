@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: Large/reentrant bodies, split address/reply boundaries, UDP frames, malformed replies and mixed
- * pipe-prefix handshakes.
+ * pipe-prefix handshakes, mixed destination sources and destination preparation before local DNS.
  * Checks: Exact greeting/auth/command and body bytes, FIFO release, capacity refusal, same splice buffer
  * in ready TCP and ordinary UDP/control read preferences.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -228,7 +228,7 @@ static void nextInit(tunnel_t *t, line_t *l)
         tunnelDownStreamEst(client, l);
     }
 }
-static void setup(bool auth, bool udp)
+static void setupBeforeInit(bool auth, bool udp)
 {
     twfWorkerEnvSetup(&env, 16384, 300);
     client = tunnelCreate(NULL, sizeof(socks5client_tstate_t), sizeof(socks5client_lstate_t));
@@ -282,10 +282,18 @@ static void setup(bool auth, bool udp)
     greetings = auths = commands = established = finishes = request_depth = max_request_depth = 0;
     body_depth = max_body_depth = response_rounds = read_pauses = read_resumes = 0;
     down_length = up_length = 0;
-    relay                   = NULL;
+    control = relay = NULL;
+}
+static void initialize(void)
+{
     tunnelUpStreamInit(client, application);
     twfRequire(established == 1 && greetings == 1 && tunnelIsActiveForLine(client, application),
                "transport Est or greeting missing, or client bypassed before negotiation");
+}
+static void setup(bool auth, bool udp)
+{
+    setupBeforeInit(auth, udp);
+    initialize();
 }
 static void negotiate(void)
 {
@@ -317,6 +325,70 @@ static void teardown(void)
     tunnelDestroy(prev);
     tunnelDestroy(next);
     twfWorkerEnvTeardown(&env);
+}
+static void destinationPreparation(void)
+{
+    for (unsigned local_dns = 0; local_dns < 2; ++local_dns)
+    {
+        for (unsigned udp = 0; udp < 2; ++udp)
+        {
+            twfSetCase("mixed destination sources and read preference before DNS, resolved target survives Init");
+            setupBeforeInit(false, udp != 0);
+            socks5client_tstate_t *ts     = tunnelGetState(client);
+            address_context_t     *target = lineGetDestinationAddressContext(application);
+            ts->target_port_source        = kDvsFirstOption;
+            ts->protocol                  = kSocks5ClientProtocolDestContext;
+            ts->resolve_domains           = local_dns != 0;
+            ts->domain_strategy           = kDsOnlyIpV4;
+            twfRequire(addresscontextSetIpAddressPort(target, "192.0.2.7", 5353), "incoming target setup failed");
+            addresscontextSetOnlyProtocol(target, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
+            ip_addr_t expected_ip;
+            twfRequire(ipaddr_aton(local_dns ? "203.0.113.9" : "127.0.0.1", &expected_ip),
+                       "expected target setup failed");
+            twfRequire(! linePrefersOrdinaryReadUpstream(application) &&
+                           ! linePrefersOrdinaryReadDownstream(application),
+                       "fresh line already prefers ordinary reads");
+            if (local_dns)
+            {
+                addresscontextDomainSetByString(&ts->target_addr, "configured.example");
+                addresscontextSetPort(&ts->target_addr, 80);
+                twfRequire(socks5clientDomainResolverPrepare(NULL, client, application, NULL),
+                           "destination prepare hook refused mixed sources");
+                twfRequire(addresscontextIsDomain(target) && stringCompare(target->domain, "configured.example") == 0 &&
+                               target->port == 5353 && target->proto_udp == (udp != 0) &&
+                               target->proto_tcp == (udp == 0) && target->domain_strategy == kDsOnlyIpV4,
+                           "prepare hook did not select configured address and inherited port/protocol");
+                twfRequire(linePrefersOrdinaryReadUpstream(application) == (udp != 0) &&
+                               linePrefersOrdinaryReadDownstream(application) == (udp != 0),
+                           "prepare hook did not select read preferences before DNS can retain input");
+                twfRequire(greetings == 0 && established == 0 && control == NULL,
+                           "destination preparation started the transport");
+                twfRequireLineStateZeroed(application, client, "destination preparation initialized client state");
+
+                sockaddr_u resolved;
+                twfRequire(sockaddrSetIpAddressPort(&resolved, "203.0.113.9", 5353) == 0,
+                           "resolved target setup failed");
+                dns_resolved_addr_t answer = {.family = AF_INET, .addrlen = sizeof(struct sockaddr_in)};
+                memoryCopy(&answer.addr, &resolved, answer.addrlen);
+                twfRequire(dnsstrategyApplyResolvedAddress(target, &answer), "applying DNS result failed");
+            }
+            initialize();
+            socks5client_lstate_t *ls = lineGetState(application, client);
+            twfRequire(lineIsAlive(application) && addresscontextIsIp(target) &&
+                           ip_addr_cmp(&target->ip_address, &expected_ip) && target->port == 5353 &&
+                           target->proto_udp == (udp != 0) && target->proto_tcp == (udp == 0),
+                       "Init changed the selected or resolved destination");
+            twfRequire(addresscontextIsIp(&ls->target_addr) && ip_addr_cmp(&ls->target_addr.ip_address, &expected_ip) &&
+                           ls->target_addr.port == 5353 &&
+                           ls->protocol == (udp ? kSocks5ClientProtocolUdp : kSocks5ClientProtocolTcp),
+                       "Init did not retain the selected destination for SOCKS requests");
+            twfRequire(linePrefersOrdinaryReadUpstream(application) == (udp != 0) &&
+                           linePrefersOrdinaryReadDownstream(application) == (udp != 0),
+                       "Init changed TCP/UDP read preferences");
+            twfRequire(ts->target_addr.port == 80, "destination selection modified configured port");
+            teardown();
+        }
+    }
 }
 static void largeBody(unsigned mode)
 {
@@ -731,6 +803,7 @@ int main(int argc, char **argv)
         nestedBodies();
         return 0;
     }
+    destinationPreparation();
 #if WW_HAVE_SPLICE
     spliceHandshake();
     spliceReentry();
