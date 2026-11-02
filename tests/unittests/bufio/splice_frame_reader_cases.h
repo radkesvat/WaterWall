@@ -1,5 +1,5 @@
 /*
- * Covers: complete-frame reader admission, FIFO, retained charge and retirement.
+ * Covers: complete/incremental frame reading, admission, FIFO, retained charge and retirement.
  * Setup: Pool and ordinary/pipe source fixtures from bufio_contract_test.c.
  * CTest: waterwall.bufio_contract_unit; waterwall.bufio_contract_no_splice_unit.
  */
@@ -171,6 +171,147 @@ static void testFrameReaderBatchAndRepresentation(buffer_pool_t *pool)
         }
 }
 
+static sbuf_t *frameReaderInput(buffer_pool_t *pool, const uint8_t *bytes, uint32_t count, bool pipe_input)
+{
+#if WW_HAVE_SPLICE
+    if (pipe_input)
+        return makeSpliceTestBuffer(pool, NULL, 0, bytes, count);
+#else
+    discard pipe_input;
+#endif
+    return streamTestBytes(pool, bytes, count);
+}
+
+static void testFrameReaderIncremental(buffer_pool_t *pool)
+{
+    for (unsigned splice_output = 0; splice_output < 2; ++splice_output)
+        for (unsigned pipe_input = 0; pipe_input < (WW_HAVE_SPLICE ? 2U : 1U); ++pipe_input)
+        {
+            testCaseSet("frame reader: fragmented incremental body, bounded chunks and mixed empty/complete frames");
+            splice_frame_reader_t r;
+            spliceframereaderInit(&r, pool, 2, 64, 128U * 1024U, splice_output != 0);
+            const uint8_t first[] = {0, 6, 'A', 'B'};
+            require(spliceframereaderAdmit(&r, frameReaderInput(pool, first, 1, pipe_input)) == kSpliceFrameDrain &&
+                        spliceframereaderPeekHeader(&r) == NULL && ! spliceframereaderFrameActive(&r),
+                    "partial header started an incremental frame");
+            require(spliceframereaderEndDrain(&r), "partial header failed settlement");
+            require(spliceframereaderAdmit(&r, frameReaderInput(pool, first + 1, 3, pipe_input)) == kSpliceFrameDrain,
+                    "first partial body failed admission");
+            require(! spliceframereaderBodyReady(&r, 6), "partial body became a complete frame");
+            spliceframereaderBeginFrame(&r, 6);
+            require(spliceframereaderFrameActive(&r) && spliceframereaderFrameRemaining(&r) == 6 &&
+                        spliceframereaderFrameAvailable(&r) == 2,
+                    "incremental frame required the complete body");
+            sbuf_t *body = spliceframereaderTakeChunk(&r, 2);
+            require(sbufIsSplice(body) == (pipe_input && splice_output), "incremental output representation changed");
+            streamCheckBytes(pool, body, "AB", 2);
+            require(spliceframereaderFrameRemaining(&r) == 4 && spliceframereaderFrameAvailable(&r) == 0 &&
+                        spliceframereaderLength(&r) == 2 && spliceframereaderCharge(&r) == 0 &&
+                        memoryEqual(spliceframereaderPeekHeader(&r), first, 2),
+                    "partial extraction lost the header, retained consumed bytes or changed frame progress");
+            require(spliceframereaderEndDrain(&r), "partial extraction failed settlement");
+            require(spliceframereaderAdmit(&r, frameReaderInput(pool, (const uint8_t *) "C", 1, pipe_input)) ==
+                        kSpliceFrameDrain,
+                    "incremental continuation failed admission");
+            spliceframereaderDiscardChunk(&r, 1);
+            require(spliceframereaderFrameRemaining(&r) == 3 && spliceframereaderLength(&r) == 2,
+                    "incremental discard ended the frame early");
+            require(spliceframereaderEndDrain(&r), "partial discard failed settlement");
+
+            const uint8_t suffix[] = {'D', 'E', 'F', 0, 0, 0, 0, 0, 1, 'G'};
+            require(spliceframereaderAdmit(&r, frameReaderInput(pool, suffix, sizeof(suffix), pipe_input)) ==
+                            kSpliceFrameDrain &&
+                        spliceframereaderFrameAvailable(&r) == 3,
+                    "available chunk crossed into the next frame");
+            streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 2), "DE", 2);
+            require(spliceframereaderFrameRemaining(&r) == 1 && spliceframereaderFrameAvailable(&r) == 1 &&
+                        memoryEqual(spliceframereaderPeekHeader(&r), first, 2),
+                    "nonfinal chunk gathered the following header");
+            streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 1), "F", 1);
+            require(! spliceframereaderFrameActive(&r) && spliceframereaderFrameRemaining(&r) == 0 &&
+                        spliceframereaderFrameAvailable(&r) == 0 && spliceframereaderLength(&r) == 7 &&
+                        spliceframereaderPeekHeader(&r)[1] == 0,
+                    "final chunk did not complete before returning");
+            spliceframereaderBeginFrame(&r, 0);
+            require(spliceframereaderFrameActive(&r) && spliceframereaderFrameAvailable(&r) == 0,
+                    "empty incremental frame completed without consumption");
+            streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 0), "", 0);
+            spliceframereaderBeginFrame(&r, 0);
+            spliceframereaderDiscardChunk(&r, 0);
+            require(spliceframereaderBodyReady(&r, 1) && spliceframereaderPeekHeader(&r)[1] == 1,
+                    "empty chunks lost the following complete frame");
+            streamCheckBytes(pool, spliceframereaderTakeFrame(&r, 1), "G", 1);
+            require(spliceframereaderEndDrain(&r) && spliceframereaderLength(&r) == 0 &&
+                        spliceframereaderCharge(&r) == 0,
+                    "mixed complete/incremental frames retained input");
+            spliceframereaderDestroy(&r);
+        }
+}
+
+static void testFrameReaderIncrementalNested(buffer_pool_t *pool)
+{
+    testCaseSet("frame reader: incremental progress commits before nested admission and final discard");
+    splice_frame_reader_t r;
+    spliceframereaderInit(&r, pool, 2, 7, 128U * 1024U, false);
+    const uint8_t first[] = {0, 6, 'A', 'B'};
+    require(spliceframereaderAdmit(&r, streamTestBytes(pool, first, sizeof(first))) == kSpliceFrameDrain,
+            "incremental nested fixture failed admission");
+    spliceframereaderBeginFrame(&r, 6);
+    streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 2), "AB", 2);
+    require(spliceframereaderAdmit(&r, streamTestBytes(pool, "CDE", 3)) == kSpliceFrameQueued &&
+                spliceframereaderFrameRemaining(&r) == 4 && spliceframereaderFrameAvailable(&r) == 3,
+            "nested input restarted the incremental frame");
+    streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 2), "CD", 2);
+    const uint8_t tail[] = {'F', 0, 1, 'G'};
+    require(spliceframereaderAdmit(&r, streamTestBytes(pool, tail, sizeof(tail))) == kSpliceFrameQueued &&
+                spliceframereaderLength(&r) == 7 && spliceframereaderFrameAvailable(&r) == 2,
+            "nested admission counted consumed body bytes or crossed the current frame");
+    spliceframereaderDiscardChunk(&r, 2);
+    require(! spliceframereaderFrameActive(&r) && spliceframereaderPeekHeader(&r)[1] == 1,
+            "final discard did not finish before nested reentry");
+    const uint8_t newer[] = {0, 1, 'H'};
+    require(spliceframereaderAdmit(&r, streamTestBytes(pool, newer, sizeof(newer))) == kSpliceFrameQueued,
+            "completed frame cleared the active drain guard");
+    streamCheckBytes(pool, spliceframereaderTakeFrame(&r, 1), "G", 1);
+    streamCheckBytes(pool, spliceframereaderTakeFrame(&r, 1), "H", 1);
+    require(spliceframereaderEndDrain(&r), "incremental nested input failed settlement");
+    spliceframereaderDestroy(&r);
+}
+
+static void testFrameReaderIncrementalRetirement(buffer_pool_t *pool)
+{
+    testCaseSet("frame reader: active-frame compaction, refusal and retirement");
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(pool, 1, bufferpoolGetLargeBufferPadding(pool), &fit), "invalid test pool geometry");
+    for (unsigned refusal = 0; refusal < 2; ++refusal)
+    {
+        splice_frame_reader_t r;
+        spliceframereaderInit(&r, pool, 2, 3, fit.allocation_charge - refusal, false);
+        const uint8_t first[] = {0, 4, 'A', 'B'};
+        require(spliceframereaderAdmit(&r, frameReaderOversized(pool, first, sizeof(first))) == kSpliceFrameDrain,
+                "active-frame settlement fixture failed admission");
+        spliceframereaderBeginFrame(&r, 4);
+        streamCheckBytes(pool, spliceframereaderTakeChunk(&r, 1), "A", 1);
+        require(spliceframereaderEndDrain(&r) == ! refusal && spliceframereaderCharge(&r) == fit.allocation_charge &&
+                    spliceframereaderFrameActive(&r) && spliceframereaderFrameRemaining(&r) == 3 &&
+                    spliceframereaderFrameAvailable(&r) == 1 && spliceframereaderLength(&r) == 3 &&
+                    memoryEqual(spliceframereaderPeekHeader(&r), first, 2),
+                "active-frame settlement lost progress, header or retained-byte accounting");
+        if (! refusal)
+        {
+            require(spliceframereaderAdmit(&r, streamTestBytes(pool, "C", 1)) == kSpliceFrameDrain,
+                    "settled active frame did not release the drain guard");
+            require(spliceframereaderAdmit(&r, streamTestBytes(pool, "D", 1)) == kSpliceFrameByteLimit &&
+                        spliceframereaderFrameRemaining(&r) == 3 && spliceframereaderFrameAvailable(&r) == 2,
+                    "nested refusal changed an active frame or ignored its cached header");
+        }
+        spliceframereaderDestroy(&r);
+        require(! spliceframereaderIsAttached(&r) && ! spliceframereaderFrameActive(&r) &&
+                    spliceframereaderFrameRemaining(&r) == 0 && spliceframereaderFrameAvailable(&r) == 0,
+                "retirement kept active-frame state");
+    }
+}
+
 static void testSpliceFrameReader(void)
 {
     pool_fixture_t fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
@@ -178,5 +319,8 @@ static void testSpliceFrameReader(void)
     testFrameReaderNested(fixture.pool);
     testFrameReaderSettlement(fixture.pool);
     testFrameReaderBatchAndRepresentation(fixture.pool);
+    testFrameReaderIncremental(fixture.pool);
+    testFrameReaderIncrementalNested(fixture.pool);
+    testFrameReaderIncrementalRetirement(fixture.pool);
     poolFixtureDestroy(&fixture);
 }

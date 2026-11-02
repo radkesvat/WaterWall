@@ -53,7 +53,7 @@ bool spliceframereaderEndDrain(splice_frame_reader_t *r)
 
 sbuf_t *spliceframereaderTakeFrame(splice_frame_reader_t *r, uint32_t body_bytes)
 {
-    assert(r->draining);
+    assert(r->draining && ! r->frame_active);
     sbuf_t *destination =
         r->splice_output && body_bytes != 0 ? bufferpoolGetSpliceBuffer(splicestreamGetPool(r->stream)) : NULL;
     return splicestreamMoveFrame(r->stream, destination, body_bytes);
@@ -61,6 +61,35 @@ sbuf_t *spliceframereaderTakeFrame(splice_frame_reader_t *r, uint32_t body_bytes
 
 void spliceframereaderDiscardFrame(splice_frame_reader_t *r, uint32_t body_bytes)
 {
-    assert(r->draining);
+    assert(r->draining && ! r->frame_active);
     splicestreamDiscardFrame(r->stream, body_bytes);
+}
+
+void spliceframereaderBeginFrame(splice_frame_reader_t *r, uint32_t body_bytes)
+{
+    assert(r->draining && ! r->frame_active && spliceframereaderPeekHeader(r) != NULL);
+    r->frame_remaining = body_bytes;
+    r->frame_active    = true;
+}
+
+static bool frameReaderConsumeChunk(splice_frame_reader_t *r, uint32_t bytes)
+{
+    assert(r->draining && r->frame_active && bytes <= spliceframereaderFrameAvailable(r));
+    r->frame_remaining -= bytes;
+    r->frame_active = r->frame_remaining != 0;
+    return ! r->frame_active;
+}
+
+sbuf_t *spliceframereaderTakeChunk(splice_frame_reader_t *r, uint32_t bytes)
+{
+    const bool finish_frame = frameReaderConsumeChunk(r, bytes);
+    sbuf_t    *destination =
+        r->splice_output && bytes != 0 ? bufferpoolGetSpliceBuffer(splicestreamGetPool(r->stream)) : NULL;
+    return splicestreamMoveFrameChunk(r->stream, destination, bytes, finish_frame);
+}
+
+void spliceframereaderDiscardChunk(splice_frame_reader_t *r, uint32_t bytes)
+{
+    const bool finish_frame = frameReaderConsumeChunk(r, bytes);
+    splicestreamDiscardFrameChunk(r->stream, bytes, finish_frame);
 }
