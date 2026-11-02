@@ -8,17 +8,25 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     vlessclient_lstate_t *ls     = lineGetState(l, t);
     address_context_t    *target = lineGetDestinationAddressContext(l);
 
+    vlessclientLinestateInitialize(ls, l);
+    ls->tunnel = t;
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
+    {
+        vlessclientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
     /* With local DNS, the prepare hook already applied the target before resolution. */
     if (! ts->resolve_domains && UNLIKELY(! vlessclientApplyTargetContext(t, l)))
     {
+        vlessclientLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
     assert(target->proto_tcp != target->proto_udp);
 
-    vlessclientLinestateInitialize(ls, l);
-    ls->tunnel   = t;
-    ls->kind     = target->proto_udp ? kVlessClientLineKindUdpApplication : kVlessClientLineKindDirect;
+    ls->kind = target->proto_udp ? kVlessClientLineKindUdpApplication : kVlessClientLineKindDirect;
     addresscontextCopy(&ls->target_addr, target);
 
     if (ts->verbose)

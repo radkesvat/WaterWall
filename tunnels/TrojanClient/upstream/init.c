@@ -8,16 +8,24 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     trojanclient_lstate_t *ls     = lineGetState(l, t);
     address_context_t     *target = lineGetDestinationAddressContext(l);
 
+    trojanclientLinestateInitialize(ls, l);
+    ls->tunnel = t;
+    if (UNLIKELY(! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l)))))
+    {
+        trojanclientLinestateDestroy(ls);
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+
     /* With local DNS, the prepare hook already applied the target before resolution. */
     if (! ts->resolve_domains && UNLIKELY(! trojanclientApplyTargetContext(t, l)))
     {
+        trojanclientLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
     assert(target->proto_tcp != target->proto_udp);
 
-    trojanclientLinestateInitialize(ls, l);
-    ls->tunnel   = t;
     ls->protocol = target->proto_udp ? kTrojanClientProtocolUdp : kTrojanClientProtocolTcp;
     ls->kind =
         ls->protocol == kTrojanClientProtocolUdp ? kTrojanClientLineKindUdpApplication : kTrojanClientLineKindDirect;

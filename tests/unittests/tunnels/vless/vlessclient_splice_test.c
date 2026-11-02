@@ -106,6 +106,7 @@ typedef struct fixture_s
     worker_t         workers[3];
     buffer_pool_t   *buffer_pools[2];
     wloop_t         *loops[2];
+    threadsafe_generic_pool_t *wios_pools[2];
     tunnel_chain_t  *chain;
     node_t           node;
     tunnel_t        *t, *prev, *next;
@@ -113,11 +114,12 @@ typedef struct fixture_s
     twf_trace_t      trace;
     uint8_t          up[3 * 1024 * 1024], down[3 * 1024 * 1024];
     size_t           up_len, down_len, parser_reads;
-    uint32_t         deliveries_up, deliveries_down, requests, ests, finishes, transport_finishes;
+    uint32_t                   deliveries_up, deliveries_down, requests, ests, finishes, transport_finishes, inits;
     uint32_t         down_lengths[16];
     uint32_t         pauses, resumes;
     unsigned         action, boundary;
     bool             udp, paused_up, paused_down, last_splice;
+    bool                       expect_init_refusal;
     bool             inject_extra;
     bool             expect_request_bypass;
     bool             retention_pipe;
@@ -291,6 +293,13 @@ static void ownerFinish(tunnel_t *t, line_t *l)
     discard t;
     ++f.finishes;
     twfRequire(l == f.application, "Finish reached owner on carrier line");
+    if (f.expect_init_refusal)
+    {
+        twfRequire(lineIsAlive(l), "Init refusal destroyed the borrowed line before notifying its owner");
+        twfRequireLineStateZeroed(l, f.t, "Init refusal notified its owner before clearing local state");
+        twfRequire(f.carrier == NULL && f.inits == 0 && f.transport_finishes == 0,
+                   "Init refusal reached an uninitialized next branch or created a carrier");
+    }
     lineDestroy(l);
 }
 static void nextFinish(tunnel_t *t, line_t *l)
@@ -302,6 +311,7 @@ static void nextFinish(tunnel_t *t, line_t *l)
 static void nextInit(tunnel_t *t, line_t *l)
 {
     discard t;
+    ++f.inits;
     f.carrier = l;
     if (l != f.application)
         lineRef(l);
@@ -370,7 +380,23 @@ static void resumed(tunnel_t *t, line_t *l)
     ++f.resumes;
     performAction(7);
 }
-static void begin(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context)
+static void closeAdmission(unsigned mode)
+{
+    if (mode == 1)
+        wloopCloseNormalAdmission(f.env.loop);
+    else
+    {
+        assert(mode == 2);
+        /* Exercise the stop predicate independently of normal admission. */
+        atomicStoreExplicit(&f.env.loop->stop_requested, true, memory_order_relaxed);
+        twfRequire(atomicLoadExplicit(&f.env.loop->normal_admission_open, memory_order_relaxed),
+                   "stop fixture also closed normal admission");
+    }
+    twfRequire(! wloopNormalDispatchAllowed(f.env.loop), "fixture did not close normal dispatch");
+}
+
+static void beginWithAdmission(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context,
+                               unsigned admission)
 {
     memoryZero(&f, sizeof(f));
     pressure = fail_queue = immediate_pressure = false;
@@ -386,6 +412,8 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
         f.buffer_pools[1]            = f.env.pool;
         GSTATE.workers               = f.workers;
         GSTATE.shortcut_buffer_pools = f.buffer_pools;
+        f.wios_pools[test_wid]       = f.env.wios_pool;
+        GSTATE.shortcut_wios_pools   = f.wios_pools;
         f.loops[test_wid]            = f.env.loop;
         f.env.loop->wid              = test_wid;
         GSTATE.shortcut_loops        = f.loops;
@@ -437,9 +465,16 @@ static void begin(bool udp, const char *target, uint32_t pool_size, unsigned ini
     f.prev->fnResumeD = f.next->fnResumeU = resumed;
     f.boundary                            = 1;
     f.action                              = init_action;
+    f.expect_init_refusal                 = admission != 0;
+    if (admission != 0)
+        closeAdmission(admission);
     tunnelUpStreamInit(f.t, f.application);
     if (udp && lineIsAlive(f.application))
         twfRequire(lineGetDestinationAddressContext(f.application)->proto_udp, "application context changed to TCP");
+}
+static void begin(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context)
+{
+    beginWithAdmission(udp, target, pool_size, init_action, context, 0);
 }
 static void requireTcpBypassed(void)
 {
@@ -469,7 +504,7 @@ static void end(void)
         lineDestroy(f.application);
     }
     twfRequireLineStateZeroed(f.application, f.t, "application state leaked");
-    if (f.carrier != f.application)
+    if (f.carrier != NULL && f.carrier != f.application)
     {
         twfRequire(! lineIsAlive(f.carrier), "carrier survived teardown");
         twfRequireLineStateZeroed(f.carrier, f.t, "carrier state leaked");
@@ -488,6 +523,7 @@ static void end(void)
         GSTATE.workers_count         = 1;
         GSTATE.workers               = &f.env.worker;
         GSTATE.shortcut_buffer_pools = f.env.pool_shortcut;
+        GSTATE.shortcut_wios_pools   = f.env.wios_shortcut;
         GSTATE.shortcut_loops        = f.env.loop_shortcut;
         f.env.loop->wid              = 0;
         testWorkerBindWID(0);
@@ -1571,8 +1607,66 @@ static void testTimerWorker(void)
     test_wid = 0;
 }
 
+static void testInitAdmission(void)
+{
+    for (test_wid = 0; test_wid < 2; ++test_wid)
+        for (unsigned udp = 0; udp < 2; ++udp)
+            for (unsigned admission = 1; admission <= 2; ++admission)
+            {
+                twfSetCase(admission == 1 ? "VlessClient Init refuses closed normal admission before next Init"
+                                          : "VlessClient Init refuses stop_requested before next Init");
+                beginWithAdmission(udp, "127.0.0.1", 128, 0, true, admission);
+                twfRequire(! lineIsAlive(f.application) && f.finishes == 1 && f.inits == 0 && f.carrier == NULL &&
+                               f.transport_finishes == 0 && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
+                           "late Init was not refused before creating downstream work");
+                twfRequireEqualU32(twfLineRefCount(f.application), 1, "Init refusal leaked a line reference");
+                end();
+            }
+    test_wid = 0;
+}
+
+static void sendFinalAdmittedPayload(void *context)
+{
+    unsigned admission = *(unsigned *) context;
+    twfRequire(wloopCurrentThreadInNormalCallback(f.env.loop), "final delivery lacks an admitted callback root");
+    closeAdmission(admission);
+    tunnelUpStreamPayload(f.t, f.application, bytes("B", 1, false, 320));
+    if (f.udp)
+    {
+        uint8_t  wire[264];
+        uint32_t length = frame(wire, "R", 1);
+        tunnelDownStreamPayload(f.t, f.carrier, bytes(wire, length, false, 320));
+    }
+    else
+        tunnelDownStreamPayload(f.t, f.carrier, bytes("R", 1, false, 320));
+}
+
+static void testExistingAssociationAfterAdmissionClose(void)
+{
+    twfSetCase("VlessClient already-admitted TCP/UDP payloads continue after creation admission closes");
+    for (unsigned udp = 0; udp < 2; ++udp)
+        for (unsigned admission = 1; admission <= 2; ++admission)
+        {
+            begin(udp, "127.0.0.1", 128, 0, true);
+            establish();
+            response();
+            size_t  prior_up = f.up_len;
+            line_t *carrier  = f.carrier;
+            twfRequire(f.requests == 1 && f.inits == 1, "fixture did not establish its original association");
+            twfRequire(wloopInvokeNormalCallback(f.env.loop, sendFinalAdmittedPayload, &admission),
+                       "fixture failed to admit its final callback root");
+            twfRequire(lineIsAlive(f.application) && f.carrier == carrier && f.inits == 1 && f.finishes == 0 &&
+                           f.transport_finishes == 0 && f.requests == 1 && f.up_len == prior_up + (udp ? 3 : 1) &&
+                           f.up[f.up_len - 1] == 'B' && f.down_len == 1 && f.down[0] == 'R',
+                       "closed creation admission interrupted an existing association's final payloads");
+            end();
+        }
+}
+
 int main(void)
 {
+    testInitAdmission();
+    testExistingAssociationAfterAdmissionClose();
     testFirstPayload();
     testFirstPayloadReuse();
     testInitialAllocationRefusal();
