@@ -37,11 +37,20 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    if (ls->pending_down_draining || bufferqueueGetBufCount(&ls->pending_down) != 0)
+    {
+        if (! httpserverTransportQueuePendingDown(l, ls, buf) || ! httpserverTransportFlushPendingDown(t, l, ls))
+            failAndCloseDownStream(t, l, ls);
+        lineUnref(l);
+        return;
+    }
+
     if (ts->websocket_enabled)
     {
         if (! ls->websocket_active)
         {
-            bufferqueuePushBack(&ls->pending_down, buf);
+            if (! httpserverTransportQueuePendingDown(l, ls, buf))
+                failAndCloseDownStream(t, l, ls);
             lineUnref(l);
             return;
         }
@@ -71,7 +80,8 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (! ls->h1_headers_parsed)
         {
-            bufferqueuePushBack(&ls->pending_down, buf);
+            if (! httpserverTransportQueuePendingDown(l, ls, buf))
+                failAndCloseDownStream(t, l, ls);
             lineUnref(l);
             return;
         }
@@ -102,7 +112,8 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (ls->h2_stream_id <= 0)
         {
-            bufferqueuePushBack(&ls->pending_down, buf);
+            if (! httpserverTransportQueuePendingDown(l, ls, buf))
+                failAndCloseDownStream(t, l, ls);
             lineUnref(l);
             return;
         }
@@ -128,6 +139,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    bufferqueuePushBack(&ls->pending_down, buf);
+    if (! httpserverTransportQueuePendingDown(l, ls, buf))
+        failAndCloseDownStream(t, l, ls);
     lineUnref(l);
 }

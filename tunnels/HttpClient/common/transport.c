@@ -1174,8 +1174,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
             LOGW("HttpClient: nested HTTP/1 payload limit exceeded");
             return false;
         }
-        bufferqueuePushBack(&ls->pending_up, payload);
-        return true;
+        return httpclientQueuePendingUp(l, ls, payload);
     }
 
     /* A nested delivery must follow the entire older input, including its last
@@ -2158,7 +2157,7 @@ bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_ls
     {
         if (payload != NULL)
         {
-            bufferqueuePushBack(&ls->pending_up, payload);
+            return httpclientQueuePendingUp(l, ls, payload);
         }
         return true;
     }
@@ -2187,11 +2186,19 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
 {
     httpclient_tstate_t *ts = tunnelGetState(t);
 
-    if ((ts->websocket_enabled && ! ls->websocket_active) || ls->h1_write_in_progress)
+    if ((ts->websocket_enabled && ! ls->websocket_active) || ls->h1_write_in_progress || ls->pending_up_draining)
     {
         return true;
     }
 
+    /* Leave the entire backlog charged until this transport can accept it. */
+    if (! ts->websocket_enabled &&
+        ((ls->runtime_proto == kHttpClientRuntimeHttp2 && ls->h2_stream_id <= 0) ||
+         (ls->runtime_proto != kHttpClientRuntimeHttp1 && ls->runtime_proto != kHttpClientRuntimeHttp2 &&
+          ls->runtime_proto != kHttpClientRuntimeUpgradedRaw)))
+        return true;
+
+    ls->pending_up_draining = true;
     while (bufferqueueGetBufCount(&ls->pending_up) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
@@ -2217,20 +2224,15 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
                 return false;
             }
         }
-        else if (ls->runtime_proto == kHttpClientRuntimeHttp1)
-        {
-            if (! httpclientTransportSendHttp1ChunkedPayload(t, l, buf))
-            {
-                return false;
-            }
-        }
         else
         {
-            bufferqueuePushFront(&ls->pending_up, buf);
-            return true;
+            assert(ls->runtime_proto == kHttpClientRuntimeHttp1);
+            if (! httpclientTransportSendHttp1ChunkedPayload(t, l, buf))
+                return false;
         }
     }
 
+    ls->pending_up_draining = false;
     return true;
 }
 
@@ -2314,7 +2316,8 @@ bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool 
     }
     if (upstream)
     {
-        bufferqueuePushBack(&ls->pending_up, buf);
+        if (! httpclientQueuePendingUp(l, ls, buf))
+            return false;
     }
     else
     {

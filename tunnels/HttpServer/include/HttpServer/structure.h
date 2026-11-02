@@ -70,6 +70,7 @@ typedef struct httpserver_lstate_s
 
     buffer_stream_t            in_stream;
     buffer_queue_t             pending_down;
+    buffer_budget_t            pending_down_budget;
     context_queue_t            events_up;
     h2_data_queue_t            h2_data;
 
@@ -88,6 +89,7 @@ typedef struct httpserver_lstate_s
     bool                      h1_response_headers_sent;
     httpserver_h1_body_mode_t h1_body_mode;
 
+    bool pending_down_draining;
     bool h2_response_headers_sent;
     bool h2_request_finished;
     bool h2_request_rejected;
@@ -183,6 +185,8 @@ enum
     kHttpServerRequiredPaddingLeft = 16,
 
     kHttpServerBufferQueueCap    = 8,
+    kHttpServerPendingBytes            = 2 * 1024 * 1024,
+    kHttpServerPendingCharge           = 8 * 1024 * 1024,
     kHttpServerMaxHeaderBytes    = 64 * 1024,
     kHttpServerHttp2FrameBytes   = 32 * 1024,
     kHttpServerUpgradeQueueChargeLimit = 2 * 1024 * 1024,
@@ -228,6 +232,8 @@ bool httpserverTransportSubmitHttp2ResponseHeaders(tunnel_t *t, line_t *l, https
 bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *payload,
                                            bool end_stream);
 
+/* Takes ownership on both success and refusal; the caller closes on refusal. */
+bool httpserverTransportQueuePendingDown(line_t *l, httpserver_lstate_t *ls, sbuf_t *payload);
 bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream);
 bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf);

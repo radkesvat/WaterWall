@@ -4,7 +4,7 @@
  *        an nghttp2 peer, and fixture-owned normal lines borrowed by HttpClient.
  * Checks: Exact framing/payload bytes, settings and windows, one request stream, WebSocket/h2c
  *         settings, nested-payload FIFO order, custom-upgrade bypass, flow-control resumption,
- *         and reentrant Finish cleanup with active and pending DATA providers.
+ *         readiness queue byte/charge limits, and reentrant Finish cleanup.
  * Limits: No TLS record, network-packet, browser traffic timing, or multi-stream equivalence claims.
  * CTest: waterwall.httpclient_wire_profile_unit
  */
@@ -47,6 +47,7 @@ typedef struct fixture_s
     bool             h2_startup_payload;
     bool             h2_finish_during_data, h2_fin_in_progress;
     bool             custom_startup_reply, raw_up_reentry, raw_down_reentry, raw_down_finish;
+    bool             pending_refill;
     nghttp2_session *peer;
     size_t           received_body;
     unsigned         request_streams, end_streams;
@@ -60,6 +61,17 @@ static sbuf_t *textPayload(fixture_t *f, const char *text)
     sbuf_t  *buf    = bufferpoolGetBestFit(f->env.pool, length, kHttpClientRequiredPaddingLeft);
     sbufSetLength(buf, length);
     sbufWrite(buf, text, length);
+    return buf;
+}
+
+static sbuf_t *chargedPayload(size_t charge, const char *text)
+{
+    const uint32_t padding = 64;
+    sbuf_t        *buf     = twfTrackAcquired(
+        sbufCreateWithPadding((uint32_t) (charge - sizeof(sbuf_t) - kSbufAllocationAlignment - padding), padding));
+    twfRequire(sbufGetQueueCharge(buf) == charge, "fixture charge was rounded unexpectedly");
+    sbufSetLength(buf, (uint32_t) strlen(text));
+    sbufWrite(buf, text, (uint32_t) strlen(text));
     return buf;
 }
 
@@ -114,7 +126,18 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
     memoryCopy(f->wire + f->wire_length, sbufGetRawPtr(buf), length);
     f->wire_length += length;
     lineReuseBuffer(line, buf);
-    if (f->h2_finish_during_data)
+    if (f->pending_refill)
+    {
+        f->pending_refill       = false;
+        httpclient_lstate_t *ls = lineGetState(line, f->http);
+        twfRequire(bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge - 192,
+                   "readiness replay did not release exactly the dispatched buffer's charge");
+        httpclientTunnelUpStreamPayload(f->http, line, chargedPayload(192, "nested!"));
+        twfRequire(lineIsAlive(line) && f->writes == 1 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
+                       bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge,
+                   "nested readiness input overtook the backlog or failed to use released capacity");
+    }
+    else if (f->h2_finish_during_data)
     {
         f->h2_finish_during_data = false;
         httpclient_lstate_t *ls  = lineGetState(line, f->http);
@@ -309,6 +332,114 @@ static void caseHttp1FinishDuringBody(void)
     twfRequire(f.writes == 1 && f.trace.prev_finish == 1 && f.trace.next_finish == 0,
                "body output continued or Finish reflected after reentrant close");
     twfRequireNoLeakedBuffers();
+    teardown(&f);
+}
+
+static void setupPending(fixture_t *f, unsigned mode)
+{
+    setup(f,
+          mode == 1   ? "{\"host\":\"unit.test\",\"http-version\":\"both\",\"upgrade\":true}"
+          : mode == 2 ? "{\"host\":\"unit.test\",\"http-version\":1,\"websocket\":true}"
+                      : "{\"host\":\"unit.test\",\"http-version\":1}");
+    httpclient_lstate_t *ls = lineGetState(f->line, f->http);
+    if (mode == 0)
+        ls->runtime_proto = kHttpClientRuntimeUnknown;
+    else if (mode == 3)
+    {
+        ls->runtime_proto = kHttpClientRuntimeHttp2;
+        ls->h2_stream_id  = 0;
+    }
+    resetWire(f);
+}
+
+static void casePendingLimits(unsigned mode, bool charge_limit)
+{
+    twfSetCase(charge_limit ? "HttpClient readiness rejects excess allocation charge, including empty input"
+                            : "HttpClient readiness admits exact byte limit and closes on one excess byte");
+    fixture_t f;
+    setupPending(&f, mode);
+    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    sbuf_t              *first =
+        charge_limit ? chargedPayload(kHttpClientPendingMaxCharge, "") : payload(&f, kHttpClientPendingMaxBytes, false);
+    size_t charge = sbufGetQueueCharge(first);
+    httpclientTunnelUpStreamPayload(f.http, f.line, first);
+    twfRequire(lineIsAlive(f.line) && f.writes == 0 && bufferqueueGetBufCount(&ls->pending_up) == 1,
+               "readiness queue rejected its inclusive limit or sent before ready");
+    buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->pending_up_budget);
+    twfRequire(used.bytes == (charge_limit ? 0 : kHttpClientPendingMaxBytes) && used.charge == charge,
+               "readiness queue did not account its retained input");
+    twfRequire(httpclientTransportFlushPendingUp(f.http, f.line, ls) && f.writes == 0 &&
+                   bufferqueueGetBufCount(&ls->pending_up) == 1 &&
+                   bufferbudgetGetUsage(&ls->pending_up_budget).charge == charge,
+               "not-ready flush changed or uncharged the backlog");
+    httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, charge_limit ? "" : "x"));
+    twfRequire(! lineIsAlive(f.line) && f.writes == 0 && f.trace.prev_finish == 1 && f.trace.next_finish == 1,
+               "readiness refusal did not close exactly the affected connection");
+    twfRequireLineStateZeroed(f.line, f.http, "readiness refusal retained buffers or budget accounting");
+    teardown(&f);
+}
+
+static void casePendingWebSocketReplay(bool finish)
+{
+    twfSetCase(finish ? "HttpClient readiness replay stops and releases its backlog after Finish"
+                      : "HttpClient readiness replay preserves FIFO and reuses popped charge during nested input");
+    fixture_t f;
+    setupPending(&f, 2);
+    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclientTunnelUpStreamPayload(f.http, f.line, chargedPayload(192, "first!"));
+    httpclientTunnelUpStreamPayload(f.http, f.line, chargedPayload(kHttpClientPendingMaxCharge - 192, "second!"));
+    twfRequire(bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge,
+               "fixture did not fill readiness charge allowance");
+    ls->websocket_active = true;
+    f.pending_refill     = ! finish;
+    f.finish_first       = finish;
+    bool ok              = httpclientTransportFlushPendingUp(f.http, f.line, ls);
+    if (finish)
+    {
+        twfRequire(! ok && ! lineIsAlive(f.line) && f.writes == 1 && f.trace.prev_finish == 1 &&
+                       f.trace.next_finish == 0,
+                   "readiness replay continued or reflected Finish after close");
+        twfRequireLineStateZeroed(f.line, f.http, "readiness replay close retained its budget/state");
+    }
+    else
+    {
+        const char *expected[] = {"first!", "second!", "nested!"};
+        twfRequire(ok && f.writes == ARRAY_SIZE(expected), "readiness replay lost a queued WebSocket payload");
+        size_t offset = 0;
+        for (size_t i = 0; i < ARRAY_SIZE(expected); ++i)
+        {
+            const uint8_t *frame  = f.wire + offset;
+            size_t         length = strlen(expected[i]);
+            twfRequire(f.lengths[i] == length + 6 && frame[0] == 0x82 && frame[1] == (0x80 | length),
+                       "readiness replay changed WebSocket framing");
+            for (size_t j = 0; j < length; ++j)
+                twfRequire((frame[6 + j] ^ frame[2 + (j % 4)]) == (uint8_t) expected[i][j],
+                           "nested WebSocket input overtook older readiness data");
+            offset += f.lengths[i];
+        }
+        twfRequire(! ls->pending_up_draining && bufferqueueGetBufCount(&ls->pending_up) == 0,
+                   "completed replay kept its draining guard or backlog");
+        bufferbudgetAssertEmpty(&ls->pending_up_budget);
+    }
+    teardown(&f);
+}
+
+static void casePendingManyBuffers(void)
+{
+    twfSetCase("HttpClient readiness limits bytes and charge rather than buffer count");
+    fixture_t f;
+    setupPending(&f, 0);
+    for (unsigned i = 0; i < 32; ++i)
+        httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, ""));
+    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 32 &&
+                   bufferbudgetGetUsage(&ls->pending_up_budget).bytes == 0 &&
+                   bufferbudgetGetUsage(&ls->pending_up_budget).charge != 0,
+               "empty queued buffers were uncharged or rejected by count");
+    httpclientTunnelUpStreamFinish(f.http, f.line);
+    twfRequire(f.trace.next_finish == 1 && f.trace.prev_finish == 0,
+               "readiness teardown reflected Finish toward its sender");
+    twfRequireLineStateZeroed(f.line, f.http, "readiness teardown retained queue accounting");
     teardown(&f);
 }
 
@@ -681,6 +812,14 @@ int main(void)
     }
     caseHttp1NestedPayload();
     caseHttp1FinishDuringBody();
+    for (unsigned mode = 0; mode < 4; ++mode)
+    {
+        casePendingLimits(mode, false);
+        casePendingLimits(mode, true);
+    }
+    casePendingWebSocketReplay(false);
+    casePendingWebSocketReplay(true);
+    casePendingManyBuffers();
     caseHttp2WireProfile();
     caseHttp2StartupReentry(false);
     caseHttp2StartupReentry(true);

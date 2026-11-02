@@ -40,6 +40,11 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_upload_line             = NULL,
                                  .split_download_line           = NULL,
                                  .split_hash                    = 0};
+    bufferbudgetInit(&ls->pending_down_budget,
+                     (buffer_budget_cost_t) {kHttpServerPendingBytes, kHttpServerPendingCharge});
+    const bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->pending_down_budget);
+    assert(attached);
+    discard attached;
     httpReceiveInit(&ls->receive);
     h2DataInit(&ls->h2_data, lineGetBufferPool(l), UINT32_MAX);
 }
@@ -56,6 +61,7 @@ void httpserverLinestateDestroy(httpserver_lstate_t *ls)
     httpReceiveDestroy(&ls->receive, ls->in_stream.pool);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_down);
+    bufferbudgetAssertEmpty(&ls->pending_down_budget);
     bufferqueueDestroy(&ls->split_pending_up);
     contextqueueDestroy(&ls->events_up);
 

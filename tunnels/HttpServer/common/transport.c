@@ -1692,7 +1692,7 @@ bool httpserverTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpserver_ls
     {
         if (payload != NULL)
         {
-            bufferqueuePushBack(&ls->pending_down, payload);
+            return httpserverTransportQueuePendingDown(l, ls, payload);
         }
         return true;
     }
@@ -1806,82 +1806,70 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
     return true;
 }
 
+bool httpserverTransportQueuePendingDown(line_t *l, httpserver_lstate_t *ls, sbuf_t *payload)
+{
+    if (bufferqueueTryPushBack(&ls->pending_down, &payload))
+        return true;
+    lineReuseBuffer(l, payload);
+    LOGW("HttpServer: pending response payload limit exceeded");
+    return false;
+}
+
 bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     httpserver_tstate_t *ts = tunnelGetState(t);
 
-    if (ts->websocket_enabled && ! ls->websocket_active)
+    if (ls->pending_down_draining || (ts->websocket_enabled && ! ls->websocket_active) ||
+        ls->runtime_proto == kHttpServerRuntimeUnknown ||
+        (ls->runtime_proto == kHttpServerRuntimeHttp1 &&
+         (! ls->h1_headers_parsed || (ts->websocket_enabled && ! ls->h1_response_headers_sent))) ||
+        (ls->runtime_proto == kHttpServerRuntimeHttp2 && ls->h2_stream_id <= 0))
     {
         return true;
     }
 
+    /* Retain the oldest buffer and its charge while response headers can
+     * reenter. New input joins this FIFO until its outer drain completes. */
+    ls->pending_down_draining = true;
     while (bufferqueueGetBufCount(&ls->pending_down) > 0)
     {
-        sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
+        if (ls->runtime_proto == kHttpServerRuntimeHttp2 && ! ls->h2_response_headers_sent)
+        {
+            if (! httpserverTransportSubmitHttp2ResponseHeaders(t, l, ls, false))
+                return false;
+        }
+        else if (! ts->websocket_enabled && ls->runtime_proto == kHttpServerRuntimeHttp1 &&
+                 ! ls->h1_response_headers_sent)
+        {
+            ls->h1_response_headers_sent = true;
+            if (! httpserverTransportSendHttp1ResponseHeaders(t, l))
+                return false;
+        }
 
+        sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
         if (ts->websocket_enabled)
         {
-            if (ls->runtime_proto == kHttpServerRuntimeHttp2 && ! ls->h2_response_headers_sent)
-            {
-                if (! httpserverTransportSubmitHttp2ResponseHeaders(t, l, ls, false))
-                {
-                    lineReuseBuffer(l, buf);
-                    return false;
-                }
-            }
-
             if (! httpserverTransportSendWebSocketData(t, l, ls, buf, kWebSocketOpcodeBinary))
-            {
                 return false;
-            }
         }
         else if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)
         {
             if (! httpserverSendRawDown(t, l, ls, buf))
-            {
                 return false;
-            }
         }
         else if (ls->runtime_proto == kHttpServerRuntimeHttp2)
         {
-            if (! ls->h2_response_headers_sent)
-            {
-                if (! httpserverTransportSubmitHttp2ResponseHeaders(t, l, ls, false))
-                {
-                    lineReuseBuffer(l, buf);
-                    return false;
-                }
-            }
-
             if (! httpserverTransportSendHttp2DataFrame(t, l, ls, buf, false))
-            {
                 return false;
-            }
-        }
-        else if (ls->runtime_proto == kHttpServerRuntimeHttp1)
-        {
-            if (! ls->h1_response_headers_sent)
-            {
-                if (! httpserverTransportSendHttp1ResponseHeaders(t, l))
-                {
-                    lineReuseBuffer(l, buf);
-                    return false;
-                }
-                ls->h1_response_headers_sent = true;
-            }
-
-            if (! httpserverTransportSendHttp1ChunkedPayload(t, l, buf))
-            {
-                return false;
-            }
         }
         else
         {
-            bufferqueuePushFront(&ls->pending_down, buf);
-            return true;
+            assert(ls->runtime_proto == kHttpServerRuntimeHttp1);
+            if (! httpserverTransportSendHttp1ChunkedPayload(t, l, buf))
+                return false;
         }
     }
-
+    ls->pending_down_draining = false;
     return true;
 }
 
@@ -1899,7 +1887,11 @@ void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf,
         httpserverTransportCloseBothDirections(t, l, ls);
         return;
     }
-    bufferqueuePushBack(queue, buf);
+    if (! bufferqueueTryPushBack(queue, &buf))
+    {
+        lineReuseBuffer(l, buf);
+        httpserverTransportCloseBothDirections(t, l, ls);
+    }
 }
 
 static bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)

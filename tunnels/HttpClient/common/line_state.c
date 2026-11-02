@@ -37,6 +37,11 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .split_download_line            = NULL,
                                  .h1_write_in_progress           = false,
                                  .h2_request_headers_sent        = false};
+    bufferbudgetInit(&ls->pending_up_budget,
+                     (buffer_budget_cost_t) {kHttpClientPendingMaxBytes, kHttpClientPendingMaxCharge});
+    bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->pending_up_budget);
+    assert(attached);
+    discard attached;
     httpReceiveInit(&ls->receive);
     h2DataInit(&ls->h2_data, lineGetBufferPool(l), kHttpClientHttp2DataBytes);
 }
@@ -53,7 +58,17 @@ void httpclientLinestateDestroy(httpclient_lstate_t *ls)
     httpReceiveDestroy(&ls->receive, ls->in_stream.pool);
     bufferstreamDestroy(&ls->in_stream);
     bufferqueueDestroy(&ls->pending_up);
+    bufferbudgetAssertEmpty(&ls->pending_up_budget);
     contextqueueDestroy(&ls->events_down);
 
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+}
+
+bool httpclientQueuePendingUp(line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
+{
+    if (bufferqueueTryPushBack(&ls->pending_up, &buf))
+        return true;
+    lineReuseBuffer(l, buf);
+    LOGW("HttpClient: pending application payload limit exceeded");
+    return false;
 }

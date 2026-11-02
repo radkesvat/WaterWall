@@ -14,6 +14,12 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 
 Scenario choices: `tester-client.allow-early-response=true`, `tester-server.streaming-response=true`. These values define the workload/edge case and are not tuning advice.
 
+The client preserves all eleven verification chunks (3,216,936 bytes) but sends
+at most 16 KiB per dispatch, yielding for 1 ms between deliveries. This lets the
+socket handshake progress while keeping the successful roundtrip within HTTP's
+2 MiB byte / 8 MiB charge waiting budget. Sending the entire request before the
+peer can respond is an overload case; focused HTTP unit tests verify its refusal.
+
 CTest selections and overrides:
 
 - `waterwall.http_upgrade_h2c_bidirectional_tcp_loopback` — default runner settings.

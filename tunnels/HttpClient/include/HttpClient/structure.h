@@ -120,6 +120,7 @@ typedef struct httpclient_lstate_s
 
     buffer_stream_t            in_stream;
     buffer_queue_t             pending_up;
+    buffer_budget_t            pending_up_budget;
     context_queue_t            events_down;
     h2_data_queue_t            h2_data;
 
@@ -164,6 +165,7 @@ typedef struct httpclient_lstate_s
     char                    split_id[48];
     bool                    h1_write_in_progress;
     bool                    h2_request_headers_sent;
+    bool                    pending_up_draining;
 } httpclient_lstate_t;
 
 enum
@@ -174,6 +176,8 @@ enum
     kHttpClientRequiredPaddingLeft = 16,
 
     kHttpClientBufferQueueCap   = 8,
+    kHttpClientPendingMaxBytes       = 2 * 1024 * 1024,
+    kHttpClientPendingMaxCharge      = 8 * 1024 * 1024,
     kHttpClientMaxHeaderBytes   = 64 * 1024,
     kHttpClientHttp1ChunkBodyBytes   = 16 * 1024 - 12,
 
@@ -208,6 +212,8 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
+/* Consumes buf on every result; false asks the caller to close its exact line/association. */
+bool httpclientQueuePendingUp(line_t *l, httpclient_lstate_t *ls, sbuf_t *buf);
 
 sbuf_t *allocBufferForLength(line_t *l, uint32_t len);
 size_t  httpclientBuildHttp2Settings(const httpclient_tstate_t *ts,

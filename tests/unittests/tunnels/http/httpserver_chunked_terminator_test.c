@@ -356,9 +356,10 @@ static void caseEmptyResponsePayloadDoesNotTerminate(bool queued)
     {
         twfRequire(fixture.trace.capture_len == 0, "waiting HTTP response leaked body bytes");
         ls->h1_headers_parsed = true;
-        twfRequire(httpserverTransportFlushPendingDown(fixture.http, fixture.line, ls), "response drain failed");
+        tunnelDownStreamPayload(fixture.http, fixture.line, pendingBuffer(fixture.line, 1, 0, 'x'));
     }
     twfRequireEqualText((char *) wire, "1\r\nA\r\n1\r\nB\r\n", "empty input ended the response");
+    bufferbudgetAssertEmpty(&ls->pending_down_budget);
     tunnelDownStreamFin(fixture.http, fixture.line);
     fixture.retired = true;
     twfRequireEqualText((char *) wire, "1\r\nA\r\n1\r\nB\r\n0\r\n\r\n", "Finish did not emit one final chunk");
@@ -366,8 +367,141 @@ static void caseEmptyResponsePayloadDoesNotTerminate(bool queued)
     fixtureTeardown(&fixture);
 }
 
+static bool submitWaitingPayload(httpserver_chunked_fixture_t *fixture, unsigned mode, sbuf_t *buf)
+{
+    httpserver_lstate_t *ls = lineGetState(fixture->line, fixture->http);
+    if (mode == 4)
+    {
+        if (! httpserverTransportSendHttp2DataFrame(fixture->http, fixture->line, ls, buf, false))
+            httpserverTransportCloseBothDirections(fixture->http, fixture->line, ls);
+    }
+    else
+        tunnelDownStreamPayload(fixture->http, fixture->line, buf);
+    return ls->line != NULL;
+}
+
+static void caseWaitingResponseLimit(unsigned mode, bool charge_limit)
+{
+    twfSetCase("HttpServer readiness queue enforces byte and allocation limits");
+    httpserver_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    httpserver_lstate_t *ls = lineGetState(fixture.line, fixture.http);
+    httpserver_tstate_t *ts = tunnelGetState(fixture.http);
+    ls->h1_headers_parsed   = false;
+    if (mode == 1)
+        ls->runtime_proto = kHttpServerRuntimeUnknown;
+    else if (mode == 2)
+        ts->websocket_enabled = true;
+    else if (mode >= 3)
+        ls->runtime_proto = kHttpServerRuntimeHttp2;
+    const uint32_t capacity =
+        charge_limit ? kHttpServerPendingCharge - sizeof(sbuf_t) - kSbufAllocationAlignment : kHttpServerPendingBytes;
+    const uint32_t length = charge_limit ? 1 : capacity;
+    twfRequire(submitWaitingPayload(&fixture, mode, pendingBuffer(fixture.line, capacity, length, 'A')),
+               "exact waiting limit was refused");
+    const buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->pending_down_budget);
+    twfRequire(used.bytes == length, "waiting bytes were not charged");
+    if (charge_limit)
+        twfRequire(used.charge == kHttpServerPendingCharge, "test did not reach the exact allocation limit");
+    twfRequire(fixture.trace.prev_payload == 0, "unready response was emitted");
+    twfRequire(! submitWaitingPayload(&fixture, mode, pendingBuffer(fixture.line, 1, 1, 'B')),
+               "waiting response overflow was accepted");
+    fixture.retired = true;
+    twfRequireEqualText(fixture.trace.seq, "Ff", "overflow did not close both directions in order");
+    twfRequire(lineIsAlive(fixture.line), "HttpServer destroyed a borrowed line on overflow");
+    fixtureTeardown(&fixture);
+}
+
+static unsigned pending_drain_mode;
+static bool     pending_header_seen, pending_body_seen;
+
+static void pendingDrainSink(tunnel_t *prev, line_t *line, sbuf_t *buf)
+{
+    tunnel_t            *http   = prev->next;
+    httpserver_lstate_t *ls     = lineGetState(line, http);
+    bool                 body_a = sbufGetLength(buf) == 3 && memcmp(sbufGetRawPtr(buf), "A\r\n", 3) == 0;
+    twfPrevPayload(prev, line, buf);
+    if (! pending_header_seen)
+    {
+        pending_header_seen = true;
+        twfRequire(ls->pending_down_draining, "drain guard was not published before response headers");
+        twfRequire(bufferbudgetGetUsage(&ls->pending_down_budget).bytes == 2,
+                   "oldest pending response lost its charge across the header callback");
+        if (pending_drain_mode == 1)
+        {
+            tunnelDownStreamPayload(
+                http, line, pendingBuffer(line, kHttpServerPendingBytes, kHttpServerPendingBytes, 'X'));
+            return;
+        }
+        if (pending_drain_mode == 2)
+        {
+            tunnelUpStreamFin(http, line);
+            return;
+        }
+        tunnelDownStreamPayload(http, line, pendingBuffer(line, 1, 1, 'C'));
+        twfRequire(httpserverTransportFlushPendingDown(http, line, ls), "recursive drain failed");
+    }
+    else if (body_a && ! pending_body_seen)
+    {
+        pending_body_seen = true;
+        twfRequire(bufferbudgetGetUsage(&ls->pending_down_budget).bytes == 2,
+                   "handed-off payload retained its queue charge");
+        if (pending_drain_mode == 3)
+        {
+            tunnelUpStreamFin(http, line);
+            return;
+        }
+        tunnelDownStreamPayload(http, line, pendingBuffer(line, 1, 1, 'D'));
+    }
+}
+
+static void casePendingDrainReentry(unsigned mode)
+{
+    twfSetCase("HttpServer response drain preserves FIFO, bounds and callback lifetime");
+    httpserver_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    uint8_t wire[1024]             = {0};
+    fixture.trace.capture          = wire;
+    fixture.trace.capture_capacity = sizeof(wire) - 1;
+    httpserver_lstate_t *ls        = lineGetState(fixture.line, fixture.http);
+    httpserver_tstate_t *ts        = tunnelGetState(fixture.http);
+    ts->status_code                = 200;
+    ls->h1_headers_parsed          = false;
+    for (char value = 'A'; value <= 'B'; ++value)
+        tunnelDownStreamPayload(fixture.http, fixture.line, pendingBuffer(fixture.line, 1, 1, value));
+    twfRequire(fixture.trace.prev_payload == 0, "queued payload bypassed request readiness");
+    ls->h1_headers_parsed    = true;
+    fixture.prev->fnPayloadD = pendingDrainSink;
+    pending_drain_mode       = mode;
+    pending_header_seen = pending_body_seen = false;
+    bool drained                            = httpserverTransportFlushPendingDown(fixture.http, fixture.line, ls);
+    twfRequire(drained == (mode == 0), "response drain reported the wrong callback result");
+    if (mode == 0)
+    {
+        const char *body = strstr((char *) wire, "\r\n\r\n");
+        twfRequire(body != NULL, "response header terminator missing");
+        twfRequireEqualText(
+            body + 4, "1\r\nA\r\n1\r\nB\r\n1\r\nC\r\n1\r\nD\r\n", "nested response overtook the pending FIFO");
+        bufferbudgetAssertEmpty(&ls->pending_down_budget);
+        twfRequire(! ls->pending_down_draining, "response drain guard remained set");
+    }
+    else
+    {
+        fixture.retired = true;
+        twfRequireEqualU32(fixture.trace.next_finish, 1, "closing header callback did not finish next");
+        twfRequireEqualU32(fixture.trace.prev_finish, mode == 1 ? 1 : 0, "closing header callback reflected Finish");
+        twfRequireEqualU32(fixture.trace.prev_payload, mode == 3 ? 3 : 1, "body escaped after callback closure");
+    }
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
+    for (unsigned mode = 0; mode < 4; ++mode)
+        casePendingDrainReentry(mode);
+    for (unsigned mode = 0; mode < 5; ++mode)
+        for (unsigned charge_limit = 0; charge_limit < 2; ++charge_limit)
+            caseWaitingResponseLimit(mode, charge_limit != 0);
     caseEmptyResponsePayloadDoesNotTerminate(false);
     caseEmptyResponsePayloadDoesNotTerminate(true);
     for (unsigned stop = 0; stop < 4; ++stop)

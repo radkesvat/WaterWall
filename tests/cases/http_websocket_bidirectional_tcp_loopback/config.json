@@ -5,7 +5,10 @@
       "name": "tester-client",
       "type": "TesterClient",
       "settings": {
-        "allow-early-response": true
+        "allow-early-response": true,
+        "max-payload-size": 16384,
+        "split-payload-burst": 1,
+        "split-payload-delay-ms": 1
       },
       "next": "http-client"
     },
