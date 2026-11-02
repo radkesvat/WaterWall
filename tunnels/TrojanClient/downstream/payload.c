@@ -19,22 +19,16 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         return;
     }
-    size_t limit = kTrojanClientMaxUdpBufferedBytes;
-    if (UNLIKELY(length > limit - ls->receive_bytes || ! bufferqueueTryPushBack(&ls->pending_down, &buf)))
+    if (UNLIKELY(! bufferreaderTryPush(&ls->reader, &buf, kTrojanClientMaxUdpBufferedBytes)))
     {
         lineReuseBuffer(l, buf);
         trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         return;
     }
-    ls->receive_bytes += length;
     if (ls->receiving)
     {
         /* Nested input must settle while the outer callback owns the parser. */
-        if (! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                        &ls->receive_head,
-                                        &ls->pending_down,
-                                        kTrojanClientMaxInputCharge,
-                                        kTrojanClientMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge, kTrojanClientMaxInputBuffers))
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         return;
     }
@@ -55,7 +49,7 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
             break;
         }
-        if (header == 0 || ls->receive_bytes - ls->header_filled < ls->body_length)
+        if (header == 0 || ! bufferreaderBodyReady(&ls->reader, ls->body_length))
             break;
         sbuf_t *body = trojanclientExtractUdpBody(ls);
         /* Parser cursor and accounting are committed before any reentrant callback. */
@@ -64,11 +58,7 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (trojanclientAssociationAlive(t, l, application))
     {
         /* Complete frames drain first; only incomplete input survives return. */
-        if (! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                        &ls->receive_head,
-                                        &ls->pending_down,
-                                        kTrojanClientMaxInputCharge,
-                                        kTrojanClientMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge, kTrojanClientMaxInputBuffers))
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         else
             ls->receiving = false;

@@ -1072,6 +1072,14 @@ if(INCLUDE_TROJAN_CLIENT OR INCLUDE_TROJAN_SERVER OR INCLUDE_SOCKS_5_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/SocksAddress)
 endif()
 
+if(INCLUDE_TROJAN_CLIENT OR INCLUDE_TROJAN_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/TrojanCommon)
+endif()
+
+if(INCLUDE_VLESS_CLIENT OR INCLUDE_VLESS_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/VlessCommon)
+endif()
+
 #trojan client
 if(INCLUDE_TROJAN_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TROJAN_CLIENT=1)

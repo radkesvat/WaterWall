@@ -162,13 +162,8 @@ static sbuf_t *oversizedBytes(const void *data, uint32_t len)
 
 static void requireUdpRetentionSettled(vlessclient_lstate_t *ls)
 {
-    size_t charge = bufferqueueGetCharge(&ls->pending_down);
-    size_t count  = bufferqueueGetBufCount(&ls->pending_down);
-    if (ls->receive_head != NULL)
-    {
-        charge += sbufGetQueueCharge(ls->receive_head);
-        ++count;
-    }
+    size_t charge = bufferreaderCharge(&ls->reader);
+    size_t count  = bufferreaderEntryCount(&ls->reader);
     twfRequire(charge <= kVlessClientMaxInputCharge && count <= kVlessClientMaxInputBuffers,
                "UDP retained input exceeded its charge or fragment threshold");
 }
@@ -241,7 +236,7 @@ static void performAction(unsigned boundary)
     if (action == 16)
     {
         vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-        twfRequire(ls->receiving && ls->receive_head != NULL && f.down_len == 1,
+        twfRequire(ls->receiving && bufferreaderHeadLength(&ls->reader) != 0 && f.down_len == 1,
                    "nested retention fixture lost its active older input");
         if (f.retention_fault)
         {
@@ -256,13 +251,13 @@ static void performAction(unsigned boundary)
                        "unrepresentable compact storage left the UDP association alive");
             return;
         }
-        twfRequire(sbufGetQueueCharge(ls->receive_head) > kVlessClientMaxInputCharge,
+        twfRequire(bufferreaderCharge(&ls->reader) > kVlessClientMaxInputCharge,
                    "nested retention fixture did not keep oversized active storage");
         tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1C", 3, f.retention_pipe, 320));
         twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier) && f.down_len == 1,
                    "nested UDP admission closed or decoded before the outer callback returned");
         requireUdpRetentionSettled(ls);
-        twfRequire(ls->receive_bytes == 6 && ls->header_filled == 0,
+        twfRequire(bufferreaderLength(&ls->reader) == 6 && bufferreaderHeaderLength(&ls->reader) == 0,
                    "nested compaction changed cached-header or unread-body accounting");
     }
     if (action == 12)
@@ -281,8 +276,8 @@ static void performAction(unsigned boundary)
             }
         }
         vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-        twfRequire(bufferqueueGetBufCount(&ls->pending_down) == 1024 &&
-                       ls->receive_bytes == (size_t) 1024 * f.retention_size,
+        twfRequire(bufferreaderEntryCount(&ls->reader) == 1024 &&
+                       bufferreaderLength(&ls->reader) == (size_t) 1024 * f.retention_size,
                    "nested FIFO accounting omitted or duplicated an active buffer");
         if (f.retention_fault == 1)
         {
@@ -750,9 +745,9 @@ static void testEmptyUdp(bool pipe)
                            memcmp(f.down, "ABC", f.down_len) == 0,
                        "empty UDP lost datagrams or changed frame order");
             vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-            twfRequire(ls->response_complete && ls->receive_bytes == 0 && ls->receive_head == NULL &&
-                           bufferqueueGetBufCount(&ls->pending_down) == 0 && ls->header_filled == 0 &&
-                           ls->body_length == 0 && ! ls->receiving,
+            twfRequire(ls->response_complete && bufferreaderLength(&ls->reader) == 0 &&
+                           bufferreaderHeadLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0 &&
+                           bufferreaderHeaderLength(&ls->reader) == 0 && ls->body_length == 0 && ! ls->receiving,
                        "empty UDP retained framing or parser accounting");
             tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\1D", 3, pipe, 320));
             twfRequire(f.deliveries_down == count + 1 && f.down_lengths[count] == 1 &&
@@ -781,7 +776,7 @@ static void testPressure(void)
         if (! close)
         {
             vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-            twfRequire(ls->receive_bytes == 0 && bufferqueueGetBufCount(&ls->pending_down) == 0,
+            twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0,
                        "ready datagrams retained for Resume");
             f.paused_down = false;
             tunnelUpStreamResume(f.t, f.application);
@@ -821,7 +816,8 @@ static void testUdpRetention(bool pipe)
                "valid fragmented UDP body was rejected or delivered incomplete");
     vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
     requireUdpRetentionSettled(ls);
-    twfRequire(ls->receive_bytes == sizeof(payload) + 1 && ls->header_filled == sizeof(header),
+    twfRequire(bufferreaderLength(&ls->reader) == sizeof(payload) + 1 &&
+                   bufferreaderHeaderLength(&ls->reader) == sizeof(header),
                "fragment compaction changed parser accounting");
     tunnelDownStreamPayload(f.t, f.carrier, bytes(payload + sizeof(payload) - 1, 1, pipe, 320));
     twfRequire(f.deliveries_down == 1 && f.down_len == sizeof(payload) &&
@@ -838,7 +834,8 @@ static void testUdpRetention(bool pipe)
                "oversized backing prevented complete UDP delivery");
     ls = lineGetState(f.carrier, f.t);
     requireUdpRetentionSettled(ls);
-    twfRequire(ls->receive_bytes == 3 && ls->header_filled == 2 && ls->body_length == 3,
+    twfRequire(bufferreaderLength(&ls->reader) == 3 && bufferreaderHeaderLength(&ls->reader) == 2 &&
+                   ls->body_length == 3,
                "suffix compaction changed cached header or body length");
     tunnelDownStreamPayload(f.t, f.carrier, bytes("CD", 2, pipe, 320));
     twfRequire(f.deliveries_down == 2 && f.down_len == 4 && memcmp(f.down, "ABCD", 4) == 0,
@@ -886,7 +883,8 @@ static void testLimits(uint32_t pool_size)
          * may run until that admission returns to its real outer dispatch. */
         ls->receiving = true;
         tunnelDownStreamPayload(f.t, f.carrier, bytes(data, (uint32_t) limit, false, 320));
-        twfRequire(lineIsAlive(f.application) && ls->receive_bytes == limit, "exact retained limit refused");
+        twfRequire(lineIsAlive(f.application) && bufferreaderLength(&ls->reader) == limit,
+                   "exact retained limit refused");
         tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, false, 320));
         twfRequire(! lineIsAlive(f.application), "retained input overflow survived");
         memoryFree(data);
@@ -1053,8 +1051,8 @@ static void testPrefixes(void)
                "empty UDP across resident prefix and pipe changed later frame");
     twfRequire(! WW_HAVE_SPLICE || f.parser_reads + reads == 5, "empty UDP materialized a pipe body");
     vlessclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-    twfRequire(ls->receive_bytes == 0 && ls->header_filled == 0 && ls->receive_head == NULL &&
-                   bufferqueueGetBufCount(&ls->pending_down) == 0,
+    twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
+                   bufferreaderHeadLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0,
                "empty UDP prefix retained input");
     end();
     begin(true, "127.0.0.1", 128, 0, false);

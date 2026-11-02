@@ -1,0 +1,6 @@
+add_library(TrojanCommon STATIC src/input.c)
+target_include_directories(TrojanCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(TrojanCommon PUBLIC ww SocksAddress)
+if(NOT APPLE)
+  target_precompile_headers(TrojanCommon REUSE_FROM ww)
+endif()

@@ -99,7 +99,7 @@ add_library(ww STATIC
     bufio/context_queue.c
     bufio/buffer_budget.c
     bufio/buffer_queue.c
-    bufio/buffer_queue_range.c
+    bufio/buffer_reader.c
     bufio/generic_pool.c
     bufio/threadsafe_generic_pool.c
     bufio/master_pool.c
@@ -1763,7 +1763,7 @@ if(BUILD_TESTING)
         bufio/buffer_pool.c
         bufio/buffer_budget.c
         bufio/buffer_queue.c
-        bufio/buffer_queue_range.c
+        bufio/buffer_reader.c
         bufio/buffer_stream.c
         libc/wfrand.c
         instance/global_state.c

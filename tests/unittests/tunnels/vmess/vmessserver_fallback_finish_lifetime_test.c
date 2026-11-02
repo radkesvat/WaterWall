@@ -19,7 +19,18 @@ typedef vmessserver_lstate_t fallback_server_lstate_t;
 #define fallbackServerTunnelDownStreamResume  vmessserverTunnelDownStreamResume
 #define fallbackServerTunnelDownStreamFinish  vmessserverTunnelDownStreamFinish
 
+static void fallbackServerRetainInitialTranscript(fallback_server_lstate_t *ls, buffer_pool_t *pool);
+
 #include "fixtures/protocols/fallback_replay_server_suite.h"
+
+static void fallbackServerRetainInitialTranscript(fallback_server_lstate_t *ls, buffer_pool_t *pool)
+{
+    memoryCopy(ls->header, "prefix", 6);
+    ls->header_filled = 6;
+    sbuf_t *tail      = fallbackFinishMakePayload(pool, "-tail");
+    twfRequire(bufferqueueTryPushBack(&ls->pending_up, &tail), "initial fallback suffix was refused");
+    ls->input_bytes = 5;
+}
 
 int main(void)
 {

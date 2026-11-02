@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include "TrojanCommon/input.h"
 #include "loggers/network_logger.h"
 
 static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
@@ -7,59 +8,12 @@ static bool trojanserverLineAuthenticated(const trojanserver_lstate_t *ls)
     return userHandleIsValid(&ls->user_handle) || ls->auth_password != NULL;
 }
 
-static bool trojanserverGatherHeader(trojanserver_lstate_t *ls, uint16_t needed)
-{
-    assert(needed <= sizeof(ls->header));
-    ls->header_needed = needed;
-    return bufferRangeGatherPrefix(
-        lineGetBufferPool(ls->line), &ls->input_head, &ls->pending_up, ls->header, &ls->header_filled, needed);
-}
-
-/* Incomplete (0) is separate from invalid (-1) and complete (1). */
-static int trojanserverGatherAddress(trojanserver_lstate_t *ls, uint16_t base, uint16_t trailer,
-                                     socks_address_t *target)
-{
-    if (! trojanserverGatherHeader(ls, base + 1))
-        return 0;
-    uint16_t length;
-    switch (ls->header[base])
-    {
-    case kTrojanAtypIpv4:
-        length = 7;
-        break;
-    case kTrojanAtypIpv6:
-        length = 19;
-        break;
-    case kTrojanAtypDomain:
-        if (! trojanserverGatherHeader(ls, base + 2))
-            return 0;
-        if (ls->header[base + 1] == 0)
-            return -1;
-        length = 4U + ls->header[base + 1];
-        break;
-    default:
-        return -1;
-    }
-    if (! trojanserverGatherHeader(ls, base + length + trailer))
-        return 0;
-    return socksAddressDecode(ls->header + base, length, target);
-}
-
 void trojanserverResetHeader(trojanserver_lstate_t *ls)
 {
-    ls->header_filled   = 0;
-    ls->header_needed   = 1;
     ls->body_length     = 0;
     ls->frame_ready     = false;
     ls->frame_selected  = false;
     ls->selected_remote = NULL;
-}
-
-void trojanserverRetainActiveHead(trojanserver_lstate_t *ls)
-{
-    /* Initial parsing only consumes this admitted head; no callback or new
-     * admission intervenes before restoring it to the still-unbound queue. */
-    bufferRangeRestoreHead(&ls->input_head, &ls->pending_up);
 }
 
 void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
@@ -76,8 +30,8 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         trojanserverStartFallback(t, l, ls);
         return;
     }
-    uint16_t prefix = (uint16_t) min(ls->input_bytes, (size_t) 58);
-    bool     gathered = trojanserverGatherHeader(ls, prefix);
+    uint16_t prefix   = (uint16_t) min(bufferreaderLength(&ls->reader), (size_t) 58);
+    bool     gathered = bufferreaderGather(&ls->reader, prefix);
     assert(gathered);
     discard gathered;
     /* Short first deliveries already took fallback; cached input stays charged. */
@@ -103,7 +57,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
             return;
         }
     }
-    if (! trojanserverGatherHeader(ls, 59))
+    if (! bufferreaderGather(&ls->reader, 59))
         return;
     uint8_t                command = ls->header[58];
     trojanserver_tstate_t *ts      = tunnelGetState(t);
@@ -113,17 +67,18 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         return;
     }
     socks_address_t        target;
-    int                    parsed = trojanserverGatherAddress(ls, 59, 2, &target);
+    int                    parsed = trojanGatherAddress(&ls->reader, 59, 2, &target);
     if (parsed == 0)
         return;
-    if (parsed < 0 || ls->header[ls->header_needed - 2] != '\r' || ls->header[ls->header_needed - 1] != '\n' ||
+    const uint16_t header_length = bufferreaderHeaderLength(&ls->reader);
+    if (parsed < 0 || ls->header[header_length - 2] != '\r' || ls->header[header_length - 1] != '\n' ||
         (command == kTrojanCmdConnect && target.port == 0))
     {
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
     trojanserverRecordLineUser(l, ls, &ls->user_handle);
-    ls->input_bytes -= ls->header_filled;
+    bufferreaderConsumeHeader(&ls->reader);
     if (command == kTrojanCmdUdpAssociate)
     {
         ls->branch = kTrojanServerBranchTrojan;
@@ -133,15 +88,14 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     }
     trojanserverApplyDestinationContext(l, &target, false);
     trojanserverResetHeader(ls);
-    trojanserverRetainActiveHead(ls);
-    if (ls->input_bytes > kTrojanServerMaxPendingBytes ||
+    if (bufferreaderLength(&ls->reader) > kTrojanServerMaxPendingBytes ||
+        ! bufferreaderMoveToQueue(&ls->reader, &ls->pending_up, false) ||
         ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->output_budget))
     {
         trojanserverCloseLineBidirectional(t, l);
         return;
     }
     ls->branch              = kTrojanServerBranchTrojan;
-    ls->input_bytes         = 0;
     ls->phase               = kTrojanServerPhaseTcpConnecting;
     ls->next_initialized    = true;
     ls->branch_initializing = true;
@@ -156,9 +110,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 
 static sbuf_t *trojanserverExtractBody(trojanserver_lstate_t *ls)
 {
-    uint32_t bytes  = ls->body_length;
-    sbuf_t  *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->input_head, &ls->pending_up, bytes);
-    ls->input_bytes -= ls->header_filled + bytes;
+    sbuf_t *result = bufferreaderTakeBody(&ls->reader, ls->body_length);
     trojanserverResetHeader(ls);
     return result;
 }
@@ -167,27 +119,19 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     if (! ls->frame_ready)
     {
-        socks_address_t        target;
-        int                    parsed = trojanserverGatherAddress(ls, 0, 4, &target);
+        const socks_address_result_t parsed = trojanReadUdpHeader(&ls->reader, &ls->body_length);
         if (parsed == 0)
             return false;
-        if (parsed < 0 || target.port == 0 || ls->header[ls->header_needed - 2] != '\r' ||
-            ls->header[ls->header_needed - 1] != '\n')
+        if (parsed < 0)
         {
             trojanserverCloseLineBidirectional(t, l);
             return false;
         }
-        uint16_t n      = ls->header_needed;
-        ls->body_length = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
         ls->frame_ready = true;
     }
-    if (ls->input_bytes - ls->header_filled < ls->body_length)
+    if (! bufferreaderBodyReady(&ls->reader, ls->body_length))
     {
-        if (! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                        &ls->input_head,
-                                        &ls->pending_up,
-                                        kTrojanServerMaxInputCharge,
-                                        kTrojanServerMaxInputBuffers))
+        if (! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge, kTrojanServerMaxInputBuffers))
             trojanserverCloseLineBidirectional(t, l);
         return false;
     }
@@ -196,7 +140,7 @@ bool trojanserverDecodeUdp(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
         ls->frame_selected = true;
         /* Cached wire metadata outlives partial-body input without owning a domain. */
         socks_address_t        target;
-        socks_address_result_t decoded = socksAddressDecode(ls->header, ls->header_filled, &target);
+        socks_address_result_t decoded = socksAddressDecode(ls->header, bufferreaderHeaderLength(&ls->reader), &target);
         assert(decoded == kSocksAddressComplete);
         discard decoded;
         line_t *remote = trojanserverGetOrCreateUdpRemoteLine(t, l, ls, &target);

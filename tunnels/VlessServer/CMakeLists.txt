@@ -45,4 +45,4 @@ if(NOT APPLE)
     target_precompile_headers(VlessServer REUSE_FROM ww)
 endif()
 
-target_link_libraries(VlessServer PUBLIC FallbackReplay)
+target_link_libraries(VlessServer PUBLIC FallbackReplay VlessCommon)

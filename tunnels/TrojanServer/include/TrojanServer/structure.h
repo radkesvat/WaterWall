@@ -136,16 +136,13 @@ typedef struct trojanserver_lstate_s
     bool frame_ready : 1;
     bool frame_selected : 1;
 
-    /* Client input: pending_up owns initial/UDP wire bytes, then opaque bytes
-     * after CONNECT. The popped head remains owned here; input_bytes includes
-     * queued input, the active head and the cached header while parsing. */
+    /* The reader owns initial/UDP input and accounts for the cached header.
+     * CONNECT/fallback transfer unread input to pending_up before binding the
+     * output budget or handing the queue to fallback replay. */
     buffer_budget_t   output_budget;
     buffer_queue_t    pending_up;
-    sbuf_t           *input_head;
-    size_t            input_bytes;
+    buffer_reader_t   reader;
     uint8_t           header[320];
-    uint16_t          header_filled;
-    uint16_t          header_needed;
     uint16_t          body_length;
 
     /* The map owns backend lines; selected_remote borrows the current frame's

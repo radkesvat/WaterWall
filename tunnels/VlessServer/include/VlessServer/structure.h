@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FallbackReplay/fallback_replay.h"
+#include "VlessCommon/input.h"
 #include "wwapi.h"
 
 enum
@@ -78,11 +79,11 @@ typedef struct vlessserver_lstate_s
     line_t           *client_line;
     line_t           *udp_remote_line;
     address_context_t udp_target;
+    /* Parser input remains unbound; selected TCP/fallback output transfers
+     * into pending_up before its separate budget is attached. */
+    buffer_reader_t   reader;
     buffer_queue_t    pending_up;
-    sbuf_t           *input_head;
-    size_t            input_bytes;
     uint8_t           header[kVlessServerInitialMaxReqLen];
-    uint16_t          header_filled;
     buffer_budget_t   upstream_budget;
     buffer_budget_t   response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
@@ -117,7 +118,7 @@ enum
     kVlessServerUuidLen                = 16,
     kVlessServerCanonicalUuidStringLen = 36,
     kVlessServerResponseLen            = 2,
-    kVlessServerUdpHeaderLen           = 2,
+    kVlessServerUdpHeaderLen           = kVlessUdpHeaderLen,
     kVlessServerUdpMaxPacket           = UINT16_MAX,
     kVlessServerBufferQueueCap         = 8,
     kVlessServerMaxBufferedBytes       = 2 * 1024 * 1024 + 65537,

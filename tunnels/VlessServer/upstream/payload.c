@@ -22,28 +22,21 @@ void vlessserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     bool first             = ! ls->first_payload_seen;
     bool short_uuid        = first && sbufGetLength(buf) < 17;
     ls->first_payload_seen = true;
-    if (! tcp && sbufGetLength(buf) > kVlessServerMaxBufferedBytes - ls->input_bytes)
-        goto refused;
     /* Empty parser input owns no bytes, but an empty first callback still
      * selects fallback. Output/reentry queues account even empty entries. */
     if (! tcp && sbufGetLength(buf) == 0)
         lineReuseBuffer(l, buf);
     else
     {
-        uint32_t bytes = sbufGetLength(buf);
-        if (! bufferqueueTryPushBack(&ls->pending_up, &buf))
+        bool admitted = tcp ? bufferqueueTryPushBack(&ls->pending_up, &buf)
+                            : bufferreaderTryPush(&ls->reader, &buf, kVlessServerMaxBufferedBytes);
+        if (! admitted)
             goto refused;
-        if (! tcp)
-            ls->input_bytes += bytes;
     }
     if (ls->input_dispatching)
     {
         if ((ls->phase == kVlessServerPhaseUdpConnecting || ls->phase == kVlessServerPhaseUdpEstablished) &&
-            ! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                        &ls->input_head,
-                                        &ls->pending_up,
-                                        kVlessServerMaxInputCharge,
-                                        kVlessServerMaxInputBuffers))
+            ! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge, kVlessServerMaxInputBuffers))
             vlessserverCloseLineBidirectional(t, l);
         return;
     }

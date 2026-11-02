@@ -17,10 +17,8 @@
 
 _Static_assert(_Generic(&wwLwipRuntimeGet, ww_lwip_engine_t *(*) (uint8_t): 1, default: 0),
                "wwapi.h must expose the lwIP runtime API");
-_Static_assert(_Generic(&bufferRangeTakeExact,
-                   sbuf_t *(*) (buffer_pool_t *, sbuf_t **, buffer_queue_t *, uint32_t): 1,
-                   default: 0),
-               "wwapi.h must expose exact buffer extraction");
+_Static_assert(_Generic(&bufferreaderTakeBody, sbuf_t *(*) (buffer_reader_t *, uint32_t): 1, default: 0),
+               "wwapi.h must expose staged buffer reading");
 _Static_assert(_Generic(&ratebucketInit, void (*)(rate_bucket_t *, uint64_t): 1, default: 0),
                "wwapi.h must expose rate buckets");
 _Static_assert(_Generic(&trafficshaperPending, size_t (*)(const traffic_shaper_t *): 1, default: 0),

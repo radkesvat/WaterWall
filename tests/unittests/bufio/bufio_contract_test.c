@@ -1503,7 +1503,10 @@ static void testTryEnsureOrdinaryRefusalPreservesSource(void)
 #include "splice_frame_reader_cases.h"
 
 /* Uses the preceding splice source and syscall-probe fixtures. */
-#include "buffer_queue_range_cases.h"
+#include "buffer_reader_storage_cases.h"
+
+/* Staged-reader cases share the preceding storage inputs and payload checks. */
+#include "buffer_reader_cases.h"
 #include "buffer_stream_accessor_cases.h"
 #include "sbuf_left_capacity_cases.h"
 
@@ -1562,7 +1565,7 @@ int main(void)
     testSpliceMaterializationClearsPacketIntent();
 #endif
     testSpliceStreamContracts();
-    testBufferQueueRangeContracts();
+    testBufferReaderContracts();
     testSbufLeftCapacityContracts();
     testMoveExactBytesTo();
     testMoveExactPreflight(true);

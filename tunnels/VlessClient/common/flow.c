@@ -15,8 +15,8 @@ void vlessclientTryBypass(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls)
 {
     if (ls->kind != kVlessClientLineKindDirect || ! ls->request_sent || ! ls->response_complete || ls->receiving)
         return;
-    assert(ls->receive_head == NULL && ls->receive_bytes == 0 && ls->header_filled == 0);
-    assert(bufferqueueGetBufCount(&ls->pending_down) == 0);
+    assert(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
+           bufferreaderEntryCount(&ls->reader) == 0);
     vlessclientLinestateDestroy(ls);
     tunnelBypassLine(t, l);
 }

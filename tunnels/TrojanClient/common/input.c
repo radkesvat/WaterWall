@@ -1,62 +1,24 @@
 #include "internal.h"
 
-/* 0: incomplete, 1: header validated, -1: malformed. Only required header
- * bytes leave their representation; waiting bodies remain in their pipes. */
+#include "TrojanCommon/input.h"
+
+/* 0: incomplete, 1: header validated, -1: malformed. */
 int trojanclientReadUdpHeader(trojanclient_lstate_t *ls)
 {
-    buffer_pool_t *pool = lineGetBufferPool(ls->line);
-    while (! ls->header_ready)
+    if (! ls->header_ready)
     {
-        assert(ls->header_needed <= sizeof(ls->header));
-        if (! bufferRangeGatherPrefix(
-                pool, &ls->receive_head, &ls->pending_down, ls->header, &ls->header_filled, ls->header_needed))
-            return 0;
-        if (ls->header_needed == 1)
-        {
-            switch (ls->header[0])
-            {
-            case kTrojanAtypIpv4:
-                ls->header_needed = 11;
-                break;
-            case kTrojanAtypIpv6:
-                ls->header_needed = 23;
-                break;
-            case kTrojanAtypDomain:
-                ls->header_needed = 2;
-                break;
-            default:
-                return -1;
-            }
-        }
-        else if (ls->header_needed == 2)
-        {
-            if (ls->header[1] == 0)
-                return -1;
-            ls->header_needed = 8U + ls->header[1];
-        }
-        else
-        {
-            /* Address kind and extent were validated while gathering the header.
-             * Only its port is needed here; the reply never retargets the application. */
-            uint16_t n        = ls->header_needed;
-            bool     has_port = ls->header[n - 6] != 0 || ls->header[n - 5] != 0;
-            ls->body_length   = ((uint16_t) ls->header[n - 4] << 8U) | ls->header[n - 3];
-            if (! has_port || ls->header[n - 2] != '\r' || ls->header[n - 1] != '\n')
-                return -1;
-            ls->header_ready = true;
-        }
+        const socks_address_result_t result = trojanReadUdpHeader(&ls->reader, &ls->body_length);
+        if (result != kSocksAddressComplete)
+            return result;
+        ls->header_ready = true;
     }
     return 1;
 }
 
 sbuf_t *trojanclientExtractUdpBody(trojanclient_lstate_t *ls)
 {
-    uint32_t bytes  = ls->body_length;
-    sbuf_t  *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->receive_head, &ls->pending_down, bytes);
-    ls->receive_bytes -= ls->header_needed + bytes;
-    ls->header_needed = 1;
-    ls->header_filled = 0;
-    ls->header_ready  = false;
-    ls->body_length   = 0;
+    sbuf_t *result   = bufferreaderTakeBody(&ls->reader, ls->body_length);
+    ls->header_ready = false;
+    ls->body_length  = 0;
     return result;
 }

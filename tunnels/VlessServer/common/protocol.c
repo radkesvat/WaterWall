@@ -44,13 +44,12 @@ void vlessserverApplyDestinationContext(line_t *l, const address_context_t *targ
 static bool vlessserverForwardInitial(tunnel_t *t, line_t *l)
 {
     vlessserver_lstate_t *ls = lineGetState(l, t);
-    vlessserverRetainActiveHead(ls);
-    if (! bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget))
+    if (! bufferreaderMoveToQueue(&ls->reader, &ls->pending_up, false) ||
+        ! bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget))
     {
         vlessserverCloseLineBidirectional(t, l);
         return false;
     }
-    ls->input_bytes         = 0;
     ls->phase               = kVlessServerPhaseTcpConnecting;
     ls->branch_initializing = true;
     if (! lineCallWithRef(l, tunnelNextUpStreamInit, t))
@@ -162,8 +161,7 @@ bool vlessserverHandleInitialRequest(tunnel_t *t, line_t *l, vlessserver_lstate_
         addresscontextReset(&target);
         goto malformed;
     }
-    ls->input_bytes -= ls->header_filled;
-    ls->header_filled = 0;
+    bufferreaderConsumeHeader(&ls->reader);
 
     vlessserverRecordLineUser(l, ls);
 

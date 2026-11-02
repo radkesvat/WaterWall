@@ -1,6 +1,7 @@
 #pragma once
 
-/* Shared VLESS/VMess node regressions. Each runner supplies protocol aliases;
+/* Shared VLESS/VMess node regressions. Each runner supplies protocol aliases and
+ * a transcript-seeding hook for its parser storage;
  * these cases invoke actual node callbacks and StartFallback integration.
  * Both nodes borrow the normal line created and retired by this fixture.
  * Covers initial and delayed FIFO replay, reentry, Finish direction, task refusal,
@@ -358,11 +359,7 @@ static void caseAlreadyPausedCloseFlushesLocalBatch(void)
 static void retainInitialTranscript(fallback_server_fixture_t *fixture)
 {
     fallback_server_lstate_t *ls = lineGetState(fixture->line, fixture->node);
-    memoryCopy(ls->header, "prefix", 6);
-    ls->header_filled = 6;
-    sbuf_t *tail      = fallbackFinishMakePayload(fixture->env.pool, "-tail");
-    twfRequire(bufferqueueTryPushBack(&ls->pending_up, &tail), "initial fallback suffix was refused");
-    ls->input_bytes = 5;
+    fallbackServerRetainInitialTranscript(ls, fixture->env.pool);
 }
 
 static void injectInputDuringInit(fallback_finish_fixture_t *fallback, line_t *line)

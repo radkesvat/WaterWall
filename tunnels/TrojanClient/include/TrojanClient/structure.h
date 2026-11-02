@@ -101,15 +101,11 @@ typedef struct trojanclient_lstate_s
      * may coalesce entries. The outer parser completes these batches in order
      * and retains only an incomplete wire suffix. No ready output or application
      * payload is queued for Pause or Est. */
-    buffer_queue_t pending_down;
+    buffer_reader_t reader;
 
-    /* UDP decoder on the carrier. The popped head is still owned here;
-     * receive_bytes includes queued bytes, this head and the cached header. */
-    sbuf_t  *receive_head;
-    size_t   receive_bytes;
+    /* UDP metadata on the carrier. The reader counts this cached header along
+     * with all unread bytes until the complete datagram is extracted. */
     uint8_t  header[kTrojanClientUdpHeaderMaxLen];
-    uint16_t header_filled;
-    uint16_t header_needed;
     uint16_t body_length;
 } trojanclient_lstate_t;
 

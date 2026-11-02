@@ -102,6 +102,7 @@ endif()
 # are therefore compiled into the test as well; the linker satisfies them from these objects and never pulls the
 # library members, so the buffer ledger sees every acquire and every recycle in every configuration.
 set(WATERWALL_LINE_FAILURE_WW_SOURCES
+  ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_reader.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_frame_reader.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_stream.c
   ${CMAKE_SOURCE_DIR}/ww/bufio/splice_buffer.c

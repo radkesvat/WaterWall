@@ -26,19 +26,8 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
     vlessserver_lstate_t *ls = lineGetState(l, t);
     if (ts->fallback_tunnel == NULL)
         goto failed;
-    vlessserverRetainActiveHead(ls);
-    if (ls->header_filled != 0)
-    {
-        buffer_pool_t *pool   = lineGetBufferPool(l);
-        sbuf_t        *prefix = bufferpoolGetBestFit(pool, ls->header_filled, bufferpoolGetLargeBufferPadding(pool));
-        sbufWrite(prefix, ls->header, ls->header_filled);
-        sbufSetLength(prefix, ls->header_filled);
-        if (! bufferqueueTryPushFront(&ls->pending_up, &prefix))
-        {
-            lineReuseBuffer(l, prefix);
-            goto failed;
-        }
-    }
+    if (! bufferreaderMoveToQueue(&ls->reader, &ls->pending_up, true))
+        goto failed;
     if (ts->fallback_replay_config.delay_ms != 0)
     {
         /* Fallback selection precedes TCP budget attachment. The independent
@@ -56,8 +45,6 @@ bool vlessserverStartFallback(tunnel_t *t, line_t *l)
                             &ls->upstream_budget,
                             &ls->pending_up) != kFallbackReplayOk)
         goto failed;
-    ls->input_bytes   = 0;
-    ls->header_filled = 0;
     ls->phase         = kVlessServerPhaseFallback;
     lineMarkFallback(l);
     if (! lineCallWithRef(l, tunnelUpStreamInit, ts->fallback_tunnel))

@@ -188,11 +188,10 @@ static uint32_t frame(uint8_t *out, const void *body, uint32_t len)
 }
 static void requireUdpRetention(void)
 {
-    vlessserver_lstate_t *ls          = lineGetState(f.line, f.t);
-    const size_t          head_charge = ls->input_head == NULL ? 0 : sbufGetQueueCharge(ls->input_head);
-    twfRequire(lineIsAlive(f.line) && ls->pending_up.budget == NULL &&
-                   head_charge + bufferqueueGetCharge(&ls->pending_up) <= kVlessServerMaxInputCharge &&
-                   (ls->input_head != NULL) + bufferqueueGetBufCount(&ls->pending_up) <= kVlessServerMaxInputBuffers,
+    vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
+    twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
+                   bufferreaderCharge(&ls->reader) <= kVlessServerMaxInputCharge &&
+                   bufferreaderEntryCount(&ls->reader) <= kVlessServerMaxInputBuffers,
                "UDP retained fragmented input beyond its storage compaction thresholds");
 }
 static void act(unsigned boundary, line_t *l)
@@ -1130,8 +1129,8 @@ static void testUdpEmptyFrames(void)
                        f.remote_count == 1 && f.finishes == 0,
                    "empty frames disrupted nonempty UDP boundaries or order");
         vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
-        twfRequire(ls->input_bytes == 0 && ls->header_filled == 0 && ls->input_head == NULL &&
-                       bufferqueueGetBufCount(&ls->pending_up) == 0,
+        twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
+                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetBufCount(&ls->pending_up) == 0,
                    "empty frames retained parser bytes or buffers");
 
         tunnelDownStreamFin(f.t, f.remotes[0]);
@@ -1348,7 +1347,8 @@ static void testLimits(void)
     vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
     ls->input_dispatching    = true;
     tunnelUpStreamPayload(f.t, f.line, bytes(data, kVlessServerMaxBufferedBytes, false, 320));
-    twfRequire(lineIsAlive(f.line) && ls->input_bytes == kVlessServerMaxBufferedBytes, "parser equality rejected");
+    twfRequire(lineIsAlive(f.line) && bufferreaderLength(&ls->reader) == kVlessServerMaxBufferedBytes,
+               "parser equality rejected");
     tunnelUpStreamPayload(f.t, f.line, bytes(data, 1, false, 320));
     twfRequire(! lineIsAlive(f.line), "parser overflow accepted");
     end();
@@ -1356,7 +1356,8 @@ static void testLimits(void)
     unsigned n = request(data, 0, false);
     tunnelUpStreamPayload(f.t, f.line, bytes(data, 17, true, 320));
     ls = lineGetState(f.line, f.t);
-    twfRequire(ls->input_bytes == 17 && ls->header_filled == 17, "cached metadata charge lost");
+    twfRequire(bufferreaderLength(&ls->reader) == 17 && bufferreaderHeaderLength(&ls->reader) == 17,
+               "cached metadata charge lost");
     fail_queue = true;
     tunnelUpStreamPayload(f.t, f.line, bytes(data + 17, n - 17, true, 320));
     twfRequire(! lineIsAlive(f.line), "queue refusal did not settle partial parser");

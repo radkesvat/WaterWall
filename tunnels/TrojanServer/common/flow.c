@@ -117,7 +117,7 @@ void trojanserverPump(tunnel_t *t, line_t *l)
         {
             /* Setup input and deferred startup notifications are settled. */
             assert(ls->next_initialized && ! ls->branch_initializing);
-            assert(ls->input_head == NULL && ls->input_bytes == 0 && ls->header_filled == 0);
+            assert(bufferreaderLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0);
             assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
             assert(ls->prev_paused == ls->next_pause_sent);
             trojanserverLinestateDestroy(ls);

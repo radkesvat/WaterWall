@@ -26,7 +26,7 @@ add_library(VlessClient STATIC
 target_include_directories(VlessClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(VlessClient PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/VlessClient)
 
-target_link_libraries(VlessClient ww DomainResolver ProxyClientCommon)
+target_link_libraries(VlessClient ww DomainResolver ProxyClientCommon VlessCommon)
 if(NOT APPLE)
     target_precompile_headers(VlessClient REUSE_FROM ww)
 endif()

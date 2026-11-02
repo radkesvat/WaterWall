@@ -167,11 +167,9 @@ static sbuf_t *oversizedBytes(const void *data, uint32_t len)
 static void requireUdpRetention(void)
 {
     twfRequire(lineIsAlive(f.application) && lineIsAlive(f.carrier), "UDP retention closed a valid association");
-    trojanclient_lstate_t *ls          = lineGetState(f.carrier, f.t);
-    const size_t           head_charge = ls->receive_head == NULL ? 0 : sbufGetQueueCharge(ls->receive_head);
-    twfRequire(head_charge + bufferqueueGetCharge(&ls->pending_down) <= kTrojanClientMaxInputCharge &&
-                   (ls->receive_head != NULL) + bufferqueueGetBufCount(&ls->pending_down) <=
-                       kTrojanClientMaxInputBuffers,
+    trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
+    twfRequire(bufferreaderCharge(&ls->reader) <= kTrojanClientMaxInputCharge &&
+                   bufferreaderEntryCount(&ls->reader) <= kTrojanClientMaxInputBuffers,
                "UDP retained input beyond storage compaction thresholds");
 }
 
@@ -220,8 +218,7 @@ static void performAction(unsigned boundary)
     if (action == 11 || action == 12)
     {
         trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-        twfRequire(ls->receive_head != NULL && sbufGetLength(ls->receive_head) != 0,
-                   "nested retention case lacks an older active suffix");
+        twfRequire(bufferreaderHeadLength(&ls->reader) != 0, "nested retention case lacks an older active suffix");
         sbuf_t *nested = f.nested;
         f.nested       = NULL;
         tunnelDownStreamPayload(f.t, f.carrier, nested);
@@ -667,7 +664,7 @@ static void testUdpPause(void)
         if (! close)
         {
             trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-            twfRequire(ls->receive_bytes == 0 && bufferqueueGetBufCount(&ls->pending_down) == 0,
+            twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0,
                        "ready datagrams retained for Resume");
             f.paused_down = false;
             tunnelUpStreamResume(f.t, f.application);
@@ -740,7 +737,8 @@ static void testLimits(uint32_t pool_size)
          * may run until that admission returns to its real outer dispatch. */
         ls->receiving = true;
         tunnelDownStreamPayload(f.t, f.carrier, bytes(data, (uint32_t) limit, false, 320));
-        twfRequire(lineIsAlive(f.application) && ls->receive_bytes == limit, "exact retained limit refused");
+        twfRequire(lineIsAlive(f.application) && bufferreaderLength(&ls->reader) == limit,
+                   "exact retained limit refused");
         tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, false, 320));
         twfRequire(! lineIsAlive(f.application), "retained input overflow survived");
         memoryFree(data);
@@ -760,8 +758,8 @@ static void testUdpRetention(void)
     tunnelDownStreamPayload(f.t, f.carrier, oversizedBytes(wire, 12));
     requireUdpRetention();
     trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-    twfRequire(f.deliveries_down == 0 && ls->header_ready && ls->header_filled == 11 && ls->receive_bytes == 12 &&
-                   ls->receive_head != NULL && sbufGetLength(ls->receive_head) == 1,
+    twfRequire(f.deliveries_down == 0 && ls->header_ready && bufferreaderHeaderLength(&ls->reader) == 11 &&
+                   bufferreaderLength(&ls->reader) == 12 && bufferreaderHeadLength(&ls->reader) == 1,
                "compaction changed cached metadata or retained-body accounting");
     tunnelDownStreamPayload(f.t, f.carrier, bytes(wire + 12, n - 12, false, 320));
     twfRequire(f.deliveries_down == 1 && f.down_len == 100 && memoryEqual(f.down, body, 100) && f.headroom >= 352,

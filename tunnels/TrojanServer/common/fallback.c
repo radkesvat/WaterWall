@@ -74,21 +74,10 @@ void trojanserverCloseFallbackFromUpstream(tunnel_t *t, line_t *l, trojanserver_
 void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
 {
     trojanserver_tstate_t *ts = tunnelGetState(t);
-    if (ts->fallback_tunnel == NULL || ls->input_bytes > kTrojanServerMaxPendingBytes)
+    if (ts->fallback_tunnel == NULL || bufferreaderLength(&ls->reader) > kTrojanServerMaxPendingBytes)
         goto failed;
-    trojanserverRetainActiveHead(ls);
-    if (ls->header_filled != 0)
-    {
-        buffer_pool_t *pool   = lineGetBufferPool(l);
-        sbuf_t        *prefix = bufferpoolGetBestFit(pool, ls->header_filled, bufferpoolGetLargeBufferPadding(pool));
-        sbufWrite(prefix, ls->header, ls->header_filled);
-        sbufSetLength(prefix, ls->header_filled);
-        if (UNLIKELY(! bufferqueueTryPushFront(&ls->pending_up, &prefix)))
-        {
-            bufferpoolReuseBuffer(pool, prefix);
-            goto failed;
-        }
-    }
+    if (! bufferreaderMoveToQueue(&ls->reader, &ls->pending_up, true))
+        goto failed;
     if (ts->fallback_replay_config.delay_ms != 0)
     {
         /* The parser has not attached the authenticated TCP output budget.
@@ -103,7 +92,6 @@ void trojanserverStartFallback(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls
             &ls->fallback, l, ts->fallback_tunnel, &ts->fallback_replay_config, &ls->output_budget, &ls->pending_up) !=
         kFallbackReplayOk)
         goto failed;
-    ls->input_bytes = 0;
     trojanserverResetHeader(ls);
     ls->phase               = kTrojanServerPhaseFallback;
     ls->branch              = kTrojanServerBranchFallback;

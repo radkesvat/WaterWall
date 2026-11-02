@@ -392,7 +392,8 @@ static void testUdpSplitLengthPrefix(bool empty_frame)
     const uint8_t prefix[]  = {0};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
     vlessserver_lstate_t *ls = lineGetState(f.line, f.node);
-    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && split_udp_payload_count == 0 && ls->input_bytes == 1,
+    twfRequire(lineIsAlive(f.line) && f.up_len == 1 && split_udp_payload_count == 0 &&
+                   bufferreaderLength(&ls->reader) == 1,
                "VlessServer did not retain an incomplete UDP length prefix");
     if (empty_frame)
     {
@@ -400,27 +401,29 @@ static void testUdpSplitLengthPrefix(bool empty_frame)
         twfRequire(lineIsAlive(f.line) && f.down_finish_count == 0 && f.up_finish_count == 0 && f.up_len == 1 &&
                        split_udp_payload_count == 1,
                    "VlessServer did not deliver exactly one split empty UDP datagram");
-        twfRequire(ls->input_bytes == 0 && ls->header_filled == 0 && ls->input_head == NULL &&
-                       bufferqueueGetBufCount(&ls->pending_up) == 0,
+        twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
+                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetBufCount(&ls->pending_up) == 0,
                    "VlessServer split empty UDP datagram retained parser input");
         applicationInput(&f, 'B');
         twfRequire(lineIsAlive(f.line) && split_udp_payload_count == 2 && f.up_len == 2 &&
-                       memoryCompare(f.up, "AB", 2) == 0 && ls->input_bytes == 0 && ls->header_filled == 0,
+                       memoryCompare(f.up, "AB", 2) == 0 && bufferreaderLength(&ls->reader) == 0 &&
+                       bufferreaderHeaderLength(&ls->reader) == 0,
                    "VlessServer split empty UDP datagram disrupted later input");
         closeFixture(&f);
         return;
     }
     const uint8_t partial_body[] = {2, 'B'};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, partial_body, sizeof(partial_body)));
-    twfRequire(f.up_len == 1 && ls->input_bytes == 3,
+    twfRequire(f.up_len == 1 && bufferreaderLength(&ls->reader) == 3,
                "VlessServer released a split UDP frame before its body completed");
     const uint8_t completed_batch[] = {'C', 0, 1, 'D', 0};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, completed_batch, sizeof(completed_batch)));
-    twfRequire(lineIsAlive(f.line) && f.up_len == 4 && memoryCompare(f.up, "ABCD", 4) == 0 && ls->input_bytes == 1,
+    twfRequire(lineIsAlive(f.line) && f.up_len == 4 && memoryCompare(f.up, "ABCD", 4) == 0 &&
+                   bufferreaderLength(&ls->reader) == 1,
                "VlessServer lost complete UDP records or their incomplete suffix");
     const uint8_t final_frame[] = {1, 'E'};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, final_frame, sizeof(final_frame)));
-    twfRequire(f.up_len == 5 && memoryCompare(f.up, "ABCDE", 5) == 0 && ls->input_bytes == 0,
+    twfRequire(f.up_len == 5 && memoryCompare(f.up, "ABCDE", 5) == 0 && bufferreaderLength(&ls->reader) == 0,
                "VlessServer failed to resume the retained UDP prefix");
     closeFixture(&f);
 }

@@ -19,7 +19,17 @@ typedef vlessserver_lstate_t fallback_server_lstate_t;
 #define fallbackServerTunnelDownStreamResume  vlessserverTunnelDownStreamResume
 #define fallbackServerTunnelDownStreamFinish  vlessserverTunnelDownStreamFinish
 
+static void fallbackServerRetainInitialTranscript(fallback_server_lstate_t *ls, buffer_pool_t *pool);
+
 #include "fixtures/protocols/fallback_replay_server_suite.h"
+
+static void fallbackServerRetainInitialTranscript(fallback_server_lstate_t *ls, buffer_pool_t *pool)
+{
+    sbuf_t *input = fallbackFinishMakePayload(pool, "prefix-tail");
+    twfRequire(bufferreaderTryPush(&ls->reader, &input, kVlessServerMaxBufferedBytes) &&
+                   bufferreaderGather(&ls->reader, 6),
+               "initial fallback transcript could not enter the reader");
+}
 
 int main(void)
 {

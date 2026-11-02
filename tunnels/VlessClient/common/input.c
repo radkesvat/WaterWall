@@ -1,75 +1,39 @@
 #include "internal.h"
 #include "loggers/network_logger.h"
 
-static sbuf_t *receiveHead(vlessclient_lstate_t *ls)
-{
-    if (ls->receive_head == NULL)
-        ls->receive_head = bufferqueuePopFront(&ls->pending_down);
-    return ls->receive_head;
-}
-
-/* Cached metadata remains charged until its complete header is consumed.
- * Only an owned popped head can change; queued entries stay immutable. */
-static bool gatherHeader(vlessclient_lstate_t *ls)
-{
-    assert(ls->header_needed <= sizeof(ls->header));
-    return bufferRangeGatherPrefix(lineGetBufferPool(ls->line),
-                                   &ls->receive_head,
-                                   &ls->pending_down,
-                                   ls->header,
-                                   &ls->header_filled,
-                                   ls->header_needed);
-}
-
 /* 0 incomplete, -1 malformed, 1 ready. Never consume a byte of TCP body or
  * the first UDP frame as response metadata, including coalesced pipe input. */
 int vlessclientReadResponse(vlessclient_lstate_t *ls)
 {
-    if (! gatherHeader(ls))
+    if (! bufferreaderGather(&ls->reader, kVlessClientResponseLen))
         return 0;
     if (UNLIKELY(ls->header[0] != 0))
     {
         LOGE("VlessClient: invalid response header version=%u", (unsigned) ls->header[0]);
         return -1;
     }
-    ls->header_needed = kVlessClientResponseLen + ls->header[1];
-    if (! gatherHeader(ls))
+    if (! bufferreaderGather(&ls->reader, kVlessClientResponseLen + ls->header[1]))
         return 0;
     if (ls->header[1] != 0)
         LOGW("VlessClient: accepting response header with non-empty addons (len=%u)", (unsigned) ls->header[1]);
-    ls->receive_bytes -= ls->header_needed;
-    ls->header_filled     = 0;
-    ls->header_needed     = kVlessClientUdpHeaderLen;
+    bufferreaderConsumeHeader(&ls->reader);
     ls->response_complete = true;
     return 1;
 }
 
 bool vlessclientReadUdpHeader(vlessclient_lstate_t *ls)
 {
-    if (! gatherHeader(ls))
-        return false;
-    ls->body_length = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
-    return true;
+    return vlessReadUdpHeader(&ls->reader, &ls->body_length);
 }
 
 sbuf_t *vlessclientTakeTcpBody(vlessclient_lstate_t *ls)
 {
-    sbuf_t *body = receiveHead(ls);
-    if (body != NULL)
-    {
-        ls->receive_head = NULL;
-        ls->receive_bytes -= sbufGetLength(body);
-    }
-    return body;
+    return bufferreaderTakeChunk(&ls->reader);
 }
 
 sbuf_t *vlessclientExtractUdpBody(vlessclient_lstate_t *ls)
 {
-    uint32_t bytes  = ls->body_length;
-    sbuf_t  *result = bufferRangeTakeExact(lineGetBufferPool(ls->line), &ls->receive_head, &ls->pending_down, bytes);
-    ls->receive_bytes -= ls->header_needed + bytes;
-    ls->header_needed = kVlessClientUdpHeaderLen;
-    ls->header_filled = 0;
+    sbuf_t *result    = bufferreaderTakeBody(&ls->reader, ls->body_length);
     ls->body_length   = 0;
     return result;
 }

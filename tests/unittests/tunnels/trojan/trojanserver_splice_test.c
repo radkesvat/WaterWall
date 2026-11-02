@@ -215,11 +215,9 @@ static uint32_t frame(uint8_t *out, unsigned form, uint16_t port, const void *bo
 }
 static void requireUdpRetention(void)
 {
-    trojanserver_lstate_t *ls          = lineGetState(f.line, f.t);
-    const size_t           head_charge = ls->input_head == NULL ? 0 : sbufGetQueueCharge(ls->input_head);
-    twfRequire(lineIsAlive(f.line) && ls->pending_up.budget == NULL &&
-                   head_charge + bufferqueueGetCharge(&ls->pending_up) <= kTrojanServerMaxInputCharge &&
-                   (ls->input_head != NULL) + bufferqueueGetBufCount(&ls->pending_up) <= kTrojanServerMaxInputBuffers,
+    trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
+    twfRequire(lineIsAlive(f.line) && bufferreaderCharge(&ls->reader) <= kTrojanServerMaxInputCharge &&
+                   bufferreaderEntryCount(&ls->reader) <= kTrojanServerMaxInputBuffers,
                "UDP retained fragmented input beyond its storage compaction thresholds");
 }
 static void act(unsigned boundary, line_t *l)
@@ -1390,8 +1388,8 @@ static void testAdmittedBatches(void)
     f.action   = 1;
     tunnelUpStreamPayload(f.t, f.line, bytes(wire, 11 * 4096, false, 320));
     trojanserver_lstate_t *ls = lineGetState(f.line, f.t);
-    twfRequire(f.calls_up == 4096 && f.pauses == 1 && ls->input_bytes == 0 && ls->input_head == NULL &&
-                   bufferqueueGetBufCount(&ls->pending_up) == 0,
+    twfRequire(f.calls_up == 4096 && f.pauses == 1 && bufferreaderLength(&ls->reader) == 0 &&
+                   bufferreaderEntryCount(&ls->reader) == 0,
                "Pause or output entry cap stranded accepted empty datagrams");
     end();
 
@@ -1411,11 +1409,11 @@ static void testAdmittedBatches(void)
     f.action             = 11;
     tunnelUpStreamPayload(f.t, f.line, bytes(wire + 5, n + last - 6, true, 320));
     ls = lineGetState(f.line, f.t);
-    twfRequire(f.calls_up == 4 && memcmp(f.up, "ABCD", 4) == 0 && ls->input_bytes == 1,
+    twfRequire(f.calls_up == 4 && memcmp(f.up, "ABCD", 4) == 0 && bufferreaderLength(&ls->reader) == 1,
                "nested parser input overtook older records or lost incomplete suffix");
     n = frame(wire, 0, 1001, "E", 1);
     tunnelUpStreamPayload(f.t, f.line, bytes(wire + 1, n - 1, true, 320));
-    twfRequire(f.calls_up == 5 && memcmp(f.up, "ABCDE", 5) == 0 && ls->input_bytes == 0,
+    twfRequire(f.calls_up == 5 && memcmp(f.up, "ABCDE", 5) == 0 && bufferreaderLength(&ls->reader) == 0,
                "retained partial header blocked later input");
     end();
 

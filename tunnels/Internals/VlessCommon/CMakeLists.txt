@@ -1,0 +1,6 @@
+add_library(VlessCommon STATIC src/input.c)
+target_include_directories(VlessCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(VlessCommon PUBLIC ww)
+if(NOT APPLE)
+  target_precompile_headers(VlessCommon REUSE_FROM ww)
+endif()

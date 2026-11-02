@@ -11,7 +11,8 @@ void vlessserverTryBypassTcp(tunnel_t *t, line_t *l)
         bufferqueueGetBufCount(&ls->pending_up) != 0 || bufferqueueGetBufCount(&ls->pending_down) != 0)
         return;
 
-    assert(ls->input_head == NULL && ls->input_bytes == 0 && ls->header_filled == 0);
+    assert(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
+           bufferreaderEntryCount(&ls->reader) == 0);
     vlessserverLinestateDestroy(ls);
     tunnelBypassLine(t, l);
 }

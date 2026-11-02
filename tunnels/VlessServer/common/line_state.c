@@ -9,6 +9,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
         .phase       = kVlessServerPhaseWaitInitial,
         .line_kind   = kind,
     };
+    bufferreaderInit(&ls->reader, lineGetBufferPool(l), ls->header, sizeof(ls->header));
     bufferqueueInitEmpty(&ls->pending_up);
     bufferqueueInitEmpty(&ls->pending_down);
     buffer_budget_cost_t limits = {kVlessServerMaxPendingBytes, SIZE_MAX, kVlessServerMaxPendingBuffers};
@@ -22,8 +23,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls)
 {
     addresscontextReset(&ls->udp_target);
-    if (ls->input_head != NULL)
-        lineReuseBuffer(ls->line, ls->input_head);
+    bufferreaderDestroy(&ls->reader);
     bufferqueueDestroy(&ls->pending_up);
     bufferqueueDestroy(&ls->pending_down);
     fallbackReplayDestroy(&ls->fallback, lineGetBufferPool(ls->line));

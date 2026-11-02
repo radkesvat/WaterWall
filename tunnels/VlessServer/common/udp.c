@@ -94,18 +94,14 @@ bool vlessserverStartUdpBranch(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls,
 
 bool vlessserverDrainUdpPackets(tunnel_t *t, line_t *l, vlessserver_lstate_t *ls)
 {
-    while (ls->input_bytes != 0)
+    while (bufferreaderLength(&ls->reader) != 0)
     {
-        if (! vlessserverGatherHeader(ls, 2))
+        uint16_t packet_size;
+        if (! vlessReadUdpHeader(&ls->reader, &packet_size))
             return true;
-        uint16_t packet_size = ((uint16_t) ls->header[0] << 8U) | ls->header[1];
-        if (ls->input_bytes - 2U < packet_size)
+        if (! bufferreaderBodyReady(&ls->reader, packet_size))
         {
-            if (! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                            &ls->input_head,
-                                            &ls->pending_up,
-                                            kVlessServerMaxInputCharge,
-                                            kVlessServerMaxInputBuffers))
+            if (! bufferreaderSettle(&ls->reader, kVlessServerMaxInputCharge, kVlessServerMaxInputBuffers))
             {
                 vlessserverCloseLineBidirectional(t, l);
                 return false;

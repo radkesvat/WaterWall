@@ -1,6 +1,6 @@
 #include "internal.h"
 
-/* Client -> selected branch: initial/UDP bytes enter the owned pending_up FIFO
+/* Client -> selected branch: initial/UDP bytes enter the owned input reader
  * for trojanserverPump() to parse through common/input.c. CONNECT bypasses this
  * node after setup; TCP reentry before bypass joins the outer pump's FIFO.
  * Fallback transfers ownership to trojanserverSendFallbackPayload()
@@ -33,21 +33,15 @@ void trojanserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             lineReuseBuffer(l, buf);
             return;
         }
-        if (UNLIKELY(length > kTrojanServerMaxWireBytes - ls->input_bytes ||
-                     ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
+        if (UNLIKELY(! bufferreaderTryPush(&ls->reader, &buf, kTrojanServerMaxWireBytes)))
         {
             lineReuseBuffer(l, buf);
             trojanserverCloseLineBidirectional(t, l);
             return;
         }
-        ls->input_bytes += length;
         /* A nested delivery cannot drain yet, so settle its retained storage now. */
         if (ls->pumping && trojanserverIsUdp(ls) &&
-            ! bufferRangeSettleRetained(lineGetBufferPool(l),
-                                        &ls->input_head,
-                                        &ls->pending_up,
-                                        kTrojanServerMaxInputCharge,
-                                        kTrojanServerMaxInputBuffers))
+            ! bufferreaderSettle(&ls->reader, kTrojanServerMaxInputCharge, kTrojanServerMaxInputBuffers))
         {
             trojanserverCloseLineBidirectional(t, l);
             return;
