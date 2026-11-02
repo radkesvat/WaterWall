@@ -71,26 +71,7 @@ sbuf_t *httpReceiveNext(http_receive_t *receive, buffer_pool_t *pool)
 
 bool httpReceiveSettle(buffer_stream_t *stream, size_t max_bytes)
 {
-    const size_t bytes = bufferstreamGetBufLen(stream);
-    if (bytes > max_bytes)
+    if (bufferstreamGetBufLen(stream) > max_bytes)
         return false;
-    if (bytes == 0)
-    {
-        bufferstreamEmpty(stream);
-        return true;
-    }
-
-    buffer_pool_fit_t fit;
-    const uint16_t    padding = bufferpoolGetLargeBufferPadding(stream->pool);
-    if (! bufferpoolQueryBestFit(stream->pool, bytes, padding, &fit))
-        return false;
-    const size_t charge_limit = max((size_t) kHttpReceiveStreamCharge, fit.allocation_charge);
-    if (bufferstreamGetCharge(stream) > charge_limit || bufferstreamGetEntryCount(stream) > kHttpReceiveNestedEntries)
-    {
-        sbuf_t *compact = bufferpoolGetBestFit(stream->pool, (uint32_t) bytes, padding);
-        bufferstreamMoveExactBytesTo(stream, compact, bytes);
-        bufferstreamEmpty(stream);
-        bufferstreamPush(stream, compact);
-    }
-    return true;
+    return bufferstreamSettleRetained(stream, kHttpReceiveStreamCharge, kHttpReceiveNestedEntries);
 }

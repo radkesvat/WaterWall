@@ -48,36 +48,13 @@ ipv4stream_input_result_t ipv4streamInputAdmit(ipv4stream_input_t *input, buffer
     return kIpv4StreamInputDrain;
 }
 
-static void compactIncomplete(buffer_stream_t *stream)
-{
-    const size_t bytes = bufferstreamGetBufLen(stream);
-    assert(bytes < kMaxAllowedPacketLength);
-    if (bytes == 0)
-    {
-        bufferstreamEmpty(stream);
-        return;
-    }
-
-    buffer_pool_fit_t fit;
-    const uint16_t    padding = bufferpoolGetLargeBufferPadding(stream->pool);
-    const bool        fits    = bufferpoolQueryBestFit(stream->pool, (uint32_t) bytes, padding, &fit);
-    assert(fits);
-    discard      fits;
-    const size_t limit = max((size_t) kIpv4StreamIncompleteCharge, fit.allocation_charge);
-    if (bufferstreamGetCharge(stream) > limit || bufferstreamGetEntryCount(stream) > kIpv4StreamNestedEntries)
-    {
-        sbuf_t *compact = bufferpoolGetBestFit(stream->pool, (uint32_t) bytes, padding);
-        bufferstreamMoveExactBytesTo(stream, compact, bytes);
-        bufferstreamEmpty(stream);
-        bufferstreamPush(stream, compact);
-    }
-    assert(bufferstreamGetCharge(stream) <= limit);
-}
-
 bool ipv4streamInputAdvance(ipv4stream_input_t *input, buffer_stream_t *stream)
 {
     assert(input->draining);
-    compactIncomplete(stream);
+    assert(bufferstreamGetBufLen(stream) < kMaxAllowedPacketLength);
+    const bool settled = bufferstreamSettleRetained(stream, kIpv4StreamIncompleteCharge, kIpv4StreamNestedEntries);
+    assert(settled);
+    discard settled;
     bufferbudgetReservationRelease(&input->active);
     sbuf_t *next = bufferqueuePopFrontReserved(&input->pending, &input->active);
     if (next != NULL)

@@ -1543,6 +1543,8 @@ int main(void)
 {
     testCaseSet("bufio_contract_test");
     testBufferStreamAccessors();
+    testBufferStreamSettleRetained();
+    testBufferStreamSettleChargeAndPadding();
 #ifndef NDEBUG
     testBufferStreamRejectsSplice();
 #endif

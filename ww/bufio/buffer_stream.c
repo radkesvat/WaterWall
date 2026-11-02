@@ -98,6 +98,31 @@ size_t bufferstreamGetCharge(const buffer_stream_t *self)
     return charge;
 }
 
+bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge, size_t max_entries)
+{
+    assert(self != NULL && self->pool != NULL && max_entries != 0);
+    const size_t bytes = bufferstreamGetBufLen(self);
+    if (bytes == 0)
+    {
+        bufferstreamEmpty(self);
+        return true;
+    }
+
+    buffer_pool_fit_t fit;
+    const uint16_t    padding = bufferpoolGetLargeBufferPadding(self->pool);
+    if (! bufferpoolQueryBestFit(self->pool, bytes, padding, &fit))
+        return false;
+    const size_t charge_limit = max(max_charge, fit.allocation_charge);
+    if (bufferstreamGetCharge(self) > charge_limit || bufferstreamGetEntryCount(self) > max_entries)
+    {
+        sbuf_t *compact = bufferpoolGetBestFit(self->pool, (uint32_t) bytes, padding);
+        bufferstreamMoveExactBytesTo(self, compact, bytes);
+        bufferstreamEmpty(self);
+        bufferstreamPush(self, compact);
+    }
+    return true;
+}
+
 buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)
 {
     assert(pool != NULL);
