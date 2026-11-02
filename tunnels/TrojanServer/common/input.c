@@ -100,7 +100,7 @@ void trojanserverParseInitial(tunnel_t *t, line_t *l, trojanserver_lstate_t *ls)
     ls->next_initialized    = true;
     ls->branch_initializing = true;
     tunnelNextUpStreamInit(t, l);
-    if (lineIsAlive(l))
+    if (lineIsAlive(l) && ls->line == l)
     {
         ls->branch_initializing = false;
         if (ls->prev_paused && ! ls->next_pause_sent)
