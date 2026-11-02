@@ -2,7 +2,7 @@
 
 #include "AuthenticationClient/interface.h"
 #include "FallbackReplay/fallback_replay.h"
-#include "VmessCommon/crypto.h"
+#include "VmessCommon/record_reader.h"
 #include "replay.h"
 #include "wwapi.h"
 
@@ -137,13 +137,10 @@ struct vmessserver_lstate_s
     bool                                  next_finished, prev_finished;
     bool                                  finish_pending;
     size_t                                unauth_bytes;
-    uint32_t                              body_length;
     uint16_t                              request_length;
-    sbuf_t                               *body_buffer;
-    uint32_t                              body_filled;
+    vmess_record_reader_t                 record_reader;
     buffer_budget_reservation_t           input_reservation;
     buffer_budget_reservation_t           response_reservation;
-    buffer_budget_reservation_t           body_reservation;
     tunnel_t                             *tunnel;
     line_t                               *line;
     line_t                               *client_line;
@@ -159,11 +156,12 @@ struct vmessserver_lstate_s
     bool                  permission_dispatching, permission_pending;
     buffer_queue_t        pending_up;
     sbuf_t               *input_head;
-    size_t                input_bytes;
-    uint8_t               header[kVmessServerInitialMaxReqLen];
-    uint16_t              header_filled;
-    buffer_budget_t       upstream_budget;
-    buffer_budget_t       response_budget;
+    /* Source wire bytes, including handshake metadata but excluding reader-owned records. */
+    size_t          input_bytes;
+    uint8_t         header[kVmessServerInitialMaxReqLen];
+    uint16_t        header_filled;
+    buffer_budget_t upstream_budget;
+    buffer_budget_t response_budget;
     /* Response-header/reentry ordering only; direct ready replies are forwarded. */
     buffer_queue_t          pending_down;
     fallback_replay_t       fallback;

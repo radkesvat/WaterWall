@@ -17,16 +17,13 @@ static void recycleEmptyHead(vmessclient_lstate_t *ls)
     }
 }
 
-/* Move logical-byte accounting from the active wire buffer into inline metadata
- * or the single incomplete record. Allocation and entry charges stay with owners. */
-static void transferBytes(vmessclient_lstate_t *ls, uint32_t count, bool body)
+/* Keep received response-header bytes charged while cached inline. */
+static void transferBytes(vmessclient_lstate_t *ls, uint32_t count)
 {
     bufferbudgetReservationSetBytes(&ls->input_reservation, sbufGetLength(ls->receive_head));
     bool acquired = bufferbudgetTryAcquire(&ls->downstream_budget, (buffer_budget_cost_t) {.bytes = count});
     assert(acquired);
     discard acquired;
-    if (body)
-        ls->body_reservation.cost.bytes += count;
 }
 
 static bool gatherHeader(vmessclient_lstate_t *ls, uint16_t needed)
@@ -39,7 +36,7 @@ static bool gatherHeader(vmessclient_lstate_t *ls, uint16_t needed)
             return false;
         uint32_t count = min(needed - ls->header_filled, sbufGetLength(head));
         sbufReadRangeToMemory(head, ls->header + ls->header_filled, count);
-        transferBytes(ls, count, false);
+        transferBytes(ls, count);
         ls->header_filled += count;
         recycleEmptyHead(ls);
     }
@@ -75,7 +72,9 @@ static int readResponse(vmessclient_lstate_t *ls)
 
 static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclient_lstate_t *ls)
 {
-    vmessclient_tstate_t *ts = tunnelGetState(t);
+    vmessclient_tstate_t      *ts    = tunnelGetState(t);
+    const vmess_record_input_t input = {
+        .pending = &ls->pending_down, .head = &ls->receive_head, .reservation = &ls->input_reservation};
     while (vmessclientAssociationAlive(t, l, application))
     {
         if (ls->input_crypto.raw)
@@ -89,74 +88,38 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
             tunnelPrevDownStreamPayload(t, application, out);
             continue;
         }
-        if (! ls->input_crypto.pending)
+        const uint32_t        ordinal = ls->input_crypto.counter;
+        vmess_record_result_t result  = vmessRecordReaderRead(&ls->record_reader, &ls->input_crypto, &input);
+        switch (result.status)
         {
-            uint16_t prefix = (uint16_t) vmessBodyLengthSize(&ls->input_crypto);
-            if (! gatherHeader(ls, prefix))
-                return true;
-            if (vmessBodyLengthOpen(&ls->input_crypto, ls->header, prefix, &ls->body_length) != kWCryptoOk)
-            {
-                vmessclientSetReason(ls, kVmessClientReasonLengthFailure);
-                goto malformed;
-            }
-            consumeHeader(ls);
-            buffer_pool_t *pool = lineGetBufferPool(l);
-            ls->body_buffer     = bufferpoolGetBestFit(pool, ls->body_length, bufferpoolGetLargeBufferPadding(pool));
-            /* Reserve storage now; only bytes actually gathered count as retained input. */
-            sbufSetLength(ls->body_buffer, 0);
-            if (! bufferbudgetTryReserve(&ls->downstream_budget, ls->body_buffer, &ls->body_reservation))
-            {
-                vmessclientSetReason(ls, kVmessClientReasonRetainedInput);
-                goto malformed;
-            }
-        }
-        while (ls->body_filled < ls->body_length)
-        {
-            sbuf_t *head = receiveHead(ls);
-            if (head == NULL)
-                return true;
-            uint32_t count = min(ls->body_length - ls->body_filled, sbufGetLength(head));
-            sbufReadRangeToMemory(head, sbufGetMutablePtr(ls->body_buffer) + ls->body_filled, count);
-            transferBytes(ls, count, true);
-            ls->body_filled += count;
-            recycleEmptyHead(ls);
-        }
-        sbuf_t *out              = ls->body_buffer;
-        ls->body_buffer          = NULL;
-        ls->body_filled          = 0;
-        size_t           length  = 0;
-        bool             eof     = false;
-        const uint32_t   ordinal = ls->input_crypto.counter;
-        wcrypto_status_t status  = vmessBodyOpen(&ls->input_crypto,
-                                                sbufGetRawPtr(out),
-                                                ls->body_length,
-                                                sbufGetMutablePtr(out),
-                                                ls->body_length,
-                                                &length,
-                                                &eof);
-        bufferbudgetReservationRelease(&ls->body_reservation);
-        if (status != kWCryptoOk)
-        {
-            lineReuseBuffer(l, out);
+        case kVmessRecordNeedMore:
+            return true;
+        case kVmessRecordLengthError:
+            vmessclientSetReason(ls, kVmessClientReasonLengthFailure);
+            goto malformed;
+        case kVmessRecordBodyError:
             vmessclientSetReason(ls, kVmessClientReasonBodyFailure);
             goto malformed;
+        case kVmessRecordLimitError:
+            vmessclientSetReason(ls, kVmessClientReasonRetainedInput);
+            goto malformed;
+        case kVmessRecordPayload:
+        case kVmessRecordEof:
+            break;
         }
         atomicIncU64Relaxed(&ts->stats.rx_records);
         if (ls->input_crypto.security != VMESS_SECURITY_NONE && ordinal == UINT16_MAX &&
             ts->counter_policy == kVmessCounterWrap)
             atomicIncU64Relaxed(&ts->stats.rx_wraps);
-        if (eof)
-        {
-            lineReuseBuffer(l, out);
+        if (result.status == kVmessRecordEof)
             goto malformed;
-        }
-        sbufSetLength(out, (uint32_t) length);
-        bool deliver = true;
+        sbuf_t *out     = result.payload;
+        bool    deliver = true;
         if (ts->packetaddr && ls->kind == kVmessClientLineKindUdpCarrier)
         {
             vmess_packet_addr_t source;
             size_t              envelope = 0;
-            if (vmessPacketAddrDecode(sbufGetRawPtr(out), length, &source, &envelope) != kWCryptoOk)
+            if (vmessPacketAddrDecode(sbufGetRawPtr(out), sbufGetLength(out), &source, &envelope) != kWCryptoOk)
             {
                 lineReuseBuffer(l, out);
                 vmessclientSetReason(ls, kVmessClientReasonMalformedPacketAddr);

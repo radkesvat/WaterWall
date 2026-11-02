@@ -2,7 +2,8 @@
  * real event-worker loop. Independent V2Ray-format vectors fix the wire input;
  * only wall time is fixed to their timestamp. Cases cover split parsing,
  * reentry, close during response delivery, auth cancellation/deadline, fallback
- * source Finish, UDP backend recreation and queue refusal. CTest:
+ * source Finish, UDP backend recreation, full-budget record batches, partial-body
+ * accounting and queue refusal. CTest:
  * waterwall.vmess_runtime_unit in both Debug and Release. */
 #define kTunnelStateSize kAuthenticationFixtureTunnelStateSize
 #define kLineStateSize   kAuthenticationFixtureLineStateSize
@@ -559,6 +560,166 @@ static void sealSend(est_fixture_t *f, vmess_body_ctx_t *sender, const void *byt
     size_t  length;
     twfRequire(vmessBodySeal(sender, bytes, size, false, wire, sizeof(wire), &length) == kWCryptoOk, "runtime seal");
     sendBytes(f, wire, length);
+}
+
+static size_t decoded_batch_bytes;
+static size_t decoded_batch_records;
+
+static void verifyDecodedBatch(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard        t;
+    const uint8_t *bytes = sbufGetRawPtr(buf);
+    for (size_t i = 0; i < sbufGetLength(buf); ++i)
+        twfRequire(bytes[i] == (uint8_t) (decoded_batch_bytes + i), "coalesced record plaintext changed order");
+    decoded_batch_bytes += sbufGetLength(buf);
+    ++decoded_batch_records;
+    lineReuseBuffer(line, buf);
+}
+
+static void coalescedInputAtByteLimit(void)
+{
+    const uint8_t modes[]   = {VMESS_SECURITY_AES128_GCM, VMESS_SECURITY_CHACHA20_POLY1305};
+    const uint8_t options[] = {VMESS_OPTION_CHUNK, VMESS_OPTION_CHUNK | VMESS_OPTION_AUTH_LENGTH};
+    for (size_t mode = 0; mode < ARRAY_SIZE(modes); ++mode)
+        for (size_t option = 0; option < ARRAY_SIZE(options); ++option)
+        {
+            est_fixture_t f;
+            setup(&f, 1000);
+            customRequest(&f, modes[mode], options[option], false, false);
+            twfRequire(lineIsAlive(f.line) && f.init_count == 1, "batch request rejected");
+            tunnelDownStreamEst(f.node, f.line);
+            f.next->fnPayloadU    = verifyDecodedBatch;
+            decoded_batch_bytes   = 0;
+            decoded_batch_records = 0;
+            vmess_body_ctx_t tx   = {0};
+            twfRequire(
+                vmessBodyInit(
+                    &tx, vector_key, vector_iv, modes[mode], options[option], kVmessCmdTcp, true, kVmessCounterWrap) ==
+                    kWCryptoOk,
+                "batch sender initialization failed");
+            uint8_t     *wire = memoryAllocate(kVmessServerMaxPendingBytes);
+            uint8_t      plain[32768];
+            size_t       wire_bytes = 0, plain_bytes = 0, records = 0;
+            const size_t overhead = vmessBodyLengthSize(&tx) + 16;
+            while (wire_bytes < kVmessServerMaxPendingBytes)
+            {
+                size_t remaining = kVmessServerMaxPendingBytes - wire_bytes;
+                twfRequire(remaining > overhead, "batch fixture left an incomplete record");
+                size_t length = min(sizeof(plain), remaining - overhead);
+                for (size_t i = 0; i < length; ++i)
+                    plain[i] = (uint8_t) (plain_bytes + i);
+                size_t written = 0;
+                twfRequire(vmessBodySeal(&tx, plain, length, false, wire + wire_bytes, remaining, &written) ==
+                                   kWCryptoOk &&
+                               written == length + overhead,
+                           "batch record sealing failed");
+                wire_bytes += written;
+                plain_bytes += length;
+                ++records;
+            }
+            /* The source already owns every body byte. Reserving an announced
+             * body length again would reject this otherwise admissible batch. */
+            sendBytes(&f, wire, wire_bytes);
+            memoryFree(wire);
+            twfRequire(lineIsAlive(f.line) && decoded_batch_bytes == plain_bytes && decoded_batch_records == records,
+                       "valid full-budget batch was refused or not drained incrementally");
+            vmessserver_lstate_t *ls   = lineGetState(f.line, f.node);
+            vmessserver_tstate_t *ts   = tunnelGetState(f.node);
+            buffer_budget_cost_t  used = bufferbudgetGetUsage(&ls->upstream_budget);
+            twfRequire(used.bytes == 0 && used.charge == 0 && ls->input_bytes == 0 &&
+                           atomic_load(&ts->stats.rx_records) == records &&
+                           atomic_load(&ts->stats.rx_application_bytes) == plain_bytes &&
+                           atomic_load(&ts->stats.reasons[kVmessServerReasonAdmission]) == 0,
+                       "batch left reservations or incorrect receive statistics");
+            for (size_t i = 0; i < 17; ++i)
+                plain[i] = (uint8_t) (plain_bytes + i);
+            sealSend(&f, &tx, plain, 17);
+            twfRequire(lineIsAlive(f.line) && decoded_batch_bytes == plain_bytes + 17 &&
+                           decoded_batch_records == records + 1,
+                       "batch drain lost the next record or advanced its nonce twice");
+            vmessBodyDestroy(&tx);
+            closeFixture(&f);
+        }
+}
+
+static void partialInputAccounting(void)
+{
+    est_fixture_t f;
+    setup(&f, 1000);
+    customRequest(&f, VMESS_SECURITY_AES128_GCM, VMESS_OPTION_CHUNK | VMESS_OPTION_AUTH_LENGTH, false, false);
+    twfRequire(lineIsAlive(f.line) && f.init_count == 1, "partial-input request rejected");
+    vmess_body_ctx_t tx = {0};
+    twfRequire(vmessBodyInit(&tx,
+                             vector_key,
+                             vector_iv,
+                             VMESS_SECURITY_AES128_GCM,
+                             VMESS_OPTION_CHUNK | VMESS_OPTION_AUTH_LENGTH,
+                             kVmessCmdTcp,
+                             true,
+                             kVmessCounterWrap) == kWCryptoOk,
+               "partial-input sender initialization failed");
+    uint8_t plain[256], wire[512];
+    memorySet(plain, 'P', sizeof(plain));
+    size_t length = 0;
+    twfRequire(vmessBodySeal(&tx, plain, sizeof(plain), false, wire, sizeof(wire), &length) == kWCryptoOk,
+               "partial-input sealing failed");
+    const size_t      prefix = vmessBodyLengthSize(&tx);
+    buffer_pool_t    *pool   = lineGetBufferPool(f.line);
+    buffer_pool_fit_t fit;
+    twfRequire(bufferpoolQueryBestFit(pool, length - prefix, bufferpoolGetLargeBufferPadding(pool), &fit),
+               "partial-input body geometry unavailable");
+    sendBytes(&f, wire, prefix);
+    twfRequire(lineIsAlive(f.line) && f.up_len == 0, "length-only input was delivered or refused");
+    vmessserver_lstate_t *ls   = lineGetState(f.line, f.node);
+    buffer_budget_cost_t  used = bufferbudgetGetUsage(&ls->upstream_budget);
+    twfRequire(used.bytes == 0 && used.charge == fit.allocation_charge,
+               "announced body charged absent bytes or failed to charge its allocation immediately");
+    sendBytes(&f, wire + prefix, 7);
+    twfRequire(lineIsAlive(f.line) && f.up_len == 0, "partial body was delivered or refused");
+    used = bufferbudgetGetUsage(&ls->upstream_budget);
+    twfRequire(used.bytes == 7 && used.charge == fit.allocation_charge,
+               "partial body did not charge exactly its received bytes");
+    sendBytes(&f, wire + prefix + 7, length - prefix - 7);
+    twfRequire(lineIsAlive(f.line) && f.up_len == sizeof(plain) && memoryCompare(f.up, plain, sizeof(plain)) == 0,
+               "fragmented body plaintext was lost");
+    used = bufferbudgetGetUsage(&ls->upstream_budget);
+    twfRequire(used.bytes == 0 && used.charge == 0, "completed body retained its reservation");
+    vmessBodyDestroy(&tx);
+    closeFixture(&f);
+}
+
+static void inputAdmissionLimits(void)
+{
+    for (unsigned excess = 0; excess <= 1; ++excess)
+    {
+        est_fixture_t f;
+        setup(&f, 1000);
+        const size_t length = 65536U + excess;
+        uint8_t     *wire   = memoryAllocateZero(length);
+        memoryCopy(wire, vector_request, sizeof(vector_request));
+        sendBytes(&f, wire, length);
+        memoryFree(wire);
+        twfRequire(lineIsAlive(f.line) == (excess == 0), "unauthenticated input did not enforce its 64KiB boundary");
+        if (excess != 0)
+        {
+            vmessserver_tstate_t *ts = tunnelGetState(f.node);
+            twfRequire(f.init_count == 0 && atomic_load(&ts->stats.reasons[kVmessServerReasonAdmission]) == 1,
+                       "unauthenticated overflow reached the protected target or had the wrong reason");
+        }
+        closeFixture(&f);
+    }
+    est_fixture_t f;
+    setup(&f, 1000);
+    sendRequest(&f, false);
+    sbuf_t *oversized = twfTrackAcquired(sbufCreateWithPadding(8U * 1024U * 1024U, 64));
+    sbufSetLength(oversized, 1);
+    sbufWrite(oversized, "X", 1);
+    tunnelUpStreamPayload(f.node, f.line, oversized);
+    vmessserver_tstate_t *ts = tunnelGetState(f.node);
+    twfRequire(! lineIsAlive(f.line) && atomic_load(&ts->stats.reasons[kVmessServerReasonAdmission]) == 1 &&
+                   f.up_len == 0,
+               "input allocation charge escaped its 8MiB limit");
+    closeFixture(&f);
 }
 
 static void serverCounterWrap(void)
@@ -1372,6 +1533,9 @@ int main(void)
     TEST_RUN_CASE(serverConfiguration);
     TEST_RUN_CASE(serverStats);
     TEST_RUN_CASE(serverConcurrentStats);
+    TEST_RUN_CASE(coalescedInputAtByteLimit);
+    TEST_RUN_CASE(partialInputAccounting);
+    TEST_RUN_CASE(inputAdmissionLimits);
     TEST_RUN_CASE(serverCounterWrap);
     TEST_RUN_CASE(deniedSecurityAndTermination);
     TEST_RUN_CASE(packetaddrBackends);

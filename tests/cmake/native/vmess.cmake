@@ -1,5 +1,11 @@
 # The shared codec is independently useful to either VMess endpoint.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET VmessCommon)
+  waterwall_add_native_executable(vmess_record_reader_test SUPPORT SOURCES
+    "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vmess/vmess_record_reader_test.c"
+    LIBRARIES ww VmessCommon)
+  add_dependencies(waterwall_unit_tests vmess_record_reader_test)
+  add_waterwall_unit_test(waterwall.vmess_record_reader_unit vmess_record_reader_test
+    "unit;tunnels;vmess;framing;ownership;admission")
   waterwall_add_native_executable(vmess_crypto_test SUPPORT SOURCES
     "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/vmess/vmess_crypto_test.c"
     LIBRARIES ww VmessCommon)

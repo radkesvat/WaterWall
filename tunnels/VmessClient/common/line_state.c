@@ -8,6 +8,7 @@ void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l)
     buffer_budget_cost_t limits = {kVmessClientMaxOrderBytes, kVmessClientMaxOrderCharge};
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->downstream_budget, limits);
+    vmessRecordReaderInit(&ls->record_reader, lineGetBufferPool(l), &ls->downstream_budget);
     bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&
                     bufferqueueTryAttachBudget(&ls->pending_down, &ls->downstream_budget);
     assert(attached);
@@ -30,11 +31,9 @@ void vmessclientLinestateDestroy(vmessclient_lstate_t *ls)
         lineReuseBuffer(ls->line, ls->transmit_head);
     if (ls->receive_head != NULL)
         lineReuseBuffer(ls->line, ls->receive_head);
-    if (ls->body_buffer != NULL)
-        lineReuseBuffer(ls->line, ls->body_buffer);
     bufferbudgetReservationRelease(&ls->transmit_reservation);
     bufferbudgetReservationRelease(&ls->input_reservation);
-    bufferbudgetReservationRelease(&ls->body_reservation);
+    vmessRecordReaderDestroy(&ls->record_reader);
     bufferbudgetRelease(&ls->downstream_budget, (buffer_budget_cost_t) {.bytes = ls->header_filled});
     bufferqueueDestroy(&ls->pending_up);
     bufferqueueDestroy(&ls->pending_down);

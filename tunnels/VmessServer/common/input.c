@@ -52,6 +52,8 @@ void vmessserverRetainActiveHead(vmessserver_lstate_t *ls)
 
 static bool drainRecords(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls)
 {
+    const vmess_record_input_t input = {
+        .pending = &ls->pending_up, .head = &ls->input_head, .reservation = &ls->input_reservation};
     while (ls->input_bytes != 0)
     {
         if (ls->input_crypto.raw)
@@ -66,66 +68,36 @@ static bool drainRecords(tunnel_t *t, line_t *l, vmessserver_lstate_t *ls)
                 return false;
             continue;
         }
-        size_t prefix_length = vmessBodyLengthSize(&ls->input_crypto);
-        if (! ls->input_crypto.pending)
+        vmess_record_result_t result = vmessRecordReaderRead(&ls->record_reader, &ls->input_crypto, &input);
+        assert(result.consumed <= ls->input_bytes);
+        ls->input_bytes -= result.consumed;
+        switch (result.status)
         {
-            if (! vmessserverGatherHeader(ls, (uint16_t) prefix_length))
-                return true;
-            if (vmessBodyLengthOpen(&ls->input_crypto, ls->header, prefix_length, &ls->body_length) != kWCryptoOk)
-            {
-                vmessserverReason(ls, kVmessServerReasonLengthAuth);
-                goto malformed;
-            }
-            ls->input_bytes -= prefix_length;
-            ls->header_filled   = 0;
-            buffer_pool_t *pool = lineGetBufferPool(l);
-            ls->body_buffer     = bufferpoolGetBestFit(pool, ls->body_length, bufferpoolGetLargeBufferPadding(pool));
-            sbufSetLength(ls->body_buffer, ls->body_length);
-            if (! bufferbudgetTryReserve(&ls->upstream_budget, ls->body_buffer, &ls->body_reservation))
-            {
-                vmessserverReason(ls, kVmessServerReasonAdmission);
-                goto malformed;
-            }
+        case kVmessRecordNeedMore:
+            return true;
+        case kVmessRecordLengthError:
+            vmessserverReason(ls, kVmessServerReasonLengthAuth);
+            goto malformed;
+        case kVmessRecordBodyError:
+            vmessserverReason(ls, kVmessServerReasonBodyAuth);
+            goto malformed;
+        case kVmessRecordLimitError:
+            vmessserverReason(ls, kVmessServerReasonAdmission);
+            goto malformed;
+        case kVmessRecordPayload:
+        case kVmessRecordEof:
+            break;
         }
-        while (ls->body_filled < ls->body_length)
-        {
-            sbuf_t *head = receiveHead(ls);
-            if (! head)
-                return true;
-            uint32_t count = min(ls->body_length - ls->body_filled, sbufGetLength(head));
-            sbufReadRangeToMemory(head, sbufGetMutablePtr(ls->body_buffer) + ls->body_filled, count);
-            bufferbudgetReservationSetBytes(&ls->input_reservation, sbufGetLength(head));
-            ls->body_filled += count;
-            ls->input_bytes -= count;
-            recycleEmptyHead(ls);
-        }
-        sbuf_t *out                = ls->body_buffer;
-        ls->body_buffer            = NULL;
-        ls->body_filled            = 0;
-        size_t           plaintext = 0;
-        bool             eof       = false;
-        wcrypto_status_t status    = vmessBodyOpen(&ls->input_crypto,
-                                                sbufGetRawPtr(out),
-                                                ls->body_length,
-                                                sbufGetMutablePtr(out),
-                                                ls->body_length,
-                                                &plaintext,
-                                                &eof);
-        bufferbudgetReservationRelease(&ls->body_reservation);
         vmessserver_tstate_t *ts = tunnelGetState(t);
-        if (status == kWCryptoOk)
+        atomicAddU64(&ts->stats.rx_records, 1);
+        if (ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter == 0)
+            atomicAddU64(&ts->stats.wrap_events, 1);
+        if (result.status == kVmessRecordEof)
         {
-            atomicAddU64(&ts->stats.rx_records, 1);
-            if (ls->input_crypto.security != VMESS_SECURITY_NONE && ls->input_crypto.counter == 0)
-                atomicAddU64(&ts->stats.wrap_events, 1);
-        }
-        if (status != kWCryptoOk || eof)
-        {
-            vmessserverReason(ls, status == kWCryptoOk ? kVmessServerReasonNormal : kVmessServerReasonBodyAuth);
-            lineReuseBuffer(l, out);
+            vmessserverReason(ls, kVmessServerReasonNormal);
             goto malformed;
         }
-        sbufSetLength(out, (uint32_t) plaintext);
+        sbuf_t *out = result.payload;
         if (! vmessserverDeliverDecoded(t, l, out))
             return false;
         if (ls->input_crypto.counter_policy == kVmessCounterStrict &&

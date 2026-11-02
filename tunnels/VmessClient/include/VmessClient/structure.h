@@ -1,7 +1,7 @@
 #pragma once
 #include "DomainResolver/interface.h"
 #include "ProxyClientCommon/first_payload_window.h"
-#include "VmessCommon/crypto.h"
+#include "VmessCommon/record_reader.h"
 #include "wwapi.h"
 
 typedef enum vmessclient_protocol_e
@@ -96,9 +96,9 @@ typedef struct vmessclient_lstate_s
     uint8_t                             response_key[16], response_iv[16], response_marker;
     buffer_queue_t                      pending_up, pending_down;
     buffer_budget_t                     upstream_budget, downstream_budget;
-    buffer_budget_reservation_t         transmit_reservation, input_reservation, body_reservation;
-    sbuf_t                             *transmit_head, *receive_head, *body_buffer;
-    uint32_t                            body_length, body_filled;
+    buffer_budget_reservation_t         transmit_reservation, input_reservation;
+    sbuf_t                             *transmit_head, *receive_head;
+    vmess_record_reader_t               record_reader;
     uint8_t                             header[293];
     uint16_t                            header_filled, response_length;
 } vmessclient_lstate_t;
