@@ -17,7 +17,7 @@ enum
     kAsyncDnsQueryCacheMaxTtlSeconds    = 30 * 60,
     kAsyncDnsInitialTimeoutMs           = 1000,
     kAsyncDnsMaxTimeoutMs               = 5000,
-    kAsyncDnsTries                      = 2,
+    kAsyncDnsTries                      = 5,
     kAsyncDnsServerFailoverRetryChance  = 10,
     kAsyncDnsServerFailoverRetryDelayMs = 5000,
     kAsyncDnsIocpPollIntervalMs         = 20
