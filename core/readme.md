@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -86,7 +86,7 @@ selected core file's directory.
     "domain-strategy": "prefer-ipv4",
     "timeout-ms": 1000,
     "max-timeout-ms": 5000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 1800,
     "ndots": 1,
     "udp-port": 53,
@@ -479,10 +479,18 @@ That form is rejected. Use `dns.domain-strategy`.
 
 | Option | Type | Default | Validation | Description |
 | --- | --- | --- | --- | --- |
-| `timeout-ms` | integer | `1000` | greater than `0` | Initial DNS query timeout in milliseconds. |
+| `timeout-ms` | integer | `1000` | greater than `0` | DNS query timeout in milliseconds, until c-ares has three answers from that server. |
 | `max-timeout-ms` | integer | `5000` | greater than `0` | Maximum DNS query timeout in milliseconds. |
-| `tries` | integer | `2` | greater than `0` | Number of DNS query tries. |
+| `tries` | integer | `5` | greater than `0` | Number of DNS query tries for each server. |
 | `query-cache-max-ttl` | integer | `1800` | greater than or equal to `0` | Maximum TTL, in seconds, for the resolver query cache. |
+
+Once a DNS server has given three answers, c-ares sets the wait for that server itself: five times its
+average answer time, at least 250 ms and at most `max-timeout-ms`, doubled with random jitter on each round
+through the servers. `timeout-ms` then no longer applies. A fast local caching resolver such as
+systemd-resolved's stub therefore gets 250 ms on the first try, even for a name it has to look up upstream,
+and `tries` decides how long that lookup may take before the line waiting on it is closed: 5 to 7 seconds
+with `5`, and 0.5 to 0.75 seconds with `2`. A DNS server that has never answered takes 12 to 14 seconds to
+give up with `5`.
 
 Example:
 
@@ -491,7 +499,7 @@ Example:
   "dns": {
     "timeout-ms": 750,
     "max-timeout-ms": 3000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 600
   }
 }
@@ -706,7 +714,7 @@ Example:
     ],
     "timeout-ms": 1000,
     "max-timeout-ms": 5000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 600,
     "lookups": "bf",
     "flags": [
