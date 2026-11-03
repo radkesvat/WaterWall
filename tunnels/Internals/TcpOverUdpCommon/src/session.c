@@ -508,7 +508,10 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
             touSessionAbort(s, kTouProtocolFailure);
             return;
         }
-        sbuf_t   *buffer = bufferpoolGetLargeBuffer(s->config.pool);
+        /* Small records must not pin a large allocation in the next node's queue.
+         * Preserve the former receive buffer's onward prepend headroom. */
+        sbuf_t *buffer =
+            bufferpoolGetBestFit(s->config.pool, (uint32_t) peek, bufferpoolGetLargeBufferPadding(s->config.pool));
         const int count =
             ikcp_recv(s->kcp, (char *) sbufGetMutablePtr(buffer), (int) sbufGetMaximumWriteableSize(buffer));
         if (count <= 0)

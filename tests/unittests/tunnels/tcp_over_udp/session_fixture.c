@@ -11,6 +11,7 @@
 #include "TcpOverUdpClient/interface.h"
 #include "TcpOverUdpCommon/session.h"
 #include "TcpOverUdpServer/interface.h"
+#include "buffer_queue.h"
 #include "settings_geometry_cases.h"
 #include "test_assert.h"
 #include "wevent.h"
@@ -55,6 +56,7 @@ typedef struct fixture_s
     unsigned        count, service_inits, carrier_finishes;
     packet_t        queue[kMaxPackets];
     size_t          count_packets;
+    buffer_queue_t *retained_payload;
     session_ref_t   sessions[kMaxSessions];
     unsigned        session_count;
     unsigned        drop_kind, drop_direction, drop_remaining, dropped;
@@ -928,6 +930,53 @@ static void caseAsymmetricMtu(bool fec, unsigned direction, bool larger_client)
                 "asymmetric fixture never sent a packet larger than the receiver's send MTU");
     teardown();
 }
+
+static void retainPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
+{
+    require((t == active->source && byApp(line)) || (t == active->service && byService(line)),
+            "retained payload reached an unexpected fixture endpoint");
+    require(bufferqueueTryPushBack(active->retained_payload, &payload),
+            "small KCP records exhausted the TCP adapter's retained allocation budget");
+}
+
+static void caseRetainedReceive(bool fec, unsigned direction)
+{
+    testCaseSet(direction ? "retained download records fit the TCP adapter budget"
+                          : "retained upload records fit the TCP adapter budget");
+    fixture_t fixture;
+    setup(&fixture, fec, 3000, 3000, 1500);
+    /* Match the TCP adapter's byte and allocation-charge ceiling. Hold the
+     * received records until CLOSE, as a blocked socket can do while KCP drains. */
+    buffer_budget_t budget;
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {16U * 1024 * 1024, 16U * 1024 * 1024});
+    buffer_queue_t retained = bufferqueueCreate(16);
+    require(bufferqueueTryAttachBudget(&retained, &budget), "empty receive queue rejected its budget");
+    fixture.retained_payload    = &retained;
+    fixture.source->fnPayloadD  = retainPayload;
+    fixture.service->fnPayloadU = retainPayload;
+    endpoint_t *ep              = openApp();
+    established(ep);
+    sendBytes(ep, direction, 512U * 1024);
+    if (direction)
+        closeService(ep);
+    else
+        closeApp(ep);
+    pump(1800);
+    require(bufferqueueGetBufLen(&retained) == 512U * 1024,
+            "graceful close lost data retained behind a blocked receiver");
+    require((direction ? ep->app_finishes : ep->service_finishes) == 1,
+            "retained receive did not finish exactly once after all data");
+    require(touSessionCloseConfirmed(direction ? ep->server_session : ep->client_session),
+            "retained receive did not acknowledge CLOSE");
+    line_t *receiver = direction ? ep->app : ep->service;
+    sbuf_t *payload;
+    while ((payload = bufferqueuePopFront(&retained)) != NULL)
+        checkPayload(ep, direction, receiver, payload);
+    require(ep->received[direction] == 512U * 1024, "retained receive lost exact ordered payload bytes");
+    bufferqueueDestroy(&retained);
+    bufferbudgetAssertEmpty(&budget);
+    teardown();
+}
 static void caseLargeFlight(bool fec, bool direct)
 {
     testCaseSet(direct ? "direct 3 MiB flight serializes nested ACKs within input admission"
@@ -1606,6 +1655,8 @@ int tcpOverUdpSessionCases(const char *selection)
 
         for (unsigned fec = 0; fec < 2; ++fec)
         {
+            for (unsigned direction = 0; direction < 2; ++direction)
+                caseRetainedReceive(fec != 0, direction);
             for (unsigned direction = 0; direction < 2; ++direction)
                 for (unsigned loss = 0; loss < 3; ++loss)
                     caseTransferClose(fec != 0, direction, loss);
