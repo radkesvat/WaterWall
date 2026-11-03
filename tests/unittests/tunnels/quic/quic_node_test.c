@@ -1,8 +1,9 @@
 /* Actual QUIC node constructors and registered callbacks: repeated Est/flow and eager data during Init,
  * synchronous Finish from Init/Est/wire/pressure, directional Finish, malformed
  * framing, byte/empty-entry admission, direct constructor string validation and
- * owner-worker quiescence. Real engine,
- * one borrowed normal line, tracked buffers and exact creator/reference cleanup.
+ * owner-worker quiescence/drain, split-line ownership, pre-readiness Finish,
+ * bounded reliable close and peer Finish. Real engine, independent borrowed and
+ * owned normal lines, tracked buffers and exact creator/reference cleanup.
  * CTest: waterwall.quic_node_unit, Debug and optimized Release/no-LTO. */
 
 #include "quic_common.h"
@@ -18,16 +19,90 @@
 #include "fixtures/protocols/protocol_est_ordering_fixture.h"
 
 static unsigned resume_count;
+static line_t  *owned_line;
+static bool     previous_finished;
+static bool     next_finished;
 
-#if QUIC_TEST_HAS_SERVER
+static bool fixtureIsClient(est_fixture_t *f)
+{
+    return ((quic_tstate_t *) tunnelGetState(f->node))->client;
+}
+
+static line_t *applicationLine(est_fixture_t *f)
+{
+    return fixtureIsClient(f) ? f->line : owned_line;
+}
+
+static line_t *carrierLine(est_fixture_t *f)
+{
+    return fixtureIsClient(f) ? owned_line : f->line;
+}
+
+static void requireCallbackSide(tunnel_t *t, line_t *l)
+{
+    est_fixture_t *f        = estContext(t);
+    bool           previous = t == f->prev;
+    twfRequire(l == (previous ? f->line : owned_line), "QUIC callback crossed its exact line boundary");
+    twfRequire(! (previous ? previous_finished : next_finished), "QUIC callback reflected toward a finished side");
+    twfRequire(lineIsAlive(l), "QUIC callback reached a logically dead line");
+}
+
+static void fixtureInit(tunnel_t *t, line_t *l)
+{
+    est_fixture_t *f = estContext(t);
+    twfRequire(owned_line == NULL && l != f->line, "QUIC reused the borrowed line for next Init");
+    owned_line = l;
+    lineRef(l); /* Observe exact owner death after synchronous Finish. */
+    twfRequire(lineGetWID(l) == lineGetWID(f->line), "QUIC companion line changed worker");
+    twfRequire(quicGetContext(f->node, l) == quicGetContext(f->node, f->line),
+               "QUIC did not publish both association links before Init");
+    estInit(t, l);
+}
+
+static void fixtureEst(tunnel_t *t, line_t *l)
+{
+    requireCallbackSide(t, l);
+    estEst(t, l);
+}
+
+static void fixturePayload(tunnel_t *t, line_t *l, sbuf_t *buffer)
+{
+    requireCallbackSide(t, l);
+    estPayload(t, l, buffer);
+}
+
+static void fixturePause(tunnel_t *t, line_t *l)
+{
+    requireCallbackSide(t, l);
+    estPause(t, l);
+}
+
+static void fixtureFinish(tunnel_t *t, line_t *l)
+{
+    requireCallbackSide(t, l);
+    est_fixture_t *f = estContext(t);
+    twfRequireLineStateZeroed(l, f->node, "QUIC notified Finish before detaching exact-line state");
+    if (t == f->next)
+    {
+        next_finished = true;
+        ++f->up_finish_count;
+    }
+    else
+    {
+        previous_finished = true;
+        ++f->down_finish_count;
+        lineDestroy(l);
+    }
+}
+
 static void fixtureFatal(void)
 {
     abortProgramNow(1);
 }
-#endif
 
 static void discardWire(tunnel_t *t, line_t *l, sbuf_t *buffer)
 {
+    requireCallbackSide(t, l);
     est_fixture_t *f        = estContext(t);
     bool           upstream = t == f->next;
     size_t        *count    = upstream ? &f->up_len : &f->down_len;
@@ -36,38 +111,40 @@ static void discardWire(tunnel_t *t, line_t *l, sbuf_t *buffer)
     est_inject_fn inject = upstream ? f->on_up : f->on_down;
     if (inject != NULL)
     {
+        if (upstream)
+            f->on_up = NULL;
+        else
+            f->on_down = NULL;
         inject(f, l);
     }
 }
 
 static void countResume(tunnel_t *t, line_t *l)
 {
-    discard t;
-    discard l;
+    requireCallbackSide(t, l);
     ++resume_count;
 }
 
-#if QUIC_TEST_HAS_SERVER
 static ww_quic_settings_t settingsForRole(bool client)
 {
-    return (ww_quic_settings_t) {.is_client            = client,
-                                 .verify               = true,
-                                 .protocol             = "h3",
-                                 .sni                  = "tls.integration.test",
-                                 .ca_file              = QUIC_TEST_CERT,
-                                 .cert_file            = QUIC_TEST_CERT,
-                                 .key_file             = QUIC_TEST_KEY,
-                                 .handshake_timeout_ms = 1000,
-                                 .idle_timeout_ms      = 2000,
-                                 .max_packet_size      = 1350,
-                                 .max_buffered_bytes   = 65536,
-                                 .max_buffered_buffers = 8,
-                                 .receive_window_bytes = 16384,
-                                 .allocate             = memoryAllocate,
-                                 .deallocate           = memoryFree,
-                                 .fatal                = fixtureFatal};
+    return (ww_quic_settings_t) {.is_client              = client,
+                                 .verify                 = true,
+                                 .protocol               = "h3",
+                                 .sni                    = "tls.integration.test",
+                                 .ca_file                = QUIC_TEST_CERT,
+                                 .cert_file              = QUIC_TEST_CERT,
+                                 .key_file               = QUIC_TEST_KEY,
+                                 .handshake_timeout_ms   = 1000,
+                                 .idle_timeout_ms        = 2000,
+                                 .close_drain_timeout_ms = 300,
+                                 .max_packet_size        = 1350,
+                                 .max_buffered_bytes     = 65536,
+                                 .max_buffered_buffers   = 8,
+                                 .receive_window_bytes   = 16384,
+                                 .allocate               = memoryAllocate,
+                                 .deallocate             = memoryFree,
+                                 .fatal                  = fixtureFatal};
 }
-#endif
 
 static bool roleEnabled(bool client)
 {
@@ -77,6 +154,8 @@ static bool roleEnabled(bool client)
 static void setupQuicWithBudget(est_fixture_t *f, bool client, bool stream, uint32_t max_bytes)
 {
     estFixtureSetup(f, sizeof(quic_tstate_t), sizeof(quic_lstate_t));
+    owned_line        = NULL;
+    previous_finished = next_finished = false;
 
     node_t *metadata = memoryAllocateZero(sizeof(*metadata));
 #if QUIC_TEST_HAS_CLIENT
@@ -100,6 +179,7 @@ static void setupQuicWithBudget(est_fixture_t *f, bool client, bool stream, uint
     cJSON_AddStringToObject(json, "carrier-mode", stream ? "stream" : "datagram");
     cJSON_AddNumberToObject(json, "handshake-timeout-ms", 1000);
     cJSON_AddNumberToObject(json, "idle-timeout-ms", 2000);
+    cJSON_AddNumberToObject(json, "close-drain-timeout-ms", 300);
     cJSON_AddNumberToObject(json, "max-packet-size", 1350);
     cJSON_AddNumberToObject(json, "max-buffered-bytes", max_bytes);
     cJSON_AddNumberToObject(json, "max-buffered-buffers", 8);
@@ -126,10 +206,15 @@ static void setupQuicWithBudget(est_fixture_t *f, bool client, bool stream, uint
     f->node->chain = f->chain;
     tunnelBind(f->prev, f->node);
     tunnelBind(f->node, f->next);
-    f->prev->chain_index = 0;
-    f->node->chain_index = 1;
-    f->next->chain_index = 2;
-    f->prev->fnPauseD = f->next->fnPauseU = estPause;
+    f->prev->chain_index    = 0;
+    f->node->chain_index    = 1;
+    f->next->chain_index    = 2;
+    f->chain->workers_count = 1;
+    f->next->fnInitU        = fixtureInit;
+    f->prev->fnEstD         = fixtureEst;
+    f->prev->fnPayloadD = f->next->fnPayloadU = fixturePayload;
+    f->prev->fnFinD = f->next->fnFinU = fixtureFinish;
+    f->prev->fnPauseD = f->next->fnPauseU = fixturePause;
     f->prev->fnResumeD = f->next->fnResumeU = countResume;
     if (client)
     {
@@ -151,6 +236,11 @@ static void requireSettled(est_fixture_t *f)
 {
     quic_tstate_t *state = tunnelGetState(f->node);
     twfRequireLineStateZeroed(f->line, f->node, "QUIC retired line state was not zeroed");
+    if (owned_line != NULL)
+    {
+        twfRequireLineStateZeroed(owned_line, f->node, "QUIC retired owned line state was not zeroed");
+        twfRequire(! lineIsAlive(owned_line), "QUIC retained an owned normal line after retirement");
+    }
     twfRequire(state->workers[0] == NULL, "QUIC retired context survived in borrowed registry");
     twfRequire(wloopNTimers(f->env.loop) == 0, "QUIC retired context left an armed alarm");
 }
@@ -161,6 +251,12 @@ static void destroyQuic(est_fixture_t *f)
     twfRequire(! lineIsAlive(f->line), "QUIC owner line remained logically alive");
     twfRequireEqualU32(twfLineRefCount(f->line), 1, "QUIC leaked a driver line reference");
     lineUnref(f->line);
+    if (owned_line != NULL)
+    {
+        twfRequireEqualU32(twfLineRefCount(owned_line), 1, "QUIC leaked an owned-line reference");
+        lineUnref(owned_line);
+        owned_line = NULL;
+    }
     twfLinePoolTeardown(&f->lines);
     tunnelDestroy(f->prev);
     node_t *metadata = tunnelGetNode(f->node);
@@ -175,11 +271,36 @@ static void destroyQuic(est_fixture_t *f)
 
 static void ownerFinish(est_fixture_t *f, line_t *l)
 {
-    tunnelUpStreamFin(f->node, l);
+    discard l;
+    previous_finished = true;
+    tunnelUpStreamFin(f->node, f->line);
     /* Logical line life is independent of this borrowed node's attachment. */
-    twfRequire(lineIsAlive(l), "QUIC borrower destroyed its creator's line");
+    twfRequire(lineIsAlive(f->line), "QUIC borrower destroyed its creator's line");
+    twfRequireLineStateZeroed(f->line, f->node, "QUIC Finish left borrowed application/carrier state attached");
+    lineDestroy(f->line);
+}
+
+static void nextFinish(est_fixture_t *f, line_t *l)
+{
+    discard l;
+    next_finished = true;
+    tunnelDownStreamFin(f->node, owned_line);
+    twfRequire(! lineIsAlive(owned_line), "QUIC owner returned from Finish with its exact line alive");
+    twfRequireLineStateZeroed(owned_line, f->node, "QUIC owned Finish did not clear line state");
+}
+
+static void abortCarrier(est_fixture_t *f)
+{
+    if (fixtureIsClient(f))
+    {
+        if (owned_line != NULL && lineIsAlive(owned_line))
+            nextFinish(f, owned_line);
+    }
+    else if (lineIsAlive(f->line))
+    {
+        ownerFinish(f, f->line);
+    }
     requireSettled(f);
-    lineDestroy(l);
 }
 
 static void testDirectConstructorStrings(void)
@@ -213,7 +334,7 @@ static void testDirectConstructorStrings(void)
             cJSON_Delete(copy);
             cJSON_Delete(parsed);
         }
-        ownerFinish(&f, f.line);
+        abortCarrier(&f);
         destroyQuic(&f);
     }
 }
@@ -221,7 +342,7 @@ static void testDirectConstructorStrings(void)
 #if QUIC_TEST_HAS_CLIENT
 static void backendFinish(est_fixture_t *f, line_t *l)
 {
-    tunnelDownStreamFin(f->node, l);
+    nextFinish(f, l);
 }
 #endif
 
@@ -230,7 +351,7 @@ static void eagerInit(est_fixture_t *f, line_t *l)
     quic_tstate_t *state = tunnelGetState(f->node);
     if (state->client)
     {
-        tunnelUpStreamPayload(f->node, l, estBytes(l, "A", 1));
+        tunnelUpStreamPayload(f->node, f->line, estBytes(f->line, "A", 1));
     }
     else
     {
@@ -260,13 +381,15 @@ static void testInitAndSignals(void)
         for (unsigned i = 0; i < 2; ++i)
         {
             tunnelUpStreamPause(f.node, f.line);
-            tunnelDownStreamPause(f.node, f.line);
+            tunnelDownStreamPause(f.node, owned_line);
             tunnelUpStreamResume(f.node, f.line);
-            tunnelDownStreamResume(f.node, f.line);
+            tunnelDownStreamResume(f.node, owned_line);
         }
         twfRequire(f.pause_count == 4 && resume_count == 4, "QUIC absorbed repeated advisory flow signals");
-        ownerFinish(&f, f.line);
-        twfRequire(f.up_finish_count == 1 && f.down_finish_count == 0, "QUIC reflected owner Finish");
+        abortCarrier(&f);
+        twfRequire(client ? f.up_finish_count == 0 && f.down_finish_count == 1
+                          : f.up_finish_count == 1 && f.down_finish_count == 0,
+                   "QUIC reflected carrier Finish");
         destroyQuic(&f);
     }
 #if QUIC_TEST_HAS_CLIENT
@@ -274,9 +397,56 @@ static void testInitAndSignals(void)
     setupQuic(&f, true, false);
     tunnelUpStreamInit(f.node, f.line);
     twfRequire(f.est_count == 0 && f.up_len >= 1200, "QUIC handshake output incorrectly requires transport Est");
-    ownerFinish(&f, f.line);
+    abortCarrier(&f);
     destroyQuic(&f);
 #endif
+}
+
+static void testSplitLineContexts(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        for (unsigned stream = 0; stream < 2; ++stream)
+        {
+            est_fixture_t f;
+            setupQuic(&f, client != 0, stream != 0);
+            twfRequire(addresscontextSetIpAddressPortProtocol(
+                           lineGetSourceAddressContext(f.line), "127.0.0.2", 12345, IP_PROTO_TCP),
+                       "source fixture address failed");
+            address_context_t *destination = lineGetDestinationAddressContext(f.line);
+            addresscontextDomainSetByString(destination, "fixture.example");
+            addresscontextSetPort(destination, 443);
+            addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+            destination->optional_flags.detected_protocols     = kAddressContextProtocolTls;
+            lineGetRoutingContext(f.line)->local_listener_port = 8443;
+            lineGetRoutingContext(f.line)->peer_source_port    = 23456;
+            lineAddAuthenticatedCredentials(f.line, "fixture-user", "fixture-secret");
+            lineMarkFallback(f.line);
+            lineMarkFallbackPeerWriteClosed(f.line);
+            linePreferOrdinaryReadUpstream(f.line);
+            linePreferOrdinaryReadDownstream(f.line);
+            tunnelUpStreamInit(f.node, f.line);
+            const address_context_t *copied = lineGetDestinationAddressContext(owned_line);
+            twfRequire(lineGetSourceAddressContext(owned_line)->port == 12345 && copied->port == 443 &&
+                           strcmp(copied->domain, "fixture.example") == 0 && copied->domain != destination->domain &&
+                           copied->optional_flags.detected_protocols == kAddressContextProtocolTls,
+                       "split QUIC line lost endpoint identity or aliased owned domain memory");
+            twfRequire(copied->proto_udp == (client && ! stream) && copied->proto_tcp == (! client || stream),
+                       "split QUIC line copied the wrong transport protocol");
+            twfRequire(lineGetRoutingContext(owned_line)->local_listener_port == 8443 &&
+                           lineGetRoutingContext(owned_line)->peer_source_port == 23456 &&
+                           lineGetUserAuthCount(owned_line) == 1 &&
+                           strcmp(lineGetAuthenticatedUsername(owned_line), "fixture-user") == 0 &&
+                           strcmp(lineGetAuthenticatedPassword(owned_line), "fixture-secret") == 0 &&
+                           lineIsFallback(owned_line) && lineFallbackShouldLinger(owned_line) &&
+                           linePrefersOrdinaryReadUpstream(owned_line) && linePrefersOrdinaryReadDownstream(owned_line),
+                       "split QUIC line lost routing, authentication, fallback or read-preference context");
+            abortCarrier(&f);
+            destroyQuic(&f);
+        }
+    }
 }
 
 #if QUIC_TEST_HAS_CLIENT
@@ -311,15 +481,18 @@ static void testReentrantFinish(void)
         tunnelUpStreamInit(f.node, f.line);
         twfRequire(! lineIsAlive(f.line), "QUIC reentrant Finish retained its owner's line");
         twfRequire(cause == 1 ? f.down_finish_count == 1 && f.up_finish_count == 0
-                              : f.down_finish_count == 0 && f.up_finish_count == 1,
+                              : f.down_finish_count == 0 && f.up_finish_count == 0,
                    "QUIC reflected reentrant Finish or forgot admitted next Init");
-        twfRequire(cause == 3 ? f.up_len >= 1200 : f.up_len == 0, "QUIC emitted wire bytes after retirement");
+        twfRequire(cause == 1 ? f.up_len == 0 : f.up_len >= 1200,
+                   "QUIC handshake did not respect independent carrier lifetime");
+        abortCarrier(&f);
         destroyQuic(&f);
     }
 }
 
 static void finishFromPressure(tunnel_t *t, line_t *l)
 {
+    requireCallbackSide(t, l);
     est_fixture_t *f = estContext(t);
     ++f->pause_count;
     ownerFinish(f, l);
@@ -333,11 +506,46 @@ static void testPressureReentry(void)
     tunnelUpStreamInit(f.node, f.line);
     uint8_t data[50000] = {0};
     tunnelUpStreamPayload(f.node, f.line, estBytes(f.line, data, sizeof(data)));
-    twfRequire(! lineIsAlive(f.line) && f.pause_count == 1 && f.up_finish_count == 1 && f.down_finish_count == 0,
+    twfRequire(! lineIsAlive(f.line) && f.pause_count == 1 && f.up_finish_count == 0 && f.down_finish_count == 0,
                "QUIC local pressure reentry reflected Finish or retained application state");
+    abortCarrier(&f);
     destroyQuic(&f);
 }
 #endif
+
+static void testInitFinishReentryBothRoles(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        for (unsigned previous = 0; previous < 2; ++previous)
+        {
+            est_fixture_t f;
+            setupQuic(&f, client != 0, false);
+            f.on_init = previous ? ownerFinish : nextFinish;
+            tunnelUpStreamInit(f.node, f.line);
+            bool application_finished = client == previous;
+            if (application_finished)
+            {
+                twfRequire(! lineIsAlive(applicationLine(&f)) && lineIsAlive(carrierLine(&f)),
+                           "Finish during Init mixed application and carrier lifetimes");
+                twfRequire(f.up_finish_count == 0 && f.down_finish_count == 0,
+                           "application Finish during Init prematurely finished its carrier");
+            }
+            else
+            {
+                twfRequire(! lineIsAlive(f.line) && ! lineIsAlive(owned_line),
+                           "carrier Finish during Init retained an exact owned line");
+                twfRequire(client ? f.down_finish_count == 1 && f.up_finish_count == 0
+                                  : f.up_finish_count == 1 && f.down_finish_count == 0,
+                           "carrier Finish during Init reflected toward its sender");
+            }
+            abortCarrier(&f);
+            destroyQuic(&f);
+        }
+    }
+}
 
 static void testMalformedCarrierAndBudgets(void)
 {
@@ -388,10 +596,11 @@ static void testQuiescenceBeforeOwnerDrain(void)
         setupQuic(&f, client != 0, true);
         tunnelUpStreamInit(f.node, f.line);
         const uint8_t prefix[] = {0, 0};
-        sbuf_t       *input    = estBytes(f.line, prefix, sizeof(prefix));
+        line_t       *carrier  = carrierLine(&f);
+        sbuf_t       *input    = estBytes(carrier, prefix, sizeof(prefix));
         if (client)
         {
-            tunnelDownStreamPayload(f.node, f.line, input);
+            tunnelDownStreamPayload(f.node, carrier, input);
         }
         else
         {
@@ -404,7 +613,11 @@ static void testQuiescenceBeforeOwnerDrain(void)
         f.node->onWorkerQuiesce(f.node, 0, NULL);
         twfRequire(lineIsAlive(f.line) && state->workers[0] != NULL && wloopNTimers(f.env.loop) == 0,
                    "QUIC borrowed quiescence destroyed an owned line or retained alarm");
-        ownerFinish(&f, f.line);
+        twfRequire(f.node->onWorkerStop != NULL, "QUIC owner has no worker drain hook");
+        f.node->onWorkerStop(f.node, 0, NULL);
+        twfRequire(! lineIsAlive(f.line) && ! lineIsAlive(owned_line) && f.up_finish_count == 1 &&
+                       f.down_finish_count == 1,
+                   "QUIC worker drain did not finish both exact line lifecycles");
         destroyQuic(&f);
     }
 }
@@ -421,13 +634,14 @@ static void testCarrierResourceEntries(void)
             setupQuic(&f, client != 0, true);
             tunnelUpStreamInit(f.node, f.line);
             quic_context_t *context = quicGetContext(f.node, f.line);
+            line_t         *carrier = carrierLine(&f);
             twfRequire(quicEnter(context), "fixture could not retain the QUIC driver");
             /* Serialize nested carrier arrivals before one input is popped.
              * A partial frame then needs a separate carrier body allocation. */
             const uint8_t prefix[] = {0, 0, 0, 32, 1};
-            quicSubmitCarrier(f.node, f.line, estBytes(f.line, prefix, sizeof(prefix)));
+            quicSubmitCarrier(f.node, carrier, estBytes(carrier, prefix, sizeof(prefix)));
             for (unsigned i = 1; i < queued; ++i)
-                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+                quicSubmitCarrier(f.node, carrier, estBytes(carrier, "", 0));
             twfRequire(lineIsAlive(f.line) && quicInputEntries(context) == queued,
                        "carrier queue refused configured entry equality");
             twfRequire(quicFeedInput(context), "queued carrier prefix was not processed");
@@ -436,10 +650,10 @@ static void testCarrierResourceEntries(void)
                 twfRequire(lineIsAlive(f.line) && context->carrier_allocations == 1 && context->active_input == NULL &&
                                quicInputEntries(context) == 7,
                            "partial carrier body lost its resource slot after active input settled");
-                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+                quicSubmitCarrier(f.node, carrier, estBytes(carrier, "", 0));
                 twfRequire(lineIsAlive(f.line) && quicInputEntries(context) == 8,
                            "carrier allocation and queued entries did not admit equality");
-                quicSubmitCarrier(f.node, f.line, estBytes(f.line, "", 0));
+                quicSubmitCarrier(f.node, carrier, estBytes(carrier, "", 0));
             }
             twfRequire(! lineIsAlive(f.line) && f.up_finish_count == 1 && f.down_finish_count == 1,
                        "active input or retained carrier allocation escaped the resource limit");
@@ -475,187 +689,456 @@ static void testCooperativeResourcePressure(void)
                 }
                 else
                 {
-                    tunnelDownStreamPayload(f.node, f.line, buffer);
+                    tunnelDownStreamPayload(f.node, owned_line, buffer);
                 }
                 ++count;
                 twfRequire(lineIsAlive(f.line), "cooperative QUIC producer hit hard refusal before resource Pause");
             }
             twfRequire(f.pause_count == 1 && count == (allocation ? 3U : 7U),
                        "QUIC did not independently pause for retained allocation charge or entry count");
-            ownerFinish(&f, f.line);
+            abortCarrier(&f);
             destroyQuic(&f);
         }
     }
 }
 
-#if QUIC_TEST_HAS_SERVER
+/* A real opposite-role engine supplies ACKs/FINs through the production node's
+ * carrier callback. The wire FIFO preserves ownership until the next peer step,
+ * while explicit callbacks below still exercise synchronous Finish reentry. */
 static struct
 {
+    ww_quic_config_t *config;
     ww_quic_engine_t *engine;
-    uint8_t           bytes[64];
+    buffer_queue_t    wire;
+    uint8_t           bytes[512];
     size_t            length;
-    bool              application_finished;
-    bool              reply_sent;
-    bool              finish_carrier;
-    bool              carrier_finished;
+    bool              peer_fin;
+    bool              fin_sent;
+    bool              closed;
+    bool              abort_on_final_wire;
     unsigned          final_wire;
-} final_peer;
+} peer;
 
-static void finalPeerWire(tunnel_t *t, line_t *l, sbuf_t *buffer)
+static void finishApplication(est_fixture_t *f)
 {
+    if (fixtureIsClient(f))
+        ownerFinish(f, f->line);
+    else
+        nextFinish(f, owned_line);
+}
+
+static bool applicationFinished(est_fixture_t *f)
+{
+    return fixtureIsClient(f) ? previous_finished : next_finished;
+}
+
+static void peerWire(tunnel_t *t, line_t *l, sbuf_t *buffer)
+{
+    requireCallbackSide(t, l);
     est_fixture_t *f = estContext(t);
-    twfRequire(ww_quic_engine_feed(final_peer.engine, sbufGetRawPtr(buffer), sbufGetLength(buffer)),
-               "final-reply peer rejected a server datagram");
-    lineReuseBuffer(l, buffer);
-    if (final_peer.application_finished)
+    bufferqueuePushBack(&peer.wire, buffer);
+    if (applicationFinished(f))
     {
-        ++final_peer.final_wire;
-        /* A still-open carrier may signal pressure while final bytes are
-         * handed off. The application already sent Finish and must see none. */
-        tunnelUpStreamPause(f->node, l);
-        tunnelUpStreamResume(f->node, l);
-        if (final_peer.finish_carrier)
+        ++peer.final_wire;
+        /* These callbacks target the still-open carrier. They must not reach
+         * the already-detached application even inside its Finish stack. */
+        if (fixtureIsClient(f))
         {
-            final_peer.carrier_finished = true;
-            tunnelUpStreamFin(f->node, l);
-            /* Finish detaches the borrowed session before this outer driver
-             * returns, while its owner keeps the normal line alive. */
-            requireSettled(f);
-            twfRequire(lineIsAlive(l), "nested carrier Finish destroyed its owner's line");
+            tunnelDownStreamEst(f->node, l);
+            tunnelDownStreamPause(f->node, l);
+            tunnelDownStreamResume(f->node, l);
         }
+        else
+        {
+            tunnelUpStreamPause(f->node, l);
+            tunnelUpStreamResume(f->node, l);
+        }
+        if (peer.abort_on_final_wire)
+        {
+            abortCarrier(f);
+        }
+    }
+}
+
+static void setupPeer(est_fixture_t *f, bool client)
+{
+    setupQuic(f, client, false);
+    memoryZero(&peer, sizeof(peer));
+    bufferqueueInitEmpty(&peer.wire);
+    ww_quic_settings_t settings   = settingsForRole(! client);
+    char               error[512] = {0};
+    peer.config                   = ww_quic_config_create(&settings, error, sizeof(error));
+    twfRequire(peer.config != NULL, error);
+    peer.engine = ww_quic_engine_create(peer.config);
+    twfRequire(peer.engine != NULL, "peer engine allocation failed");
+    if (client)
+        f->next->fnPayloadU = peerWire;
+    else
+        f->prev->fnPayloadD = peerWire;
+    twfRequire(ww_quic_engine_start(peer.engine), "peer engine startup failed");
+    tunnelUpStreamInit(f->node, f->line);
+}
+
+static void stepPeer(est_fixture_t *f)
+{
+    sbuf_t *buffer;
+    while ((buffer = bufferqueuePopFront(&peer.wire)) != NULL)
+    {
+        if (! ww_quic_engine_closed(peer.engine))
+        {
+            bool accepted = ww_quic_engine_feed(peer.engine, sbufGetRawPtr(buffer), sbufGetLength(buffer));
+            twfRequire(accepted || ww_quic_engine_closed(peer.engine), "peer rejected a live carrier packet");
+        }
+        bufferpoolReuseBuffer(f->env.pool, buffer);
+    }
+    if (! ww_quic_engine_closed(peer.engine))
+        discard ww_quic_engine_tick(peer.engine);
+    ww_quic_event_t event;
+    while (ww_quic_engine_peek(peer.engine, &event))
+    {
+        if (event.type == WW_QUIC_EVENT_DATAGRAM)
+        {
+            line_t *carrier = carrierLine(f);
+            sbuf_t *packet  = lineIsAlive(carrier) && quicGetContext(f->node, carrier) != NULL
+                                  ? estBytes(carrier, event.data, event.length)
+                                  : NULL;
+            ww_quic_engine_consume(peer.engine);
+            if (packet != NULL)
+            {
+                if (fixtureIsClient(f))
+                    tunnelDownStreamPayload(f->node, carrier, packet);
+                else
+                    tunnelUpStreamPayload(f->node, carrier, packet);
+            }
+            continue;
+        }
+        if (event.type == WW_QUIC_EVENT_PLAINTEXT)
+        {
+            twfRequire(event.length <= sizeof(peer.bytes) - peer.length, "peer received excess application bytes");
+            memoryCopy(peer.bytes + peer.length, event.data, event.length);
+            peer.length += event.length;
+        }
+        else if (event.type == WW_QUIC_EVENT_PEER_FIN)
+        {
+            twfRequire(! peer.peer_fin, "peer FIN was published twice");
+            peer.peer_fin = true;
+        }
+        else if (event.type == WW_QUIC_EVENT_CLOSED)
+        {
+            peer.closed = true;
+        }
+        ww_quic_engine_consume(peer.engine);
+    }
+    if (peer.peer_fin && ! peer.fin_sent && ! ww_quic_engine_closed(peer.engine))
+        peer.fin_sent = ww_quic_engine_finish(peer.engine);
+    if (ww_quic_engine_peer_finished(peer.engine) && ww_quic_engine_finish_acked(peer.engine) &&
+        ! ww_quic_engine_closing(peer.engine) && ! ww_quic_engine_closed(peer.engine))
+        ww_quic_engine_begin_close(peer.engine);
+    discard wloopProcessEvents(f->env.loop, 0);
+}
+
+static void handshakePeer(est_fixture_t *f)
+{
+    uint64_t deadline = ww_quic_now_us() + 1000000;
+    while (ww_quic_now_us() < deadline)
+    {
+        stepPeer(f);
+        line_t *carrier = carrierLine(f);
+        if (lineIsAlive(carrier))
+        {
+            quic_context_t *context = quicGetContext(f->node, carrier);
+            if (context != NULL && ww_quic_engine_ready(context->engine) && ww_quic_engine_ready(peer.engine))
+                return;
+        }
+        wwSleepMS(1);
+    }
+    twfRequire(false, "node and real peer never opened the application stream");
+}
+
+static void waitForRetirement(est_fixture_t *f)
+{
+    quic_tstate_t *state    = tunnelGetState(f->node);
+    uint64_t       deadline = ww_quic_now_us() + 2000000;
+    uint64_t       first_deadline =
+        state->workers[0] != NULL && state->workers[0]->final_flush ? state->workers[0]->final_deadline_us : 0;
+    while (state->workers[0] != NULL && ww_quic_now_us() < deadline)
+    {
+        stepPeer(f);
+        if (state->workers[0] != NULL && state->workers[0]->final_flush)
+        {
+            if (first_deadline == 0)
+                first_deadline = state->workers[0]->final_deadline_us;
+            twfRequire(state->workers[0]->final_deadline_us == first_deadline,
+                       "handshake or later peer FIN extended the first close deadline");
+        }
+        wwSleepMS(1);
+    }
+    /* The final data event may already be staged on the peer when the node's
+     * bounded closing interval ends. Consume it before checking exact bytes. */
+    stepPeer(f);
+    requireSettled(f);
+}
+
+static void destroyPeer(est_fixture_t *f)
+{
+    bufferqueueDestroy(&peer.wire);
+    ww_quic_engine_destroy(peer.engine);
+    ww_quic_config_destroy(peer.config);
+    peer.engine = NULL;
+    destroyQuic(f);
+}
+
+static void sendApplication(est_fixture_t *f, const char *bytes)
+{
+    line_t *app    = applicationLine(f);
+    sbuf_t *buffer = estBytes(app, bytes, strlen(bytes));
+    if (fixtureIsClient(f))
+        tunnelUpStreamPayload(f->node, app, buffer);
+    else
+        tunnelDownStreamPayload(f->node, app, buffer);
+}
+
+static void testReliableFinalReply(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        for (unsigned abort = 0; abort < 2; ++abort)
+        {
+            est_fixture_t f;
+            setupPeer(&f, client != 0);
+            handshakePeer(&f);
+            peer.abort_on_final_wire = abort != 0;
+            sendApplication(&f, "final");
+            finishApplication(&f);
+            twfRequire(! lineIsAlive(applicationLine(&f)), "application Finish did not retire its exact line");
+            twfRequireLineStateZeroed(applicationLine(&f), f.node, "application state survived Finish");
+            if (abort)
+            {
+                /* If data was emitted just before Finish, FIN still produces
+                 * a final wire callback in which the carrier closes reentrantly. */
+                waitForRetirement(&f);
+                twfRequire(f.up_finish_count == 0 && f.down_finish_count == 0,
+                           "reentrant carrier Finish reflected into an already finished endpoint");
+            }
+            else
+            {
+                twfRequire(lineIsAlive(carrierLine(&f)), "application Finish prematurely destroyed its carrier");
+                waitForRetirement(&f);
+                twfRequire(peer.length == 5 && memoryCompare(peer.bytes, "final", 5) == 0 && peer.peer_fin,
+                           "final accepted bytes or reliable FIN did not reach the peer");
+                twfRequire(ww_quic_engine_closing(peer.engine) || ww_quic_engine_closed(peer.engine),
+                           "normal final reply expired before both FIN directions completed");
+                twfRequire(client ? f.up_finish_count == 1 && f.down_finish_count == 0
+                                  : f.up_finish_count == 0 && f.down_finish_count == 1,
+                           "reliable close notified the finished application or missed carrier Finish");
+            }
+            twfRequire(peer.final_wire != 0 && f.pause_count == 0 && resume_count == 0 && f.est_count == 0,
+                       "final wire work reflected a signal into the retired application");
+            destroyPeer(&f);
+        }
+    }
+}
+
+static void testPeerFinish(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        est_fixture_t f;
+        setupPeer(&f, client != 0);
+        handshakePeer(&f);
+        twfRequire(ww_quic_engine_write(peer.engine, (const uint8_t *) "last", 4), "peer final write was refused");
+        twfRequire(ww_quic_engine_finish(peer.engine), "peer FIN was refused");
+        peer.fin_sent = true;
+        waitForRetirement(&f);
+        size_t   length = client ? f.down_len : f.up_len;
+        uint8_t *bytes  = client ? f.down : f.up;
+        twfRequire(length == 4 && memoryCompare(bytes, "last", 4) == 0,
+                   "peer FIN overtook its preceding application bytes");
+        twfRequire(f.up_finish_count == 1 && f.down_finish_count == 1,
+                   "peer FIN did not retire application and carrier exactly once");
+        twfRequire(peer.peer_fin, "peer-first close did not receive the node's reciprocal FIN");
+        destroyPeer(&f);
     }
 }
 
 static void replyThenFinish(tunnel_t *t, line_t *l, sbuf_t *buffer)
 {
+    requireCallbackSide(t, l);
     est_fixture_t *f = estContext(t);
-    twfRequire(! final_peer.reply_sent && sbufGetLength(buffer) == 1 &&
-                   ((const uint8_t *) sbufGetRawPtr(buffer))[0] == 'R',
-               "final-reply server received wrong request or opening marker");
+    twfRequire(sbufGetLength(buffer) == 1 && *(const uint8_t *) sbufGetRawPtr(buffer) == 'R',
+               "nested final-reply application received the wrong request");
     lineReuseBuffer(l, buffer);
-    final_peer.reply_sent = true;
-    tunnelDownStreamPayload(f->node, l, estBytes(l, "final", 5));
-    final_peer.application_finished = true;
-    tunnelDownStreamFin(f->node, l);
-}
-
-static void pumpFinalPeer(est_fixture_t *f)
-{
-    twfRequire(ww_quic_engine_tick(final_peer.engine), "final-reply client alarm failed");
-    ww_quic_event_t event;
-    while (ww_quic_engine_peek(final_peer.engine, &event))
-    {
-        if (event.type == WW_QUIC_EVENT_DATAGRAM)
-        {
-            sbuf_t *packet = lineIsAlive(f->line) && ! final_peer.carrier_finished
-                                 ? estBytes(f->line, event.data, event.length)
-                                 : NULL;
-            ww_quic_engine_consume(final_peer.engine);
-            if (packet != NULL)
-            {
-                tunnelUpStreamPayload(f->node, f->line, packet);
-            }
-        }
-        else
-        {
-            twfRequire(event.type != WW_QUIC_EVENT_CLOSED, "final-reply peer closed before receiving report");
-            if (event.type == WW_QUIC_EVENT_PLAINTEXT)
-            {
-                twfRequire(event.length <= sizeof(final_peer.bytes) - final_peer.length,
-                           "final-reply peer received excess application bytes");
-                memoryCopy(final_peer.bytes + final_peer.length, event.data, event.length);
-                final_peer.length += event.length;
-            }
-            ww_quic_engine_consume(final_peer.engine);
-        }
-    }
-    discard wloopProcessEvents(f->env.loop, 0);
-}
-
-static void runNestedFinalReply(bool finish_carrier)
-{
-    est_fixture_t f;
-    setupQuic(&f, false, false);
-    memoryZero(&final_peer, sizeof(final_peer));
-    final_peer.finish_carrier     = finish_carrier;
-    ww_quic_settings_t settings   = settingsForRole(true);
-    char               error[512] = {0};
-    ww_quic_config_t  *config     = ww_quic_config_create(&settings, error, sizeof(error));
-    twfRequire(config != NULL, error);
-    final_peer.engine  = ww_quic_engine_create(config);
-    f.prev->fnPayloadD = finalPeerWire;
-    f.next->fnPayloadU = replyThenFinish;
-    /* Explicit owner-thread event dispatch drives the actual QUIC alarm root. */
-    atomicStoreExplicit(&f.env.loop->status, WLOOP_STATUS_RUNNING, memory_order_relaxed);
-    tunnelUpStreamInit(f.node, f.line);
-    twfRequire(ww_quic_engine_start(final_peer.engine), "final-reply client startup failed");
-    uint64_t deadline = ww_quic_now_us() + 1000000;
-    while (! ww_quic_engine_ready(final_peer.engine) && ww_quic_now_us() < deadline)
-    {
-        pumpFinalPeer(&f);
-        wwSleepMS(1);
-    }
-    twfRequire(ww_quic_engine_ready(final_peer.engine), "final-reply pair never opened its sole stream");
-    /* Leave ordinary pacing headroom; this checks an uncongested synchronous
-     * final response, not a promise of delivery after arbitrary local Finish. */
-    wwSleepMS(20);
-    pumpFinalPeer(&f);
-    twfRequire(ww_quic_engine_write(final_peer.engine, (const uint8_t *) "R", 1), "final request was refused");
-    twfRequire(ww_quic_engine_flush(final_peer.engine), "final request flush failed");
-    deadline = ww_quic_now_us() + 1000000;
-    while (final_peer.length < 5 && ! final_peer.carrier_finished && ww_quic_now_us() < deadline)
-    {
-        pumpFinalPeer(&f);
-        wwSleepMS(1);
-    }
-    if (finish_carrier)
-    {
-        twfRequire(final_peer.carrier_finished && lineIsAlive(f.line),
-                   "nested carrier Finish did not retain owner authority over the normal line");
-        twfRequire(f.down_finish_count == 0 && f.up_finish_count == 0,
-                   "QUIC reflected Finish into an already finished application or carrier");
-        requireSettled(&f);
-        lineDestroy(f.line);
-    }
-    else
-    {
-        twfRequire(final_peer.length == 5 && memoryCompare(final_peer.bytes, "final", 5) == 0,
-                   "nested application reply followed by Finish was discarded before wire handoff");
-        twfRequire(f.down_finish_count == 1 && f.up_finish_count == 0,
-                   "final wire delivery reflected Finish into the finished application");
-    }
-    twfRequire(final_peer.reply_sent && final_peer.final_wire > 0 && ! lineIsAlive(f.line),
-               "final-reply close did not retire its borrowed association");
-    twfRequire(f.pause_count == 0 && resume_count == 0,
-               "final wire delivery reflected a flow signal into the finished application");
-    ww_quic_engine_destroy(final_peer.engine);
-    ww_quic_config_destroy(config);
-    final_peer.engine = NULL;
-    atomicStoreExplicit(&f.env.loop->status, WLOOP_STATUS_STOP, memory_order_relaxed);
-    destroyQuic(&f);
+    sendApplication(f, "final");
+    finishApplication(f);
 }
 
 static void testNestedFinalReply(void)
 {
-    runNestedFinalReply(false);
-    runNestedFinalReply(true);
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        est_fixture_t f;
+        setupPeer(&f, client != 0);
+        handshakePeer(&f);
+        if (client)
+            f.prev->fnPayloadD = replyThenFinish;
+        else
+            f.next->fnPayloadU = replyThenFinish;
+        twfRequire(ww_quic_engine_write(peer.engine, (const uint8_t *) "R", 1), "final request was refused");
+        twfRequire(ww_quic_engine_flush(peer.engine), "final request flush failed");
+        waitForRetirement(&f);
+        twfRequire(peer.length == 5 && memoryCompare(peer.bytes, "final", 5) == 0 && peer.peer_fin,
+                   "application Payload callback discarded its reentrant final reply and Finish");
+        twfRequire(client ? f.up_finish_count == 1 && f.down_finish_count == 0
+                          : f.up_finish_count == 0 && f.down_finish_count == 1,
+                   "nested final reply reflected Finish to its application");
+        destroyPeer(&f);
+    }
 }
-#endif
+
+static void testFinishBeforeReadiness(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        est_fixture_t f;
+        setupPeer(&f, client != 0);
+        twfRequire(! ww_quic_engine_ready(peer.engine), "pre-readiness fixture already completed handshake");
+        sendApplication(&f, "queued");
+        finishApplication(&f);
+        twfRequire(! lineIsAlive(applicationLine(&f)) && lineIsAlive(carrierLine(&f)),
+                   "pre-readiness Finish did not separate application retirement from carrier drain");
+        waitForRetirement(&f);
+        twfRequire(peer.length == 6 && memoryCompare(peer.bytes, "queued", 6) == 0 && peer.peer_fin,
+                   "pre-readiness Finish discarded previously accepted application bytes");
+        destroyPeer(&f);
+    }
+}
+
+static void testCloseDeadlineAndShutdown(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        for (unsigned shutdown = 0; shutdown < 2; ++shutdown)
+        {
+            est_fixture_t f;
+            setupQuic(&f, client != 0, false);
+            tunnelUpStreamInit(f.node, f.line);
+            sendApplication(&f, "unacknowledged");
+            finishApplication(&f);
+            quic_tstate_t *state = tunnelGetState(f.node);
+            twfRequire(state->workers[0] != NULL && lineIsAlive(carrierLine(&f)),
+                       "closing association was not retained independently of its application");
+            if (shutdown)
+            {
+                f.node->onQuiesceRequest(f.node, NULL);
+                f.node->onWorkerQuiesce(f.node, 0, NULL);
+                twfRequire(wloopNTimers(f.env.loop) == 0, "quiescence retained a close timer");
+                f.node->onWorkerStop(f.node, 0, NULL);
+            }
+            else
+            {
+                uint64_t started = ww_quic_now_us();
+                while (state->workers[0] != NULL && ww_quic_now_us() - started < 1000000)
+                {
+                    discard wloopProcessEvents(f.env.loop, 0);
+                    wwSleepMS(1);
+                }
+                twfRequire(ww_quic_now_us() - started >= 200000 && ww_quic_now_us() - started < 900000,
+                           "pre-readiness close exceeded its configured 300 ms deadline");
+            }
+            requireSettled(&f);
+            twfRequire(client ? f.up_finish_count == 1 && f.down_finish_count == 0
+                              : f.up_finish_count == 0 && f.down_finish_count == 1,
+                       "deadline/shutdown reflected Finish toward the retired application");
+            destroyQuic(&f);
+        }
+    }
+}
+
+static void testClosedAdmission(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        est_fixture_t f;
+        setupQuic(&f, client != 0, false);
+        f.node->onQuiesceRequest(f.node, NULL);
+        tunnelUpStreamInit(f.node, f.line);
+        twfRequire(owned_line == NULL && f.init_count == 0 && f.down_finish_count == 1,
+                   "closed QUIC admission created a companion or forwarded Init");
+        destroyQuic(&f);
+    }
+}
+
+static void finishOnResume(tunnel_t *t, line_t *l)
+{
+    requireCallbackSide(t, l);
+    est_fixture_t *f = estContext(t);
+    ++resume_count;
+    sendApplication(f, "resumed");
+    finishApplication(f);
+}
+
+static void testIdleResumeFinishReentry(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        est_fixture_t f;
+        setupPeer(&f, client != 0);
+        handshakePeer(&f);
+        /* Resume is the root callback. Its application receiver submits data
+         * and Finish synchronously, with no later producer event to pump them. */
+        if (client)
+        {
+            f.prev->fnResumeD = finishOnResume;
+            tunnelDownStreamResume(f.node, owned_line);
+        }
+        else
+        {
+            f.next->fnResumeU = finishOnResume;
+            tunnelUpStreamResume(f.node, f.line);
+        }
+        twfRequire(resume_count == 1 && ! lineIsAlive(applicationLine(&f)),
+                   "Resume reentry did not synchronously retire the application");
+        waitForRetirement(&f);
+        twfRequire(peer.length == 7 && memoryCompare(peer.bytes, "resumed", 7) == 0 && peer.peer_fin,
+                   "idle Resume stranded its reentrant payload or Finish");
+        destroyPeer(&f);
+    }
+}
 
 int main(void)
 {
     TEST_RUN_CASE(testDirectConstructorStrings);
     TEST_RUN_CASE(testInitAndSignals);
+    TEST_RUN_CASE(testSplitLineContexts);
 #if QUIC_TEST_HAS_CLIENT
     TEST_RUN_CASE(testReentrantFinish);
     TEST_RUN_CASE(testPressureReentry);
 #endif
     TEST_RUN_CASE(testMalformedCarrierAndBudgets);
+    TEST_RUN_CASE(testInitFinishReentryBothRoles);
     TEST_RUN_CASE(testQuiescenceBeforeOwnerDrain);
     TEST_RUN_CASE(testCarrierResourceEntries);
     TEST_RUN_CASE(testCooperativeResourcePressure);
-#if QUIC_TEST_HAS_SERVER
+    TEST_RUN_CASE(testReliableFinalReply);
+    TEST_RUN_CASE(testPeerFinish);
     TEST_RUN_CASE(testNestedFinalReply);
-#endif
+    TEST_RUN_CASE(testFinishBeforeReadiness);
+    TEST_RUN_CASE(testCloseDeadlineAndShutdown);
+    TEST_RUN_CASE(testClosedAdmission);
+    TEST_RUN_CASE(testIdleResumeFinishReentry);
     return 0;
 }

@@ -12,6 +12,7 @@ quic_context_t *quicGetContext(tunnel_t *t, line_t *l)
 static void quicFree(quic_context_t *context)
 {
     assert(! context->attached && ! context->driving);
+    assert(context->application_line == NULL && context->carrier_line == NULL);
     ww_quic_engine_destroy(context->engine);
     memoryFree(context);
 }
@@ -19,25 +20,18 @@ static void quicFree(quic_context_t *context)
 bool quicEnter(quic_context_t *context)
 {
     if (context->driving)
-    {
         return false;
-    }
     assert(context->attached);
     context->driving = true;
-    lineRef(context->line);
     return true;
 }
 
 void quicLeave(quic_context_t *context)
 {
     assert(context->driving);
-    line_t *line     = context->line;
     context->driving = false;
     if (! context->attached)
-    {
         quicFree(context);
-    }
-    lineUnref(line);
 }
 
 static void *quicCarrierAllocate(void *owner, size_t length)
@@ -46,9 +40,7 @@ static void *quicCarrierAllocate(void *owner, size_t length)
     quic_tstate_t       *state   = tunnelGetState(context->tunnel);
     buffer_budget_cost_t cost    = {.charge = length};
     if (quicInputEntries(context) >= state->max_buffers || ! bufferbudgetTryAcquire(&context->input_budget, cost))
-    {
         return NULL;
-    }
     ++context->carrier_allocations;
     return memoryAllocate(length);
 }
@@ -62,27 +54,45 @@ static void quicCarrierDeallocate(void *owner, void *pointer, size_t length)
     bufferbudgetRelease(&context->input_budget, (buffer_budget_cost_t) {.charge = length});
 }
 
-static void quicDetach(quic_context_t *context)
+/* Null the association before calling out. A sibling callback can finish the
+ * other line; the entered driver keeps only the independent context alive. */
+static void quicDetachSide(quic_context_t *context, bool application, bool notify)
 {
-    assert(context->attached);
+    line_t **slot = application ? &context->application_line : &context->carrier_line;
+    line_t  *line = *slot;
+    if (line == NULL)
+        return;
+    *slot                      = NULL;
+    tunnel_t            *t     = context->tunnel;
+    const quic_tstate_t *state = tunnelGetState(t);
+    bool                 owned = application != state->client;
+    lineRef(line);
+    memoryZeroAligned32(lineGetState(line, t), tunnelGetCorrectAlignedLineStateSize(sizeof(quic_lstate_t)));
+    if (notify && (! owned || context->next_init_sent))
+    {
+        if (owned)
+            tunnelNextUpStreamFinish(t, line);
+        else
+            tunnelPrevDownStreamFinish(t, line);
+    }
+    if (owned && lineIsAlive(line))
+        lineDestroy(line);
+    lineUnref(line);
+}
+
+void quicRetire(quic_context_t *context)
+{
+    assert(context->attached && context->driving);
     context->attached = false;
     quicCancelTimer(context);
     quic_tstate_t *state = tunnelGetState(context->tunnel);
-    const wid_t    wid   = lineGetWID(context->line);
     if (context->previous != NULL)
-    {
         context->previous->next = context->next;
-    }
     else
-    {
-        state->workers[wid] = context->next;
-    }
+        state->workers[context->wid] = context->next;
     if (context->next != NULL)
-    {
         context->next->previous = context->previous;
-    }
-    quic_lstate_t *line_state = lineGetState(context->line, context->tunnel);
-    memoryZeroAligned32(line_state, tunnelGetCorrectAlignedLineStateSize(sizeof(*line_state)));
+    context->previous = context->next = NULL;
     quicReleaseActive(context, true);
     quicReleaseActive(context, false);
     bufferqueueDestroy(&context->application);
@@ -91,36 +101,48 @@ static void quicDetach(quic_context_t *context)
     assert(context->carrier_allocations == 0);
     bufferbudgetAssertEmpty(&context->application_budget);
     bufferbudgetAssertEmpty(&context->input_budget);
-    if (! context->driving)
-    {
-        quicFree(context);
-    }
+    /* Next before prev. Nested Finish of the other side is allowed, but the
+     * detached context cannot admit input, timers or further protocol work. */
+    quicDetachSide(context, ! state->client, true);
+    quicDetachSide(context, state->client, true);
 }
 
 void quicFail(quic_context_t *context, const char *reason)
 {
     assert(context->attached && context->driving);
-    tunnel_t      *t                = context->tunnel;
-    line_t        *l                = context->line;
-    bool           next_initialized = context->next_init_sent;
-    bool           finish_up        = context->finish_up;
-    bool           finish_down      = context->finish_down;
-    quic_tstate_t *state            = tunnelGetState(t);
-    LOGW("%s: closing association: %s", state->client ? "QuicClient" : "QuicServer", reason);
-    quicDetach(context);
-    if (next_initialized && ! finish_down)
-    {
-        tunnelNextUpStreamFinish(t, l);
-    }
-    if (! finish_up && lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
+    quic_tstate_t *state = tunnelGetState(context->tunnel);
+    if (strcmp(reason, WW_QUIC_CLOSE_FINISHED) == 0)
+        LOGD("%s: association finished", state->client ? "QuicClient" : "QuicServer");
+    else
+        LOGW("%s: closing association: %s", state->client ? "QuicClient" : "QuicServer", reason);
+    quicRetire(context);
 }
 
 bool quicSurvived(const quic_context_t *context)
 {
-    return context->attached && lineIsAlive(context->line);
+    return context->attached;
+}
+
+static void quicCopyContext(line_t *next, line_t *previous, const quic_tstate_t *state)
+{
+    addresscontextCopy(lineGetSourceAddressContext(next), lineGetSourceAddressContext(previous));
+    addresscontextCopy(lineGetDestinationAddressContext(next), lineGetDestinationAddressContext(previous));
+    lineGetRoutingContext(next)->local_listener_port = lineGetRoutingContext(previous)->local_listener_port;
+    lineGetRoutingContext(next)->peer_source_port    = lineGetRoutingContext(previous)->peer_source_port;
+    lineCopyUsers(next, previous);
+    if (lineIsFallback(previous))
+    {
+        lineMarkFallback(next);
+        if (lineFallbackShouldLinger(previous))
+            lineMarkFallbackPeerWriteClosed(next);
+    }
+    if (linePrefersOrdinaryReadUpstream(previous))
+        linePreferOrdinaryReadUpstream(next);
+    if (linePrefersOrdinaryReadDownstream(previous))
+        linePreferOrdinaryReadDownstream(next);
+    const uint8_t protocol = state->client && ! state->stream_carrier ? IP_PROTO_UDP : IP_PROTO_TCP;
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(next), protocol);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(next), protocol);
 }
 
 quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
@@ -129,16 +151,20 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     quic_lstate_t *line_state = lineGetState(l, t);
     memoryZeroAligned32(line_state, tunnelGetCorrectAlignedLineStateSize(sizeof(*line_state)));
     quic_tstate_t *state = tunnelGetState(t);
-    if (atomicLoadRelaxed(&state->stopping))
-    {
+    if (atomicLoadRelaxed(&state->stopping) || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return NULL;
-    }
     quic_context_t *context = memoryCalloc(1, sizeof(*context));
     context->tunnel         = t;
-    context->line           = l;
+    context->wid            = lineGetWID(l);
     context->pool           = lineGetBufferPool(l);
     context->engine         = ww_quic_engine_create(state->config);
     context->attached       = true;
+    line_t *next            = lineCreate(t->chain->line_pools, context->wid);
+    quicCopyContext(next, l, state);
+    context->application_line                          = state->client ? l : next;
+    context->carrier_line                              = state->client ? next : l;
+    ((quic_lstate_t *) lineGetState(next, t))->context = context;
+    line_state->context                                = context;
     context->carrier =
         (ww_quic_carrier_t) {.context = context, .allocate = quicCarrierAllocate, .deallocate = quicCarrierDeallocate};
     buffer_budget_cost_t limits = {.bytes = state->max_bytes, .charge = (size_t) state->max_bytes * 2};
@@ -151,89 +177,115 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     assert(app_attached && input_attached);
     discard app_attached;
     discard input_attached;
-    wid_t   wid   = lineGetWID(l);
-    context->next = state->workers[wid];
+    context->next = state->workers[context->wid];
     if (context->next != NULL)
-    {
         context->next->previous = context;
-    }
-    state->workers[wid] = context;
-    line_state->context = context;
+    state->workers[context->wid] = context;
     if (state->verbose)
-    {
-        LOGD("%s: initializing borrowed line on worker %u with %s carrier",
+        LOGD("%s: initializing split association on worker %u with %s carrier",
              state->client ? "QuicClient" : "QuicServer",
-             (unsigned) wid,
+             (unsigned) context->wid,
              state->stream_carrier ? "stream" : "datagram");
-    }
     bool entered = quicEnter(context);
     assert(entered);
     discard entered;
-    /* Publish before Init: eager Est, Payload and Finish may arrive inline. */
+    /* The caller dispatches next Init immediately; nested callbacks may finish
+     * either line before that dispatch returns. */
     context->next_init_sent = true;
     return context;
+}
+
+line_t *quicNextLine(quic_context_t *context)
+{
+    const quic_tstate_t *state = tunnelGetState(context->tunnel);
+    return state->client ? context->carrier_line : context->application_line;
 }
 
 void quicCompleteLineInit(quic_context_t *context)
 {
     assert(context->driving);
     if (quicSurvived(context))
-    {
         quicPump(context);
-    }
     quicLeave(context);
 }
 
-quic_finish_scope_t quicBeginFinish(tunnel_t *t, line_t *l, quic_finish_side_t sender, quic_finish_mode_t mode)
+static void quicBeginDrain(quic_context_t *context)
 {
-    assert(sender == kQuicFinishFromPrev || sender == kQuicFinishFromNext);
-    assert(mode == kQuicFinishFlushApplication || mode == kQuicFinishDiscardCarrier);
+    if (context->final_deadline_us == 0)
+    {
+        const quic_tstate_t *state = tunnelGetState(context->tunnel);
+        context->final_deadline_us = ww_quic_now_us() + (uint64_t) state->close_drain_timeout_ms * 1000;
+    }
+    context->final_flush = true;
+}
+
+void quicPeerFinish(quic_context_t *context)
+{
+    assert(context->attached && context->driving);
+    quicBeginDrain(context);
+    quicDetachSide(context, true, true);
+}
+
+void quicFinishApplication(tunnel_t *t, line_t *l)
+{
+    quic_context_t *context = quicGetContext(t, l);
+    assert(context != NULL && context->application_line == l);
+    bool entered = quicEnter(context);
+    quicBeginDrain(context);
+    quicDetachSide(context, true, false);
+    if (quicSurvived(context))
+    {
+        const quic_tstate_t *state = tunnelGetState(t);
+        if (atomicLoadRelaxed(&state->stopping))
+            quicRetire(context);
+        else if (entered)
+            quicPump(context);
+    }
+    if (entered)
+        quicLeave(context);
+}
+
+void quicFinishCarrier(tunnel_t *t, line_t *l)
+{
+    quic_context_t *context = quicGetContext(t, l);
+    assert(context != NULL && context->carrier_line == l);
+    bool entered = quicEnter(context);
+    quicDetachSide(context, false, false);
+    if (quicSurvived(context))
+        quicRetire(context);
+    if (entered)
+        quicLeave(context);
+}
+
+static void quicRelay(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal, bool up)
+{
     quic_context_t *context = quicGetContext(t, l);
     assert(context != NULL);
-    quic_finish_scope_t scope         = {.context = context, .entered = quicEnter(context)};
-    bool                was_finishing = context->finish_up || context->finish_down;
-    if (sender == kQuicFinishFromPrev)
+    if (! context->attached)
+        return;
+    const quic_tstate_t *state  = tunnelGetState(t);
+    line_t              *target = up == state->client ? context->carrier_line : context->application_line;
+    if (target == NULL)
+        return;
+    bool entered = quicEnter(context);
+    lineRef(target);
+    signal(t, target);
+    lineUnref(target);
+    if (entered)
     {
-        context->finish_up = true;
-    }
-    else
-    {
-        context->finish_down = true;
-    }
-    quicCancelTimer(context);
-    if (was_finishing)
-    {
-        // The other still-open side finished during final wire delivery.
-        quicDetach(context);
-    }
-    else
-    {
-        if (mode == kQuicFinishFlushApplication && ww_quic_engine_ready(context->engine))
-        {
-            quicFinalWire(context);
-        }
         if (quicSurvived(context))
-        {
-            scope.forward = sender == kQuicFinishFromNext || context->next_init_sent;
-            quicDetach(context);
-        }
-    }
-    return scope;
-}
-
-void quicEndFinish(quic_finish_scope_t *scope)
-{
-    if (scope->entered)
-    {
-        quicLeave(scope->context);
+            quicPump(context);
+        quicLeave(context);
     }
 }
 
-bool quicCanRelay(tunnel_t *t, line_t *l)
+void quicRelayUp(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal)
 {
-    quic_context_t *context = quicGetContext(t, l);
-    assert(context != NULL);
-    return ! context->finish_up && ! context->finish_down;
+    quicRelay(t, l, signal, true);
+}
+void quicRelayDown(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal)
+{
+    quicRelay(t, l, signal, false);
 }
 
 void quicCloseAdmission(tunnel_t *t)
@@ -241,7 +293,6 @@ void quicCloseAdmission(tunnel_t *t)
     quic_tstate_t *state = tunnelGetState(t);
     atomicStoreRelaxed(&state->stopping, true);
 }
-
 void quicQuiesceWorker(tunnel_t *t, wid_t wid)
 {
     assert(currentThreadOwnsWorker(wid));
@@ -252,7 +303,20 @@ void quicQuiesceWorker(tunnel_t *t, wid_t wid)
         quicCancelTimer(session);
     }
 }
-
+void quicStopWorker(tunnel_t *t, wid_t wid)
+{
+    assert(currentThreadOwnsWorker(wid));
+    quic_tstate_t *state = tunnelGetState(t);
+    while (state->workers[wid] != NULL)
+    {
+        quic_context_t *context = state->workers[wid];
+        bool            entered = quicEnter(context);
+        assert(entered);
+        discard entered;
+        quicRetire(context);
+        quicLeave(context);
+    }
+}
 void quicDestroyState(tunnel_t *t)
 {
     quic_tstate_t *state = tunnelGetState(t);
@@ -260,7 +324,7 @@ void quicDestroyState(tunnel_t *t)
     {
         if (state->workers[wid] != NULL)
         {
-            LOGF("QUIC: destroying tunnel with borrowed sessions still attached");
+            LOGF("QUIC: destroying tunnel with sessions still attached");
             abortProgramNow(1);
         }
     }

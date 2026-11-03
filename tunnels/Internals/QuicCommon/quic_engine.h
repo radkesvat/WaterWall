@@ -41,6 +41,7 @@ extern "C"
         const char *key_file;
         uint32_t    handshake_timeout_ms;
         uint32_t    idle_timeout_ms;
+        uint32_t    close_drain_timeout_ms;
         uint32_t    max_packet_size;
         uint32_t    max_buffered_bytes;
         uint32_t    max_buffered_buffers;
@@ -57,6 +58,7 @@ extern "C"
         WW_QUIC_EVENT_DATAGRAM,
         WW_QUIC_EVENT_PLAINTEXT,
         WW_QUIC_EVENT_READY,
+        WW_QUIC_EVENT_PEER_FIN,
         WW_QUIC_EVENT_CLOSED
     } ww_quic_event_type_t;
 
@@ -105,6 +107,20 @@ extern "C"
     bool        ww_quic_engine_ready(const ww_quic_engine_t *engine);
     bool        ww_quic_engine_closed(const ww_quic_engine_t *engine);
     const char *ww_quic_engine_error(const ww_quic_engine_t *engine);
+    /* The engine's outcome once both stream directions ended normally. */
+#define WW_QUIC_CLOSE_FINISHED "application finished"
+    /* Ends the application stream after the bytes already written. False while the
+     * stream cannot take the FIN yet. Idempotent once accepted. Peer FIN and local
+     * FIN acknowledgment do not close the opposite direction or the connection. */
+    bool ww_quic_engine_finish(ww_quic_engine_t *engine);
+    bool ww_quic_engine_peer_finished(const ww_quic_engine_t *engine);
+    bool ww_quic_engine_finish_acked(const ww_quic_engine_t *engine);
+    /* Closing/draining accepts only carrier input and ticks. Its fixed deadline is
+     * min(three QUIC PTOs, close_drain_timeout_ms), never renewed by peer traffic. */
+    bool ww_quic_engine_closing(const ww_quic_engine_t *engine);
+    /* Requires peer FIN and acknowledgment of our FIN. Sends CONNECTION_CLOSE and
+     * retains its response to duplicates until CLOSED reports settled retirement. */
+    void ww_quic_engine_begin_close(ww_quic_engine_t *engine);
     /* Silent immediate retirement. No final packet/event is generated; all alarms,
      * retained bytes and library state are discarded synchronously. */
     void ww_quic_engine_close(ww_quic_engine_t *engine);

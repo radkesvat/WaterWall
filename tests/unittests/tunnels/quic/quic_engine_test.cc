@@ -39,6 +39,7 @@ ww_quic_settings_t Settings(bool client)
     s.key_file             = QUIC_TEST_KEY;
     s.handshake_timeout_ms = 2000;
     s.idle_timeout_ms      = 5000;
+    s.close_drain_timeout_ms = 30000;
     s.max_packet_size      = 1350;
     s.max_buffered_bytes   = 128 * 1024;
     s.max_buffered_buffers = 1024;
@@ -72,10 +73,14 @@ struct Pair
     std::deque<Packet> packets;
     std::string        client_bytes;
     std::string        server_bytes;
+    std::vector<uint8_t> last_client_packet, last_server_packet;
     bool               client_ready = false, server_ready = false;
     bool               impairment     = false;
     bool               dropped        = false;
     bool               dropped_marker = false;
+    bool                 discard_client_packets = false, discard_server_packets = false;
+    unsigned             client_fin_events = 0, server_fin_events = 0;
+    size_t               client_fin_bytes = 0, server_fin_bytes = 0;
     size_t             packet_number  = 0;
 
     Pair(ww_quic_settings_t cs = Settings(true), ww_quic_settings_t ss = Settings(false))
@@ -95,8 +100,13 @@ struct Pair
             if (event.type == WW_QUIC_EVENT_DATAGRAM)
             {
                 require(event.length >= 1 && event.length <= 1350, "packet writer violated configured datagram size");
+                (from_client ? last_client_packet : last_server_packet).assign(event.data, event.data + event.length);
                 ++packet_number;
-                if (impairment && ! dropped)
+                if (from_client ? discard_client_packets : discard_server_packets)
+                {
+                    // Explicit loss windows in the FIN/ACK and close fixtures.
+                }
+                else if (impairment && ! dropped)
                     dropped = true; // one lost handshake packet must be retransmitted by real alarms
                 else if (impairment && from_client && ww_quic_engine_ready(engine) && ! server_ready &&
                          ! dropped_marker)
@@ -117,6 +127,12 @@ struct Pair
                     .append(reinterpret_cast<const char *>(event.data), event.length);
             else if (event.type == WW_QUIC_EVENT_READY)
                 (from_client ? client_ready : server_ready) = true;
+            else if (event.type == WW_QUIC_EVENT_PEER_FIN)
+            {
+                ++(from_client ? client_fin_events : server_fin_events);
+                (from_client ? client_fin_bytes : server_fin_bytes) =
+                    (from_client ? client_bytes : server_bytes).size();
+            }
             ww_quic_engine_consume(engine);
         }
     }
@@ -325,6 +341,188 @@ void TestFinalFlush()
             "already-staged final bytes were lost after immediate sender retirement");
 }
 
+void FinishBoth(Pair &pair)
+{
+    require(ww_quic_engine_finish(pair.client.get()) && ww_quic_engine_finish(pair.server.get()),
+            "writable streams refused FIN");
+    require(pair.Until([&] {
+        return ww_quic_engine_peer_finished(pair.client.get()) && ww_quic_engine_peer_finished(pair.server.get()) &&
+               ww_quic_engine_finish_acked(pair.client.get()) && ww_quic_engine_finish_acked(pair.server.get());
+    }),
+            "bidirectional FIN exchange did not settle");
+}
+
+void TestGracefulFinish(bool client_first)
+{
+    Pair pair;
+    pair.Handshake();
+    require(pair.Until([&] {
+        ww_quic_storage_t storage{};
+        ww_quic_engine_storage(pair.client.get(), &storage);
+        return pair.client->session->GetHandshakeState() == quic::HANDSHAKE_CONFIRMED && storage.send_bytes == 0;
+    }),
+            "handshake confirmation did not settle before the FIN loss window");
+    const std::string payload       = Payload(WW_QUIC_WRITE_CHUNK);
+    auto             *sender        = client_first ? pair.client.get() : pair.server.get();
+    auto             *receiver      = client_first ? pair.server.get() : pair.client.get();
+    bool             &drop_sender   = client_first ? pair.discard_client_packets : pair.discard_server_packets;
+    bool             &drop_receiver = client_first ? pair.discard_server_packets : pair.discard_client_packets;
+    require(ww_quic_engine_write(sender, reinterpret_cast<const uint8_t *>(payload.data()), payload.size()),
+            "initial final-data fixture write was refused");
+    require(pair.Until([&] {
+        ww_quic_storage_t storage{};
+        ww_quic_engine_storage(sender, &storage);
+        return storage.send_bytes == 0;
+    }),
+            "data before the deliberately lost FIN was not acknowledged");
+    require(ww_quic_engine_write(receiver, reinterpret_cast<const uint8_t *>(payload.data()), payload.size()),
+            "accepted reverse-direction final data was refused");
+    require(ww_quic_engine_finish(sender) && ww_quic_engine_finish(sender), "FIN was not accepted idempotently");
+    require(! ww_quic_engine_write(sender, reinterpret_cast<const uint8_t *>(payload.data()), 1),
+            "stream accepted new data after FIN");
+    // Lose the first FIN flight. Also suppress the opposite data and ACKs
+    // until the receiver observes FIN, leaving accepted reverse output pending.
+    drop_sender   = true;
+    drop_receiver = true;
+    pair.Collect(sender, client_first);
+    pair.Collect(receiver, ! client_first);
+    pair.packets.clear();
+    drop_sender = false;
+    require(pair.Until([&] { return ww_quic_engine_peer_finished(receiver); }),
+            "lost FIN flight was not retransmitted");
+    require(! ww_quic_engine_closed(sender) && ! ww_quic_engine_closed(receiver) &&
+                ! ww_quic_engine_finish_acked(sender),
+            "peer FIN or an absent ACK retired the active connection");
+    ww_quic_storage_t pending{};
+    ww_quic_engine_storage(receiver, &pending);
+    require(pending.send_bytes == payload.size(), "peer FIN discarded accepted reverse-direction bytes");
+    require(ww_quic_engine_finish(receiver), "peer FIN prevented finishing the opposite direction");
+    pair.Collect(receiver, ! client_first); // lose the first reciprocal FIN and ACK too
+    drop_receiver = false;
+    require(pair.Until([&] {
+        return pair.client_bytes == payload && pair.server_bytes == payload && ww_quic_engine_finish_acked(sender) &&
+               ww_quic_engine_finish_acked(receiver);
+    }),
+            "lost FIN/ACK recovery discarded final data in one direction");
+    require(pair.client_fin_events == 1 && pair.server_fin_events == 1 && pair.client_fin_bytes == payload.size() &&
+                pair.server_fin_bytes == payload.size(),
+            "peer FIN was repeated or preceded its ordered plaintext");
+    ww_quic_engine_storage(sender, &pending);
+    require(pending.send_bytes == 0, "acknowledged FIN did not release the send ledger");
+    ww_quic_engine_storage(receiver, &pending);
+    require(pending.send_bytes == 0, "opposite acknowledged FIN did not release the send ledger");
+    ww_quic_engine_begin_close(sender);
+    require(ww_quic_engine_closing(sender) && ! ww_quic_engine_closed(sender),
+            "connection skipped its closing interval");
+    require(pair.Until([&] { return ww_quic_engine_closed(sender) && ww_quic_engine_closed(receiver); }),
+            "graceful close did not settle within its fixed interval");
+    require(std::strcmp(ww_quic_engine_error(sender), WW_QUIC_CLOSE_FINISHED) == 0 &&
+                std::strcmp(ww_quic_engine_error(receiver), WW_QUIC_CLOSE_FINISHED) == 0,
+            "acknowledged graceful completion was reported as failure");
+}
+
+void TestCloseReplay(bool closing_client)
+{
+    Pair pair;
+    pair.Handshake();
+    FinishBoth(pair);
+    auto      *sender    = closing_client ? pair.client.get() : pair.server.get();
+    auto      *receiver  = closing_client ? pair.server.get() : pair.client.get();
+    const auto duplicate = closing_client ? pair.last_server_packet : pair.last_client_packet;
+    require(! duplicate.empty(), "no protected peer packet available for duplicate close probe");
+    ww_quic_engine_begin_close(sender);
+    const uint64_t deadline = ww_quic_engine_deadline(sender);
+    require(! sender->termination_packets.empty(), "QUICHE did not retain its closing packet");
+    (closing_client ? pair.discard_client_packets : pair.discard_server_packets) = true;
+    pair.Collect(sender, closing_client); // lose the original CONNECTION_CLOSE
+    pair.packets.clear();
+    (closing_client ? pair.discard_client_packets : pair.discard_server_packets) = false;
+    require(! ww_quic_engine_closing(receiver), "lost close unexpectedly reached the peer");
+    while (ww_quic_now_us() < sender->close_response_after_us)
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    const auto          &cid = sender->closing_destination_ids.front();
+    std::vector<uint8_t> tiny(1 + cid.length(), 0);
+    tiny[0] = 0x40;
+    if (cid.length() != 0)
+        std::memcpy(tiny.data() + 1, cid.data(), cid.length());
+    require(3 * tiny.size() < sender->close_response_bytes, "tiny closing probe was not smaller than its response");
+    ww_quic_engine_feed(sender, tiny.data(), tiny.size());
+    ww_quic_storage_t tiny_storage{};
+    ww_quic_engine_storage(sender, &tiny_storage);
+    require(tiny_storage.wire_entries == 0, "tiny unauthenticated packet amplified a closing response");
+    if (! closing_client)
+    {
+        auto wrong_cid = duplicate;
+        require(! (wrong_cid[0] & 0x80), "closing duplicate fixture expected a short-header application packet");
+        wrong_cid[1] ^= 0x80;
+        ww_quic_engine_feed(sender, wrong_cid.data(), wrong_cid.size());
+        Pair fresh;
+        fresh.Collect(fresh.client.get(), true);
+        for (const auto &packet : fresh.packets)
+            ww_quic_engine_feed(sender, packet.bytes.data(), packet.bytes.size());
+        ww_quic_storage_t unrelated{};
+        ww_quic_engine_storage(sender, &unrelated);
+        require(unrelated.wire_entries == 0 && ww_quic_engine_deadline(sender) == deadline,
+                "unrelated CID or fresh Initial was treated as the retained closed session");
+    }
+    require(ww_quic_engine_feed(sender, duplicate.data(), duplicate.size()), "duplicate prematurely ended closing");
+    ww_quic_storage_t before{}, after{};
+    ww_quic_engine_storage(sender, &before);
+    require(before.wire_entries != 0, "duplicate input did not recover the lost closing packet");
+    for (unsigned i = 0; i < 64; ++i)
+        ww_quic_engine_feed(sender, duplicate.data(), duplicate.size());
+    ww_quic_engine_storage(sender, &after);
+    require(after.wire_entries == before.wire_entries && ww_quic_engine_deadline(sender) == deadline,
+            "duplicate flood bypassed close-response rate limit or extended retention");
+    require(pair.Until([&] { return ww_quic_engine_closing(receiver); }), "replayed close did not enter peer draining");
+    const uint64_t peer_deadline = ww_quic_engine_deadline(receiver);
+    ww_quic_engine_feed(receiver, duplicate.data(), duplicate.size());
+    require(ww_quic_engine_deadline(receiver) == peer_deadline, "draining input renewed retention");
+    require(pair.Until([&] { return ww_quic_engine_closed(sender) && ww_quic_engine_closed(receiver); }),
+            "closing/draining did not expire");
+}
+
+void TestCloseDeadlineCap()
+{
+    auto cs = Settings(true), ss = Settings(false);
+    cs.close_drain_timeout_ms = ss.close_drain_timeout_ms = 2;
+    Pair pair(cs, ss);
+    pair.Handshake();
+    FinishBoth(pair);
+    const uint64_t start = ww_quic_now_us();
+    ww_quic_engine_begin_close(pair.client.get());
+    const uint64_t deadline = ww_quic_engine_deadline(pair.client.get());
+    require(deadline >= start && deadline <= ww_quic_now_us() + 2000,
+            "protocol closing exceeded configured retention cap");
+    ww_quic_engine_begin_close(pair.client.get());
+    require(ww_quic_engine_deadline(pair.client.get()) == deadline, "repeated close restarted its deadline");
+    require(pair.Until([&] { return ww_quic_engine_closed(pair.client.get()); }, 100000),
+            "capped closing deadline did not retire the engine");
+}
+
+void TestPrematurePeerClose()
+{
+    auto cs = Settings(true), ss = Settings(false);
+    cs.close_drain_timeout_ms = ss.close_drain_timeout_ms = 20;
+    Pair pair(cs, ss);
+    pair.Handshake();
+    const std::string payload = Payload(8192);
+    require(ww_quic_engine_write(pair.client.get(), reinterpret_cast<const uint8_t *>(payload.data()), payload.size()),
+            "early-close fixture did not admit data");
+    pair.discard_client_packets = true;
+    pair.Collect(pair.client.get(), true);
+    pair.packets.clear();
+    pair.server->session->connection()->CloseConnection(
+        quic::QUIC_NO_ERROR, "peer stopped early", quic::ConnectionCloseBehavior::SEND_CONNECTION_CLOSE_PACKET);
+    require(pair.Until([&] { return ww_quic_engine_closing(pair.client.get()); }),
+            "peer close did not enter bounded draining");
+    require(! ww_quic_engine_finish_acked(pair.client.get()) &&
+                std::strcmp(ww_quic_engine_error(pair.client.get()), WW_QUIC_CLOSE_FINISHED) != 0,
+            "peer close falsely confirmed unacknowledged output");
+    require(pair.Until([&] { return ww_quic_engine_closed(pair.client.get()); }, 200000),
+            "premature peer close did not settle");
+}
+
 void SuppressClientOpening(Pair &pair)
 {
     // Suppress only the bridge's private opening protocol. TLS, QUIC packet
@@ -493,6 +691,11 @@ void TestConfig()
     settings                      = Settings(true);
     settings.receive_window_bytes = settings.max_buffered_bytes + 1;
     require(ww_quic_config_create(&settings, error, sizeof(error)) == nullptr, "unbounded receive geometry accepted");
+    settings                        = Settings(true);
+    settings.close_drain_timeout_ms = 0;
+    require(ww_quic_config_create(&settings, error, sizeof(error)) == nullptr, "zero close timeout accepted");
+    settings.close_drain_timeout_ms = WW_QUIC_MAX_TIMEOUT_MS + 1;
+    require(ww_quic_config_create(&settings, error, sizeof(error)) == nullptr, "unbounded close timeout accepted");
 }
 } // namespace
 
@@ -502,6 +705,12 @@ int main()
     TestDeadline();
     TestIdle();
     TestFinalFlush();
+    TestGracefulFinish(true);
+    TestGracefulFinish(false);
+    TestCloseReplay(true);
+    TestCloseReplay(false);
+    TestCloseDeadlineCap();
+    TestPrematurePeerClose();
     TestRoundtrip(false, "h3");
     TestRoundtrip(true, "waterwall-test");
     TestAdmission();
