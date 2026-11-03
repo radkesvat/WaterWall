@@ -40,6 +40,7 @@ tunnel_t *quicclientTunnelCreate(node_t *node)
     t->fnResumeD        = quicclientTunnelDownStreamResume;
     t->onQuiesceRequest = quicclientTunnelOnQuiesceRequest;
     t->onWorkerQuiesce  = quicclientTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = quicclientTunnelOnWorkerStop;
     t->onDestroy        = quicclientTunnelDestroy;
     return t;
 }

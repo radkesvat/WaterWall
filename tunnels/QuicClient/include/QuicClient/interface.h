@@ -8,6 +8,7 @@ WW_EXPORT void         quicclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_c
 WW_EXPORT api_result_t quicclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void quicclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void quicclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void quicclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void quicclientTunnelUpStreamInit(tunnel_t *t, line_t *l);

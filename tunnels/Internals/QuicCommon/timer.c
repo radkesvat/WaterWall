@@ -20,7 +20,7 @@ static void quicTimer(wtimer_t *timer)
     {
         return;
     }
-    assert(getLoopWorkerWID(weventGetLoop(timer)) == lineGetWID(context->line));
+    assert(getLoopWorkerWID(weventGetLoop(timer)) == context->wid);
     if (! quicEnter(context))
     {
         /* A nested loop cannot recursively enter the protocol driver. */
@@ -60,7 +60,7 @@ void quicArm(quic_context_t *context, bool more_work)
     {
         ++wait;
     }
-    wloop_t *loop = getWorkerLoop(lineGetWID(context->line));
+    wloop_t *loop = getWorkerLoop(context->wid);
     wloopUpdateTime(loop);
     if (context->timer != NULL)
     {

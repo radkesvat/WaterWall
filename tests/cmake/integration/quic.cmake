@@ -1,7 +1,9 @@
 # Raw QUIC carriers are explicit; all live endpoints are private loopback peers.
 if(TARGET QuicClient AND TARGET QuicServer AND
    CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
-  foreach(quic_mode IN ITEMS direct udp stream udp-impaired shutdown failures service-close-udp service-close-stream)
+  foreach(quic_mode IN ITEMS direct udp stream udp-impaired shutdown failures
+      service-close-udp service-close-stream upload-close-udp upload-close-stream
+      server-first-close-udp server-first-close-stream)
     string(REPLACE "-" "_" quic_case "waterwall.quic_${quic_mode}")
     add_waterwall_isolated_test(${quic_case}
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_integration.py"

@@ -39,6 +39,7 @@ tunnel_t *quicserverTunnelCreate(node_t *node)
     t->fnResumeD        = quicserverTunnelDownStreamResume;
     t->onQuiesceRequest = quicserverTunnelOnQuiesceRequest;
     t->onWorkerQuiesce  = quicserverTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = quicserverTunnelOnWorkerStop;
     t->onDestroy        = quicserverTunnelDestroy;
     return t;
 }

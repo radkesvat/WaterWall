@@ -9,6 +9,8 @@ reports verified upload/download Mbit/s from the fixed measured byte interval.
 CTest: waterwall.quic_direct, waterwall.quic_udp, waterwall.quic_stream,
 waterwall.quic_udp_impaired, waterwall.quic_shutdown, waterwall.quic_failures,
 waterwall.quic_service_close_udp, waterwall.quic_service_close_stream,
+waterwall.quic_upload_close_udp, waterwall.quic_upload_close_stream,
+waterwall.quic_server_first_close_udp, waterwall.quic_server_first_close_stream,
 waterwall.quic_speedtest_vless_udp. No internet, timing performance gate or HTTP/3.
 """
 
@@ -66,6 +68,10 @@ def orderly_stop(process):
 class DatagramRelay:
     """One explicit peer, bounded held packet, fixed packet ordinal impairment."""
 
+    def __init__(self, *, reply_gate=None):
+        self.reply_gate = reply_gate
+        self.first_reply = threading.Event()
+
     def __enter__(self):
         self.front = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.back = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -82,6 +88,7 @@ class DatagramRelay:
     def run(self):
         peer = None
         held = [None, None]
+        gated = []
         try:
             while not self.stop.is_set():
                 for source in select.select([self.front, self.back], [], [], 0.01)[0]:
@@ -93,6 +100,15 @@ class DatagramRelay:
                         assert peer == address, "impairment fixture received an unexpected second peer"
                     assert peer is not None
                     target = self.back.send if direction == 0 else lambda data: self.front.sendto(data, peer)
+                    if self.reply_gate is not None:
+                        if direction == 1:
+                            self.first_reply.set()
+                            if not self.reply_gate.is_set():
+                                assert len(gated) < 32, "handshake gate exceeded its packet bound"
+                                gated.append(payload)
+                                continue
+                        target(payload)
+                        continue
                     self.counts[direction] += 1
                     ordinal = self.counts[direction]
                     if direction == 0 and ordinal == 1:
@@ -114,6 +130,10 @@ class DatagramRelay:
                     if pending is not None and time.monotonic() - pending[2] >= 0.025:
                         held[direction] = None
                         pending[1](pending[0])
+                if self.reply_gate is not None and self.reply_gate.is_set():
+                    for payload in gated:
+                        self.front.sendto(payload, peer)
+                    gated.clear()
         except BaseException as error:
             self.errors.append(error)
 
@@ -130,11 +150,18 @@ class DatagramRelay:
             self.back.close()
         if exc_type is None:
             assert not self.errors, self.errors
-            assert all(self.applied.values()), f"impairment was not exercised: {self.applied}"
+            if self.reply_gate is None:
+                assert all(self.applied.values()), f"impairment was not exercised: {self.applied}"
+            else:
+                assert self.first_reply.is_set(), "server handshake was never gated"
 
 
 class StreamRelay:
     """Force split prefixes/bodies and join complete frames on a TCP carrier."""
+
+    def __init__(self, *, reply_gate=None):
+        self.reply_gate = reply_gate
+        self.first_reply = threading.Event()
 
     def __enter__(self):
         self.listener = socket.socket()
@@ -159,6 +186,14 @@ class StreamRelay:
         try:
             while not self.stop.is_set():
                 packet = frame()
+                if self.reply_gate is not None:
+                    if direction == 1:
+                        self.first_reply.set()
+                        while not self.reply_gate.wait(0.01):
+                            if self.stop.is_set():
+                                return
+                    target.sendall(packet)
+                    continue
                 if self.fragmented[direction] < 2:
                     # The first four writes split every prefix boundary. A
                     # delayed first body byte additionally forces partial body.
@@ -207,8 +242,11 @@ class StreamRelay:
         assert not self.thread.is_alive(), "stream relay did not stop"
         if exc_type is None:
             assert not self.errors, self.errors
-            assert all(self.fragmented), "stream prefix/body fragmentation was not exercised"
-            assert sum(self.coalesced) > 0, "stream coalescing was not exercised"
+            if self.reply_gate is None:
+                assert all(self.fragmented), "stream prefix/body fragmentation was not exercised"
+                assert sum(self.coalesced) > 0, "stream coalescing was not exercised"
+            else:
+                assert self.first_reply.is_set(), "server handshake was never gated"
 
 
 def roundtrip_nodes(mode):
@@ -309,6 +347,70 @@ def service_close(binary, mode):
                         task.result(timeout=20)
                 orderly_stop(process)
     print(f"QUIC service close {mode}: every byte and then EOF passed")
+
+
+def upload_close(binary, mode):
+    upload = bytes(range(256)) * 65536
+    with RunDirectory("waterwall-quic-upload-close-" + mode + "-") as root:
+        nodes = roundtrip_nodes(mode)
+        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = CARRIER_PORT
+        write_inputs(root, nodes, workers=1)
+        with socket.socket() as backend:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with Process([binary], cwd=root, log_path=root / "stdout.log") as process:
+                for _ in range(3):
+                    client = connect_when_ready(process, (HOST, APP_PORT), deadline=time.monotonic() + 10,
+                        failure=lambda: AssertionError("QUIC runtime exited before upload connection"))
+
+                    def service():
+                        with backend.accept()[0] as connection:
+                            connection.settimeout(15)
+                            assert exact(connection, len(upload), max_chunk=1 << 20) == upload, \
+                                "QUIC lost or changed bytes after application close"
+                            assert connection.recv(1) == b"", "missing backend EOF after upload"
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        task = executor.submit(service)
+                        with client:
+                            client.settimeout(15)
+                            client.sendall(upload)
+                        # The application's socket is already gone. Its independent
+                        # QUIC carrier must finish delivery and acknowledgement.
+                        task.result(timeout=20)
+                orderly_stop(process)
+    print(f"QUIC upload close {mode}: every byte and then EOF after source close passed")
+
+
+def server_first_close(binary, mode):
+    greeting = b"\0server-first-before-handshake\xff" * 1024
+    gate = threading.Event()
+    relay_context = StreamRelay(reply_gate=gate) if mode == "stream" else DatagramRelay(reply_gate=gate)
+    with RunDirectory("waterwall-quic-server-first-close-" + mode + "-") as root:
+        nodes = roundtrip_nodes(mode)
+        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = RELAY_PORT
+        write_inputs(root, nodes, workers=1)
+        with socket.socket() as backend:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with relay_context as relay, Process([binary], cwd=root, log_path=root / "stdout.log") as process:
+                client = connect_when_ready(process, (HOST, APP_PORT), deadline=time.monotonic() + 10,
+                    failure=lambda: AssertionError("QUIC runtime exited before server-first connection"))
+                with client:
+                    client.settimeout(15)
+                    with backend.accept()[0] as connection:
+                        connection.settimeout(15)
+                        assert relay.first_reply.wait(10), "server did not start its handshake"
+                        connection.sendall(greeting)
+                    # No server handshake flight has reached the client yet. The
+                    # backend has already sent and closed without any client bytes.
+                    gate.set()
+                    if isinstance(relay, StreamRelay):
+                        relay.transfer_complete.set()
+                    assert exact(client, len(greeting)) == greeting, "pre-ready service response was lost"
+                    assert client.recv(1) == b"", "missing EOF after pre-ready service close"
+                if isinstance(relay, DatagramRelay):
+                    relay.stop_forwarding()
+                orderly_stop(process)
+    print(f"QUIC server-first close {mode}: service closed before handshake, complete response and EOF passed")
 
 
 def direct(binary):
@@ -429,6 +531,10 @@ if __name__ == "__main__":
         failures(binary)
     elif mode in ("service-close-udp", "service-close-stream"):
         service_close(binary, mode.rsplit("-", 1)[1])
+    elif mode in ("upload-close-udp", "upload-close-stream"):
+        upload_close(binary, mode.rsplit("-", 1)[1])
+    elif mode in ("server-first-close-udp", "server-first-close-stream"):
+        server_first_close(binary, mode.rsplit("-", 1)[1])
     else:
         assert mode in ("udp", "stream", "udp-impaired"), mode
         roundtrip(binary, mode)
