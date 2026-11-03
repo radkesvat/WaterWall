@@ -697,12 +697,16 @@ static inline void hybridmutexLock(whybrid_mutex_t *m)
             {
                 if (--n == 0)
                 {
-                    atomicAddExplicit(&m->nwait, 1, memory_order_relaxed);
-                    while (atomicLoadExplicit(&m->flag, memory_order_relaxed))
+                    // Sequentially consistent, pairing with hybridmutexUnlock: either the unlocker sees this waiter
+                    // and posts, or this waiter sees the released flag. On weakly ordered CPUs relaxed accesses let
+                    // both miss each other, and the waiter sleeps until some later unlock.
+                    atomic_fetch_add(&m->nwait, 1);
+                    while (atomic_load(&m->flag))
                     {
                         semaphoreWait(&m->sema);
                     }
                     atomicSubExplicit(&m->nwait, 1, memory_order_relaxed);
+                    break; // Retry acquisition with a fresh spin budget if another thread acquired the lock.
                 }
                 else
                 {
