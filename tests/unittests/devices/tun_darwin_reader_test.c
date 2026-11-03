@@ -43,6 +43,8 @@ static sbuf_t                  *outstanding[kFixtureBurst];
 static uint64_t                 warning_now_ms;
 static unsigned                 packet_warnings, native_writes;
 static const char              *warning_match;
+static const sbuf_t            *expected_output;
+static int                      output_error;
 
 static bool fixtureWarningGate(atomic_log_rate_limiter_t *limiter, uint64_t interval)
 {
@@ -64,13 +66,23 @@ static ssize_t fixtureWritev(int fd, const struct iovec *iov, int count)
 {
     require(fd == kFixtureFd && count == 2 && iov[0].iov_len == 4, "utun output framing changed");
     ++native_writes;
+    if (expected_output != NULL)
+    {
+        require(*(const uint32_t *) iov[0].iov_base == htonl(AF_INET) &&
+                    iov[1].iov_len == sbufGetLength(expected_output) &&
+                    memoryEqual(iov[1].iov_base, sbufGetRawPtr(expected_output), iov[1].iov_len),
+                "utun writer changed the complete IPv4 packet");
+        if (output_error == 0)
+            return (ssize_t) (iov[0].iov_len + iov[1].iov_len);
+        errno = output_error;
+        return -1;
+    }
     errno = EAGAIN;
     return -1;
 }
 
-static sbuf_t *fixtureGetBuffer(buffer_pool_t *pool)
+static sbuf_t *fixtureTrackBuffer(sbuf_t *buffer)
 {
-    sbuf_t *buffer = bufferpoolGetSmallBuffer(pool);
     for (unsigned i = 0; i < ARRAY_SIZE(outstanding); ++i)
     {
         if (outstanding[i] == NULL)
@@ -82,6 +94,11 @@ static sbuf_t *fixtureGetBuffer(buffer_pool_t *pool)
     }
     require(false, "receive exceeded bounded buffer staging");
     return NULL;
+}
+
+static sbuf_t *fixtureGetBuffer(buffer_pool_t *pool)
+{
+    return fixtureTrackBuffer(bufferpoolGetSmallBuffer(pool));
 }
 
 static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
@@ -183,7 +200,7 @@ static void testPacketWarnings(buffer_pool_t *pool)
         atomicLogRateLimiterInitialize(mode == 0 ? &tun_oversized_output_log : &tun_transient_write_log);
         warning_now_ms  = 0;
         packet_warnings = native_writes = checkouts = recycles = 0;
-        warning_match                                          = mode == 0 ? "exceeds device MTU" : "writing to device";
+        warning_match = mode == 0 ? "exceeds maximum IP packet size" : "writing to device";
         char         device_name[]                             = "utun-warning-fixture";
         tun_device_t device = {.name = device_name, .handle = kFixtureFd, .mtu = kFixtureMtu};
         atomic_init(&device.lifecycle, kTunLifecycleUp);
@@ -194,8 +211,9 @@ static void testPacketWarnings(buffer_pool_t *pool)
             const unsigned count = burst == 0 ? 4 : 1;
             for (unsigned i = 0; i < count; ++i)
             {
-                buffers[i] = fixtureGetBuffer(pool);
-                sbufSetLength(buffers[i], mode == 0 ? kFixtureMtu + 1 : 20);
+                const uint32_t length = mode == 0 ? UINT16_MAX + 1U : 20;
+                buffers[i]            = fixtureTrackBuffer(bufferpoolGetBestFit(pool, length, 0));
+                sbufSetLength(buffers[i], length);
                 ((uint8_t *) sbufGetMutablePtr(buffers[i]))[0] = 0x45;
             }
             require(tunWriteBatch(&device, &worker, buffers, count), "packet warning changed device lifecycle");
@@ -218,6 +236,42 @@ static void testPacketWarnings(buffer_pool_t *pool)
     runDrainCase(
         pool, "short-frame warning interval resumes", short_frames, ARRAY_SIZE(short_frames), NULL, 0, kTunDrainAgain);
     require(packet_warnings == 2, "short-frame warnings did not resume after interval");
+}
+
+static void testWriterPacketSizeIndependentOfDeviceMtu(buffer_pool_t *pool)
+{
+    const uint16_t lengths[]     = {1200, 1500, UINT16_MAX, 1500, 1200};
+    char           device_name[] = "utun-write-mtu";
+    tun_device_t   device        = {.name = device_name, .handle = kFixtureFd, .mtu = 1200};
+    atomic_init(&device.lifecycle, kTunLifecycleUp);
+    worker_t worker = {.buffer_pool = pool};
+    native_writes = checkouts = recycles = 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        sbuf_t  *buffer = fixtureTrackBuffer(bufferpoolGetBestFit(pool, lengths[i], 0));
+        uint8_t *packet = sbufGetMutablePtr(buffer);
+        memorySet(packet, 0x5a, lengths[i]);
+        memoryZero(packet, 20);
+        packet[0] = 0x45;
+        packet[8] = 64;
+        packet[9] = 253;
+        PUT_BE16(packet + 2, lengths[i]);
+        PUT_BE32(packet + 12, UINT32_C(0x0A000001));
+        PUT_BE32(packet + 16, UINT32_C(0x0A000002));
+        uint32_t sum = 0;
+        for (unsigned offset = 0; offset < 20; offset += 2)
+            sum += GET_BE16(packet + offset);
+        while (sum >> 16)
+            sum = (sum & UINT16_MAX) + (sum >> 16);
+        PUT_BE16(packet + 10, (uint16_t) ~sum);
+        sbufSetLength(buffer, lengths[i]);
+        expected_output = buffer;
+        output_error    = i == 3 ? EMSGSIZE : 0;
+        require(tunWriteBatch(&device, &worker, &buffer, 1), "native packet outcome failed the utun writer");
+        expected_output = NULL;
+        require(native_writes == i + 1 && checkouts == recycles && tundeviceIsUp(&device),
+                "utun writer restricted incoming packet size or made EMSGSIZE fatal");
+    }
 }
 
 int main(void)
@@ -270,6 +324,7 @@ int main(void)
                  0,
                  kTunDrainAgain);
 
+    testWriterPacketSizeIndependentOfDeviceMtu(pool);
     testPacketWarnings(pool);
     bufferpoolDestroy(pool);
     masterpoolMakeEmpty(large);

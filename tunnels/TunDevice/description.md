@@ -161,6 +161,8 @@ Full-route example with local ranges excluded:
 
 - `device-mtu` `(integer)`
   MTU to configure on the TUN device, in the inclusive range `68..65535`.
+  It controls packets the OS transmits through the interface into WaterWall;
+  it is not a size limit for packets WaterWall writes back into the OS.
   Fractional numbers, strings, booleans, and `null` are rejected.
 
   Default: global MTU size used by WaterWall.
@@ -400,6 +402,11 @@ When payload reaches `TunDevice` from upstream or downstream:
   packets that cannot be recalculated are dropped with a rate-limited warning
 
 Both upstream and downstream payload handlers write to the same TUN device.
+Writing to TUN delivers an incoming packet to the OS. Valid IPv4 packets up to
+65,535 bytes can take this path even when they exceed `device-mtu`; structure,
+checksum and output-queue checks still apply. The native backend may refuse a
+packet. On Unix, `EMSGSIZE` drops the refused packet or GSO record and allows
+later packets to proceed, without marking the device failed.
 
 Payload callbacks validate and append to the current event worker's output FIFO
 without waiting for capacity or performing native I/O. One deferred flush per
@@ -416,9 +423,10 @@ compatible adjacent TCP data packets into bounded scatter/gather GSO records. It
 takes only packets already available, never waits to fill a batch, and retains
 packet order. A flush processes at most 64 packets and 256 KiB of allocation
 charge; a larger single allocation progresses alone. Remaining packets schedule
-another deferred flush. Each GSO record stays within 65,535 IPv4 bytes. Original packets must still fit
-MTU. UDP, fragments, controls, incompatible TCP packets, interposed nodes and
-`gso:false` keep individual packet writes. Checksum-only writes still include the
+another deferred flush. Each GSO record stays within 65,535 IPv4 bytes. Packets
+selected for GSO coalescing must fit `device-mtu`; larger valid packets use
+individual writes. UDP, fragments, controls, incompatible TCP packets, interposed
+nodes and `gso:false` keep individual packet writes. Checksum-only writes still include the
 virtio header: ordinary untrusted packets use zero metadata and complete bytes;
 trusted TCP/UDP packets may carry a partial seed and `NEEDS_CSUM` with `GSO_NONE`.
 Checksum-only input rejects every non-`GSO_NONE` record. Payload bytes are not
@@ -626,5 +634,7 @@ consumers, regardless of the device policy or intervening nodes. DF alone is not
 a fragment; MF or a nonzero fragment offset is.
 
 Reassembly emits complete IPv4 datagrams up to 65,535 bytes. It does not raise
-packet-output limits or device MTU, and does not automatically fragment output
-again. See Developer Guide Part 4 for assembly bounds and packet ownership.
+other nodes' packet-output limits or the interface MTU, and does not automatically
+fragment output again. TUN writes can inject these datagrams into the OS even
+when they exceed `device-mtu`. See Developer Guide Part 4 for assembly bounds
+and packet ownership.

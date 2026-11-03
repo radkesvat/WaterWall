@@ -703,12 +703,13 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
             continue;
         }
 
-        if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
+        /* Wintun injects received IP independently of the interface's transmit MTU. */
+        if (UNLIKELY(sbufGetLength(buf) > WINTUN_MAX_IP_PACKET_SIZE))
         {
             if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunDiscardReportIntervalMs))
-                LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
+                LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
                      sbufGetLength(buf),
-                     tunDeviceMtu(tdev));
+                     (unsigned) WINTUN_MAX_IP_PACKET_SIZE);
 
             bufferpoolReuseBuffer(worker->buffer_pool, buf);
             continue;
