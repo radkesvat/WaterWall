@@ -697,10 +697,11 @@ static inline void hybridmutexLock(whybrid_mutex_t *m)
             {
                 if (--n == 0)
                 {
-                    // Sequentially consistent, pairing with hybridmutexUnlock: either the unlocker sees this waiter
-                    // and posts, or this waiter sees the released flag. On weakly ordered CPUs relaxed accesses let
-                    // both miss each other, and the waiter sleeps until some later unlock.
+                    // Pair registration and the flag check with hybridmutexUnlock so either the unlocker sees this
+                    // waiter or we see its release. The SC fence also excludes older non-SC flag/count values permitted
+                    // by C's mixed-order rules (acquire exchanges and relaxed waiter decrements).
                     atomic_fetch_add(&m->nwait, 1);
+                    atomic_thread_fence(memory_order_seq_cst);
                     while (atomic_load(&m->flag))
                     {
                         semaphoreWait(&m->sema);
