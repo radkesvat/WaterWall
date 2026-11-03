@@ -706,6 +706,7 @@ static inline void hybridmutexLock(whybrid_mutex_t *m)
                         semaphoreWait(&m->sema);
                     }
                     atomicSubExplicit(&m->nwait, 1, memory_order_relaxed);
+                    break; // Retry acquisition with a fresh spin budget if another thread acquired the lock.
                 }
                 else
                 {
