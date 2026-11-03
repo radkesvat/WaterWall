@@ -37,6 +37,7 @@ typedef struct wire_queue_s
 static tunnel_t    *source, *client, *wire, *server, *api;
 static tunnel_t     target;
 static line_t      *connection;
+static line_t      *carrier;
 static wire_queue_t queues[2];
 static uint8_t      received[kReceiveCapacity];
 static size_t       received_size;
@@ -108,7 +109,13 @@ static void previousPayload(tunnel_t *tunnel, line_t *line, sbuf_t *buffer)
 static void queuePacket(size_t direction, line_t *line, sbuf_t *packet)
 {
     wire_queue_t *queue = &queues[direction];
-    require(line == connection, "Wire received a foreign line");
+    if (carrier == NULL)
+    {
+        require(direction == 0 && line != connection, "Client did not create an independent reliable transport line");
+        carrier = line;
+        lineRef(carrier);
+    }
+    require(line == carrier, "Wire received a foreign carrier line");
     require(++queue->emitted < 10000, "Reliable stream made no bounded progress");
     if (! queue->dropped)
     {
@@ -150,9 +157,9 @@ static void flushWire(void)
             {
                 sbuf_t *packet = batch[i + j - 1];
                 if (direction == 0)
-                    tunnelNextUpStreamPayload(wire, connection, packet);
+                    tunnelNextUpStreamPayload(wire, carrier, packet);
                 else
-                    tunnelPrevDownStreamPayload(wire, connection, packet);
+                    tunnelPrevDownStreamPayload(wire, carrier, packet);
             }
         }
     }
@@ -217,8 +224,8 @@ int main(void)
                                    nodeAPIServerGet()};
     char   gateway_name[]       = "api-fixture";
     nodes[4].name               = gateway_name;
-    nodes[1].node_settings_json = cJSON_Parse("{\"mtu\":1500}");
-    nodes[3].node_settings_json = cJSON_Parse("{\"mtu\":1500}");
+    nodes[1].node_settings_json = cJSON_Parse("{\"send-mtu\":1500}");
+    nodes[3].node_settings_json = cJSON_Parse("{\"send-mtu\":1500}");
     nodes[4].node_settings_json = cJSON_Parse(
         "{\"clients\":[{\"name\":\"fixture-client\","
         "\"token\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\","
@@ -287,9 +294,16 @@ int main(void)
     apiserverOnWorkerQuiesce(api, 0, context);
     client->onQuiesceRequest(client, context);
     server->onQuiesceRequest(server, context);
+    client->onWorkerQuiesce(client, 0, context);
+    server->onWorkerQuiesce(server, 0, context);
     tunnelNextUpStreamFinish(source, connection);
     lineDestroy(connection);
     connection = NULL;
+    client->onWorkerStop(client, 0, context);
+    server->onWorkerStop(server, 0, context);
+    require(carrier && ! lineIsAlive(carrier), "Worker Stop kept an owned reliable transport alive");
+    lineUnref(carrier);
+    carrier = NULL;
     for (size_t direction = 0; direction < 2; ++direction)
         for (size_t i = 0; i < queues[direction].count; ++i)
             bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), queues[direction].packets[i]);

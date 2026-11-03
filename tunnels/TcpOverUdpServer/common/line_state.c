@@ -2,115 +2,115 @@
 
 #include "loggers/network_logger.h"
 
-static void kcpPrintLog(const char *log, struct IKCPCB *kcp, void *user)
+void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls)
 {
-    discard user;
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+}
 
-    LOGD("TcpOverUdpServer -> KCP[%d]: %s", kcp->conv, log);
+void tcpoverudpserverCarrierRetain(tcpoverudpserver_carrier_t *carrier)
+{
+    assert(carrier != NULL && carrier->refs > 0 && carrier->refs < UINT32_MAX);
+    ++carrier->refs;
+}
+
+void tcpoverudpserverCarrierRelease(tcpoverudpserver_carrier_t *carrier)
+{
+    assert(carrier != NULL && carrier->refs > 0);
+    if (--carrier->refs == 0)
+    {
+        assert(! carrier->active && carrier->sessions == NULL && carrier->pending_timer == NULL);
+        lineUnref(carrier->line);
+        memoryFree(carrier);
+    }
+}
+
+static void pendingExpired(wtimer_t *timer)
+{
+    tcpoverudpserver_carrier_t *carrier = weventGetUserdata(timer);
+    assert(carrier != NULL && carrier->active && carrier->pending_timer == timer);
+    tcpoverudpserverCarrierRetain(carrier);
+    uint64_t now = wloopNowMonotonicMS(weventGetLoop(timer));
+    if (now < carrier->pending_deadline)
+    {
+        uint32_t delay = (uint32_t) min(carrier->pending_deadline - now, (uint64_t) UINT32_MAX);
+        if (! wtimerReset(timer, max(1U, delay)))
+        {
+            tcpoverudpserverCarrierClose(carrier, true);
+        }
+    }
+    else
+    {
+        carrier->pending       = false;
+        carrier->pending_timer = NULL;
+        weventSetUserData(timer, NULL);
+        wtimerDelete(timer);
+        if (carrier->sessions == NULL)
+        {
+            tcpoverudpserverCarrierClose(carrier, true);
+        }
+    }
+    tcpoverudpserverCarrierRelease(carrier);
+}
+
+bool tcpoverudpserverArmPending(tcpoverudpserver_carrier_t *carrier, uint64_t deadline)
+{
+    uint64_t now              = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(carrier->line)));
+    uint32_t delay            = (uint32_t) min(deadline > now ? deadline - now : 1, (uint64_t) UINT32_MAX);
+    carrier->pending_deadline = deadline;
+    if (carrier->pending_timer != NULL)
+    {
+        return wtimerReset(carrier->pending_timer, max(1U, delay));
+    }
+    carrier->pending_timer =
+        wtimerAdd(getWorkerLoop(lineGetWID(carrier->line)), pendingExpired, max(1U, delay), INFINITE);
+    if (carrier->pending_timer == NULL)
+    {
+        return false;
+    }
+    weventSetUserData(carrier->pending_timer, carrier);
+    return true;
 }
 
 bool tcpoverudpserverLinestateInitialize(tcpoverudpserver_lstate_t *ls, line_t *l, tunnel_t *t)
 {
     tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
-
-    // every resource is built in a local until all of them succeeded; a failing line therefore leaves the line state
-    // zeroed, which is the same terminal shape tcpoverudpserverLinestateDestroy() produces.
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpserver_lstate_t)));
-
-    ikcpcb *k_handle = ikcp_create(0, ls);
-    /* configuring the high-efficiency KCP settings */
-
-    ikcp_setoutput(k_handle, tcpoverudpserverKUdpOutput);
-
-    ikcp_nodelay(
-        k_handle, ts->kcp_nodelay ? 1 : 0, ts->kcp_interval_ms, ts->kcp_resend, ts->kcp_no_congestion_control ? 1 : 0);
-
-    ikcp_wndsize(k_handle, ts->kcp_send_window, ts->kcp_recv_window);
-
-    const int kcp_mtu       = tcpoverudpserverGetKcpMtu(ts);
-    const int setmtu_result = ikcp_setmtu(k_handle, kcp_mtu);
-
-    if (setmtu_result != 0)
+    tcpoverudpserverLinestateDestroy(ls);
+    assert(lineIsOnCurrentWorker(l) && lineGetWID(l) < ts->workers_count);
+    if (atomicLoadRelaxed(&ts->stopping) || ts->workers[lineGetWID(l)].quiescing)
     {
-        // tunnel creation already rejected every MTU that KCP can refuse, so reaching this branch means the validated
-        // tunnel state was corrupted or the KCP contract changed under us
-        LOGF("TcpOverUdpServer: KCP rejected the validated MTU %d (result %d)", kcp_mtu, setmtu_result);
-        abortProgramNow(1);
-    }
-
-    k_handle->cwnd = (IUINT32) ts->kcp_initial_cwnd;
-
-    k_handle->writelog = kcpPrintLog;
-    // k_handle->logmask = 0x0FFFFFFF; // Enable all logs
-
-    k_handle->rx_minrto = (IINT32) ts->kcp_rx_minrto_ms;
-
-    wtimer_t *k_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)),
-                                  tcpoverudpserverKcpLoopIntervalCallback,
-                                  (uint32_t) ts->kcp_interval_ms,
-                                  INFINITE);
-
-    if (k_timer == NULL)
-    {
-        ikcp_release(k_handle);
-        LOGE("TcpOverUdpServer: failed to create the KCP interval timer for this line");
         return false;
     }
-
-    tcpoverudp_fec_encoder_t *fec_encoder = NULL;
-    tcpoverudp_fec_decoder_t *fec_decoder = NULL;
-
-    if (ts->fec_enabled)
+    tcpoverudpserver_carrier_t *carrier = memoryAllocateZero(sizeof(*carrier));
+    carrier->tunnel                     = t;
+    carrier->line                       = l;
+    carrier->pool                       = lineGetBufferPool(l);
+    carrier->wid                        = lineGetWID(l);
+    carrier->refs                       = 1;
+    carrier->active                     = true;
+    lineRef(l);
+    bufferqueueInitEmpty(&carrier->input);
+    bufferbudgetInit(&carrier->input_budget,
+                     (buffer_budget_cost_t) {.bytes = 2U * 1024U * 1024U, .charge = 8U * 1024U * 1024U});
+    bool attached = bufferqueueTryAttachBudget(&carrier->input, &carrier->input_budget);
+    assert(attached);
+    discard  attached;
+    uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
+    if (! tcpoverudpserverArmPending(carrier, touDeadline(now, ts->no_recv_timeout_ms)))
     {
-        fec_encoder = tcpoverudpFecEncoderCreate(ts->fec_data_shards, ts->fec_parity_shards);
-        fec_decoder = tcpoverudpFecDecoderCreate(ts->fec_data_shards, ts->fec_parity_shards);
-
-        if (fec_encoder == NULL || fec_decoder == NULL)
-        {
-            tcpoverudpFecEncoderDestroy(&fec_encoder);
-            tcpoverudpFecDecoderDestroy(&fec_decoder);
-            weventSetUserData(k_timer, NULL);
-            wtimerDelete(k_timer);
-            ikcp_release(k_handle);
-            LOGE("TcpOverUdpServer: failed to initialize the FEC state for this line");
-            return false;
-        }
+        carrier->active = false;
+        bufferqueueDestroy(&carrier->input);
+        tcpoverudpserverCarrierRelease(carrier);
+        return false;
     }
-
-    *ls = (tcpoverudpserver_lstate_t) {.k_handle      = k_handle,
-                                       .k_timer       = k_timer,
-                                       .fec_encoder   = fec_encoder,
-                                       .fec_decoder   = fec_decoder,
-                                       .tunnel        = t,
-                                       .line          = l,
-                                       .last_recv     = wloopNowMS(getWorkerLoop(lineGetWID(l))),
-                                       .cq_d          = contextqueueCreate(),
-                                       .source_paused = false,
-                                       .can_upstream  = true,
-                                       .ping_sent     = true};
-
-    // published only after the line state is committed, so the timer callback can never observe a partial state
-    weventSetUserData(k_timer, ls);
-
-    uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
-    ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
-
+    tcpoverudpserver_worker_t *worker = &ts->workers[lineGetWID(l)];
+    carrier->next                     = worker->carriers;
+    if (carrier->next != NULL)
+    {
+        carrier->next->prev = carrier;
+    }
+    worker->carriers = carrier;
+    *ls              = (tcpoverudpserver_lstate_t) {.kind = kTcpOverUdpServerCarrier, .carrier = carrier};
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_UDP);
     return true;
-}
-
-void tcpoverudpserverLinestateDestroy(tcpoverudpserver_lstate_t *ls)
-{
-    assert(ls->k_handle != NULL && ls->k_timer != NULL);
-
-    weventSetUserData(ls->k_timer, NULL);
-    wtimerDelete(ls->k_timer);
-
-    contextqueueDestroy(&ls->cq_d);
-
-    tcpoverudpFecEncoderDestroy(&ls->fec_encoder);
-    tcpoverudpFecDecoderDestroy(&ls->fec_decoder);
-
-    ikcp_release(ls->k_handle);
-
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpserver_lstate_t)));
 }
