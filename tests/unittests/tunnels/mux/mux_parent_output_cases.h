@@ -210,6 +210,26 @@ static void pqSetup(pq_fixture_t *f)
     pqSource(f)->pqResumeSlot                               = pqSourceResume;
 }
 
+/* Enter the server's ordinary streaming phase through its real receive path before
+ * installing callbacks that exercise partial-frame delivery. Client input is unchanged. */
+static void pqStartStreamingChild(pq_fixture_t *f)
+{
+#ifdef MUX_OUTPUT_CLIENT
+    discard f;
+#else
+    const twf_trace_t trace = f->trace;
+    sbuf_t           *input = bufferpoolGetSmallBuffer(f->env.pool);
+    sbufSetLength(input, kMuxFrameLength + 1);
+    writeFrameHeader(sbufGetMutablePtr(input), 1, kMuxFlagData, kTestChildCid);
+    sbufGetMutablePtr(input)[kMuxFrameLength] = 0xa5;
+    pqReceive(f->mux, f->parent_l, input);
+    twfRequire(f->trace.next_payload == trace.next_payload + 1 && f->trace.capture_len == trace.capture_len + 1 &&
+                   f->capture[trace.capture_len] == 0xa5,
+               "complete first DATA frame did not establish child streaming");
+    f->trace = trace;
+#endif
+}
+
 static mux_parent_output_t *pqOutput(pq_fixture_t *f)
 {
     pq_state_t *parent = lineGetState(f->parent_l, f->mux);
@@ -1276,6 +1296,7 @@ static void caseChildCloseKeepsParentParsing(void)
     twfSetCase("close during an incomplete DATA body discards its suffix and continues with a sibling frame");
     pq_fixture_t f;
     pqSetup(&f);
+    pqStartStreamingChild(&f);
     pq_tstate_t *ts                  = tunnelGetState(f.mux);
     ts->parent_write_pause_threshold  = 1;
     ts->parent_write_resume_threshold = 0;
@@ -1524,6 +1545,7 @@ static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, 
     twfSetCase("tiny carrier fragments stream immediately or wait in the parser for a paused child");
     pq_fixture_t f;
     pqSetup(&f);
+    pqStartStreamingChild(&f);
     pqSetSpliceSinks(&f);
     pq_state_t *parent            = lineGetState(f.parent_l, f.mux);
     pq_state_t *child             = lineGetState(f.child_l, f.mux);
@@ -1694,6 +1716,7 @@ static void caseSpliceIncompleteCarrier(void)
     {
         pq_fixture_t f;
         pqSetup(&f);
+        pqStartStreamingChild(&f);
         pqSetSpliceSinks(&f);
         uint8_t wire[40];
         writeFrameHeader(wire, 32, kMuxFlagData, kTestChildCid);
@@ -2155,12 +2178,96 @@ static void pqReceiveBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t lengt
     pqReceive(f->mux, f->parent_l, input);
 }
 
+#ifndef MUX_OUTPUT_CLIENT
+static void pqFirstFrameCapture(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfNextPayload(t, l, sbufEnsureOrdinary(lineGetBufferPool(l), buf));
+}
+
+static void pqFirstFrameInput(pq_fixture_t *f, const uint8_t *bytes, uint32_t length, bool splice_input)
+{
+#if WW_HAVE_SPLICE
+    if (splice_input)
+    {
+        pqReceive(f->mux, f->parent_l, pqSpliceBytes(f, bytes, length));
+        return;
+    }
+#else
+    discard splice_input;
+#endif
+    pqReceiveBytes(f, bytes, length);
+}
+
+/* Empty DATA does not consume the exception. Pause may end before or after the
+ * first frame completes, but only later frames may deliver partial bodies. */
+static void caseFirstDataFrame(bool splice_input, unsigned pause_mode)
+{
+    twfSetCase("server delivers the first nonempty DATA frame whole and later frames incrementally");
+    pq_fixture_t f;
+    pqSetup(&f);
+    f.next->fnPayloadU = pqFirstFrameCapture;
+    pq_state_t *child  = lineGetState(f.child_l, f.mux);
+    pq_state_t *parent = lineGetState(f.parent_l, f.mux);
+    child->paused      = pause_mode != 0;
+
+    uint8_t empty[kMuxFrameLength];
+    writeFrameHeader(empty, 0, kMuxFlagData, kTestChildCid);
+    pqFirstFrameInput(&f, empty, sizeof(empty), splice_input);
+    twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 0,
+               "empty first DATA produced a callback or queue entry");
+
+    uint8_t wire[kMuxFrameLength + 32];
+    writeFrameHeader(wire, 32, kMuxFlagData, kTestChildCid);
+    for (uint32_t i = 0; i < 32; ++i)
+        wire[kMuxFrameLength + i] = patternByte(i);
+    for (uint32_t offset = 0; offset < sizeof(wire);)
+    {
+        const uint32_t count = min(3U, (uint32_t) sizeof(wire) - offset);
+        pqFirstFrameInput(&f, wire + offset, count, splice_input);
+        offset += count;
+        if (pause_mode == 1 && offset == 12)
+            muxserverTunnelDownStreamResume(f.mux, f.child_l);
+        if (offset < sizeof(wire))
+            twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 0,
+                       "first DATA frame escaped before its final byte");
+    }
+    if (pause_mode == 2)
+    {
+        twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1 &&
+                       bufferqueueGetBufLen(&child->pending_child_data) == 32,
+                   "paused first DATA frame was delivered or split into queue entries");
+        muxserverTunnelDownStreamResume(f.mux, f.child_l);
+    }
+    twfRequire(pqChildDeliveries(&f) == 1 && f.trace.capture_len == 32 &&
+                   memcmp(f.capture, wire + kMuxFrameLength, 32) == 0,
+               "first DATA frame was not delivered once with its complete body");
+    twfRequire(splicestreamLength(parent->parent_state->read_stream) == 0 &&
+                   bufferqueueGetCharge(&child->pending_child_data) == 0 &&
+                   bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge == 0,
+               "first DATA frame retained parser or child queue ownership after delivery");
+
+    uint8_t later[kMuxFrameLength + 2];
+    writeFrameHeader(later, 2, kMuxFlagData, kTestChildCid);
+    later[kMuxFrameLength]     = 0x61;
+    later[kMuxFrameLength + 1] = 0x62;
+    pqFirstFrameInput(&f, later, sizeof(later) - 1, splice_input);
+    twfRequire(pqChildDeliveries(&f) == 2 && f.trace.capture_len == 33 && f.capture[32] == 0x61,
+               "later DATA frame waited for its complete body");
+    pqFirstFrameInput(&f, later + sizeof(later) - 1, 1, splice_input);
+    twfRequire(pqChildDeliveries(&f) == 3 && f.trace.capture_len == 34 && f.capture[33] == 0x62 &&
+                   splicestreamLength(parent->parent_state->read_stream) == 0,
+               "later DATA frame lost its suffix or retained parser state");
+    fixtureTeardown(&f);
+}
+#endif
+
 static void caseFrameLengthFragmentation(uint32_t length, uint32_t first, bool byte_tail)
 {
     twfSetCase("24-bit frame delivers its available body immediately on low-profile pools");
     g_pool_size = LARGE_BUFFER_SIZE_RAM_LOW;
     pq_fixture_t f;
     fixtureSetup(&f, length + 1U);
+    pqStartStreamingChild(&f);
     const uint32_t wire_length = kMuxFrameLength + length;
     uint8_t       *wire        = memoryAllocate(wire_length);
     writeFrameHeader(wire, length, kMuxFlagData, kTestChildCid);
@@ -2311,6 +2418,7 @@ static void caseStreamingCallbackLifetime(bool close_parent, bool queued_resume)
                             : "reentrant DATA suffix observes published parser progress and preserves stream order");
     pq_fixture_t f;
     pqSetup(&f);
+    pqStartStreamingChild(&f);
     pqStreamCloseParent                                     = close_parent;
     pqStreamQueuedResume                                    = queued_resume;
     ((pq_state_t *) lineGetState(f.child_l, f.mux))->paused = queued_resume;
@@ -2393,6 +2501,7 @@ static void caseNestedResumeKeptFrame(void)
     twfSetCase("nested Resume leaves a kept DATA body to the active receive loop in stream order");
     pq_fixture_t f;
     pqSetup(&f);
+    pqStartStreamingChild(&f);
 #ifdef MUX_OUTPUT_CLIENT
     ((pq_state_t *) lineGetState(f.child_l, f.mux))->open_frame_submitted = true;
     f.prev->fnPayloadD                                                    = pqNestedResumeCallback;
@@ -2420,6 +2529,15 @@ static void caseNestedResumeKeptFrame(void)
 
 static void runParentOutputCases(void)
 {
+#ifndef MUX_OUTPUT_CLIENT
+    for (unsigned pause_mode = 0; pause_mode < 3; ++pause_mode)
+    {
+        caseFirstDataFrame(false, pause_mode);
+#if WW_HAVE_SPLICE
+        caseFirstDataFrame(true, pause_mode);
+#endif
+    }
+#endif
     caseChildPauseWithoutQueuedData();
 #ifdef MUX_OUTPUT_CLIENT
     for (unsigned mode = 0; mode < 7; ++mode)
