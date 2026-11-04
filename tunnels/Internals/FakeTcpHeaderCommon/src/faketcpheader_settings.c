@@ -22,6 +22,7 @@ static const char *const kSettingsIncrementSequence = "increment-sequence";
 static const char *const kSettingsIncrementAcknowledgment = "increment-acknowledgment";
 static const char *const kSettingsSequence          = "sequence";
 static const char *const kSettingsAcknowledgment    = "acknowledgment";
+static const char *const kSettingsFlags                   = "flags";
 
 static bool faketcpheaderSettingsKeyIsKnown(const char *key)
 {
@@ -39,7 +40,7 @@ static bool faketcpheaderSettingsKeyIsKnown(const char *key)
     return stringCompare(key, kSettingsOptions) == 0 || stringCompare(key, kSettingsClientPortRange) == 0 ||
            stringCompare(key, kSettingsIncrementSequence) == 0 || stringCompare(key, kSettingsSequence) == 0 ||
            stringCompare(key, kSettingsAcknowledgment) == 0 ||
-           stringCompare(key, kSettingsIncrementAcknowledgment) == 0;
+           stringCompare(key, kSettingsIncrementAcknowledgment) == 0 || stringCompare(key, kSettingsFlags) == 0;
 }
 
 static bool faketcpheaderSettingsKeysAreKnown(const cJSON *settings, const char *node_name)
@@ -185,6 +186,91 @@ static bool faketcpheaderSettingsLoadField(const cJSON *settings, const char *no
     return false;
 }
 
+static bool faketcpheaderSettingsLoadFlags(const cJSON *settings, const char *node_name,
+                                           faketcpheader_wire_config_t *config)
+{
+    const cJSON *array = NULL;
+    const cJSON *field = NULL;
+    cJSON_ArrayForEach(field, settings)
+    {
+        if (stringCompare(field->string, kSettingsFlags) == 0)
+        {
+            if (array != NULL)
+            {
+                LOGF("JSON Error: %s->settings->flags : duplicate setting", node_name);
+                return false;
+            }
+            array = field;
+        }
+    }
+    if (array == NULL)
+    {
+        return true;
+    }
+    const int count = cJSON_GetArraySize(array);
+    if (! cJSON_IsArray(array) || count < 1 || count > kFakeTcpHeaderWireMaxFlagCount)
+    {
+        LOGF("JSON Error: %s->settings->flags : expected an array of 1 to %u flag objects",
+             node_name,
+             (unsigned int) kFakeTcpHeaderWireMaxFlagCount);
+        return false;
+    }
+    static const struct
+    {
+        const char *name;
+        uint8_t     mask;
+    } bits[]           = {{"fin", TCP_FIN},
+                          {"syn", TCP_SYN},
+                          {"rst", TCP_RST},
+                          {"psh", TCP_PSH},
+                          {"ack", TCP_ACK},
+                          {"urg", TCP_URG},
+                          {"ece", TCP_ECE},
+                          {"cwr", TCP_CWR}};
+    const cJSON *entry = NULL;
+    unsigned int index = 0;
+    cJSON_ArrayForEach(entry, array)
+    {
+        if (! cJSON_IsObject(entry))
+        {
+            LOGF("JSON Error: %s->settings->flags : entry %u must be an object", node_name, index);
+            return false;
+        }
+        uint8_t flags = 0, seen = 0;
+        cJSON_ArrayForEach(field, entry)
+        {
+            size_t bit = 0;
+            while (bit < ARRAY_SIZE(bits) &&
+                   (field->string == NULL || stringCompare(field->string, bits[bit].name) != 0))
+            {
+                ++bit;
+            }
+            if (bit == ARRAY_SIZE(bits) || ! jsonObjectFieldStringsAreExact(entry, bits[bit].name))
+            {
+                LOGF(
+                    "JSON Error: %s->settings->flags : entry %u has an unknown or invalid flag name", node_name, index);
+                return false;
+            }
+            if ((seen & bits[bit].mask) != 0 || ! cJSON_IsBool(field))
+            {
+                LOGF("JSON Error: %s->settings->flags : entry %u->%s must be a single true or false value",
+                     node_name,
+                     index,
+                     bits[bit].name);
+                return false;
+            }
+            seen |= bits[bit].mask;
+            if (cJSON_IsTrue(field))
+            {
+                flags |= bits[bit].mask;
+            }
+        }
+        config->flags[index++] = flags;
+    }
+    config->flags_count = (uint8_t) count;
+    return true;
+}
+
 static bool faketcpheaderSettingsLoadOptions(const cJSON *settings, const char *node_name,
                                              faketcpheader_wire_config_t *config)
 {
@@ -215,7 +301,10 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
 {
     assert(node_name != NULL && out != NULL);
 
-    faketcpheader_wire_config_t config = {.sequence_mode = kFakeTcpHeaderFieldRandomPort, .increment_sequence = true};
+    faketcpheader_wire_config_t config = {.sequence_mode      = kFakeTcpHeaderFieldRandomPort,
+                                          .increment_sequence = true,
+                                          .flags_count        = 1,
+                                          .flags              = {kFakeTcpHeaderWireTcpFlags}};
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: %s->settings : expected an object", node_name);
@@ -246,7 +335,8 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
             settings, node_name, kSettingsAcknowledgment, true, &config.acknowledgment_mode, &config.acknowledgment) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsWindow, UINT16_MAX, &window) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsUrgentPointer, 0, &urgent_pointer) ||
-        ! faketcpheaderSettingsLoadOptions(settings, node_name, &config))
+        ! faketcpheaderSettingsLoadOptions(settings, node_name, &config) ||
+        ! faketcpheaderSettingsLoadFlags(settings, node_name, &config))
     {
         return false;
     }

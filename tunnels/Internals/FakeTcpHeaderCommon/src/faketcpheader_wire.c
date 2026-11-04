@@ -86,6 +86,7 @@ static uint32_t faketcpheaderWirePseudoHeaderSum(const uint8_t *ipv4, uint16_t s
 void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, atomic_u32_t *values)
 {
     assert(config->client_port_count >= 1 && config->client_port_count <= kFakeTcpHeaderWireMaxClientPortCount);
+    assert(config->flags_count >= 1 && config->flags_count <= kFakeTcpHeaderWireMaxFlagCount);
     assert(config->sequence_mode >= kFakeTcpHeaderFieldNumeric &&
            config->sequence_mode <= kFakeTcpHeaderFieldRandomPort);
     assert(config->acknowledgment_mode >= kFakeTcpHeaderFieldNumeric &&
@@ -119,7 +120,41 @@ void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, atomic_u32_
                 config->acknowledgment_mode == kFakeTcpHeaderFieldRandomPort ? fastRand32() : config->acknowledgment;
             atomicStoreU32Relaxed(&values[offset + i], seed);
         }
+        offset += config->client_port_count;
     }
+    if (faketcpheaderWireNeedsFlagPositions(config))
+    {
+        for (uint16_t i = 0; i < config->client_port_count; ++i)
+        {
+            atomicStoreU32Relaxed(&values[offset + i], 0);
+        }
+    }
+}
+
+/* The cursor only increases toward last, so contention cannot cause wrap or
+ * replay. After the finite prefix, even the atomic write is unnecessary. */
+static uint8_t faketcpheaderWireTakeFlags(const faketcpheader_wire_config_t *config, atomic_u32_t *values,
+                                          uint16_t index)
+{
+    if (! faketcpheaderWireNeedsFlagPositions(config))
+    {
+        return config->flags[0];
+    }
+    const size_t   offset   = (size_t) config->client_port_count * ((size_t) faketcpheaderWireNeedsSequences(config) +
+                                                                (size_t) faketcpheaderWireNeedsAcknowledgments(config));
+    atomic_u32_t  *cursor   = &values[offset + index];
+    const uint32_t last     = (uint32_t) config->flags_count - 1U;
+    uint32_t       position = atomicLoadU32Relaxed(cursor);
+    assert(position <= last);
+    while (position < last)
+    {
+        if (atomicCompareExchangeU32Explicit(
+                cursor, &position, position + 1U, memory_order_relaxed, memory_order_relaxed))
+        {
+            break;
+        }
+    }
+    return config->flags[position];
 }
 
 faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config, atomic_u32_t *values,
@@ -127,6 +162,7 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
 {
     assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
     assert(! sbufIsSplice(buf));
+    assert(config->flags_count >= 1 && config->flags_count <= kFakeTcpHeaderWireMaxFlagCount);
     assert(faketcpheaderWireStateCount(config) == 0 || values != NULL);
 
     const uint32_t     length             = sbufGetLength(buf);
@@ -183,13 +219,15 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
 
     PUT_BE16(tcp, side == kFakeTcpHeaderWireClient ? client : config->server_port);
     PUT_BE16(tcp + 2, side == kFakeTcpHeaderWireClient ? config->server_port : client);
-    /* All refusals precede this reservation. Only the fake TCP payload occupies
-     * sequence space: the protocol byte plus the original IP payload. */
+    /* All refusals precede flag and counter reservations. SYN and FIN each
+     * occupy one sequence number in addition to the fake TCP payload. */
+    const uint8_t flags    = faketcpheaderWireTakeFlags(config, values, index);
     uint32_t sequence = config->sequence;
     if (config->increment_sequence)
     {
         sequence = atomicAddU32Explicit(&values[index],
-                                        (uint32_t) native.transport_length + kFakeTcpHeaderWireProtocolLength,
+                                        (uint32_t) native.transport_length + kFakeTcpHeaderWireProtocolLength +
+                                            ((flags & TCP_SYN) != 0 ? 1U : 0U) + ((flags & TCP_FIN) != 0 ? 1U : 0U),
                                         memory_order_relaxed);
     }
     else if (config->sequence_mode == kFakeTcpHeaderFieldRandomPort)
@@ -211,7 +249,7 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
     }
     PUT_BE32(tcp + 8, acknowledgment);
     tcp[12] = (uint8_t) ((fake_header_length / 4U) << 4U);
-    tcp[13] = kFakeTcpHeaderWireTcpFlags;
+    tcp[13] = flags;
     PUT_BE16(tcp + 14, config->window);
     PUT_BE16(tcp + 18, config->urgent_pointer);
     memoryCopy(tcp + kFakeTcpHeaderWireTcpHeaderLength, config->options, config->options_length);

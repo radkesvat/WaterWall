@@ -23,10 +23,11 @@ enum
     kFakeTcpHeaderWireMaxCarrierLength   = kMaxAllowedPacketLength,
     kFakeTcpHeaderWireTcpFlags           = TCP_ACK | TCP_PSH,
     kFakeTcpHeaderWireMaxClientPortCount = 1024,
+    kFakeTcpHeaderWireMaxFlagCount       = 32,
 };
 
 _Static_assert(kFakeTcpHeaderWireRequiredPaddingLeft == 61, "FakeTcpHeader padding contract changed unexpectedly");
-_Static_assert(kFakeTcpHeaderWireTcpFlags == 0x18, "FakeTcpHeader carriers use ACK|PSH");
+_Static_assert(kFakeTcpHeaderWireTcpFlags == 0x18, "FakeTcpHeader default flags are ACK|PSH");
 
 /* Which endpoint of the carrier pair is encoding or decoding. */
 typedef enum faketcpheader_wire_side_e
@@ -58,6 +59,8 @@ typedef struct faketcpheader_wire_config_s
     uint16_t                   client_port_count;
     bool                       increment_sequence;
     bool                       increment_acknowledgment;
+    uint8_t                    flags_count;
+    uint8_t                    flags[kFakeTcpHeaderWireMaxFlagCount];
     uint8_t                    options_length;
     uint8_t                    options[kFakeTcpHeaderWireMaxOptionsLength];
 } faketcpheader_wire_config_t;
@@ -73,12 +76,18 @@ static inline bool faketcpheaderWireNeedsAcknowledgments(const faketcpheader_wir
     return config->increment_acknowledgment || config->acknowledgment_mode == kFakeTcpHeaderFieldRandomPort;
 }
 
-/* Optional sequence slots precede optional per-port ACK slots. Both arrays
- * share the node allocation; at most two 32-bit values per selected port. */
+static inline bool faketcpheaderWireNeedsFlagPositions(const faketcpheader_wire_config_t *config)
+{
+    return config->flags_count > 1;
+}
+
+/* Optional sequence, ACK, then flag-position blocks share the node allocation;
+ * at most three 32-bit values per selected port. Single flags need no position. */
 static inline size_t faketcpheaderWireStateCount(const faketcpheader_wire_config_t *config)
 {
     return (size_t) config->client_port_count *
-           ((size_t) faketcpheaderWireNeedsSequences(config) + (size_t) faketcpheaderWireNeedsAcknowledgments(config));
+           ((size_t) faketcpheaderWireNeedsSequences(config) + (size_t) faketcpheaderWireNeedsAcknowledgments(config) +
+            (size_t) faketcpheaderWireNeedsFlagPositions(config));
 }
 
 /* Every non-Ok value leaves all bytes (including headroom), cursor, length and
@@ -123,7 +132,8 @@ WW_EXPORT uint16_t faketcpheaderWirePortIndex(const faketcpheader_wire_config_t 
                                               uint32_t native_length);
 
 /* Initialize once before publishing the node, after runtime RNG initialization.
- * Resolve random_node fields and independently seed random_port fields. values
+ * Resolve random_node fields, independently seed random_port fields, and start
+ * each flag position at zero. flags_count must be in 1..MaxFlagCount. values
  * has StateCount atomic entries, or may be NULL when that count is zero.
  * Config is immutable after initialization; do not copy live counters. */
 WW_EXPORT void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, atomic_u32_t *values);
@@ -131,8 +141,10 @@ WW_EXPORT void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, a
 /* Insert fake TCP and a protocol byte into one complete unfragmented IPv4 packet.
  * Honor native repair intent before normalizing TCP/UDP checksum addresses to zero.
  * Otherwise retain native checksum residuals. Sequence incrementing reserves the
- * selected port's fake TCP payload bytes from values; ACK incrementing uses its
- * current value then adds one per accepted encoding. Refusals advance neither.
+ * selected port's fake TCP payload bytes plus one each for SYN/FIN from values;
+ * ACK incrementing uses its current value then adds one per accepted encoding.
+ * Flags advance per port through their list, then stay at the final entry.
+ * Refusals advance no state. Flags never control packet or node lifetime.
  * Fixed random_port fields read their stored values without advancing. ACK
  * random_packet draws only after every expected refusal, before checksumming.
  * Requires initialized field state and an ordinary buffer. */

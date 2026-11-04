@@ -76,10 +76,10 @@ its options, sequence numbers, acknowledgments and flags; its checksum is
 adjusted for the current addresses as explained in [Wire Rules](#wire-rules).
 
 The original TCP endpoints still perform their own handshake and
-retransmissions. An original SYN is carried behind a fake ACK|PSH header and
-reaches the receiving stack as a SYN after decoding. The node's configured
-`sequence`, `acknowledgment`, `window`, and `options` affect only the fake header,
-not the real TCP connection.
+retransmissions. With the default flags, an original SYN is carried behind a
+fake ACK|PSH header and reaches the receiving stack as a SYN after decoding.
+The node's configured `sequence`, `acknowledgment`, `flags`, `window`, and
+`options` affect only the fake header, not the real TCP connection.
 
 ### ICMP example
 
@@ -157,10 +157,11 @@ needed; each received packet supplies its own protocol byte.
 | `server-port` | `40000` | Fake TCP server port, integer `1..65535`. |
 | `client-port` | unset | Use exactly one fake TCP client port. Integer `1..65535`; mutually exclusive with `client-port-range`. |
 | `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
-| `increment-sequence` | `true` | Advance the outgoing sequence counter for the selected client port by the fake TCP payload length. Boolean only. Set `false` to use a fixed sequence. |
+| `increment-sequence` | `true` | Advance the selected port's sequence by fake TCP payload length, plus one for each chosen SYN or FIN bit. Boolean only. Set `false` to use a fixed sequence. |
 | `sequence` | `"random_port"` | Starting value: an integer `0..4294967295`, `"random_node"` for one random start shared by all client ports, or `"random_port"` for an independent random start per port. See [Sequence Progression](#sequence-progression). |
 | `acknowledgment` | `0` | An integer `0..4294967295`, `"random_node"`, `"random_port"`, or `"random_packet"`. Never derived from received packets. See [Acknowledgment Modes](#acknowledgment-modes). |
 | `increment-acknowledgment` | `false` | Advance the selected client port's ACK by one per successfully encoded packet. Boolean only; incompatible with `"acknowledgment": "random_packet"`. |
+| `flags` | `[{"ack": true, "psh": true}]` | Ordered script of `1..32` flag objects, tracked per client port; repeats the last entry. See [Outgoing Flag Script](#outgoing-flag-script). |
 | `window` | `65535` | Fake TCP window, integer `0..65535`. |
 | `urgent-pointer` | `0` | Fake TCP urgent pointer, integer `0..65535`. |
 | `options` | `""` | Verbatim hexadecimal fake TCP options: `0..40` bytes, in four-byte groups. |
@@ -186,6 +187,73 @@ For example, fake TCP port 40000 can carry original UDP traffic for port 5300.
 The original application port is kept in the original transport header;
 `server-port` does not select or replace the backend application's port.
 
+## Outgoing Flag Script
+
+`flags` selects an ordered script for the fake TCP header. The default is:
+
+```json
+{
+  "flags": [{"ack": true, "psh": true}]
+}
+```
+
+This one-entry script uses ACK|PSH (`0x18`) on every outgoing carrier. To use a
+different pattern, supply `1..32` objects. Each object accepts the flag names
+`fin`, `syn`, `rst`, `psh`, `ack`, `urg`, `ece`, and `cwr`, with JSON boolean
+values. An omitted flag is `false`; `{}` is valid and sets no flags. Unknown or
+duplicate flag names, embedded NUL characters, non-boolean values, non-object
+entries, an empty array, and more than 32 entries are rejected. For example,
+`"syn": 1` and `"ack": "true"` are invalid. `options` remains a separate
+hexadecimal string; it is not part of this script.
+
+For example:
+
+```json
+{
+  "flags": [
+    {"syn": true},
+    {"fin": true},
+    {"ack": true, "fin": true, "cwr": true}
+  ]
+}
+```
+
+Each selected client port starts at the first entry when the node is created.
+Each successfully encoded packet uses its current entry, then moves to the
+next. **The last entry repeats forever**; the script does not loop back.
+For packets selecting the same client port, this example produces:
+
+| Successful encoding | Fake TCP flags | Flag byte |
+| --- | --- | --- |
+| First | SYN | `0x02` |
+| Second | FIN | `0x01` |
+| Third | ACK, FIN, CWR | `0x91` |
+| Fourth and later | ACK, FIN, CWR | `0x91` |
+
+Another client port starts its own script at the first entry. Workers, native
+flows and peers mapping to the same client port share its position safely.
+New native connections do not restart it; recreating the node does. Client
+upstream and server downstream have independent scripts, and the two peers
+may configure different scripts.
+
+Every entry still carries the native packet that triggered encoding. A SYN
+entry does not create an additional handshake packet or wait for a response;
+FIN and RST do not close the node, its packet line or the native connection.
+This is an explicitly selected header pattern, not a TCP session or reliability
+mechanism. Worker scheduling and network reordering can change wire/arrival
+order. A refused encoding does not advance the script, draw a per-packet ACK
+or advance either counter; a drop after successful encoding does not undo them.
+
+With sequence incrementing enabled, the chosen fake SYN and FIN bits each add
+one to that packet's sequence increment. Both set means two extra sequence
+positions; other flags add none. See [Sequence Progression](#sequence-progression).
+ACK generation and optional ACK incrementing run independently, even when the
+script sets `ack` to `false`. The ACK field still contains the configured
+numeric, random or counter value. The carrier checksum covers the actual flags,
+sequence and ACK written. Decode does not interpret flag meanings, compare them
+with its own script, change local script state or require an expected order;
+normal packet geometry and checksum checks remain in force.
+
 ## Sequence Progression
 
 The recommended profile is also the default:
@@ -195,7 +263,8 @@ The recommended profile is also the default:
   "sequence": "random_port",
   "increment-sequence": true,
   "acknowledgment": 0,
-  "increment-acknowledgment": false
+  "increment-acknowledgment": false,
+  "flags": [{"ack": true, "psh": true}]
 }
 ```
 
@@ -224,14 +293,18 @@ it by:
 
 ```text
 1 protocol byte + original IPv4 payload length
++ 1 if the chosen fake SYN bit is set
++ 1 if the chosen fake FIN bit is set
 ```
 
 The server uses this logic when encoding a downstream packet from `server-port`
 to the selected client port. The original IPv4 payload includes the native
 TCP/UDP header and data, or the complete ICMP/opaque body. IPv4 and fake TCP
-headers/options are excluded. For example, a UDP packet with 100 application
-bytes advances its selected port's counter by `1 + 8 + 100 = 109`: a starting
-sequence of `1000` becomes `1109` for the next packet selecting that port.
+headers/options are excluded. SYN and FIN each add one sequence position, not
+a packet byte. For example, with the default ACK|PSH flags, a UDP packet with
+100 application bytes advances its port's counter by `1 + 8 + 100 = 109`:
+a starting sequence of `1000` becomes `1109` for the next packet selecting
+that port.
 
 Packets selecting another client port advance that port's separate counter.
 All workers of one node instance share these counters safely. Native flows and
@@ -463,9 +536,11 @@ restoration leaves public addresses in the decoded packet; this breaks delivery
 when its receiving stack expects the private tuple. Other placements can work
 when checksums and routing remain consistent.
 
-For other fake TCP flags, place `IpManipulator` between this node and RawSocket
-with `dw-tcp-bit-*` for server egress. For another visible carrier protocol, use
-`protoswap-tcp` next to both codecs and capture that protocol without TCP port
+Use this node's `flags` script to choose outgoing fake TCP flags. An
+`IpManipulator` between this node and RawSocket can further rewrite them with
+`dw-tcp-bit-*` for server egress, but those later rewrites do not change the
+sequence increment already reserved by this node. For another visible carrier
+protocol, use `protoswap-tcp` next to both codecs and capture that protocol without TCP port
 qualifiers, restoring protocol 6 before decode. See
 [client composition](../FakeTcpHeaderClient/description.md#composition).
 
@@ -550,6 +625,6 @@ requirements are `FakeTcpHeaderCommon` and `ww`, independent of the client and
 IpManipulator modules.
 
 The implementation is a pure packet tunnel created with `packettunnelCreate()`.
-It keeps no per-line connection state. Sequence counters, optional ACK counters
-and any fixed random ACK values belong to the node instance and are shared
-across its workers.
+It keeps no per-line connection state. Sequence counters, optional ACK counters,
+flag-script positions and any fixed random ACK values belong to the node
+instance and are shared across its workers.

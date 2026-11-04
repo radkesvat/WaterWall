@@ -7,7 +7,7 @@ tunnel_t *faketcpheaderclientCreate(node_t *node)
     {
         return NULL;
     }
-    /* At most 1024 ports, with one sequence slot and one ACK slot each.
+    /* At most 1024 ports, with sequence, ACK, and flag-position slots as needed.
      * Only required blocks are reserved, sharing the tunnel allocation/lifetime. */
     const size_t state_count = faketcpheaderWireStateCount(&wire);
     tunnel_t    *t =

@@ -108,6 +108,14 @@ static void requireFieldStorage(const node_case_t *c, tunnel_t *t)
             require(atomicLoadU32Relaxed(&c->values(t)[offset + i]) == wire->acknowledgment,
                     "node did not seed every ACK counter");
     }
+    if (faketcpheaderWireNeedsFlagPositions(wire))
+    {
+        const unsigned offset = wire->client_port_count *
+                                (faketcpheaderWireNeedsSequences(wire) + faketcpheaderWireNeedsAcknowledgments(wire));
+        for (uint16_t i = 0; i < wire->client_port_count; ++i)
+            require(atomicLoadU32Relaxed(&c->values(t)[offset + i]) == 0,
+                    "node did not start every flags array at zero");
+    }
 }
 
 static tunnel_t *createWithSettings(const node_case_t *c, const char *json)
@@ -157,6 +165,7 @@ static void requireDefaults(const faketcpheader_wire_config_t *wire)
     require(wire->options_length == 0, "default TCP options are not empty");
     require(wire->increment_sequence, "sequence progression is not enabled by default");
     require(! wire->increment_acknowledgment, "ACK progression is not disabled by default");
+    require(wire->flags_count == 1 && wire->flags[0] == 0x18, "default flags are not one ACK|PSH template");
 }
 
 static void testDefaults(const node_case_t *c)
@@ -313,6 +322,57 @@ static void requireRejected(const node_case_t *c, const char *json, const char *
     require(strstr(log_capture, expected) != NULL, "rejection did not name the node and the offending key");
 }
 
+static void testFlagSettings(const node_case_t *c)
+{
+    const struct
+    {
+        const char *json;
+        uint8_t     count;
+        uint8_t     flags[3];
+    } cases[] = {
+        {"[{}]", 1, {0}},
+        {"[{\"syn\":true},{\"ack\":true,\"psh\":true}]", 2, {2, 0x18}},
+        {"[{\"fin\":true,\"syn\":true,\"rst\":true,\"psh\":true,\"ack\":true,\"urg\":true,\"ece\":true,\"cwr\":true}]",
+         1,
+         {255}}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+        for (unsigned counters = 0; counters < 4; ++counters)
+        {
+            char json[320];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"sequence\":0,\"increment-sequence\":%s,\"increment-acknowledgment\":%s,"
+                     "\"client-port-range\":[64512,65535],\"flags\":%s}",
+                     counters & 1U ? "true" : "false",
+                     counters & 2U ? "true" : "false",
+                     cases[i].json);
+            tunnel_t *t = createWithSettings(c, json);
+            require(t != NULL, "constructor refused flags settings");
+            const faketcpheader_wire_config_t *wire = c->wire(t);
+            require(wire->flags_count == cases[i].count && memoryEqual(wire->flags, cases[i].flags, cases[i].count),
+                    "constructor changed flag masks or order");
+            requireFieldStorage(c, t);
+            destroyTunnel(t);
+        }
+    const char *const rejected[] = {"{\"flags\":24}",
+                                    "{\"flags\":null}",
+                                    "{\"flags\":[]}",
+                                    "{\"flags\":{}}",
+                                    "{\"flags\":[null]}",
+                                    "{\"flags\":[24]}",
+                                    "{\"flags\":[[]]}",
+                                    "{\"flags\":[{\"syn\":1}]}",
+                                    "{\"flags\":[{\"ack\":null}]}",
+                                    "{\"flags\":[{\"syn\":\"true\"}]}",
+                                    "{\"flags\":[{\"SYN\":true}]}",
+                                    "{\"flags\":[{\"ns\":true}]}",
+                                    "{\"flags\":[{\"syn\":true,\"syn\":false}]}",
+                                    "{\"flags\":[{}],\"flags\":[{}]}",
+                                    "{\"flags\":[{\"syn\\u0000extra\":true}]}"};
+    for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+        requireRejected(c, rejected[i], "flags");
+}
+
 static void testRejections(const node_case_t *c)
 {
     const char *const bad_modes[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
@@ -399,15 +459,8 @@ static void testRejections(const node_case_t *c)
     for (size_t i = 0; i < ARRAY_SIZE(bad_protocol); ++i)
         requireRejected(c, bad_protocol[i], "payload-protocol");
 
-    static const char *const removed[] = {"role",
-                                          "protocol-number",
-                                          "flags",
-                                          "mtu",
-                                          "local-ipv4",
-                                          "peer-ipv4",
-                                          "local-port",
-                                          "peer-port",
-                                          "client-port-count"};
+    static const char *const removed[] = {
+        "role", "protocol-number", "mtu", "local-ipv4", "peer-ipv4", "local-port", "peer-port", "client-port-count"};
     for (size_t i = 0; i < ARRAY_SIZE(removed); ++i)
     {
         char json[96];
@@ -559,7 +612,7 @@ static void requireForwarded(bool upstream, line_t *line, sbuf_t *buf)
     require(lineIsAlive(line), "payload destroyed the chain-owned packet line");
 }
 static void requireValuesUnchanged(const node_case_t *c, tunnel_t *t, const uint32_t *expected_sequences,
-                                   const uint32_t *expected_acknowledgments)
+                                   const uint32_t *expected_acknowledgments, const uint32_t *expected_positions)
 {
     const faketcpheader_wire_config_t *wire          = c->wire(t);
     const bool                         has_sequences = faketcpheaderWireNeedsSequences(wire);
@@ -572,6 +625,13 @@ static void requireValuesUnchanged(const node_case_t *c, tunnel_t *t, const uint
             require(atomicLoadU32Relaxed(&c->values(t)[(has_sequences ? wire->client_port_count : 0) + i]) ==
                         expected_acknowledgments[i],
                     "callback changed a per-port ACK");
+    if (faketcpheaderWireNeedsFlagPositions(wire))
+    {
+        const unsigned offset = wire->client_port_count * (has_sequences + faketcpheaderWireNeedsAcknowledgments(wire));
+        for (uint16_t i = 0; i < wire->client_port_count; ++i)
+            require(atomicLoadU32Relaxed(&c->values(t)[offset + i]) == expected_positions[i],
+                    "callback advanced flag position on refusal/decode or changed another port");
+    }
 }
 
 static void testPayloadCallbacks(const node_case_t *c, const char *settings)
@@ -585,9 +645,10 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
     uint8_t        packet[80];
     tunnel_t      *t = createWithSettings(c, settings);
     require(t != NULL, "callback fixture constructor");
+    requireFieldStorage(c, t);
     const faketcpheader_wire_config_t *wire      = c->wire(t);
     faketcpheader_wire_config_t        peer_wire = *wire;
-    atomic_u32_t                       peer_values[2 * kFakeTcpHeaderWireMaxClientPortCount];
+    atomic_u32_t                       peer_values[3 * kFakeTcpHeaderWireMaxClientPortCount];
     atomic_u32_t                      *peer_state = faketcpheaderWireStateCount(&peer_wire) != 0 ? peer_values : NULL;
     faketcpheaderWireInitState(&peer_wire, peer_state);
     tunnel_t *idle = createWithSettings(c, settings);
@@ -598,6 +659,8 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
     uint32_t next_sequences[kFakeTcpHeaderWireMaxClientPortCount], idle_sequences[kFakeTcpHeaderWireMaxClientPortCount];
     uint32_t acknowledgments[kFakeTcpHeaderWireMaxClientPortCount],
         idle_acknowledgments[kFakeTcpHeaderWireMaxClientPortCount];
+    uint32_t       positions[kFakeTcpHeaderWireMaxClientPortCount]      = {0};
+    const uint32_t idle_positions[kFakeTcpHeaderWireMaxClientPortCount] = {0};
     const unsigned ack_offset      = faketcpheaderWireNeedsSequences(wire) ? wire->client_port_count : 0;
     const unsigned idle_ack_offset = faketcpheaderWireNeedsSequences(idle_wire) ? idle_wire->client_port_count : 0;
     for (uint16_t i = 0; i < wire->client_port_count; ++i)
@@ -648,13 +711,17 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
             if (encoding)
             {
                 const uint8_t *carrier = sbufGetRawPtr(buf);
+                const uint8_t  flags   = wire->flags[positions[index]];
+                require(carrier[33] == flags, "callback selected the wrong per-port flag template");
                 require(GET_BE32(carrier + 24) == next_sequences[index], "callback used the wrong outgoing sequence");
                 if (wire->acknowledgment_mode != kFakeTcpHeaderFieldRandomPacket)
                     require(GET_BE32(carrier + 28) == acknowledgments[index], "callback used the wrong ACK");
                 if (wire->increment_sequence)
-                    next_sequences[index] += 61U;
+                    next_sequences[index] += 61U + ((flags & 2U) != 0) + ((flags & 1U) != 0);
                 if (wire->increment_acknowledgment)
                     ++acknowledgments[index];
+                if (positions[index] + 1U < wire->flags_count)
+                    ++positions[index];
                 require(sbufGetLength(buf) == 101, "callback did not insert fake TCP and one protocol byte");
                 require(((const uint8_t *) sbufGetRawPtr(buf))[40] == protocol,
                         "callback did not tag the actual native protocol");
@@ -664,7 +731,7 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
                                                 buf) == kFakeTcpHeaderWireOk,
                         "encoded callback output invalid");
             }
-            requireValuesUnchanged(c, t, next_sequences, acknowledgments);
+            requireValuesUnchanged(c, t, next_sequences, acknowledgments, positions);
             require(sbufGetLength(buf) == sizeof(packet) && memoryEqual(sbufGetRawPtr(buf), packet, sizeof(packet)),
                     "payload callback did not preserve native packet");
             lineReuseBuffer(line, buf);
@@ -681,7 +748,7 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
             require(twfRecycleCount() == refused_recycles + 1, "refused payload was not recycled exactly once");
             twfRequireLastRecycle(buf, lineGetBufferPool(line), "refusal used another line's pool");
             require(lineIsAlive(line), "refusal destroyed packet line");
-            requireValuesUnchanged(c, t, next_sequences, acknowledgments);
+            requireValuesUnchanged(c, t, next_sequences, acknowledgments, positions);
 
             const uint16_t fragments[] = {0x2000, 0x2001, 0x0001};
             for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
@@ -709,12 +776,12 @@ static void testPayloadCallbacks(const node_case_t *c, const char *settings)
                     require(twfRecycleCount() == fragment_recycles + 1, "fragment was not recycled exactly once");
                     twfRequireLastRecycle(buf, lineGetBufferPool(line), "fragment refusal used another pool");
                     require(lineIsAlive(line), "fragment refusal destroyed packet line");
-                    requireValuesUnchanged(c, t, next_sequences, acknowledgments);
+                    requireValuesUnchanged(c, t, next_sequences, acknowledgments, positions);
                 }
             }
         }
     }
-    requireValuesUnchanged(c, idle, idle_sequences, idle_acknowledgments);
+    requireValuesUnchanged(c, idle, idle_sequences, idle_acknowledgments, idle_positions);
     require(idle_wire->sequence == idle_seed && idle_wire->acknowledgment == idle_ack,
             "another node changed a fixed field seed");
     destroyTunnel(idle);
@@ -842,6 +909,7 @@ int main(void)
         testMetadata(&cases[i]);
         testDefaults(&cases[i]);
         testConfigured(&cases[i]);
+        testFlagSettings(&cases[i]);
         testRejections(&cases[i]);
 #if FAKE_TCP_HEADER_CALLBACK_FIXTURE
         testPayloadCallbacks(&cases[i], NULL);
@@ -855,6 +923,19 @@ int main(void)
                              "{\"sequence\":123,\"increment-sequence\":false,"
                              "\"acknowledgment\":4294967295,\"increment-acknowledgment\":true}");
         testPayloadCallbacks(&cases[i], "{\"acknowledgment\":4294967295,\"increment-acknowledgment\":true}");
+        testPayloadCallbacks(&cases[i],
+                             "{\"client-port\":40001,\"sequence\":0,\"increment-sequence\":false,"
+                             "\"flags\":[{\"syn\":true},{},{\"ack\":true,\"psh\":true}]}");
+        testPayloadCallbacks(&cases[i],
+                             "{\"client-port\":40001,\"sequence\":4294967294,\"acknowledgment\":4294967295,"
+                             "\"increment-acknowledgment\":true,\"flags\":[{\"syn\":true},{},{\"fin\":true}]}");
+        testPayloadCallbacks(&cases[i],
+                             "{\"client-port\":40001,\"acknowledgment\":\"random_packet\","
+                             "\"flags\":[{\"syn\":true},{},{\"fin\":true}]}");
+        testPayloadCallbacks(&cases[i],
+                             "{\"flags\":[{\"fin\":true,\"syn\":true,\"rst\":true,\"psh\":true,"
+                             "\"ack\":true,\"urg\":true,\"ece\":true,\"cwr\":true}]}");
+        testPayloadCallbacks(&cases[i], "{\"sequence\":0,\"increment-sequence\":false,\"flags\":[{}]}");
         const char *const ack_modes[]    = {"random_node", "random_port", "random_packet"};
         const char *const seq_settings[] = {"\"sequence\":0,\"increment-sequence\":false",
                                             "\"sequence\":4294967270,\"increment-sequence\":true",

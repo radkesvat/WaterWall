@@ -10,7 +10,8 @@ starts, and --tun explicitly disables increments with numeric starts. Advancing
 byte ranges are checked per direction/client port without assuming arrival order.
 ACK modes are random-packet for UDP, random-node for --multi-queue, numeric for
 --tcp, and random-port for --tun. TCP/TUN ACKs advance once per encoded packet;
-multiqueue ACKs remain fixed within each node.
+multiqueue ACKs remain fixed within each node. TCP/TUN also use short flag scripts
+including SYN/FIN/RST and non-ACK carriers, with the last entry repeated.
 """
 import contextlib
 import errno
@@ -109,7 +110,7 @@ def check_sequence_ranges(ranges, key, expected_initial=None, field="sequence"):
         assert initial == expected_initial, f"fake {field} did not start at its configured value for {key}"
     for offset, (length, _) in ordered:
         assert offset == expected_offset, f"fake {field} ranges overlap or leave a gap for {key}"
-        expected_offset += length  # Sequence: fake payload bytes; acknowledgment: one packet.
+        expected_offset += length  # Sequence: fake payload plus SYN/FIN; acknowledgment: one packet.
     assert expected_offset - first_offset < 1 << 31, f"fake {field} escaped the bounded probe workload"
     return initial
 
@@ -131,6 +132,12 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = FAKE_OPTIONS.hex()
+            if tcp:
+                settings["flags"] = [{"syn": True}, {"fin": True, "rst": True}, {"ack": True, "psh": True}]
+            elif tun:
+                settings["flags"] = [{"syn": True, "fin": True, "rst": True}, {}]
+            else:
+                settings.pop("flags", None)
             if tun:
                 settings["acknowledgment"] = "random_port"
             elif tcp:
@@ -356,6 +363,9 @@ def run(binary, directory, tun, multi_queue, tcp):
             # exact placement and total length excludes an extra IPv4 header.
             initial_sequence = 12345 if forward else 67890
             sequence, acknowledgment = struct.unpack_from("!II", carrier, 4)
+            fake_flags = carrier[13]
+            allowed_flags = (0x02, 0x05, 0x18) if tcp else (0x07, 0) if tun else (0x18,)
+            assert fake_flags in allowed_flags, "fake TCP flags escaped the configured script"
             if tun or tcp:
                 # ACK reservations may be ordered differently from sequence
                 # reservations across workers; validate each counter separately.
@@ -374,10 +384,11 @@ def run(binary, directory, tun, multi_queue, tcp):
                 # Check modulo-relative order later: workers may deliver wire
                 # packets out of order, and loopback may capture a frame twice.
                 ranges = sequence_ranges.setdefault((source, client_side), {})
-                entry = (len(carrier) - fake_length, packet)
+                control_span = bool(fake_flags & 0x02) + bool(fake_flags & 0x01)
+                entry = (len(carrier) - fake_length + control_span, packet)
                 assert ranges.setdefault(sequence, entry) == entry, "different packets reused a fake sequence range"
             expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
-                                                 0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
+                                                 0x60, fake_flags, 65535, 0, 0) + FAKE_OPTIONS)
             struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + bytes((protocol,)) + native))
             assert carrier[:fake_length] == expected_fake, "configured fake TCP header did not reach wire"
             assert total == 20 + 24 + 1 + len(native) and total - 25 <= NATIVE_MTU
@@ -496,8 +507,17 @@ def run(binary, directory, tun, multi_queue, tcp):
             for key, ranges in acknowledgment_ranges.items():
                 initial = TCP_ACK_STARTS[0 if key[0] == "192.0.2.10" else 1] if tcp else None
                 check_sequence_ranges(ranges, key, initial, field="acknowledgment")
+                # Distinct ACK values identify accepted encodings; loopback can
+                # capture one packet twice. Script reservations can be reordered
+                # relative to ACK/sequence reservations, so compare multisets.
+                flags = [packet[(packet[0] & 15) * 4 + 13] for _, packet in ranges.values()]
                 if tun:
                     assert len(ranges) == 3, "TUN ACK count did not match the three accepted UDP packets"
+                    assert flags.count(0x07) == 1 and flags.count(0) == 2, \
+                        "TUN flag script did not advance once and repeat its final empty entry per port"
+                else:
+                    assert flags.count(0x02) == 1 and flags.count(0x05) == 1 and flags.count(0x18) >= 2, \
+                        "TCP flag script did not emit each prefix once then repeat its final entry per port"
         if not tun:
             assert sequence_ranges, "no incrementing fake sequence ranges were inspected"
             node_starts = {}

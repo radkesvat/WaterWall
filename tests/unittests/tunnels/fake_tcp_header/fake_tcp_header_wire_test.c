@@ -161,7 +161,9 @@ static faketcpheader_wire_config_t baseConfig(void)
                                           .server_port        = 40000,
                                           .client_port        = 40001,
                                           .client_port_count  = 16,
-                                          .increment_sequence = false};
+                                          .increment_sequence = false,
+                                          .flags_count        = 1,
+                                          .flags              = {0x18}};
 }
 
 static void setOptions(faketcpheader_wire_config_t *config, uint8_t length)
@@ -237,7 +239,7 @@ static uint16_t oracleCarrier(uint8_t *out, const uint8_t *packet, const faketcp
     PUT_BE32(tcp + 4, config->sequence);
     PUT_BE32(tcp + 8, config->acknowledgment);
     tcp[12] = (uint8_t) ((f / 4U) << 4);
-    tcp[13] = 0x18;
+    tcp[13] = config->flags[0];
     PUT_BE16(tcp + 14, config->window);
     PUT_BE16(tcp + 18, config->urgent_pointer);
     memoryCopy(tcp + 20, config->options, config->options_length);
@@ -292,7 +294,10 @@ static void expectRefusal(const faketcpheader_wire_config_t *config, faketcphead
     faketcpheader_wire_config_t advancing = *config;
     advancing.increment_sequence          = true;
     advancing.increment_acknowledgment    = true;
-    atomic_u32_t sequences[2 * kFakeTcpHeaderWireMaxClientPortCount];
+    advancing.flags_count                 = 2;
+    advancing.flags[0]                    = 0x02;
+    advancing.flags[1]                    = 0x18;
+    atomic_u32_t sequences[3 * kFakeTcpHeaderWireMaxClientPortCount];
     faketcpheaderWireInitState(&advancing, sequences);
     requireResult(encode ? faketcpheaderWireEncode(&advancing, sequences, side, buf)
                          : faketcpheaderWireDecode(config, side, buf),
@@ -308,6 +313,8 @@ static void expectRefusal(const faketcpheader_wire_config_t *config, faketcphead
         requireResult(atomicLoadU32Relaxed(&sequences[config->client_port_count + i]),
                       config->acknowledgment,
                       "refusal advanced an ACK counter");
+        requireResult(
+            atomicLoadU32Relaxed(&sequences[2 * config->client_port_count + i]), 0, "refusal consumed a flag position");
     }
     sbufDestroy(buf);
 }
@@ -903,7 +910,8 @@ static void testAcknowledgmentModes(void)
                         config.increment_acknowledgment    = ack_increment != 0;
                         config.acknowledgment              = UINT32_MAX - 1U;
                         config.client_port_count           = 3;
-                        const bool seq_storage             = faketcpheaderWireNeedsSequences(&config);
+                        config.flags[0]            = 0; /* ACK field generation is independent of the ACK bit. */
+                        const bool seq_storage     = faketcpheaderWireNeedsSequences(&config);
                         const bool ack_random_port = config.acknowledgment_mode == kFakeTcpHeaderFieldRandomPort;
                         const bool ack_storage     = config.increment_acknowledgment || ack_random_port;
                         require(faketcpheaderWireNeedsAcknowledgments(&config) == ack_storage,
@@ -1071,6 +1079,118 @@ static void testAcknowledgmentModes(void)
                     }
 }
 
+static void testFlagProgression(void)
+{
+    const uint8_t templates[] = {0, 1, 2, 4, 8, 16, 32, 64, 128, 255};
+    uint8_t       packet[100], expected[180];
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (unsigned counters = 0; counters < 4; ++counters)
+            for (unsigned options = 0; options < 2; ++options)
+            {
+                faketcpheader_wire_config_t config = baseConfig();
+                config.client_port_count           = 3;
+                config.sequence                    = UINT32_MAX - 2U;
+                config.acknowledgment              = UINT32_MAX - 1U;
+                config.increment_sequence          = (counters & 1U) != 0;
+                config.increment_acknowledgment    = (counters & 2U) != 0;
+                config.flags_count                 = sizeof(templates);
+                memoryCopy(config.flags, templates, sizeof(templates));
+                setOptions(&config, options ? 40 : 0);
+                const unsigned ack_offset   = config.increment_sequence ? 3U : 0U;
+                const unsigned flags_offset = ack_offset + (config.increment_acknowledgment ? 3U : 0U);
+                require(faketcpheaderWireNeedsFlagPositions(&config), "multi-entry flags omitted cursor storage");
+                requireResult(faketcpheaderWireStateCount(&config), flags_offset + 3U, "flag storage block size");
+                atomic_u32_t values[9];
+                faketcpheaderWireInitState(&config, values);
+                uint32_t next_sequence[3] = {config.sequence, config.sequence, config.sequence};
+                uint32_t next_ack[3]      = {config.acknowledgment, config.acknowledgment, config.acknowledgment};
+                unsigned positions[3]     = {0};
+                unsigned seen[3]          = {0};
+                for (unsigned flow = 0; flow < 96; ++flow)
+                {
+                    buildNative(packet, 17, 24, sizeof(packet));
+                    PUT_BE16(packet + 24, (uint16_t) (5000U + flow));
+                    oracleSetChecksums(packet);
+                    const uint16_t index = faketcpheaderWirePortIndex(&config, packet, sizeof(packet));
+                    const uint8_t  flags = templates[positions[index]];
+                    ++seen[index];
+                    faketcpheader_wire_config_t oracle = config;
+                    oracle.flags[0]                    = flags;
+                    oracle.sequence                    = next_sequence[index];
+                    oracle.acknowledgment              = next_ack[index];
+                    const uint16_t length              = oracleCarrier(expected, packet, &oracle, kSides[s], index);
+                    sbuf_t        *buf                 = makeBuffer(packet, sizeof(packet), 61);
+                    requireResult(faketcpheaderWireEncode(&config, values, kSides[s], buf),
+                                  kFakeTcpHeaderWireOk,
+                                  "flags fixture refused valid native packet");
+                    requireBytes(
+                        bufferBytes(buf), expected, length, "flag template or dependent checksum differs from oracle");
+                    if (config.increment_sequence)
+                        next_sequence[index] += sizeof(packet) - 24U + 1U + ((flags & 2U) != 0) + ((flags & 1U) != 0);
+                    if (config.increment_acknowledgment)
+                        ++next_ack[index];
+                    if (positions[index] < sizeof(templates) - 1U)
+                        ++positions[index];
+                    decodeOk(&config, peerSide(kSides[s]), buf, packet, sizeof(packet));
+                    sbufDestroy(buf);
+                    for (unsigned i = 0; i < 3; ++i)
+                    {
+                        if (config.increment_sequence)
+                            requireResult(atomicLoadU32Relaxed(&values[i]),
+                                          next_sequence[i],
+                                          "flag changed sequence span or another port");
+                        if (config.increment_acknowledgment)
+                            requireResult(atomicLoadU32Relaxed(&values[ack_offset + i]),
+                                          next_ack[i],
+                                          "flag changed ACK generation or another port");
+                        requireResult(atomicLoadU32Relaxed(&values[flags_offset + i]),
+                                      positions[i],
+                                      "flag cursor changed another port, advanced on decode, or wrapped");
+                    }
+                }
+                for (unsigned i = 0; i < 3; ++i)
+                {
+                    requireResult(
+                        positions[i], sizeof(templates) - 1U, "fixture did not reach every port's final template");
+                    require(seen[i] > sizeof(templates) + 2U,
+                            "fixture did not repeatedly reuse every port's final template");
+                }
+                /* Construction of a new node starts the array again, even if all previous cursors saturated. */
+                faketcpheaderWireInitState(&config, values);
+                for (unsigned i = 0; i < 3; ++i)
+                    requireResult(
+                        atomicLoadU32Relaxed(&values[flags_offset + i]), 0, "node recreation did not reset flags");
+                sbuf_t *buf = makeBuffer(packet, sizeof(packet), 61);
+                requireResult(faketcpheaderWireEncode(&config, values, kSides[s], buf),
+                              kFakeTcpHeaderWireOk,
+                              "recreated flags fixture encode");
+                requireResult(
+                    bufferBytes(buf)[24 + 13], templates[0], "recreated node did not restart the first template");
+                sbufDestroy(buf);
+            }
+
+    /* A single entry requires no cursor, including the explicit empty/all-bits templates. */
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (unsigned mask = 0; mask < 2; ++mask)
+        {
+            faketcpheader_wire_config_t config = baseConfig();
+            config.flags[0]                    = mask ? 255U : 0U;
+            require(! faketcpheaderWireNeedsFlagPositions(&config) && faketcpheaderWireStateCount(&config) == 0,
+                    "single flag template allocated cursor storage");
+            faketcpheaderWireInitState(&config, NULL);
+            buildNative(packet, 6, 24, sizeof(packet));
+            const uint16_t index  = faketcpheaderWirePortIndex(&config, packet, sizeof(packet));
+            const uint16_t length = oracleCarrier(expected, packet, &config, kSides[s], index);
+            for (unsigned repeat = 0; repeat < 3; ++repeat)
+            {
+                sbuf_t *buf = encodeOk(&config, kSides[s], packet, sizeof(packet), 61, false);
+                requireBytes(bufferBytes(buf), expected, length, "single flag template changed across packets");
+                decodeOk(&config, peerSide(kSides[s]), buf, packet, sizeof(packet));
+                sbufDestroy(buf);
+            }
+        }
+}
+
 enum
 {
     kSequenceThreads          = 4,
@@ -1119,7 +1239,12 @@ static void testConcurrentSequences(void)
                 config.acknowledgment              = UINT32_MAX - 3U;
                 config.acknowledgment_mode         = ack_modes[a];
                 config.client_port_count           = 1;
-                atomic_u32_t sequences[2];
+                config.sequence                    = UINT32_MAX - 7U;
+                config.flags_count                 = 5;
+                const uint8_t flag_templates[]     = {0x02, 0x01, 0x03, 0x80, 0x18};
+                memoryCopy(config.flags, flag_templates, sizeof(flag_templates));
+                const unsigned flags_offset = 1U + faketcpheaderWireNeedsAcknowledgments(&config);
+                atomic_u32_t   sequences[3];
                 faketcpheaderWireInitState(&config, sequences);
                 const uint32_t acknowledgment = faketcpheaderWireNeedsAcknowledgments(&config)
                                                     ? atomicLoadU32Relaxed(&sequences[1])
@@ -1148,18 +1273,31 @@ static void testConcurrentSequences(void)
                 for (unsigned t = 0; t < kSequenceThreads; ++t)
                     requireResult(threadJoin(threads[t]), 0, "failed to join sequence encoder thread");
 
-                bool seen[kSequenceThreads * kSequencePacketsPerThread]     = {false};
-                bool ack_seen[kSequenceThreads * kSequencePacketsPerThread] = {false};
+                /* SYN and FIN consume four extra sequence bytes across the finite initial templates. */
+                bool sequence_bytes[kSequenceThreads * kSequencePacketsPerThread * kSequencePayloadLength + 4] = {
+                    false};
+                bool     ack_seen[kSequenceThreads * kSequencePacketsPerThread] = {false};
+                unsigned flag_seen[5]                                           = {0};
                 for (unsigned t = 0; t < kSequenceThreads; ++t)
                     for (unsigned p = 0; p < kSequencePacketsPerThread; ++p)
                     {
                         sbuf_t        *buf     = tasks[t].packets[p];
                         const uint8_t *carrier = bufferBytes(buf);
                         const uint32_t offset  = GET_BE32(carrier + 24) - config.sequence;
-                        require(offset % kSequencePayloadLength == 0, "concurrent sequence interval is misaligned");
-                        const uint32_t slot = offset / kSequencePayloadLength;
-                        require(slot < ARRAY_SIZE(seen) && ! seen[slot], "concurrent sequence intervals overlap");
-                        seen[slot] = true;
+                        const uint8_t  flags   = carrier[33];
+                        const uint32_t span    = kSequencePayloadLength + ((flags & 2U) != 0) + ((flags & 1U) != 0);
+                        require(offset <= sizeof(sequence_bytes) && span <= sizeof(sequence_bytes) - offset,
+                                "concurrent sequence interval exceeds total bytes");
+                        for (uint32_t byte = offset; byte < offset + span; ++byte)
+                        {
+                            require(! sequence_bytes[byte], "concurrent variable sequence intervals overlap");
+                            sequence_bytes[byte] = true;
+                        }
+                        unsigned flag_index = 0;
+                        while (flag_index < ARRAY_SIZE(flag_templates) && flag_templates[flag_index] != flags)
+                            ++flag_index;
+                        require(flag_index < ARRAY_SIZE(flag_templates), "concurrent encoder selected unknown flags");
+                        ++flag_seen[flag_index];
                         if (config.increment_acknowledgment)
                         {
                             const uint32_t ack_slot = GET_BE32(carrier + 28) - acknowledgment;
@@ -1173,9 +1311,19 @@ static void testConcurrentSequences(void)
                                 "concurrent sequence broke checksum");
                         sbufDestroy(buf);
                     }
+                for (size_t byte = 0; byte < sizeof(sequence_bytes); ++byte)
+                    require(sequence_bytes[byte], "concurrent variable sequence intervals left a gap");
+                for (unsigned i = 0; i < ARRAY_SIZE(flag_templates) - 1U; ++i)
+                    requireResult(
+                        flag_seen[i], 1, "concurrent encoders duplicated or skipped an initial flag template");
+                requireResult(flag_seen[4],
+                              kSequenceThreads * kSequencePacketsPerThread - 4U,
+                              "concurrent encoders did not keep the final template");
+                requireResult(
+                    atomicLoadU32Relaxed(&sequences[flags_offset]), 4, "concurrent flag cursor did not saturate");
                 requireResult(atomicLoadU32Relaxed(sequences),
-                              config.sequence + kSequenceThreads * kSequencePacketsPerThread * kSequencePayloadLength,
-                              "concurrent encoders lost sequence increments");
+                              (uint32_t) (config.sequence + (uint32_t) sizeof(sequence_bytes)),
+                              "concurrent encoders lost sequence increments or SYN/FIN bytes");
                 if (faketcpheaderWireNeedsAcknowledgments(&config))
                     requireResult(atomicLoadU32Relaxed(&sequences[1]),
                                   acknowledgment + (config.increment_acknowledgment
@@ -1735,8 +1883,80 @@ static void requireDefaults(const faketcpheader_wire_config_t *config)
                 config->sequence_mode == kFakeTcpHeaderFieldRandomPort && config->sequence == 0 &&
                 config->acknowledgment_mode == kFakeTcpHeaderFieldNumeric && config->acknowledgment == 0 &&
                 config->window == 65535 && config->urgent_pointer == 0 && config->options_length == 0 &&
-                config->increment_sequence && ! config->increment_acknowledgment,
+                config->increment_sequence && ! config->increment_acknowledgment && config->flags_count == 1 &&
+                config->flags[0] == 0x18,
             "default settings changed");
+}
+
+static void testFlagSettings(void)
+{
+    const char *const names[]          = {"fin", "syn", "rst", "psh", "ack", "urg", "ece", "cwr"};
+    const char *const invalid_values[] = {"null", "0", "1", "\"true\"", "[]", "{}"};
+    for (unsigned bit = 0; bit < ARRAY_SIZE(names); ++bit)
+    {
+        char json[96];
+        snprintf(json, sizeof(json), "{\"flags\":[{\"%s\":true}]}", names[bit]);
+        faketcpheader_wire_config_t config = requireSettingsLoaded(json);
+        require(config.flags_count == 1 && config.flags[0] == (uint8_t) (1U << bit) &&
+                    ! faketcpheaderWireNeedsFlagPositions(&config),
+                "flag name mapped to the wrong TCP bit");
+        snprintf(json, sizeof(json), "{\"flags\":[{\"%s\":false}]}", names[bit]);
+        config = requireSettingsLoaded(json);
+        require(config.flags_count == 1 && config.flags[0] == 0, "false flag was not cleared");
+        for (size_t v = 0; v < ARRAY_SIZE(invalid_values); ++v)
+        {
+            snprintf(json, sizeof(json), "{\"flags\":[{\"%s\":%s}]}", names[bit], invalid_values[v]);
+            requireSettingsRejected(json);
+        }
+    }
+    faketcpheader_wire_config_t config = requireSettingsLoaded(
+        "{\"flags\":[{}, {\"syn\":true}, {\"syn\":false,\"ack\":true,\"psh\":true},"
+        "{\"fin\":true,\"syn\":true,\"rst\":true,\"psh\":true,\"ack\":true,\"urg\":true,\"ece\":true,\"cwr\":true}]}");
+    const uint8_t expected[] = {0, 2, 0x18, 255};
+    requireResult(config.flags_count, sizeof(expected), "flag array length changed");
+    requireBytes(config.flags, expected, sizeof(expected), "flag array order or omitted defaults changed");
+    config = requireSettingsLoaded("{\"sequence\":0,\"increment-sequence\":false,\"flags\":[{},{}]}");
+    requireResult(faketcpheaderWireStateCount(&config), 16, "flag-only state was not reserved");
+    config = requireSettingsLoaded("{\"sequence\":0,\"increment-sequence\":false,\"flags\":[{}]}");
+    requireResult(faketcpheaderWireStateCount(&config), 0, "single empty flag template reserved state");
+    for (unsigned count = 32; count <= 33; ++count)
+    {
+        char   json[160];
+        size_t length = (size_t) snprintf(json, sizeof(json), "{\"flags\":[");
+        for (unsigned i = 0; i < count; ++i)
+            length += (size_t) snprintf(json + length, sizeof(json) - length, "%s{}", i ? "," : "");
+        snprintf(json + length, sizeof(json) - length, "]}");
+        if (count == 32)
+        {
+            config = requireSettingsLoaded(json);
+            requireResult(config.flags_count, 32, "maximum flags array was not loaded");
+            for (unsigned i = 0; i < count; ++i)
+                requireResult(config.flags[i], 0, "empty flags object inherited a default bit");
+        }
+        else
+            requireSettingsRejected(json);
+    }
+    const char *const rejected[] = {"{\"flags\":null}",
+                                    "{\"flags\":24}",
+                                    "{\"flags\":true}",
+                                    "{\"flags\":{}}",
+                                    "{\"flags\":\"syn\"}",
+                                    "{\"flags\":[]}",
+                                    "{\"flags\":[null]}",
+                                    "{\"flags\":[24]}",
+                                    "{\"flags\":[true]}",
+                                    "{\"flags\":[[]]}",
+                                    "{\"flags\":[\"syn\"]}",
+                                    "{\"flags\":[{\"SYN\":true}]}",
+                                    "{\"flags\":[{\"ns\":true}]}",
+                                    "{\"flags\":[{\"syn\":true,\"syn\":false}]}",
+                                    "{\"flags\":[{}],\"flags\":[{\"syn\":true}]}",
+                                    "{\"flags\":[{\"syn\\u0000extra\":true}]}",
+                                    "{\"flags\":[{\"\\u0000syn\":true}]}",
+                                    "{\"flags\":[{\"syn\xc0\xaf\":true}]}",
+                                    "{\"flags\\u0000extra\":[{}]}"};
+    for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+        requireSettingsRejected(rejected[i]);
 }
 
 static void testSettings(void)
@@ -2069,6 +2289,7 @@ int main(void)
     checkSumInit();
     /* Settings are pure parsing: even random defaults must work before RNG startup. */
     TEST_RUN_CASE(testSettings);
+    TEST_RUN_CASE(testFlagSettings);
     require(globalstateInitializeSecureRandom(), "OS random source unavailable");
     require(frandGlobalInit(), "fast random initialization failed");
     frandInit();
@@ -2083,6 +2304,7 @@ int main(void)
     TEST_RUN_CASE(testSequencePortIsolation);
     TEST_RUN_CASE(testRandomSequenceModes);
     TEST_RUN_CASE(testAcknowledgmentModes);
+    TEST_RUN_CASE(testFlagProgression);
     TEST_RUN_CASE(testConcurrentSequences);
     TEST_RUN_CASE(testLimitsAndFraming);
     TEST_RUN_CASE(testAllProtocolBytes);
