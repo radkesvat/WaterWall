@@ -1,13 +1,17 @@
 #pragma once
 
+#include "EncryptionCommon/packet.h"
 #include "EncryptionCommon/record.h"
 
 typedef struct encryptionserver_tstate_s
 {
-    uint32_t algorithm;
-    uint32_t kdf_iterations;
-    uint32_t max_frame_payload;
-    uint8_t  key[32];
+    uint32_t                  algorithm;
+    uint32_t                  kdf_iterations;
+    uint32_t                  max_frame_payload;
+    uint8_t                   key[32];
+    uint8_t                   packet_download_key[32];
+    atomic_log_rate_limiter_t packet_drop_log_limiter;
+    bool                      packet_mode;
 } encryptionserver_tstate_t;
 
 typedef struct encryptionserver_lstate_s
@@ -38,3 +42,6 @@ void encryptionserverLinestateDestroy(encryptionserver_lstate_t *ls);
 void encryptionserverTunnelstateDestroy(encryptionserver_tstate_t *ts);
 
 void encryptionserverCloseLineBidirectional(tunnel_t *t, line_t *l);
+
+void encryptionserverPacketUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
+void encryptionserverPacketDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
