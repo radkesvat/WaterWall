@@ -312,6 +312,13 @@ static inline uint32_t atomicSubU32Explicit(atomic_u32_t *object, uint32_t opera
     return atomic_fetch_sub_explicit(object, operand, order);
 }
 
+/* Strong compare/exchange; on failure, expected receives the observed value. */
+static inline bool atomicCompareExchangeU32Explicit(atomic_u32_t *object, uint32_t *expected, uint32_t desired,
+                                                    memory_order success, memory_order failure)
+{
+    return atomic_compare_exchange_strong_explicit(object, expected, desired, success, failure);
+}
+
 #else
 
 _Static_assert(_Alignof(atomic_u32_t) >= 4, "Interlocked operations require 4-byte-aligned storage");
@@ -339,6 +346,16 @@ static inline uint32_t atomicSubU32Explicit(atomic_u32_t *object, uint32_t opera
 {
     (void) order;
     return (uint32_t) InterlockedExchangeAdd(object, (LONG) (UINT32_C(0) - operand));
+}
+
+static inline bool atomicCompareExchangeU32Explicit(atomic_u32_t *object, uint32_t *expected, uint32_t desired,
+                                                    memory_order success, memory_order failure)
+{
+    (void) success;
+    (void) failure;
+    const uint32_t old = *expected;
+    *expected          = (uint32_t) InterlockedCompareExchange((volatile LONG *) object, (LONG) desired, (LONG) old);
+    return *expected == old;
 }
 
 #endif

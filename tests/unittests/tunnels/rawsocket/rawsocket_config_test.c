@@ -358,6 +358,60 @@ static void testProtocolExclusions(void)
     }
 }
 
+static void testProtocolAllowlist(void)
+{
+    const char *const valid[] = {
+        "{\"capture-protocols\":[6,6]}", "{\"capture-protocols\":[]}", "{\"capture-protocols\":[0,6,255]}"};
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(valid[i], &settings);
+        require(t != NULL, "RawSocket rejected a valid protocol allowlist");
+        rawsocket_tstate_t *state = tunnelGetState(t);
+        for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+        {
+            const bool allowed =
+                (i == 0 && protocol == 6) || (i == 2 && (protocol == 0 || protocol == 6 || protocol == 255));
+            require(captureProtocolFilterExcludes(&state->capture_protocol_filter, (uint8_t) protocol) == ! allowed,
+                    "protocol allowlist captured an unselected protocol");
+        }
+        destroyRawSocket(t, settings);
+    }
+    const char *const invalid[] = {
+        "null", "6", "\"6\"", "{}", "[true]", "[null]", "[\"6\"]", "[-1]", "[256]", "[1.5]", "[1e100]", "[[]]"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char json[128];
+        snprintf(json, sizeof(json), "{\"capture-protocols\":%s}", invalid[i]);
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(json, &settings);
+        require(t == NULL, "RawSocket accepted invalid allowlist input");
+        destroyRawSocket(t, settings);
+    }
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket("{\"capture-protocols\":[6],\"dont-capture-protocols\":[]}", &settings);
+    require(t == NULL, "RawSocket accepted conflicting protocol selectors");
+    destroyRawSocket(t, settings);
+}
+
+static void testAllProtocolsAllowed(void)
+{
+    /* Every protocol allowed is the unrestricted selection: no exclusion predicate. */
+    char json[1200] = "{\"capture-protocols\":[0";
+    for (unsigned int protocol = 1; protocol < kCaptureIpProtocolCount; ++protocol)
+    {
+        const size_t used = strlen(json);
+        snprintf(json + used, sizeof(json) - used, ",%u", protocol);
+    }
+    strcat(json, "]}");
+    cJSON    *settings;
+    tunnel_t *t = createRawSocket(json, &settings);
+    require(t != NULL &&
+                captureProtocolFilterIsEmpty(&((rawsocket_tstate_t *) tunnelGetState(t))->capture_protocol_filter),
+            "an all-protocol allowlist added a protocol exclusion predicate");
+    destroyRawSocket(t, settings);
+}
+
 int main(void)
 {
     testCaseSet("rawsocket_config_test");
@@ -370,5 +424,7 @@ int main(void)
     testInvalidCaptureElementIsRejected();
     testConntrackSetting();
     testProtocolExclusions();
+    testProtocolAllowlist();
+    testAllProtocolsAllowed();
     return 0;
 }

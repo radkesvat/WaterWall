@@ -881,6 +881,42 @@ static void testProtocolFilterUsesTheSamePredicateForEveryRule(void)
     requireNoShellInvocation();
 }
 
+static void openBytecodeSockets(const char *bytecode, int sockets[2])
+{
+    char               *cursor;
+    const unsigned long count = strtoul(bytecode, &cursor, 10);
+    struct sock_filter  instructions[64];
+    require(count > 0 && count <= ARRAY_SIZE(instructions), "cBPF program exceeds xt_bpf's limit");
+    for (unsigned long i = 0; i < count; ++i)
+    {
+        int consumed = 0;
+        require(sscanf(cursor,
+                       ",%hu %hhu %hhu %u%n",
+                       &instructions[i].code,
+                       &instructions[i].jt,
+                       &instructions[i].jf,
+                       &instructions[i].k,
+                       &consumed) == 4 &&
+                    consumed > 0,
+                "invalid generated cBPF instruction");
+        cursor += consumed;
+    }
+    require(*cursor == '\0', "trailing bytes in generated cBPF program");
+    struct sock_fprog program = {.len = (unsigned short) count, .filter = instructions};
+    require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "unable to create cBPF test sockets");
+    require(setsockopt(sockets[1], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
+            "the kernel rejected the generated cBPF program");
+}
+
+static void requireBytecodeResult(const int sockets[2], const uint8_t *packet, size_t length, bool expected,
+                                  const char *message)
+{
+    require(send(sockets[0], packet, length, 0) == (ssize_t) length, "filter test send failed");
+    uint8_t       received_byte;
+    const ssize_t received = recv(sockets[1], &received_byte, sizeof(received_byte), MSG_DONTWAIT);
+    require(expected ? received == 1 : received == -1 && (errno == EAGAIN || errno == EWOULDBLOCK), message);
+}
+
 static void testProtocolFilterInTheKernel(void)
 {
     /* Execute the actual generated cBPF on an unprivileged datagram socket.
@@ -899,30 +935,8 @@ static void testProtocolFilterInTheKernel(void)
         }
         char bytecode[kCaptureLinuxProtocolFilterSize];
         captureLinuxBuildProtocolFilter(&filter, bytecode);
-        char               *cursor;
-        const unsigned long count = strtoul(bytecode, &cursor, 10);
-        struct sock_filter  instructions[64];
-        require(count > 0 && count <= ARRAY_SIZE(instructions), "protocol program exceeds xt_bpf's limit");
-        for (unsigned long i = 0; i < count; ++i)
-        {
-            int consumed = 0;
-            require(sscanf(cursor,
-                           ",%hu %hhu %hhu %u%n",
-                           &instructions[i].code,
-                           &instructions[i].jt,
-                           &instructions[i].jf,
-                           &instructions[i].k,
-                           &consumed) == 4 &&
-                        consumed > 0,
-                    "invalid generated cBPF instruction");
-            cursor += consumed;
-        }
-        require(*cursor == '\0', "trailing bytes in generated cBPF program");
-        struct sock_fprog program = {.len = (unsigned short) count, .filter = instructions};
-        int               sockets[2];
-        require(socketpair(AF_UNIX, SOCK_DGRAM, 0, sockets) == 0, "unable to create protocol-filter sockets");
-        require(setsockopt(sockets[1], SOL_SOCKET, SO_ATTACH_FILTER, &program, sizeof(program)) == 0,
-                "the kernel rejected the generated protocol filter");
+        int sockets[2];
+        openBytecodeSockets(bytecode, sockets);
         for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
         {
             uint8_t packet[20] = {0x45};
@@ -944,6 +958,127 @@ static void testProtocolFilterInTheKernel(void)
         close(sockets[0]);
         close(sockets[1]);
     }
+}
+
+static void testProtocolFilterDoesNotInspectTcpPorts(void)
+{
+    capture_protocol_filter_t filter = {0};
+    for (unsigned protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+        if (protocol != IPPROTO_TCP)
+            captureProtocolFilterExclude(&filter, (uint8_t) protocol);
+    char bytecode[kCaptureLinuxProtocolFilterSize];
+    captureLinuxBuildProtocolFilter(&filter, bytecode);
+    int sockets[2];
+    openBytecodeSockets(bytecode, sockets);
+
+    /* Protocol selection must not require transport bytes or interpret fragments. */
+    uint8_t packet[80] = {0x45};
+    packet[9]          = IPPROTO_TCP;
+    requireBytecodeResult(sockets, packet, 20, true, "TCP protocol predicate required transport bytes");
+    const uint16_t ports[]     = {0, 1, 443, 40000, 65535};
+    const uint16_t fragments[] = {0, 0x4000, 0x2000, 1};
+    const uint8_t  ihls[]      = {5, 6, 15};
+    for (size_t h = 0; h < ARRAY_SIZE(ihls); ++h)
+        for (size_t p = 0; p < ARRAY_SIZE(ports); ++p)
+            for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
+            {
+                memset(packet, 0, sizeof(packet));
+                const unsigned header_length = ihls[h] * 4U;
+                const unsigned length        = header_length + 20U;
+                packet[0]                    = (uint8_t) (0x40U | ihls[h]);
+                packet[2]                    = (uint8_t) (length >> 8);
+                packet[3]                    = (uint8_t) length;
+                packet[6]                    = (uint8_t) (fragments[f] >> 8);
+                packet[7]                    = (uint8_t) fragments[f];
+                packet[9]                    = IPPROTO_TCP;
+                packet[header_length]        = (uint8_t) (ports[p] >> 8);
+                packet[header_length + 1]    = (uint8_t) ports[p];
+                packet[header_length + 2]    = (uint8_t) (ports[ARRAY_SIZE(ports) - p - 1] >> 8);
+                packet[header_length + 3]    = (uint8_t) ports[ARRAY_SIZE(ports) - p - 1];
+                packet[header_length + 12]   = 0x50;
+                requireBytecodeResult(sockets,
+                                      packet,
+                                      length,
+                                      true,
+                                      "TCP protocol predicate selected ports or rejected IP options/fragments");
+                packet[9] = IPPROTO_UDP;
+                requireBytecodeResult(
+                    sockets, packet, length, false, "TCP protocol predicate admitted an excluded UDP packet");
+            }
+    close(sockets[0]);
+    close(sockets[1]);
+}
+
+static void requireBpfMatch(const recorded_call_t *call, size_t offset, const char *bytecode, const char *message)
+{
+    require(call->argc >= offset + 4, message);
+    requireEqStr(call->argv[offset], "-m", message);
+    requireEqStr(call->argv[offset + 1], "bpf", message);
+    requireEqStr(call->argv[offset + 2], "--bytecode", message);
+    requireEqStr(call->argv[offset + 3], bytecode, message);
+}
+
+static void testProtocolAndSteeringUseSeparateMatchesOnEveryRule(void)
+{
+    capture_rule_fixture_t fixture;
+    prepareRuleFixture(&fixture);
+    capture_protocol_filter_t filter = {0};
+    for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
+    {
+        if (protocol != 6)
+            captureProtocolFilterExclude(&filter, (uint8_t) protocol);
+    }
+    captureLinuxBuildProtocolFilter(&filter, fixture.device.protocol_filter);
+
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    require(capturedeviceInstallRuleKind(&fixture.device, false), "protocol-filtered queue installation failed");
+    require(capturedeviceInstallRuleKind(&fixture.device, true), "protocol-filtered NOTRACK installation failed");
+    require(recorded_call_count == 14, "protocol-filtered capture changed the owned rule inventory");
+    for (size_t i = 0; i < 12; ++i)
+    {
+        const recorded_call_t *call = &recorded_calls[i];
+        const size_t           lane = (i % 6) % kRuleTestQueues;
+        char                   opaque_filter[kCaptureLinuxSteeringFilterSize];
+        captureLinuxBuildOpaqueFilter(opaque_filter);
+        requireEqStr(call->argv[4], "INPUT", "protocol-filtered capture rule left INPUT");
+        requireBpfMatch(call, 16, fixture.device.protocol_filter, "INPUT rule lost its protocol predicate");
+        requireBpfMatch(call,
+                        20,
+                        i < 6 ? fixture.queues[lane].steering_filter : opaque_filter,
+                        "INPUT rule lost its steering predicate");
+        require(call->argc == (i < 6 || lane == 0 ? 24 : 30), "INPUT rule has the wrong argument count");
+    }
+    for (size_t i = 12; i < 14; ++i)
+    {
+        const recorded_call_t *call = &recorded_calls[i];
+        requireEqStr(call->argv[6], "PREROUTING", "protocol-filtered NOTRACK rule left raw PREROUTING");
+        require(call->argc == 24, "NOTRACK rule has the wrong argument count");
+        requireBpfMatch(call, 20, fixture.device.protocol_filter, "NOTRACK rule lost its protocol predicate");
+    }
+
+    require(capturedeviceRemoveInstalledRules(&fixture.device), "protocol-filtered cleanup failed");
+    require(recorded_call_count == 28 && capturedevicePendingRangeCount(&fixture.device) == 0,
+            "protocol-filtered cleanup did not retire every owned rule");
+    requireMatchingDelete(&recorded_calls[13], &recorded_calls[14], 5);
+    requireMatchingDelete(&recorded_calls[12], &recorded_calls[15], 5);
+    for (size_t index = 0; index < 6; ++index)
+    {
+        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[16 + index], 3);
+        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[22 + index], 3);
+    }
+
+    /* Startup rollback after a failed insertion deletes the same predicates. */
+    resetRecording(kFakeOutcomeNonzeroExit, 2);
+    require(! capturedeviceInstallRuleKind(&fixture.device, false), "failed protocol-filtered insertion was accepted");
+    require(recorded_call_count == 3, "failed protocol-filtered insertion continued");
+    recorded_call_t inserted[2] = {recorded_calls[0], recorded_calls[1]};
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
+            "protocol-filtered rollback did not settle ownership");
+    require(recorded_call_count == 2, "protocol-filtered rollback changed the installed inventory");
+    requireMatchingDelete(&inserted[1], &recorded_calls[0], 3);
+    requireMatchingDelete(&inserted[0], &recorded_calls[1], 3);
+    requireNoShellInvocation();
 }
 
 int main(void)
@@ -973,6 +1108,8 @@ int main(void)
     testSysctlSkipRunsNoCommands();
     testProtocolFilterUsesTheSamePredicateForEveryRule();
     testProtocolFilterInTheKernel();
+    testProtocolFilterDoesNotInspectTcpPorts();
+    testProtocolAndSteeringUseSeparateMatchesOnEveryRule();
 
     printf("capture_linux_command_test: all tests passed\n");
     return 0;

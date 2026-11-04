@@ -118,6 +118,27 @@ if(LINUX AND TARGET EncryptionServer)
 endif()
 
 if(LINUX AND TARGET EncryptionCommon)
+  waterwall_add_native_executable(encryption_packet_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/encryption_packet_test.c
+    LIBRARIES EncryptionCommon ww)
+  add_dependencies(waterwall_unit_tests encryption_packet_test)
+  add_waterwall_unit_test(waterwall.encryption_packet_unit encryption_packet_test
+    "unit;tunnels;encryption;crypto;packet")
+
+  if(TARGET EncryptionClient AND TARGET EncryptionServer)
+    waterwall_add_native_executable(encryption_packet_nodes_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/encryption_packet_nodes_test.c
+      LIBRARIES EncryptionClient EncryptionServer EncryptionCommon ww)
+    target_link_options(encryption_packet_nodes_test PRIVATE
+      "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+      "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetBestFit"
+      "-Wl,--wrap=bufferpoolTryGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+      "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+    add_dependencies(waterwall_unit_tests encryption_packet_nodes_test)
+    add_waterwall_unit_test(waterwall.encryption_packet_nodes_unit encryption_packet_nodes_test
+      "unit;tunnels;encryption;crypto;packet")
+  endif()
+
   # Compile the wrapped callers outside ww/EncryptionCommon's Release IPO units,
   # so the existing pool ledger sees both record and BufferStream ownership.
   set(encryption_test_sources

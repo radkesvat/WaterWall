@@ -1,5 +1,6 @@
 
 add_library(EncryptionClient STATIC
+                    common/packet.c
                     instance/create.c
                     instance/destroy.c
                     instance/api.c

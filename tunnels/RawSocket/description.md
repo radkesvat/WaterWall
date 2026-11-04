@@ -117,6 +117,39 @@ For write-only packet injection, omit all capture-range keys:
   { "dont-capture-protocols": [1, 6] }
   ```
 
+- `capture-protocols` `(array of integers)`
+  Capture only the literal IPv4 Protocol bytes listed here, for example `[6]`
+  for fake-TCP carriers on both peers. Entries must be whole numbers
+  from `0` through `255`; duplicates are ignored. Omission preserves the default
+  of all protocols. An explicit empty array captures none. This setting and
+  `dont-capture-protocols` are mutually exclusive, even for empty lists.
+
+  The allowlist is compiled once into the existing protocol predicate: Linux
+  uses fixed-size cBPF in both NFQUEUE and incoming NOTRACK rules; Windows uses
+  WinDivert. Unselected protocols stay in the host stack and retain normal
+  conntrack/firewall processing. Raw output is unaffected. Nonempty exclusions,
+  including those produced from this allowlist, require Linux's iptables `bpf`
+  match. Source-IP capture ranges still apply.
+
+  For example, a fake-TCP client captures TCP from its server with:
+
+  ```json
+  {
+    "capture-filter-mode": "source-ip",
+    "capture-ips": ["198.51.100.10"],
+    "capture-protocols": [6]
+  }
+  ```
+
+  At the server, use the client's source address instead. This captures **all
+  TCP from the selected source addresses**, including ordinary SSH or HTTPS
+  between those endpoints, regardless of port. FakeTcpHeader checks its carrier
+  ports only after capture; rejecting a packet cannot return it to the host
+  stack. IP/protocol filtering is not authentication. See
+  [FakeTcpHeaderClient](../FakeTcpHeaderClient/description.md) and
+  [FakeTcpHeaderServer](../FakeTcpHeaderServer/description.md) for the carrier
+  ports and envelope.
+
 - `capture-filter-mode` `(string)`
   Filter mode for captured traffic. This field is required when at least one capture range is configured and is ignored in write-only mode.
 
@@ -387,12 +420,14 @@ Current implementation behavior:
 - on Linux, multiqueue capture creates a flow rule per queue and range; only `spread` adds random opaque rules. Single-queue capture creates one queue rule per range
 - `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
 
-On Linux, a nonempty `dont-capture-protocols` list requires the iptables `bpf`
-match (`xt_bpf`). One fixed-size classic BPF predicate checks the IPv4 Protocol
-byte in both the NFQUEUE and incoming NOTRACK rules. It also handles fragments
-and protocol zero without interpreting transport headers. Missing matcher
-support fails startup and rolls back installed rules. An empty list adds no
-protocol matcher. Windows applies the same exclusions in its WinDivert filter.
+On Linux, nonempty protocol exclusions, whether configured directly or derived
+from `capture-protocols`, require the iptables `bpf` match (`xt_bpf`). One
+fixed-size classic BPF predicate checks the IPv4 Protocol byte in both the
+NFQUEUE and incoming NOTRACK rules. It also handles fragments and protocol zero
+without interpreting transport headers. Insertion, rollback and deletion use
+identical predicates. Missing matcher support fails startup and rolls back
+installed rules. An unrestricted protocol selection adds no protocol matcher.
+Windows applies the same protocol selection in its WinDivert filter.
 
 By default the Linux capture backend applies best-effort `sysctl` tuning for
 backlogs and other TCP parameters before creating NFQUEUE resources. The core

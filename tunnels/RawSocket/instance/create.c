@@ -151,14 +151,18 @@ static bool rawsocketLoadCaptureRanges(rawsocket_tstate_t *state, const cJSON *s
 
 static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const cJSON *settings)
 {
-    const cJSON *protocols = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
-    if (protocols == NULL)
+    const cJSON *allow = cJSON_GetObjectItemCaseSensitive(settings, "capture-protocols");
+    const cJSON *deny  = cJSON_GetObjectItemCaseSensitive(settings, "dont-capture-protocols");
+    if (allow != NULL && deny != NULL)
     {
-        return true;
+        LOGF("JSON Error: RawSocket->settings->capture-protocols : cannot be combined with dont-capture-protocols");
+        return false;
     }
-    if (! cJSON_IsArray(protocols))
+    const char  *key       = allow != NULL ? "capture-protocols" : "dont-capture-protocols";
+    const cJSON *protocols = allow != NULL ? allow : deny;
+    if (protocols != NULL && ! cJSON_IsArray(protocols))
     {
-        LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : expected an array of integers from 0 to 255");
+        LOGF("JSON Error: RawSocket->settings->%s : expected an array of integers from 0 to 255", key);
         return false;
     }
     const cJSON *protocol;
@@ -167,11 +171,17 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
         if (! cJSON_IsNumber(protocol) || protocol->valuedouble < 0 || protocol->valuedouble > 255 ||
             protocol->valuedouble != protocol->valueint)
         {
-            LOGF("JSON Error: RawSocket->settings->dont-capture-protocols : each entry must be an integer from 0 to "
-                 "255");
+            LOGF("JSON Error: RawSocket->settings->%s : each entry must be an integer from 0 to 255", key);
             return false;
         }
         captureProtocolFilterExclude(filter, (uint8_t) protocol->valueint);
+    }
+    if (allow != NULL)
+    {
+        /* Compile the allowlist once into the existing kernel predicate. This
+         * also applies to NOTRACK; no packet crosses userspace just to reject it. */
+        for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
+            filter->excluded[i] = ~filter->excluded[i];
     }
     return true;
 }

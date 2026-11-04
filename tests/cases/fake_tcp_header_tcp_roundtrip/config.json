@@ -1,0 +1,132 @@
+{
+  "name": "fake-tcp-header-tcp-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000,
+        "nodelay": true
+      },
+      "next": "connection-to-packets"
+    },
+    {
+      "name": "connection-to-packets",
+      "type": "ConnectionToPackets",
+      "settings": {
+        "source-ipv4": "10.90.0.1",
+        "target-address": "10.90.0.2",
+        "port": 9001,
+        "mtu": 1479,
+        "domain-strategy": "only-ipv4"
+      },
+      "next": "fake-client"
+    },
+    {
+      "name": "fake-client",
+      "type": "FakeTcpHeaderClient",
+      "next": "client-addresses",
+      "settings": {}
+    },
+    {
+      "name": "client-addresses",
+      "type": "IpOverrider",
+      "next": "server-addresses",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "192.0.2.10"
+          },
+          "dest-ip": {
+            "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.90.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.1"
+          }
+        }
+      }
+    },
+    {
+      "name": "server-addresses",
+      "type": "IpOverrider",
+      "next": "fake-server",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "10.90.0.1"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.2"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "198.51.100.10"
+          },
+          "dest-ip": {
+            "ipv4": "192.0.2.10"
+          }
+        }
+      }
+    },
+    {
+      "name": "fake-server",
+      "type": "FakeTcpHeaderServer",
+      "next": "packets-to-connection",
+      "settings": {}
+    },
+    {
+      "name": "packets-to-connection",
+      "type": "PacketsToConnection",
+      "next": "target-connector",
+      "settings": {
+        "mtu": 1479
+      }
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9001,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "name": "fake-tcp-udp-client",
+  "nodes": [
+    {
+      "name": "user-udp",
+      "type": "UdpListener",
+      "next": "packets",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 5000
+      }
+    },
+    {
+      "name": "packets",
+      "type": "ConnectionToPackets",
+      "next": "fake-tcp-header",
+      "settings": {
+        "source-ipv4": "10.90.0.1",
+        "target-address": "10.90.0.2",
+        "port": 5300,
+        "mtu": 1479
+      }
+    },
+    {
+      "name": "fake-tcp-header",
+      "type": "FakeTcpHeaderClient",
+      "next": "carrier-addresses",
+      "settings": {
+        "server-port": 40000,
+        "client-port-range": [40001, 40016],
+        "sequence": "random_port",
+        "increment-sequence": true,
+        "acknowledgment": 67890,
+        "window": 65535
+      }
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "next": "raw",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "192.0.2.10"
+          },
+          "dest-ip": {
+            "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.90.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.1"
+          }
+        }
+      }
+    },
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "settings": {
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "198.51.100.10"
+        ],
+        "capture-protocols": [
+          6
+        ]
+      }
+    }
+  ]
+}

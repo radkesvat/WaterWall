@@ -4,8 +4,9 @@
 
 enum encryption_algorithm_e
 {
-    kEncryptionAlgorithmChaCha20Poly1305 = kDvsFirstOption,
-    kEncryptionAlgorithmAes256Gcm        = kDvsSecondOption,
+    kEncryptionAlgorithmChaCha20Poly1305  = kDvsFirstOption,
+    kEncryptionAlgorithmAes256Gcm         = kDvsSecondOption,
+    kEncryptionAlgorithmXChaCha20Poly1305 = kDvsThirdOption,
 };
 
 enum

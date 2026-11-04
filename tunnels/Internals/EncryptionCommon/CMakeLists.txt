@@ -1,4 +1,4 @@
-add_library(EncryptionCommon STATIC src/record.c)
+add_library(EncryptionCommon STATIC src/record.c src/packet.c)
 target_include_directories(EncryptionCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(EncryptionCommon PUBLIC ww)
 if(NOT APPLE)

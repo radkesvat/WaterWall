@@ -1,0 +1,69 @@
+{
+  "name": "fake-tcp-udp-server",
+  "nodes": [
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "next": "carrier-addresses",
+      "settings": {
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "192.0.2.10"
+        ],
+        "capture-protocols": [
+          6
+        ]
+      }
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "next": "fake-tcp-header",
+      "settings": {
+        "down": {
+          "source-ip": {
+            "ipv4": "198.51.100.10"
+          },
+          "dest-ip": {
+            "ipv4": "192.0.2.10"
+          }
+        },
+        "up": {
+          "source-ip": {
+            "ipv4": "10.90.0.1"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.2"
+          }
+        }
+      }
+    },
+    {
+      "name": "fake-tcp-header",
+      "type": "FakeTcpHeaderServer",
+      "next": "flows",
+      "settings": {
+        "server-port": 40000,
+        "client-port-range": [40001, 40016],
+        "sequence": "random_port",
+        "increment-sequence": true,
+        "acknowledgment": 12345,
+        "window": 65535
+      }
+    },
+    {
+      "name": "flows",
+      "type": "PacketsToConnection",
+      "next": "udp-destination",
+      "settings": {}
+    },
+    {
+      "name": "udp-destination",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 5300
+      }
+    }
+  ]
+}

@@ -62,7 +62,7 @@ static bool capturedeviceAppendFilter(char *filter, size_t filter_len, size_t *o
 static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count,
                                                const capture_protocol_filter_t *protocol_filter)
 {
-    size_t ranges_size;
+    size_t       ranges_size;
     const size_t protocol_extra = captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U;
     if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U - protocol_extra)
     {

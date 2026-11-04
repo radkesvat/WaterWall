@@ -221,6 +221,8 @@ option(INCLUDE_PACKET_SPLIT_STREAM      "link PacketSplitStream staticly to the 
 option(INCLUDE_LAYER3_IP_ROUTING_TABLE  "link Layer3IpRoutingTable staticly to the core"                            FALSE)
 option(INCLUDE_IP_OVERRIDER             "link IpOverrider staticly to the core"                                     TRUE)
 option(INCLUDE_IP_MANIPULATOR           "link IPManipulator staticly to the core"                                   TRUE)
+option(INCLUDE_FAKE_TCP_HEADER_CLIENT   "link FakeTcpHeaderClient statically to the core"                           TRUE)
+option(INCLUDE_FAKE_TCP_HEADER_SERVER   "link FakeTcpHeaderServer statically to the core"                           TRUE)
 option(INCLUDE_PING_CLIENT              "link PingClient staticly to the core"                                      TRUE)
 option(INCLUDE_PING_SERVER              "link PingServer staticly to the core"                                      TRUE)
 option(INCLUDE_KEEPALIVE_CLIENT         "link KeepAliveClient staticly to the core"                                 TRUE)
@@ -779,6 +781,27 @@ if(INCLUDE_IP_MANIPULATOR)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/IpManipulator)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} IpManipulator)
+endif()
+
+# FakeTcpHeaderCommon wire codec is shared by FakeTcpHeaderClient and FakeTcpHeaderServer.
+if(INCLUDE_FAKE_TCP_HEADER_CLIENT OR INCLUDE_FAKE_TCP_HEADER_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/FakeTcpHeaderCommon)
+endif()
+
+#fake tcp header client
+if(INCLUDE_FAKE_TCP_HEADER_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_FAKE_TCP_HEADER_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/FakeTcpHeaderClient)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/FakeTcpHeaderClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} FakeTcpHeaderClient)
+endif()
+
+#fake tcp header server
+if(INCLUDE_FAKE_TCP_HEADER_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_FAKE_TCP_HEADER_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/FakeTcpHeaderServer)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/FakeTcpHeaderServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} FakeTcpHeaderServer)
 endif()
 
 # Ping wire v2 codec is shared by either endpoint.  Keep it independent of

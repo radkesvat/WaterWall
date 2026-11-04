@@ -18,9 +18,13 @@ static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
     case (kDvsFifthOption + 3):
         return kEncryptionAlgorithmAes256Gcm;
 
+    case (kDvsFifthOption + 4):
+        return kEncryptionAlgorithmXChaCha20Poly1305;
+
     case kDvsConstant:
         if (algorithm_dv.integer == kEncryptionAlgorithmChaCha20Poly1305 ||
-            algorithm_dv.integer == kEncryptionAlgorithmAes256Gcm)
+            algorithm_dv.integer == kEncryptionAlgorithmAes256Gcm ||
+            algorithm_dv.integer == kEncryptionAlgorithmXChaCha20Poly1305)
         {
             return algorithm_dv.integer;
         }
@@ -31,12 +35,12 @@ static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
     }
 }
 
-static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
+static uint32_t parseAlgorithmFromSettings(const cJSON *settings, bool packet_mode)
 {
     const cJSON    *algorithm_json = cJSON_GetObjectItemCaseSensitive(settings, "algorithm");
     dynamic_value_t algorithm_dv   = parseDynamicNumericValueFromJsonObject(settings,
                                                                           "algorithm",
-                                                                          8,
+                                                                          9,
                                                                           "chacha20-poly1305",
                                                                           "chacha20poly1305",
                                                                           "chacha20",
@@ -44,7 +48,8 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
                                                                           "aes-gcm",
                                                                           "aes256gcm",
                                                                           "aes-256-gcm",
-                                                                          "aes256-gcm");
+                                                                          "aes256-gcm",
+                                                                          "xchacha20-poly1305");
 
     if (algorithm_dv.status != kDvsEmpty)
     {
@@ -61,7 +66,7 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
     {
         algorithm_dv = parseDynamicNumericValueFromJsonObject(settings,
                                                               "method",
-                                                              8,
+                                                              9,
                                                               "chacha20-poly1305",
                                                               "chacha20poly1305",
                                                               "chacha20",
@@ -69,7 +74,8 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
                                                               "aes-gcm",
                                                               "aes256gcm",
                                                               "aes-256-gcm",
-                                                              "aes256-gcm");
+                                                              "aes256-gcm",
+                                                              "xchacha20-poly1305");
 
         if (algorithm_dv.status == kDvsEmpty)
         {
@@ -79,21 +85,29 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings)
         return normalizeAlgorithm(algorithm_dv);
     }
 
-    return kEncryptionAlgorithmChaCha20Poly1305;
+    return packet_mode ? kEncryptionAlgorithmXChaCha20Poly1305 : kEncryptionAlgorithmChaCha20Poly1305;
 }
 
-static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, uint8_t out_key[32])
+static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, bool packet_mode,
+                                  uint8_t out_key[32])
 {
     size_t password_len = stringLength(password);
     size_t salt_len     = stringLength(salt);
 
     assert(password_len > 0 && iterations > 0);
+    sha256_hash_t packet_password_key = {0};
+    if (packet_mode &&
+        wCryptoSHA256(&packet_password_key, (const unsigned char *) password, password_len) != kWCryptoOk)
+        return false;
+    const unsigned char *iteration_key     = packet_mode ? packet_password_key.bytes : (const unsigned char *) password;
+    const size_t         iteration_key_len = packet_mode ? sizeof(packet_password_key.bytes) : password_len;
 
     if (wCryptoBlake2s(
             out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len) !=
         kWCryptoOk)
     {
         wCryptoZero(out_key, 32);
+        wCryptoZero(&packet_password_key, sizeof(packet_password_key));
         return false;
     }
 
@@ -105,18 +119,18 @@ static bool deriveKeyFromPassword(const char *password, const char *salt, uint32
         memoryCopy(iter_block, out_key, 32);
         memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
 
-        if (wCryptoBlake2s(
-                out_key, 32, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block)) !=
-            kWCryptoOk)
+        if (wCryptoBlake2s(out_key, 32, iteration_key, iteration_key_len, iter_block, sizeof(iter_block)) != kWCryptoOk)
         {
             wCryptoZero(iter_block, sizeof(iter_block));
             wCryptoZero(out_key, 32);
+            wCryptoZero(&packet_password_key, sizeof(packet_password_key));
             return false;
         }
 
         wCryptoZero(iter_block, sizeof(iter_block));
     }
 
+    wCryptoZero(&packet_password_key, sizeof(packet_password_key));
     return true;
 }
 
@@ -137,10 +151,20 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
         goto cleanup;
     }
 
-    algorithm = parseAlgorithmFromSettings(settings);
-    if (algorithm != kEncryptionAlgorithmChaCha20Poly1305 && algorithm != kEncryptionAlgorithmAes256Gcm)
+    const cJSON *packet_mode = cJSON_GetObjectItemCaseSensitive(settings, "packet-mode");
+    if (packet_mode != NULL && ! cJSON_IsBool(packet_mode))
     {
-        LOGF("EncryptionServer: 'algorithm'/'method' is unsupported. Use chacha20-poly1305 or aes-gcm");
+        LOGF("EncryptionServer: 'packet-mode' must be a boolean");
+        goto cleanup;
+    }
+    ts->packet_mode = cJSON_IsTrue(packet_mode);
+    algorithm       = parseAlgorithmFromSettings(settings, ts->packet_mode);
+    if ((ts->packet_mode && algorithm != kEncryptionAlgorithmXChaCha20Poly1305) ||
+        (! ts->packet_mode && algorithm != kEncryptionAlgorithmChaCha20Poly1305 &&
+         algorithm != kEncryptionAlgorithmAes256Gcm))
+    {
+        LOGF("EncryptionServer: packet mode requires xchacha20-poly1305; stream mode requires chacha20-poly1305 or "
+             "aes-gcm");
         goto cleanup;
     }
 
@@ -165,6 +189,11 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
         goto cleanup;
     }
 
+    if (ts->packet_mode && cJSON_GetObjectItemCaseSensitive(settings, "max-frame-size") != NULL)
+    {
+        LOGF("EncryptionServer: 'max-frame-size' applies only to stream mode");
+        goto cleanup;
+    }
     getIntFromJsonObject(&max_frame_size, settings, "max-frame-size");
     if (max_frame_size <= 0 || max_frame_size > kEncryptionHardMaxFramePayload)
     {
@@ -182,12 +211,25 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
     ts->kdf_iterations    = (uint32_t) kdf_iterations;
     ts->max_frame_payload = (uint32_t) max_frame_size;
 
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->key))
+    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->packet_mode, ts->key))
     {
         LOGF("EncryptionServer: failed to derive key from password");
         goto cleanup;
     }
 
+    if (ts->packet_mode)
+    {
+        uint8_t base_key[32];
+        memoryCopy(base_key, ts->key, sizeof(base_key));
+        const bool derived = encryptionPacketDeriveKeys(base_key, ts->key, ts->packet_download_key);
+        wCryptoZero(base_key, sizeof(base_key));
+        if (! derived)
+        {
+            LOGF("EncryptionServer: failed to derive packet direction keys");
+            goto cleanup;
+        }
+        atomicLogRateLimiterInitialize(&ts->packet_drop_log_limiter);
+    }
     result = true;
 
 cleanup:
@@ -209,28 +251,40 @@ cleanup:
 
 tunnel_t *encryptionserverTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(encryptionserver_tstate_t), sizeof(encryptionserver_lstate_t));
-    if (! t)
+    const cJSON *settings       = node->node_settings_json;
+    const cJSON *packet_setting = cJSON_GetObjectItemCaseSensitive(settings, "packet-mode");
+    const bool   packet_mode    = cJSON_IsTrue(packet_setting);
+    if (packet_mode)
     {
-        return NULL;
+        node->layer_group           = kNodeLayer3;
+        node->layer_group_prev_node = kNodeLayer3;
+        node->layer_group_next_node = kNodeLayer3;
+        node->required_padding_left = kEncryptionPacketNonceSize;
     }
-
-    t->fnInitU    = &encryptionserverTunnelUpStreamInit;
-    t->fnFinU     = &encryptionserverTunnelUpStreamFinish;
-    t->fnPayloadU = &encryptionserverTunnelUpStreamPayload;
-    t->fnFinD     = &encryptionserverTunnelDownStreamFinish;
-    t->fnPayloadD = &encryptionserverTunnelDownStreamPayload;
-
-    t->onDestroy = &encryptionserverTunnelDestroy;
-
-    encryptionserver_tstate_t *ts       = tunnelGetState(t);
-    const cJSON               *settings = node->node_settings_json;
-
+    tunnel_t *t = packet_mode
+                      ? packettunnelCreate(node, sizeof(encryptionserver_tstate_t), 0)
+                      : tunnelCreate(node, sizeof(encryptionserver_tstate_t), sizeof(encryptionserver_lstate_t));
+    if (t == NULL)
+        return NULL;
+    encryptionserver_tstate_t *ts = tunnelGetState(t);
     if (! encryptionserverTunnelstateInitialize(ts, settings))
     {
         tunnelDestroy(t);
         return NULL;
     }
-
+    if (packet_mode)
+    {
+        t->fnPayloadU = &encryptionserverPacketUpStreamPayload;
+        t->fnPayloadD = &encryptionserverPacketDownStreamPayload;
+    }
+    else
+    {
+        t->fnInitU    = &encryptionserverTunnelUpStreamInit;
+        t->fnFinU     = &encryptionserverTunnelUpStreamFinish;
+        t->fnPayloadU = &encryptionserverTunnelUpStreamPayload;
+        t->fnFinD     = &encryptionserverTunnelDownStreamFinish;
+        t->fnPayloadD = &encryptionserverTunnelDownStreamPayload;
+    }
+    t->onDestroy = &encryptionserverTunnelDestroy;
     return t;
 }

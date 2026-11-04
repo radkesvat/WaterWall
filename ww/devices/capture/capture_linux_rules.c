@@ -280,7 +280,7 @@ void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
 }
 
 /* Callers reserve four extra argv entries per filter plus the NULL terminator. */
-static void capturedeviceAppendProtocolFilter(const char **argv, const char *protocol_filter)
+static void capturedeviceAppendProtocolFilter(const char **argv, size_t capacity, const char *protocol_filter)
 {
     if (protocol_filter[0] == '\0')
     {
@@ -291,6 +291,8 @@ static void capturedeviceAppendProtocolFilter(const char **argv, const char *pro
     {
         ++count;
     }
+    assert(count + 5 <= capacity);
+    discard capacity;
     argv[count++] = "-m";
     argv[count++] = "bpf";
     argv[count++] = "--bytecode";
@@ -327,8 +329,8 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
                             queue_number_arg,
                             "--queue-bypass",
                             NULL};
-    capturedeviceAppendProtocolFilter(argv, protocol_filter);
-    capturedeviceAppendProtocolFilter(argv, steering_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), protocol_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), steering_filter);
     char probability_arg[16];
     if (remaining_queues > 1)
     {
@@ -339,6 +341,7 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
         size_t count = 0;
         while (argv[count] != NULL)
             ++count;
+        assert(count + 7 <= ARRAY_SIZE(argv));
         argv[count++] = "-m";
         argv[count++] = "statistic";
         argv[count++] = "--mode";
@@ -370,10 +373,11 @@ static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithCon
     // INPUT captures local delivery. Do not exempt transit traffic from
     // conntrack merely because it shares a captured source range. Keep the
     // ordinary raw priority: fragment reassembly still precedes this rule.
+    /* Twenty base arguments, one four-argument BPF match and the terminating NULL. */
     const char *argv[25] = {"iptables", "-w",        lock_wait_arg, "-t",       "raw",        operation,   "PREROUTING",
                             "-s",       cidr,        "-m",          "addrtype", "--dst-type", "LOCAL",     "-m",
                             "comment",  "--comment", rule_comment,  "-j",       "CT",         "--notrack", NULL};
-    capturedeviceAppendProtocolFilter(argv, protocol_filter);
+    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), protocol_filter);
     return capturedeviceRunCommand(cdev, "iptables", argv);
 }
 
