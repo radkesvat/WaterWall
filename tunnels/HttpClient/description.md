@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HttpClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -155,6 +155,9 @@ support can change.
 - `user-agent` `(string)`
   HTTP `User-Agent` header value.
   Default: `"WaterWall/1.x"`
+
+- `close-drain-timeout-ms` `(integer)`
+  Fixed allowance after application Finish to drain accepted HTTP/2 uploads, including pending h2c or HTTP/2 WebSocket handshakes. Default `30000`; allowed range `1..86400000`. Traffic and progress do not extend it. It does not add a drain wait to ordinary HTTP/1.1 or split mode.
 
 - `http-version` `(number or string)`
   Selects request protocol mode.
@@ -420,6 +423,14 @@ buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `
 
 Upstream `Finish` becomes an empty DATA frame with `END_STREAM`, or `END_STREAM` is attached to the last DATA frame when appropriate.
 
+For HTTP/2-capable configurations, HttpClient creates its own carrier line during `Init` and borrows the application line. The application may close and release its line while the carrier finishes sending bytes already accepted by HttpClient. This also covers an h2c handshake and WebSocket-over-HTTP/2 handshake that is still pending. Ordinary HTTP/1.1, HTTP/1.1 split mode and custom raw upgrades keep their existing line behavior.
+
+The first application `Finish` starts a fixed `close-drain-timeout-ms` deadline, default **30000 ms**. Accepted upload bytes remain in order before the WebSocket close frame, when applicable, and HTTP/2 `END_STREAM`. The carrier continues reading `WINDOW_UPDATE` and other control frames; response-body bytes are discarded after the application closes. Traffic, extra credit and upload progress do not restart the deadline. Expiry drops the unsent remainder and closes the carrier. Peer cancellation, carrier loss and program shutdown also settle the retained upload immediately. A normal response `END_STREAM` alone does not cancel an unfinished upload.
+
+HTTP/2 upload pressure pauses the application above **1 MiB** of pending body bytes and resumes below **256 KiB**, provided the next transport is also ready. The provider queue additionally has hard limits of **16 MiB pending payload** and **16 MiB retained allocation charge**; exceeding either closes that connection. Allocation charge remains counted until its buffer is released, even if part of that buffer has already been sent. These are queue limits, not total upload-size limits. The separate pre-handshake queue retains its **2 MiB payload / 8 MiB allocation-charge** limits.
+
+Successful HTTP/2 draining requests a bounded TCP close linger. On Linux, TcpConnector may retain the detached socket to flush writes already accepted by the adapter and discard unread response/control bytes, then wait for peer closure. HTTP state and the owned carrier line are already released. This socket phase is separate from `close-drain-timeout-ms`; handing bytes to the next tunnel does not acknowledge receipt by the remote application.
+
 ### Upgrade behavior
 
 When `http-version` is `both` and `upgrade` is enabled:
@@ -466,7 +477,7 @@ For HTTP/2 responses:
 
 - HEADERS are consumed internally
 - DATA frames are forwarded downstream as plain body payload
-- `END_STREAM` becomes downstream `Finish`
+- response `END_STREAM` completes the response framing without canceling a still-open upload; stream reset or carrier closure closes the affected connection
 
 ## Notes And Caveats
 

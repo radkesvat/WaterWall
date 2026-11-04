@@ -204,5 +204,7 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->runtime_proto == kHttpClientRuntimeUpgradedRaw && ! httpclientTransportFinishCustomUpgrade(t, l, ls) &&
         lineIsAlive(l) && ls->line != NULL)
         rejectInput(t, l, ls);
+    if (lineIsAlive(l) && ls->line != NULL)
+        httpclientProgressClose(t, l, ls);
     lineUnref(l);
 }

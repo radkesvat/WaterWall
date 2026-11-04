@@ -51,6 +51,7 @@ void httpserverLinestateInitialize(httpserver_lstate_t *ls, tunnel_t *t, line_t 
 
 void httpserverLinestateDestroy(httpserver_lstate_t *ls)
 {
+    httpserverCancelCloseDrain(ls);
     if (ls->session != NULL)
     {
         nghttp2_session_del(ls->session);

@@ -67,6 +67,8 @@ typedef struct httpserver_lstate_s
     line_t   *line;
 
     nghttp2_session *session;
+    wtimer_t        *close_drain_timer;
+    uint64_t         close_drain_deadline_ms;
 
     buffer_stream_t            in_stream;
     buffer_queue_t             pending_down;
@@ -93,10 +95,15 @@ typedef struct httpserver_lstate_s
     bool h2_response_headers_sent;
     bool h2_request_finished;
     bool h2_request_rejected;
+    bool h2_stream_closed;
 
     bool fin_sent;
+    bool h2_end_stream_emitted;
+    bool h2_source_paused; // our DATA backlog paused next
+    bool prev_paused;      // prev paused next through us
     bool prev_finished;
     bool next_finished;
+    bool finish_dispatching; // synchronous final output owns cleanup until it returns
 
     bool websocket_active;
     bool websocket_close_sent;
@@ -158,6 +165,7 @@ typedef struct httpserver_tstate_s
     enum http_method       split_download_method_enum;
     enum http_content_type content_type;
     int                    status_code;
+    uint32_t               close_drain_timeout_ms;
 
     wmutex_t                split_upload_map_mutex;
     wmutex_t                split_download_map_mutex;
@@ -189,6 +197,10 @@ enum
     kHttpServerPendingCharge           = 8 * 1024 * 1024,
     kHttpServerMaxHeaderBytes    = 64 * 1024,
     kHttpServerHttp2FrameBytes   = 32 * 1024,
+    kHttpServerHttp2PauseDataBytes     = 1024 * 1024,
+    kHttpServerHttp2ResumeDataBytes    = 256 * 1024,
+    kHttpServerDefaultCloseDrainTimeoutMs = 30000,
+    kHttpServerMaxCloseDrainTimeoutMs     = 86400000,
     kHttpServerUpgradeQueueChargeLimit = 2 * 1024 * 1024,
     kHttpServerSplitMaxBuffering = 65535 * 2,
     kHttpServerDefaultHttp1Port  = 80,
@@ -244,6 +256,12 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
 void httpserverTransportCloseBothDirections(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 void httpserverTransportCloseNextDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
 void httpserverTransportClosePrevDirection(tunnel_t *t, line_t *l, httpserver_lstate_t *ls);
+
+/* Owner-worker HTTP/2 completion deadline; failure means cancel this response. */
+void httpserverStartCloseDrain(httpserver_lstate_t *ls);
+bool httpserverCloseDrainAllowed(httpserver_lstate_t *ls);
+bool httpserverArmCloseDrain(httpserver_lstate_t *ls);
+void httpserverCancelCloseDrain(httpserver_lstate_t *ls);
 
 bool httpserverSplitIsEnabled(tunnel_t *t);
 void httpserverSplitUpStreamInit(tunnel_t *t, line_t *l);

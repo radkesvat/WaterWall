@@ -15,6 +15,17 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     httpclient_lstate_t *ls = lineGetState(l, t);
     httpclient_tstate_t *ts = tunnelGetState(t);
 
+    if (ls->line_role == kHttpClientLineApplication)
+    {
+        line_t *carrier = ls->carrier_line;
+        lineRef(carrier);
+        httpclientTunnelUpStreamPayload(t, carrier, buf);
+        if (lineIsAlive(carrier))
+            httpclientProgressClose(t, carrier, lineGetState(carrier, t));
+        lineUnref(carrier);
+        return;
+    }
+
     if (ls->split_role == kHttpClientSplitRoleMain)
     {
         httpclientSplitUpStreamPayload(t, l, buf);

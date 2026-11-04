@@ -429,16 +429,34 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     t->fnResumeD  = &httpclientTunnelDownStreamResume;
 
     t->onDestroy = &httpclientTunnelDestroy;
+    t->onQuiesceRequest = httpclientTunnelOnQuiesceRequest;
+    t->onWorkerStop     = httpclientTunnelOnWorkerStop;
 
     httpclient_tstate_t *ts       = tunnelGetState(t);
     const cJSON         *settings = node->node_settings_json;
 
+    ts->worker_count  = getWorkersCount();
+    ts->carrier_heads = memoryAllocateZero(sizeof(*ts->carrier_heads) * ts->worker_count);
+    atomicStoreRelaxed(&ts->stopping, false);
+
     if (! checkJsonIsObjectAndHasChild(settings))
     {
         LOGF("JSON Error: HttpClient->settings (object field) is empty or invalid");
-        tunnelDestroy(t);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
+
+    int64_t timeout_ms = kHttpClientDefaultCloseDrainTimeoutMs;
+    if (! jsonObjectFieldStringsAreExact(settings, "close-drain-timeout-ms") ||
+        jsonGetObjectIntegerInRange(
+            settings, "close-drain-timeout-ms", 1, kHttpClientMaxCloseDrainTimeoutMs, &timeout_ms) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: HttpClient->settings->close-drain-timeout-ms must be an integer in 1..%d",
+             kHttpClientMaxCloseDrainTimeoutMs);
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    ts->close_drain_timeout_ms = (uint32_t) timeout_ms;
 
     if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
         ! parseRequiredFields(ts, settings))

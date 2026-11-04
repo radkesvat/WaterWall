@@ -57,8 +57,21 @@ typedef enum httpclient_split_placement_e
     kHttpClientSplitPlacementPath   = 3
 } httpclient_split_placement_t;
 
+typedef enum httpclient_line_role_e
+{
+    kHttpClientLineDirect = 0,
+    kHttpClientLineApplication,
+    kHttpClientLineCarrier
+} httpclient_line_role_t;
+
+struct httpclient_lstate_s;
+
 typedef struct httpclient_tstate_s
 {
+    struct httpclient_lstate_s **carrier_heads;
+    uint32_t                     close_drain_timeout_ms;
+    wid_t                        worker_count;
+    atomic_bool                  stopping;
     nghttp2_session_callbacks *cbs;
     nghttp2_option            *ngoptions;
 
@@ -115,6 +128,21 @@ typedef struct httpclient_lstate_s
 {
     tunnel_t *tunnel;
     line_t   *line;
+
+    httpclient_line_role_t      line_role;
+    line_t                     *application_line;
+    line_t                     *carrier_line;
+    struct httpclient_lstate_s *inventory_prev, *inventory_next;
+    wtimer_t                   *close_drain_timer;
+    uint64_t                    close_drain_deadline_ms;
+    bool                        startup_in_progress;
+    bool                        h2_sending;
+    bool                        close_driving;
+    bool                        h2_end_stream_emitted;
+    bool                        h2_stream_closed;
+    bool                        h2_source_paused;
+    bool                        next_paused;
+    bool                        application_read_paused;
 
     nghttp2_session *session;
 
@@ -178,6 +206,12 @@ enum
     kHttpClientBufferQueueCap   = 8,
     kHttpClientPendingMaxBytes       = 2 * 1024 * 1024,
     kHttpClientPendingMaxCharge      = 8 * 1024 * 1024,
+    kHttpClientDefaultCloseDrainTimeoutMs = 30000,
+    kHttpClientMaxCloseDrainTimeoutMs     = 86400000,
+    kHttpClientHttp2PauseDataBytes        = 1024 * 1024,
+    kHttpClientHttp2ResumeDataBytes       = 256 * 1024,
+    kHttpClientHttp2MaxDataBytes          = 16 * 1024 * 1024,
+    kHttpClientHttp2MaxDataCharge         = 16 * 1024 * 1024,
     kHttpClientMaxHeaderBytes   = 64 * 1024,
     kHttpClientHttp1ChunkBodyBytes   = 16 * 1024 - 12,
 
@@ -212,6 +246,18 @@ void httpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t *l);
 void httpclientLinestateDestroy(httpclient_lstate_t *ls);
+bool httpclientUsesOwnedCarrier(const httpclient_tstate_t *ts);
+void httpclientCarrierStart(tunnel_t *t, line_t *application);
+void httpclientStartTransport(tunnel_t *t, line_t *l);
+void httpclientCarrierClose(tunnel_t *t, line_t *carrier, bool notify_application);
+void httpclientApplicationFinish(tunnel_t *t, line_t *application);
+void httpclientCarrierUnlink(httpclient_lstate_t *ls);
+void httpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void httpclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+bool httpclientCloseDrainAllowed(httpclient_lstate_t *ls);
+void httpclientCancelCloseDrain(httpclient_lstate_t *ls);
+void httpclientProgressClose(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
+bool httpclientRefreshHttp2SourcePressure(tunnel_t *t, line_t *l, httpclient_lstate_t *ls);
 /* Consumes buf on every result; false asks the caller to close its exact line/association. */
 bool httpclientQueuePendingUp(line_t *l, httpclient_lstate_t *ls, sbuf_t *buf);
 

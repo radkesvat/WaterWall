@@ -514,6 +514,11 @@ static bool httpserverRequestEndReflectsFinish(const httpserver_lstate_t *ls)
 
 static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
 {
+    if (ls->next_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return true;
+    }
     line_t *target = httpserverUpstreamTargetLine(ls, l);
     if (! lineIsAlive(target))
     {
@@ -522,8 +527,7 @@ static bool httpserverForwardUpstreamPayload(tunnel_t *t, line_t *l, httpserver_
     }
     if (! lineCallWithRefWithBuf(target, tunnelNextUpStreamPayload, t, buf))
         return false;
-    return lineIsAlive(l) && httpserverLinestateIsActive(ls) && httpserverUpstreamTargetLine(ls, l) == target &&
-           ! ls->next_finished;
+    return lineIsAlive(l) && httpserverLinestateIsActive(ls) && httpserverUpstreamTargetLine(ls, l) == target;
 }
 
 static void httpserverForwardUpstreamFinish(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
@@ -1082,6 +1086,28 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
     return true;
 }
 
+/* Flow control can hold queued response DATA indefinitely, and releasing it all at once overruns the write queue of
+ * the transport below, so bound that backlog at its producer. False when the callback closed this direction. */
+static bool httpserverRefreshHttp2SourcePressure(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
+{
+    const size_t pending = h2DataPendingBytes(&ls->h2_data);
+    const bool   pause   = ! ls->h2_source_paused && pending > kHttpServerHttp2PauseDataBytes;
+    const bool   resume  = ls->h2_source_paused && pending < kHttpServerHttp2ResumeDataBytes;
+    if ((! pause && ! resume) || ls->next_finished)
+    {
+        return true;
+    }
+    ls->h2_source_paused = pause;
+    if (ls->prev_paused)
+    {
+        // Prev's own Pause already holds next; its Resume checks this backlog first.
+        return true;
+    }
+    const bool alive =
+        pause ? lineCallWithRef(l, tunnelNextUpStreamPause, t) : lineCallWithRef(l, tunnelNextUpStreamResume, t);
+    return alive && httpserverCanSendDownstream(ls);
+}
+
 static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
     if (UNLIKELY(! httpserverCanSendDownstream(ls)))
@@ -1103,6 +1129,10 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 
     while (true)
     {
+        if (! httpserverCloseDrainAllowed(ls))
+        {
+            return false;
+        }
         const uint8_t *data = NULL;
         nghttp2_ssize  len  = nghttp2_session_mem_send2(ls->session, &data);
 
@@ -1162,7 +1192,7 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
         }
     }
 
-    return true;
+    return httpserverRefreshHttp2SourcePressure(t, l, ls);
 }
 
 static h2_data_result_t httpserverSubmitNextHttp2Data(httpserver_lstate_t *ls)
@@ -1389,7 +1419,7 @@ static int httpserverOnDataChunkRecvCallback(nghttp2_session *session, uint8_t f
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
 
-    if (ls->h2_request_rejected || (ls->h2_stream_id != 0 && stream_id != ls->h2_stream_id))
+    if (ls->next_finished || ls->h2_request_rejected || (ls->h2_stream_id != 0 && stream_id != ls->h2_stream_id))
     {
         return 0;
     }
@@ -1513,6 +1543,7 @@ static int httpserverOnStreamClosedCallback(nghttp2_session *session, int32_t st
     if (stream_id == ls->h2_stream_id)
     {
         ls->h2_request_finished = true;
+        ls->h2_stream_closed    = true;
     }
 
     return 0;
@@ -1522,16 +1553,20 @@ static int httpserverOnFrameSendCallback(nghttp2_session *session, const nghttp2
 {
     discard session;
 
-    if (userdata == NULL || frame == NULL || frame->hd.type != NGHTTP2_DATA)
+    if (userdata == NULL || frame == NULL || (frame->hd.type != NGHTTP2_DATA && frame->hd.type != NGHTTP2_HEADERS))
     {
         return 0;
     }
 
     httpserver_lstate_t *ls = (httpserver_lstate_t *) userdata;
-    if (h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
+    if (frame->hd.type == NGHTTP2_DATA && h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
         httpserverSubmitNextHttp2Data(ls).status == H2_DATA_FAILED)
     {
         return NGHTTP2_ERR_CALLBACK_FAILURE;
+    }
+    if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0 && frame->hd.stream_id == ls->h2_stream_id)
+    {
+        ls->h2_end_stream_emitted = true;
     }
 
     return 0;
@@ -1764,6 +1799,11 @@ bool httpserverTransportDrainWebSocketUp(tunnel_t *t, line_t *l, httpserver_lsta
 {
     while (! ls->websocket_close_received)
     {
+        if (ls->next_finished)
+        {
+            bufferstreamEmpty(&ls->in_stream);
+            return true;
+        }
         sbuf_t                       *payload = NULL;
         const http_websocket_result_t result =
             httpWebSocketDecoderStep(&ls->websocket_decoder, &ls->in_stream, true, &payload);
@@ -1942,6 +1982,12 @@ static bool drainUpEvents(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
     {
         context_t *ctx = contextqueuePop(&ls->events_up);
 
+        if (ls->next_finished)
+        {
+            contextDestroy(ctx);
+            continue;
+        }
+
         lineRef(l);
         contextApplyOnNextTunnelU(ctx, t);
         contextDestroy(ctx);
@@ -1966,7 +2012,9 @@ static bool httpserverTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpse
         return false;
     }
 
-    if (ls->h2_request_rejected)
+    /* A canceled stream cannot emit the queued final DATA. Retire outside
+     * nghttp2's callback instead of waiting for an impossible END_STREAM. */
+    if (ls->h2_request_rejected || (ls->h2_stream_closed && ! ls->h2_end_stream_emitted))
     {
         return false;
     }

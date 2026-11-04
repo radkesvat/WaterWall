@@ -48,6 +48,8 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
 
 void httpclientLinestateDestroy(httpclient_lstate_t *ls)
 {
+    httpclientCancelCloseDrain(ls);
+    httpclientCarrierUnlink(ls);
     if (ls->session != NULL)
     {
         nghttp2_session_del(ls->session);
