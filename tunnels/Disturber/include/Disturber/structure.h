@@ -21,8 +21,8 @@ typedef struct disturber_tstate_s
 
 typedef struct disturber_direction_lstate_s
 {
-    bool is_deadhang; // the connection is dead, no packet type will be transmitted, but only close
-    bool finished;    // payload publication in this direction is terminal after packet Finish
+    bool is_deadhang;      // the connection is dead, no packet type will be transmitted, but only close
+    bool publication_open; // zeroed state cannot publish pending payload
 
     sbuf_t *held_payload; // store  a payload and wait for next, to be able to send them out of order
 

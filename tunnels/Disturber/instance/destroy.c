@@ -40,7 +40,7 @@ static void disturberVerifyPacketStateDrained(tunnel_t *t)
 
         disturber_lstate_t *ls = lineGetState(packet_line, t);
         if (ls->upstream.held_payload != NULL || ls->downstream.held_payload != NULL || ls->upstream.is_deadhang ||
-            ls->downstream.is_deadhang || ls->upstream.finished || ls->downstream.finished)
+            ls->downstream.is_deadhang || ls->upstream.publication_open || ls->downstream.publication_open)
         {
             LOGF("Disturber: finalized packet line on worker %d retained undrained line state", workerWIDForLog(wid));
             abortProgramNow(1);

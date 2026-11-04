@@ -24,7 +24,8 @@ static void disturberPercentGateInitialize(noncrypto_percent_gate_t *gate, int c
 
 static void disturberDirectionLinestateInitialize(disturber_direction_lstate_t *dir_ls, const disturber_tstate_t *ts)
 {
-    *dir_ls = (disturber_direction_lstate_t) {0};
+    *dir_ls                  = (disturber_direction_lstate_t) {0};
+    dir_ls->publication_open = true;
 
     disturberPercentGateInitialize(&dir_ls->instant_close_gate, ts->chance_instant_close);
     disturberPercentGateInitialize(&dir_ls->middle_close_gate, ts->chance_middle_close);

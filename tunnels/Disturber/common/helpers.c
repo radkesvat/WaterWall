@@ -21,7 +21,7 @@ static disturber_direction_lstate_t *disturberGetDirectionState(disturber_lstate
 static void disturberForwardScheduledUpstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     disturber_lstate_t *ls = lineGetState(l, t);
-    if (ls->upstream.finished)
+    if (! ls->upstream.publication_open)
     {
         lineReuseBuffer(l, buf);
         return;
@@ -33,7 +33,7 @@ static void disturberForwardScheduledUpstreamPayload(tunnel_t *t, line_t *l, sbu
 static void disturberForwardScheduledDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     disturber_lstate_t *ls = lineGetState(l, t);
-    if (ls->downstream.finished)
+    if (! ls->downstream.publication_open)
     {
         lineReuseBuffer(l, buf);
         return;
@@ -118,22 +118,22 @@ void disturberPacketLineFinish(tunnel_t *t, line_t *l, disturber_payload_directi
     /* A received Finish creates two terminal publication boundaries. Payload
      * already queued in the same direction must not overtake the propagated
      * Finish, and payload queued in the opposite direction must not reflect
-     * toward the side that sent it. Normal-line teardown gets both guarantees
-     * by destroying all lstate; persistent packet state needs them explicitly. */
+     * toward the side that sent it. Normal-line teardown closes publication by
+     * zeroing all lstate; persistent packet state needs both gates explicitly. */
     disturber_direction_lstate_t *received = disturberGetDirectionState(ls, direction);
     disturber_direction_lstate_t *opposite = disturberGetDirectionState(ls,
                                                                         direction == kDisturberPayloadDirectionUpstream
                                                                             ? kDisturberPayloadDirectionDownstream
                                                                             : kDisturberPayloadDirectionUpstream);
 
-    received->finished = true;
+    received->publication_open = false;
     if (received->held_payload != NULL)
     {
         lineReuseBuffer(l, received->held_payload);
         received->held_payload = NULL;
     }
 
-    opposite->finished = true;
+    opposite->publication_open = false;
     if (opposite->held_payload != NULL)
     {
         lineReuseBuffer(l, opposite->held_payload);
@@ -165,7 +165,7 @@ void disturberTunnelPayload(tunnel_t *t, line_t *l, sbuf_t *buf, disturber_paylo
         return;
     }
 
-    if (dir_ls->finished || dir_ls->is_deadhang)
+    if (! dir_ls->publication_open || dir_ls->is_deadhang)
     {
         lineReuseBuffer(l, buf);
         return;
