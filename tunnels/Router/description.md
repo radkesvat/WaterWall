@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -158,6 +158,7 @@ object:
 | `sniffing` | array | no | domain-sniffing modes: `http1`, `http2`, `http`, `tls`, `quic`, `http3` (see [Domain sniffing](#domain-sniffing)). Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false` (see [When domain sniffing runs](#when-domain-sniffing-runs)) |
 | `resolve-domains` | boolean | no | default `false`. Resolve an unresolved domain destination before Router classifies (see [Resolving domains before routing](#resolving-domains-before-routing)) |
+| `dns` | object | no | how the internal resolver looks names up. Omitted → `mode: "core"` (the worker c-ares resolver, unchanged). `mode: "chain"` sends the DNS queries through Router's own rules and requires `resolve-domains: true` (see [Resolving through the chain](#resolving-through-the-chain-dns)) |
 | `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` (see [GeoIP](#geoip)) |
 | `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database used by `geosite:<list>` (see [GeoSite](#geosite)) |
 
@@ -191,7 +192,7 @@ are ignored with a warning.
 | `destination-port-range` | two-integer array | Match `dest_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `destination-port`, the exact ports and range are OR-combined. |
 | `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or GeoSite lists (`geosite:cn`, see [GeoSite](#geosite)). The domain may come from an earlier tunnel or from [domain sniffing](#domain-sniffing). |
 | `network` | string or array | Match the destination transport flags: `tcp`, `udp`, `icmp`, `packet`, or combined in one string `"tcp,udp"`. OR within the field. |
-| `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`. OR within the field. See [Protocol detection](#protocol-detection). |
+| `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`, `dns`. `dns` also matches the resolver's own query lines (see [Resolving through the chain](#resolving-through-the-chain-dns)). OR within the field. See [Protocol detection](#protocol-detection). |
 | `attributes` | non-empty array | Match sniffed facts. Currently supports `"http_upgrade_present"`. See [Attribute sniffing](#attribute-sniffing). |
 | `username` | string or array | Exact, **case-sensitive** match against authenticated credential markers on the line. No authenticated username → no match. See [Authenticated identity](#authenticated-identity-username--password). |
 | `password` | string or array | Exact, **case-sensitive** match against authenticated credential markers on the line. No authenticated password → no match. |
@@ -207,7 +208,7 @@ of them implies another:
 | fact | switched on by | stored in | matched by |
 |------|----------------|-----------|------------|
 | destination domain — HTTP `Host`, HTTP/2 `:authority`, TLS/QUIC SNI | root `sniffing` setting | `dest_ctx.domain` | `destination-domain` |
-| application protocol — `http1`, `tls`, `bittorrent` | automatic: any rule that uses `protocol` | `dest_ctx.optional_flags.detected_protocols` | `protocol` |
+| application protocol — `http1`, `tls`, `bittorrent`, `dns` | automatic: any rule that uses `protocol` | `dest_ctx.optional_flags.detected_protocols` | `protocol` |
 | HTTP `Upgrade:` header present | a rule that uses `attributes`, plus `sniffing` containing `http1` | Router's per-line state | `attributes` |
 
 All three read the same buffered first payload and share the same bounded
@@ -317,6 +318,7 @@ first upstream payload. It needs no root `sniffing`: if any rule uses
 | `http1` | an HTTP/1 request method prefix (`GET `, `POST `, …) — note: **not** the HTTP/2 preface |
 | `tls` | a TLS ClientHello record |
 | `bittorrent` | the BitTorrent handshake prefix (`0x13` followed by `BitTorrent protocol`) |
+| `dns` | a plain DNS query datagram: a 12-byte header with QR=0 and a standard-query opcode, at least one question, and a valid first question name. Checked only on UDP-only lines; a resolver query line from [chain DNS](#resolving-through-the-chain-dns) matches without sniffing |
 
 - Multiple values are OR-combined: `"protocol": ["tls", "bittorrent"]` matches
   either.
@@ -326,6 +328,9 @@ first upstream payload. It needs no root `sniffing`: if any rule uses
 - `http1` is a cheap method-prefix signal: any payload that begins with an HTTP
   verb token is flagged `http1`, even if it is not really HTTP. `tls` and
   `bittorrent` are stronger structural/signature checks.
+- `dns` is sniffed only on UDP-only lines, so DNS over TCP (and DoH/DoT) is never
+  detected as `dns`. On UDP it tags ordinary DNS traffic too, for example a
+  device's own UDP/53 queries arriving from `PacketsToConnection`.
 
 Detected bits live in `dest_ctx.optional_flags.detected_protocols`. They are
 **optional routing metadata, not endpoint identity**: Router's sniffing sets
@@ -398,6 +403,127 @@ Notes:
   concrete-IP line is stored for matching only — the original IP remains the
   connection endpoint (see
   [What a sniffed domain changes](#what-a-sniffed-domain-changes)).
+- By default (`dns` omitted, or `mode: "core"`) the lookup uses the worker
+  c-ares resolver configured in `core.json`, so DNS packets leave the host
+  directly, outside every Router route.
+
+### Resolving through the chain (`dns`)
+
+With `"dns": { "mode": "chain", ... }` the internal resolver no longer asks the
+system resolver. For each lookup it sends a plain DNS query as a short-lived
+**UDP line** whose destination is one of the configured `servers`, and hands
+that line to Router's classifier. Router routes it like any other UDP line, so
+your rules decide where DNS goes — typically through the same proxy tunnel as
+the traffic itself.
+
+```json
+{
+    "resolve-domains": true,
+    "dns": {
+        "mode": "chain",
+        "servers": ["1.1.1.1", "8.8.8.8:53"],
+        "timeout-ms": 2000,
+        "tries": 2,
+        "cache-size": 4096,
+        "min-ttl": 30,
+        "max-ttl": 3600,
+        "fallback-to-core": false
+    },
+    "rules": [
+        { "protocol": "dns", "target": "proxy_path" }
+    ]
+}
+```
+
+| key | type | default | description |
+|-----|------|---------|-------------|
+| `mode` | string | `"core"` | `"core"`: worker c-ares resolver (today's behavior). `"chain"`: queries travel as UDP lines through Router's rules. `"chain"` requires `resolve-domains: true`; otherwise Router creation fails |
+| `servers` | array of strings | — | **required** for `"chain"`, 1 to 8 entries. IPv4 or IPv6 literals with an optional port (`"1.1.1.1:53"`, `"[2606:4700:4700::1111]:53"`); the port defaults to `53`. Domain names are rejected, because resolving them would need DNS |
+| `timeout-ms` | integer | `2000` | wait per try, `100` to `60000` |
+| `tries` | integer | `2` | total attempts across `servers`, rotating through them in order, `1` to `16` |
+| `cache-size` | integer | `4096` | cached names per worker, at most `1048576`; `0` disables the cache |
+| `min-ttl` | integer | `30` | lower bound, in seconds, applied to the answer TTL before caching, `0` to `604800` |
+| `max-ttl` | integer | `3600` | upper bound, in seconds, at least `min-ttl` and at most `604800` |
+| `fallback-to-core` | boolean | `false` | after every chain try failed, ask the worker c-ares resolver once. That query leaves the host directly, outside the chain, so it is off by default |
+
+Wrong types and out-of-range values are configuration errors that name the JSON
+path. Keys other than those above are ignored inside `dns`.
+
+How a lookup runs:
+
+1. The domain strategy picks the query types: `only-ipv4` asks for `A`,
+   `only-ipv6` for `AAAA`, every other strategy for both. Queries use a random
+   ID and request recursion.
+2. The query line is UDP, its destination is the selected server, and it is
+   marked as a resolver query. It enters Router's classification directly,
+   bypassing the internal resolver, and Router commits its route during `Init`
+   without waiting for a payload. `protocol: "dns"` matches it. Nothing is
+   sniffed from it, so payload-dependent conditions (other `protocol` values,
+   sniffed domains, `attributes`) do not match it; metadata conditions such as
+   `destination-ip`, `destination-port` and `network` see the server address.
+3. A reply must carry the same ID, be a response and repeat the question.
+   `A`/`AAAA` answers are collected, following a `CNAME` chain only inside the
+   same reply. Replies larger than 4096 bytes are dropped. The smallest answer
+   TTL, clamped to `[min-ttl, max-ttl]`, sets the cache lifetime.
+4. `NXDOMAIN`, or an empty answer (`NODATA`) for every requested type, ends the
+   lookup at once. `SERVFAIL`, `REFUSED`, malformed replies and truncated
+   replies (`TC=1`) count as a failed try and rotate to the next server like a
+   timeout. These rules apply only when no requested type returned addresses: with both `A` and `AAAA` requested, addresses for one type win over a failure or `NXDOMAIN` for the other. A server error that omits the question (`FORMERR`, `REFUSED`, `NOTIMP`, `SERVFAIL`) also ends the try at once. There is **no** retry over TCP, so use servers whose answers fit in
+   one UDP datagram for the names you resolve.
+5. A try that gets no valid reply within `timeout-ms`, or whose line closes
+   first, moves on to the next server. After `tries` attempts the lookup fails
+   (or, with `fallback-to-core`, goes to the worker c-ares resolver once).
+6. The selected address is applied exactly as in core mode. A failed lookup
+   closes the original connection the same way a core DNS failure does.
+
+Concurrent lookups of the same name and query types on one worker share one
+query. Cache hits are still delivered asynchronously.
+
+Things to plan for:
+
+- **Add a `protocol: "dns"` rule.** Without one, query lines follow the default
+  `next` route like any unmatched line, and Router logs a startup warning. That
+  is valid when `next` really is where DNS should go, but it is usually a sign
+  that DNS is leaving through the direct path.
+- **The DNS route must carry UDP.** Query lines are UDP-only. A `UdpConnector`,
+  `TcpUdpConnector`, or a proxy client running in UDP mode (VLESS, Trojan,
+  VMess, SOCKS5 UDP) can carry them. A TCP-only path needs `UdpOverTcpClient`
+  in front of it (with a matching `UdpOverTcpServer` on the far side);
+  otherwise every try fails.
+- **`"dns"` never delays stream lines.** DNS is sniffed only on UDP lines, so
+  a `protocol: "dns"` rule does not make TCP lines wait for their first
+  payload: when `"dns"` is the only protocol in the rules, TCP lines are
+  routed at Init as if no `protocol` rule existed. UDP lines still wait for
+  their first datagram. Other `protocol` values (`http1`, `tls`,
+  `bittorrent`) still delay every line until its first payload. Resolver
+  query lines are classified during Init.
+- **A lost reply for one type waits for the timeout.** With both `A` and
+  `AAAA` requested, a try finishes when both types have answered. If one reply
+  is lost, the try succeeds with the other type's addresses only when
+  `timeout-ms` expires.
+- **Query lines are not client connections.** The resolver creates them; they
+  carry no authenticated user, no credential markers and no source address of
+  the client whose connection triggered the lookup. `username`/`password`
+  rules do not match them, and per-user accounting or limiting nodes on the DNS
+  route (`UserController`, `SoftIpLimiter`, and similar) cannot attribute them
+  to that client. Behind a proxy client, the remote server sees them as
+  ordinary connections of the proxy client's own configured identity, coming
+  from the WaterWall host.
+- **Every resolved domain uses the DNS route.** The resolver runs before rule
+  classification, so a connection that a later rule sends `direct` was still
+  resolved through the `protocol: "dns"` target.
+- **`fake-dns`.** With `PacketsToConnection` `fake-dns` enabled, application
+  lines already carry domains, and the chain resolver runs only where Router
+  needs an IP. With it disabled, the device's own DNS datagrams reach Router as
+  UDP lines; `protocol: "dns"` matches them by sniffing, so the same rule can
+  route them too.
+- Embedded resolvers inside connectors and protocol clients keep using core
+  mode; the `dns` object affects only Router's internal resolver.
+- Query lines enter at Router's classification step, not through the previous
+  node. Their downstream callbacks end at the internal resolver, which owns
+  them; the previous node never sees them. Router's `Init`-time clearing of
+  detected-protocol bits keeps their resolver-query mark, which only
+  `protocol: "dns"` matches.
 
 ## GeoIP & GeoSite databases
 
@@ -528,6 +654,56 @@ is detected as BitTorrent. Any one failing → the rule is skipped.
     "next": "default_path"
 }
 ```
+
+### DNS through a VLESS tunnel, Iranian sites direct
+
+Router resolves every domain through the tunnel, then sends `geosite:ir`
+destinations direct and everything else through VLESS. The VLESS client takes
+the line's own destination and protocol, so it carries both the TCP
+connections and the UDP DNS query lines:
+
+```json
+[
+    {
+        "name": "router",
+        "type": "Router",
+        "settings": {
+            "resolve-domains": true,
+            "geosite-db-path": "/var/lib/waterwall/geosite_generated.json",
+            "dns": { "mode": "chain", "servers": ["1.1.1.1", "8.8.8.8"] },
+            "rules": [
+                { "protocol": "dns", "target": "vless_client" },
+                { "destination-domain": "geosite:ir", "target": "direct" }
+            ]
+        },
+        "next": "vless_client"
+    },
+    {
+        "name": "vless_client",
+        "type": "VlessClient",
+        "settings": {
+            "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+            "address": "dest_context->address",
+            "port": "dest_context->port",
+            "protocol": "dest_context->protocol"
+        },
+        "next": "tls_client"
+    },
+    {
+        "name": "direct",
+        "type": "TcpUdpConnector",
+        "settings": {
+            "address": "dest_context->address",
+            "port": "dest_context->port"
+        }
+    }
+]
+```
+
+`tls_client` and the connector to the VLESS server follow the usual
+[`VlessClient`](../VlessClient/description.md) chain. The inbound before
+Router (for example `Socks5Server` with `udp` enabled, or
+`PacketsToConnection`) is unchanged.
 
 ## Router vs SniffRouter
 

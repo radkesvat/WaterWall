@@ -194,3 +194,27 @@ add_waterwall_probe_integration_test(
 )
 add_waterwall_integration_test(waterwall.router_connector_rule_target_tcp_loopback router_connector_rule_target_tcp_loopback)
 add_waterwall_integration_test(waterwall.router_domainresolver_connector_rule_target_tcp_loopback router_domainresolver_connector_rule_target_tcp_loopback)
+# Router dns.mode=chain: resolver queries travel as injected UDP lines through the chain.
+foreach(router_dns_case IN ITEMS
+    router_dns_chain_rule_udp_probe
+    router_dns_chain_default_route_warning_probe
+    router_dns_chain_silent_rotation_probe
+    router_dns_core_mode_regression_probe)
+  add_waterwall_probe_integration_test(waterwall.${router_dns_case} ${router_dns_case} 30)
+endforeach()
+# Router dns object errors stop startup with a message naming the JSON path.
+add_waterwall_expected_failure_integration_test(
+  waterwall.router_dns_config_unknown_key
+  router_dns_config_unknown_key
+  "JSON Error: Router->settings->dns->mod : unknown key"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.router_dns_config_chain_without_resolve_domains
+  router_dns_config_chain_without_resolve_domains
+  "requires Router->settings->resolve-domains to be"
+)
+add_waterwall_expected_failure_integration_test(
+  waterwall.router_dns_config_not_object
+  router_dns_config_not_object
+  "Router->settings->dns (object field) : expected an object"
+)

@@ -63,6 +63,10 @@ typedef struct router_tstate_s
     uint8_t                         sniffing_modes;
     bool                            sniff_even_if_domain_is_already_provided;
     bool                            resolve_domains;
+    bool                            dns_chain_mode; // internal resolver sends DNS over injected lines
+    uint8_t                         dns_chain_servers_count;     // copy of dns.servers for the startup route check
+    uint16_t                        dns_chain_server_ports[8];   // == kDnsLineClientMaxServers
+    ip_addr_t                       dns_chain_server_ips[8];
     bool                            needs_http_upgrade_attribute;
     uint32_t                        needed_protocols;
 } router_tstate_t;
@@ -77,6 +81,7 @@ typedef struct router_lstate_s
     bool           replaying;      // selected Init and its initial FIFO are still running
     bool           datagram_input; // exact incoming transport, retained across branch context rewrites
     bool           pending_pause;  // receiver Pause waiting for the selected branch's Init
+    bool           datagram_protocols_sniffed; // datagram-only sniffers (dns) already judged the first datagram
 } router_lstate_t;
 
 // Connection facts handed to matcher modules. Carries the line (for routing
@@ -150,3 +155,7 @@ void routerTunnelUpStreamResume(tunnel_t *t, line_t *l);
 
 // --- downstream callbacks ---
 void routerTunnelDownStreamFinish(tunnel_t *t, line_t *l);
+
+// --- internal resolver (DNS "chain" mode) ---
+// Enter Router classification with a resolver-generated DNS query line, bypassing the internal DomainResolver.
+void routerInjectResolverLine(tunnel_t *router, line_t *l);

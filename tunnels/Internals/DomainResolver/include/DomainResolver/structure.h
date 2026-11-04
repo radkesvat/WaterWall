@@ -21,6 +21,12 @@ typedef struct domainresolver_tstate_s
     bool                                  verbose;
     bool                                  use_line_strategy;
     bool                                  allow_missing_destination;
+    // DNS transport. Core keeps the worker c-ares path; chain owns chain_client from onPrepare to onDestroy.
+    dnslineclient_mode_e     mode;
+    dnslineclient_config_t   chain_cfg;
+    dnslineclient_t         *chain_client;
+    tunnel_t                *inject_owner;
+    domainresolver_inject_fn inject;
 } domainresolver_tstate_t;
 
 typedef struct domainresolver_lstate_s
@@ -36,6 +42,8 @@ typedef struct domainresolver_lstate_s
     bool                       read_pause_sent; // Receiver pressure forwarded to next after Init.
     bool                       source_paused;   // Combined DNS/backlog and next-side pressure sent to prev.
     domainresolver_phase_t     phase;
+    // Non-NULL only on a chain-mode DNS query line this resolver injected; such a line never runs Init here.
+    dnslineclient_query_t *chain_query;
 } domainresolver_lstate_t;
 
 enum
@@ -73,3 +81,12 @@ void domainresolverOpenPath(tunnel_t *t, line_t *l);
 bool domainresolverDrainPending(tunnel_t *t, line_t *l);
 
 bool domainresolverUpdateSourcePressure(tunnel_t *t, line_t *l);
+
+void domainresolverTunnelOnPrepare(tunnel_t *t);
+void domainresolverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void domainresolverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void domainresolverTunnelOnDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
+
+void domainresolverChainOpenLine(tunnel_t *t, line_t *l, dnslineclient_query_t *query);
+void domainresolverChainDetachLine(tunnel_t *t, line_t *l);
+void domainresolverChainInjectNext(tunnel_t *owner, line_t *l);

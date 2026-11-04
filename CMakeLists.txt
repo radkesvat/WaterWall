@@ -660,6 +660,8 @@ endif()
 #domain resolver
 if(INCLUDE_DOMAIN_RESOLVER)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_DOMAIN_RESOLVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DnsLineClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} DnsLineClient)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/DomainResolver)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} DomainResolver)

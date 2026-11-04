@@ -169,6 +169,18 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
         return false;
     }
 
+    const bool chain_mode = ts->mode == kDnsLineClientModeChain;
+    if (UNLIKELY(addresscontextIsResolverOrigin(dest_ctx)))
+    {
+        /* A resolver-generated query line is created with an IP destination. If something on its route turned it
+         * into a domain, resolving it here (chain or core) would start DNS from inside DNS, so refuse it. Such
+         * lines exist only when some resolver runs in chain mode. */
+        loggerPrint(getDnsLogger(),
+                    LOG_LEVEL_ERROR,
+                    "DomainResolver: refusing to resolve the domain of an internal DNS query line");
+        return false;
+    }
+
     addresscontextSetDomainStrategy(dest_ctx, domainresolverStrategyForLine(ts, dest_ctx));
 
     const char *domain   = dest_ctx->domain;
@@ -182,7 +194,17 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
     ls->phase = kDomainResolverPhaseResolving;
 
     *started_out = true;
-    int rc       = lineResolveDomainServiceAsync(l, domain, NULL, socktype, domainresolverOnDnsResolved, t, NULL);
+    int rc       = ARES_SUCCESS;
+    if (chain_mode)
+    {
+        assert(ts->chain_client != NULL);
+        rc = dnslineclientResolve(
+            ts->chain_client, l, domain, dest_ctx->domain_strategy, domainresolverOnDnsResolved, t, NULL);
+    }
+    else
+    {
+        rc = lineResolveDomainServiceAsync(l, domain, NULL, socktype, domainresolverOnDnsResolved, t, NULL);
+    }
     if (UNLIKELY(rc != ARES_SUCCESS))
     {
         *started_out = false;
