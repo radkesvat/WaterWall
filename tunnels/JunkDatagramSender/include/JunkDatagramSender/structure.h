@@ -21,8 +21,8 @@ typedef struct junkdatagramsender_tstate_s
 typedef struct junkdatagramsender_lstate_s
 {
     uint32_t remaining_resend_again_times;
-    bool     upstream_finished;
-    bool     downstream_finished;
+    bool     upstream_publication_open;
+    bool     downstream_publication_open;
 } junkdatagramsender_lstate_t;
 
 enum
@@ -58,8 +58,9 @@ bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direc
 bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l);
 void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l);
 
-static inline bool junkdatagramsenderDirectionIsFinished(const junkdatagramsender_lstate_t *ls,
-                                                         junkdatagramsender_direction_t     direction)
+static inline bool junkdatagramsenderCanPublish(const junkdatagramsender_lstate_t *ls,
+                                                junkdatagramsender_direction_t     direction)
 {
-    return direction == kJunkDatagramSenderDirectionUpstream ? ls->upstream_finished : ls->downstream_finished;
+    return direction == kJunkDatagramSenderDirectionUpstream ? ls->upstream_publication_open
+                                                             : ls->downstream_publication_open;
 }

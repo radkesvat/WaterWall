@@ -199,6 +199,8 @@ static void teardown(fixture_t *f)
         nghttp2_session_del(f->sender);
     f->sender = NULL;
     h2DataDestroyAfterSession(&f->queue);
+    twfRequire(h2DataPendingBytes(&f->queue) == 0 && h2DataRetainedCharge(&f->queue) == 0,
+               "destroyed queue retained payload or allocation charge");
     twfRequire(f->queue.head == NULL && f->queue.tail == NULL && f->queue.active == NULL,
                "queue retained provider storage after destruction");
     twfRequireNoLeakedBuffers();
@@ -309,12 +311,17 @@ static void caseWindowExhaustion(bool connection)
     uint32_t length = connection ? 70000 : 4096;
     append(&f, length, true, false);
     append(&f, 17, true, false);
+    size_t retained_charge = h2DataRetainedCharge(&f.queue);
+    twfRequire(retained_charge >= length + 17, "queued allocations were not charged");
     start(&f);
     h2_data_item_t *active  = f.queue.active;
     h2_data_item_t *pending = f.queue.head;
     exchange(&f);
     twfRequire(f.received == (connection ? 65535U : 1024U) && f.retired == 0,
                "window exhaustion did not retain the partial provider");
+    twfRequire(h2DataRetainedCharge(&f.queue) == retained_charge &&
+                   h2DataPendingBytes(&f.queue) == length + 17 - f.received,
+               "partial DATA released allocation charge before its provider retired");
     twfRequire(f.queue.active == active && f.queue.head == pending, "window stall changed provider identities");
     twfRequire(h2DataTrySubmit(&f.queue, f.sender, f.stream_id).status == H2_DATA_IDLE && exchange(&f) == 0,
                "window-stalled provider reported new progress");
@@ -323,6 +330,8 @@ static void caseWindowExhaustion(bool connection)
     exchange(&f);
     twfRequire(f.received == length + 17 && f.retired == 2 && f.end_streams == 0,
                "WINDOW_UPDATE failed to resume exact queued bytes");
+    twfRequire(h2DataPendingBytes(&f.queue) == 0 && h2DataRetainedCharge(&f.queue) == 0,
+               "completed DATA retained payload or allocation charge");
     teardown(&f);
 }
 

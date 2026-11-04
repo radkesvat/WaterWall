@@ -19,9 +19,19 @@ void httpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     }
 
     httpclient_tstate_t *ts = tunnelGetState(t);
-    httpclient_lstate_t *ls = lineGetState(l, t);
+    if (httpclientUsesOwnedCarrier(ts))
+    {
+        httpclientCarrierStart(t, l);
+        return;
+    }
+    httpclientLinestateInitialize(lineGetState(l, t), t, l);
+    httpclientStartTransport(t, l);
+}
 
-    httpclientLinestateInitialize(ls, t, l);
+void httpclientStartTransport(tunnel_t *t, line_t *l)
+{
+    httpclient_tstate_t *ts = tunnelGetState(t);
+    httpclient_lstate_t *ls = lineGetState(l, t);
 
     if (ts->verbose)
     {

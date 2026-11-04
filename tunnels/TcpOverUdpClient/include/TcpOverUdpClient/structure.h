@@ -2,44 +2,65 @@
 
 #include "wwapi.h"
 
-#include "ikcp.h"
-#include "ww_fec.h"
+#include "TcpOverUdpCommon/session.h"
+
+typedef struct tcpoverudpclient_session_s tcpoverudpclient_session_t;
+
+typedef struct tcpoverudpclient_worker_s
+{
+    tcpoverudpclient_session_t *sessions;
+    bool                        quiescing;
+} tcpoverudpclient_worker_t;
 
 typedef struct tcpoverudpclient_tstate_s
 {
-    uint16_t    mtu; // Immutable configured packet budget.
-    atomic_bool stopping;
-    bool        fec_enabled;
-    uint8_t     fec_data_shards;
-    uint8_t     fec_parity_shards;
-    bool        kcp_nodelay;
-    bool        kcp_no_congestion_control;
-    int         kcp_interval_ms;
-    int         kcp_resend;
-    int         kcp_send_window;
-    int         kcp_recv_window;
-    int         kcp_initial_cwnd;
-    int         kcp_rx_minrto_ms;
-    int         kcp_send_buffer_limit;
-    uint32_t    ping_interval_ms;
-    uint32_t    no_recv_timeout_ms;
+    uint16_t                   send_mtu; // Immutable configured packet budget.
+    atomic_bool                stopping;
+    bool                       fec_enabled;
+    uint8_t                    fec_data_shards;
+    uint8_t                    fec_parity_shards;
+    bool                       kcp_nodelay;
+    bool                       kcp_no_congestion_control;
+    int                        kcp_interval_ms;
+    int                        kcp_resend;
+    int                        kcp_send_window;
+    int                        kcp_recv_window;
+    int                        kcp_initial_cwnd;
+    int                        kcp_rx_minrto_ms;
+    int                        kcp_send_buffer_limit;
+    uint32_t                   ping_interval_ms;
+    uint32_t                   no_recv_timeout_ms;
+    uint32_t                   close_drain_timeout_ms;
+    wid_t                      workers_count;
+    tcpoverudpclient_worker_t *workers;
 } tcpoverudpclient_tstate_t;
+
+/* Application lines are borrowed; transport lines are created and owned here. */
+typedef enum tcpoverudpclient_role_e
+{
+    kTcpOverUdpClientApplication = 1,
+    kTcpOverUdpClientTransport,
+} tcpoverudpclient_role_t;
 
 typedef struct tcpoverudpclient_lstate_s
 {
-    tunnel_t                 *tunnel;         // our tunnel
-    line_t                   *line;           // our line
-    ikcpcb                   *k_handle;       // kcp handle
-    wtimer_t                 *k_timer;        // kcp processing loop timer
-    tcpoverudp_fec_encoder_t *fec_encoder;    // optional fec encoder
-    tcpoverudp_fec_decoder_t *fec_decoder;    // optional fec decoder
-    uint64_t                  last_recv;      // last received timestamp
-    context_queue_t           cq_u;           // context queue upstream
-    bool                      source_paused;  // our KCP send-queue pressure
-    bool                      can_downstream; // can downstream data
-    bool                      ping_sent;      // ping sent state
-
+    tcpoverudpclient_session_t *session;
+    tcpoverudpclient_role_t     role;
 } tcpoverudpclient_lstate_t;
+
+/* Stable until the common driver's final reference releases destroy_user. */
+struct tcpoverudpclient_session_s
+{
+    tunnel_t                   *tunnel;
+    line_t                     *application;
+    line_t                     *transport;
+    tou_session_t              *driver;
+    tcpoverudpclient_session_t *prev;
+    tcpoverudpclient_session_t *next;
+    wid_t                       wid;
+    bool                        next_init_entered;
+    bool                        transport_finished;
+};
 
 enum
 {
@@ -52,11 +73,11 @@ enum
     kTcpOverUdpClientFecDefaultDataShards   = 10,
     kTcpOverUdpClientFecDefaultParityShards = 3,
     // the smallest MTU ikcp_setmtu() accepts; anything below it is rejected with -1
-    kTcpOverUdpClientKcpMinimumMtu = 50,
+    kTcpOverUdpClientKcpMinimumMtu  = 50,
     kTcpOverUdpClientIpv4HeaderSize = 20,
     kTcpOverUdpClientUdpHeaderSize  = 8,
     kTcpOverUdpClientKcpHeaderSize  = 24,
-    kTcpOverUdpClientKcpMaximumMtu  = 64000,
+    kTcpOverUdpClientKcpMaximumMtu  = kTouMaximumKcpPacketSize,
 };
 
 enum tcpoverudpclient_kcpsettings_e
@@ -81,8 +102,8 @@ static inline uint32_t tcpoverudpclientGetOuterFecOverhead(const tcpoverudpclien
 
 static inline int tcpoverudpclientGetKcpMtu(const tcpoverudpclient_tstate_t *ts)
 {
-    const int budget = (int) ts->mtu - kTcpOverUdpClientIpv4HeaderSize - kTcpOverUdpClientUdpHeaderSize -
-                       (int) tcpoverudpclientGetOuterFecOverhead(ts);
+    const int budget = (int) ts->send_mtu - kTcpOverUdpClientIpv4HeaderSize - kTcpOverUdpClientUdpHeaderSize -
+                       kTouEnvelopeSize - (int) tcpoverudpclientGetOuterFecOverhead(ts);
     return min(budget, kTcpOverUdpClientKcpMaximumMtu);
 }
 
@@ -91,22 +112,13 @@ static inline int tcpoverudpclientGetKcpWriteMtu(const tcpoverudpclient_tstate_t
     return tcpoverudpclientGetKcpMtu(ts) - kTcpOverUdpClientKcpHeaderSize - kFrameHeaderLength;
 }
 
-static inline int tcpoverudpclientGetKcpSendBufferLimit(const tcpoverudpclient_lstate_t *ls)
-{
-    const tcpoverudpclient_tstate_t *ts = tunnelGetState(ls->tunnel);
-    if (ts->kcp_send_buffer_limit > 0)
-    {
-        return ts->kcp_send_buffer_limit;
-    }
-
-    const uint64_t limit = (uint64_t) ls->k_handle->snd_wnd + ls->k_handle->rmt_wnd + 10U;
-    return limit > INT_MAX ? INT_MAX : (int) limit;
-}
-
 WW_EXPORT tunnel_t    *tcpoverudpclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t tcpoverudpclientTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void tcpoverudpclientTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void tcpoverudpclientTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void tcpoverudpclientTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void tcpoverudpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 void tcpoverudpclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
@@ -118,11 +130,9 @@ void tcpoverudpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 void tcpoverudpclientTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *l, tunnel_t *t);
 void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls);
-
-int  tcpoverudpclientKUdpOutput(const char *data, int len, ikcpcb *kcp, void *user);
-bool tcpoverudpclientInputKcpPacket(void *ctx, const uint8_t *packet, size_t packet_len);
-
-void tcpoverudpclientKcpLoopIntervalCallback(wtimer_t *timer);
-bool tcpoverudpclientUpdateKcp(tcpoverudpclient_lstate_t *ls, bool flush);
+bool tcpoverudpclientSessionCreate(tunnel_t *t, line_t *application);
+void tcpoverudpclientDetachApplication(tcpoverudpclient_session_t *session, bool notify);
+void tcpoverudpclientSignalApplication(tcpoverudpclient_session_t *session, LineTaskFnNoBuf signal);
+void tcpoverudpclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
+void tcpoverudpclientTunnelUpStreamResume(tunnel_t *t, line_t *l);

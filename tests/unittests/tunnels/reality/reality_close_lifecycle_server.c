@@ -55,6 +55,7 @@ typedef struct server_lifecycle_context_s
     bool           inject_destination_callbacks_on_ack;
     bool           inject_destination_callbacks_on_finish;
     bool           inject_destination_callbacks_on_payload;
+    bool           expect_protocol_close_linger;
     bool           destroy_line_on_destination_payload;
     bool           require_allowance_consumed_on_destination_payload;
     bool           reenter_peer_close;
@@ -258,8 +259,10 @@ static void serverNextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void serverNextInit(tunnel_t *t, line_t *l)
 {
     server_lifecycle_context_t *context = serverContext(t);
-    requireServer(! lineIsFallback(l) && ! l->fallback_peer_write_closed,
+    requireServer(! lineIsFallback(l) && ! lineHasCloseLingerReason(l, kLineCloseLingerPeerWriteShutdown),
                   "camouflage fallback state reached protected Init");
+    requireServer(lineHasCloseLingerReason(l, kLineCloseLingerProtocolDrain) == context->expect_protocol_close_linger,
+                  "authorization changed the independent protocol linger request");
     serverEvent(context, 'I');
     if (context->kill_on_protected_init)
     {
@@ -906,15 +909,16 @@ static void serverDestinationFallbackInit(tunnel_t *t, line_t *l)
 {
     server_lifecycle_context_t *context = serverContext(t);
     realityserver_lstate_t     *ls      = lineGetState(l, context->reality);
-    requireServer(lineIsFallback(l) && ! l->fallback_peer_write_closed && ls->mode == kRealityServerModePending &&
-                      ls->destination_init_sent,
+    requireServer(lineIsFallback(l) && ! lineHasCloseLingerReason(l, kLineCloseLingerPeerWriteShutdown) &&
+                      ls->mode == kRealityServerModePending && ls->destination_init_sent,
                   "destination Init did not receive initialized fallback state");
     serverEvent(context, 'i');
 }
 
 static void serverFallbackPrevFinish(tunnel_t *t, line_t *l)
 {
-    requireServer(lineFallbackShouldLinger(l), "destination half-close lost fallback state before owner Finish");
+    requireServer(lineShouldLingerOnClose(l) && lineHasCloseLingerReason(l, kLineCloseLingerPeerWriteShutdown),
+                  "destination half-close lost its linger request before owner Finish");
     serverPrevFinish(t, l);
 }
 
@@ -942,7 +946,7 @@ static void testServerDestinationFallbackLifecycle(void)
                           "visitor selection lost destination fallback state");
         }
 
-        lineMarkFallbackPeerWriteClosed(fixture.line);
+        lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
         realityserverTunnelDownStreamFinish(fixture.reality, fixture.line);
         requireServer(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, visitor != 0 ? "iTD" : "iD") == 0,
                       "destination half-close did not finish only toward the owner");
@@ -950,13 +954,21 @@ static void testServerDestinationFallbackLifecycle(void)
     }
 }
 
-static void testServerTls12AuthorizationClearsFallback(const reality_v2_record_profile_t *profile)
+static void testServerTls12AuthorizationClearsFallback(const reality_v2_record_profile_t *profile,
+                                                       bool                               protocol_close_linger)
 {
     server_lifecycle_fixture_t fixture;
     serverFixtureInitialize(&fixture);
     serverFixtureAddDestination(&fixture);
     prepareServerPendingProfile(&fixture, kRealityV2Tls12, profile);
     lineMarkFallback(fixture.line);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
+    if (protocol_close_linger)
+    {
+        lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    }
+    fixture.context.expect_protocol_close_linger           = protocol_close_linger;
+    fixture.context.inject_destination_callbacks_on_finish = true;
 
     const uint8_t application = 0x5a;
     requireServer(realityserverProcessUpstream(fixture.reality,
@@ -971,8 +983,10 @@ static void testServerTls12AuthorizationClearsFallback(const reality_v2_record_p
                   "TLS 1.2 fallback fixture did not authorize");
     realityserver_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
     requireServer(ls->mode == kRealityServerModeAuthorized && ls->destination_up_finished && ls->protected_init_sent &&
-                      ! lineIsFallback(fixture.line) && ! fixture.line->fallback_peer_write_closed &&
-                      strcmp(fixture.context.events, "FIA") == 0,
+                      ! lineIsFallback(fixture.line) &&
+                      ! lineHasCloseLingerReason(fixture.line, kLineCloseLingerPeerWriteShutdown) &&
+                      lineShouldLingerOnClose(fixture.line) == protocol_close_linger &&
+                      fixture.context.destination_callbacks_injected == 5 && strcmp(fixture.context.events, "FIA") == 0,
                   "TLS 1.2 authorization did not retire fallback before protected routing");
     realityserverLinestateDestroy(ls);
     serverFixtureDestroy(&fixture);
@@ -2297,6 +2311,8 @@ static void testServerTls13DestinationCallbacksStaySuppressed(void)
     server_lifecycle_fixture_t fixture;
     prepareServerTls13ReentryFixture(&fixture);
     lineMarkFallback(fixture.line);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    fixture.context.expect_protocol_close_linger        = true;
     fixture.context.inject_destination_callbacks_on_ack = true;
     requireServer(
         realityserverProcessUpstream(
@@ -2309,13 +2325,13 @@ static void testServerTls13DestinationCallbacksStaySuppressed(void)
                       fixture.context.cover_downstream_bytes == 0 && strcmp(fixture.context.events, "K") == 0,
                   "destination callbacks escaped while the downstream cutoff was active");
 
-    lineMarkFallbackPeerWriteClosed(fixture.line);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     requireServer(
         realityserverProcessUpstream(fixture.reality,
                                      fixture.line,
                                      buildServerInboundControl(&fixture, kRealityV2RecordKindHandoffConfirm, 1)) &&
             ls->mode == kRealityServerModeAuthorized && ls->protected_init_sent &&
-            strcmp(fixture.context.events, "KI") == 0,
+            lineShouldLingerOnClose(fixture.line) && strcmp(fixture.context.events, "KI") == 0,
         "cutoff callback suppression prevented clean authorization");
     const uint8_t protected_application = 0x5a;
     requireServer(realityserverProcessUpstream(fixture.reality,
@@ -2333,6 +2349,10 @@ static void testServerTls13DestinationCallbacksStaySuppressed(void)
     serverFixtureDestroy(&fixture);
 
     prepareServerTls13ReentryFixture(&fixture);
+    lineMarkFallback(fixture.line);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
+    fixture.context.expect_protocol_close_linger = true;
     requireServer(
         realityserverProcessUpstream(fixture.reality,
                                      fixture.line,
@@ -2438,7 +2458,8 @@ void realityTestServerCloseLifecycle(void)
     {
         if (versions[i] == kRealityV2Tls12)
         {
-            testServerTls12AuthorizationClearsFallback(&profiles[i]);
+            testServerTls12AuthorizationClearsFallback(&profiles[i], false);
+            testServerTls12AuthorizationClearsFallback(&profiles[i], true);
             runFirstFatalAuthorization(versions[i], &profiles[i]);
             runServerFragmentedAlert(versions[i], &profiles[i]);
             testServerCoalescedRecords(versions[i], &profiles[i], false);

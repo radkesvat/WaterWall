@@ -2,116 +2,213 @@
 
 #include "loggers/network_logger.h"
 
-static void kcpPrintLog(const char *log, struct IKCPCB *kcp, void *user)
+void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
 {
-    discard user;
-
-    LOGD("TcpOverUdpClient -> KCP[%d]: %s", kcp->conv, log);
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }
 
-bool tcpoverudpclientLinestateInitialize(tcpoverudpclient_lstate_t *ls, line_t *l, tunnel_t *t)
+void tcpoverudpclientDetachApplication(tcpoverudpclient_session_t *session, bool notify)
 {
-    tcpoverudpclient_tstate_t *ts = tunnelGetState(t);
+    line_t *application = session->application;
+    if (application == NULL)
+        return;
+    /* Clear both directions before Finish; the borrowed owner may destroy immediately. */
+    session->application = NULL;
+    tcpoverudpclientLinestateDestroy(lineGetState(application, session->tunnel));
+    if (notify)
+        tunnelPrevDownStreamFinish(session->tunnel, application);
+}
 
-    // every resource is built in a local until all of them succeeded; a failing line therefore leaves the line state
-    // zeroed, which is the same terminal shape tcpoverudpclientLinestateDestroy() produces.
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
+void tcpoverudpclientSignalApplication(tcpoverudpclient_session_t *session, LineTaskFnNoBuf signal)
+{
+    line_t *application = session->application;
+    if (application == NULL)
+        return;
+    lineRef(application);
+    signal(session->tunnel, application);
+    /* No state is touched after a callback which can retire the association. */
+    lineUnref(application);
+}
 
-    ikcpcb *k_handle = ikcp_create(0, ls);
-    /* configuring the high-efficiency KCP settings */
+static void clientEmit(void *user, sbuf_t *packet)
+{
+    tcpoverudpclient_session_t *session   = user;
+    line_t                     *transport = session->transport;
+    assert(transport != NULL && session->next_init_entered);
+    lineRef(transport);
+    tunnelNextUpStreamPayload(session->tunnel, transport, packet);
+    lineUnref(transport);
+}
 
-    ikcp_setoutput(k_handle, tcpoverudpclientKUdpOutput);
-
-    ikcp_nodelay(
-        k_handle, ts->kcp_nodelay ? 1 : 0, ts->kcp_interval_ms, ts->kcp_resend, ts->kcp_no_congestion_control ? 1 : 0);
-
-    ikcp_wndsize(k_handle, ts->kcp_send_window, ts->kcp_recv_window);
-
-    const int kcp_mtu       = tcpoverudpclientGetKcpMtu(ts);
-    const int setmtu_result = ikcp_setmtu(k_handle, kcp_mtu);
-
-    if (setmtu_result != 0)
+static void clientPayload(void *user, sbuf_t *payload)
+{
+    tcpoverudpclient_session_t *session     = user;
+    line_t                     *application = session->application;
+    if (application == NULL)
     {
-        // tunnel creation already rejected every MTU that KCP can refuse, so reaching this branch means the validated
-        // tunnel state was corrupted or the KCP contract changed under us
-        LOGF("TcpOverUdpClient: KCP rejected the validated MTU %d (result %d)", kcp_mtu, setmtu_result);
-        abortProgramNow(1);
+        bufferpoolReuseBuffer(getWorkerBufferPool(session->wid), payload);
+        return;
     }
+    lineRef(application);
+    tunnelPrevDownStreamPayload(session->tunnel, application, payload);
+    lineUnref(application);
+}
 
-    k_handle->cwnd = (IUINT32) ts->kcp_initial_cwnd;
+static void clientPeerClose(void *user)
+{
+    tcpoverudpclientDetachApplication(user, true);
+}
 
-    k_handle->writelog = kcpPrintLog;
-    // k_handle->logmask = 0x0FFFFFFF; // Enable all logs
+static void clientPressure(void *user, bool paused)
+{
+    tcpoverudpclientSignalApplication(user, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume);
+}
 
-    k_handle->rx_minrto = (IINT32) ts->kcp_rx_minrto_ms;
+static void clientTerminal(void *user, tou_result_t result)
+{
+    tcpoverudpclient_session_t *session     = user;
+    tunnel_t                   *t           = session->tunnel;
+    tcpoverudpclient_tstate_t  *ts          = tunnelGetState(t);
+    line_t                     *transport   = session->transport;
+    line_t                     *application = session->application;
+    tou_session_t              *driver      = session->driver;
 
-    wtimer_t *k_timer = wtimerAdd(getWorkerLoop(lineGetWID(l)),
-                                  tcpoverudpclientKcpLoopIntervalCallback,
-                                  (uint32_t) ts->kcp_interval_ms,
-                                  INFINITE);
+    if (result == kTouUnconfirmed)
+        LOGW("TcpOverUdpClient: close delivery unconfirmed at fixed deadline");
+    else if (result != kTouConfirmed && result != kTouPeerDrained)
+        LOGD("TcpOverUdpClient: session aborted (reason %d)", (int) result);
 
-    if (k_timer == NULL)
+    lineRef(transport);
+    if (application != NULL)
+        lineRef(application);
+    /* Retire application admission and the authoritative inventory before callouts.
+     * The transport keeps only a terminal context until its own cleanup. */
+    if (session->prev != NULL)
+        session->prev->next = session->next;
+    else
+        ts->workers[session->wid].sessions = session->next;
+    if (session->next != NULL)
+        session->next->prev = session->prev;
+    session->prev = session->next = NULL;
+    session->transport            = NULL;
+    session->driver               = NULL;
+    session->application          = NULL;
+    if (application != NULL)
+        tcpoverudpclientLinestateDestroy(lineGetState(application, t));
+
+    /* Close application-owner admission before transport cleanup can synchronously
+     * trigger another read/close through a shared neighboring resource. Transport
+     * callbacks still resolve this terminal context until its own Finish below. */
+    if (application != NULL)
     {
-        ikcp_release(k_handle);
-        LOGE("TcpOverUdpClient: failed to create the KCP interval timer for this line");
+        if (lineIsAlive(application))
+            tunnelPrevDownStreamFinish(t, application);
+        lineUnref(application);
+    }
+    if (lineIsAlive(transport))
+    {
+        tcpoverudpclientLinestateDestroy(lineGetState(transport, t));
+        if (session->next_init_entered && ! session->transport_finished)
+            tunnelNextUpStreamFinish(t, transport);
+        lineDestroy(transport);
+    }
+    lineUnref(transport);
+    touSessionRelease(driver);
+}
+
+static void clientDestroyUser(void *user)
+{
+    memoryFree(user);
+}
+
+bool tcpoverudpclientSessionCreate(tunnel_t *t, line_t *application)
+{
+    tcpoverudpclient_tstate_t *ts  = tunnelGetState(t);
+    const wid_t                wid = lineGetWID(application);
+    assert(wid < ts->workers_count);
+    tcpoverudpclient_worker_t *worker         = &ts->workers[wid];
+    tcpoverudpclient_lstate_t *application_ls = lineGetState(application, t);
+    tcpoverudpclientLinestateDestroy(application_ls);
+    if (atomicLoadRelaxed(&ts->stopping) || worker->quiescing || ! wloopNormalDispatchAllowed(getWorkerLoop(wid)))
+        return false;
+
+    line_t *transport = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    addresscontextCopy(lineGetSourceAddressContext(transport), lineGetSourceAddressContext(application));
+    addresscontextCopy(lineGetDestinationAddressContext(transport), lineGetDestinationAddressContext(application));
+    transport->routing_context.local_listener_port = application->routing_context.local_listener_port;
+    transport->routing_context.peer_source_port    = application->routing_context.peer_source_port;
+    lineCopyUsers(transport, application);
+    transport->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
+    transport->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
+    transport->fallback_mode          = application->fallback_mode;
+    if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
+        lineRequestCloseLinger(transport, kLineCloseLingerPeerWriteShutdown);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(transport), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(transport), IP_PROTO_UDP);
+
+    tcpoverudpclient_session_t *session = memoryAllocateZero(sizeof(*session));
+    session->tunnel                     = t;
+    session->application                = application;
+    session->transport                  = transport;
+    session->wid                        = wid;
+    tou_config_t config                 = {
+                        .send_mtu                  = ts->send_mtu,
+                        .fec_enabled               = ts->fec_enabled,
+                        .fec_data_shards           = ts->fec_data_shards,
+                        .fec_parity_shards         = ts->fec_parity_shards,
+                        .kcp_nodelay               = ts->kcp_nodelay,
+                        .kcp_no_congestion_control = ts->kcp_no_congestion_control,
+                        .kcp_interval_ms           = ts->kcp_interval_ms,
+                        .kcp_resend                = ts->kcp_resend,
+                        .kcp_send_window           = ts->kcp_send_window,
+                        .kcp_recv_window           = ts->kcp_recv_window,
+                        .kcp_initial_cwnd          = ts->kcp_initial_cwnd,
+                        .kcp_rx_minrto_ms          = ts->kcp_rx_minrto_ms,
+                        .kcp_send_buffer_limit     = ts->kcp_send_buffer_limit,
+                        .ping_interval_ms          = ts->ping_interval_ms,
+                        .no_recv_timeout_ms        = ts->no_recv_timeout_ms,
+                        .close_drain_timeout_ms    = ts->close_drain_timeout_ms,
+                        .pool                      = lineGetBufferPool(transport),
+                        .loop                      = getWorkerLoop(wid),
+    };
+    const tou_callbacks_t callbacks = {
+        .emit         = clientEmit,
+        .payload      = clientPayload,
+        .peer_close   = clientPeerClose,
+        .pressure     = clientPressure,
+        .terminal     = clientTerminal,
+        .destroy_user = clientDestroyUser,
+    };
+    uint8_t       client_nonce[kTouNonceSize];
+    const uint8_t server_nonce[kTouNonceSize] = {0};
+    touNonceGenerate(client_nonce);
+    session->driver = touSessionCreate(&config, &callbacks, session, true, client_nonce, server_nonce, NULL);
+    if (session->driver == NULL)
+    {
+        memoryFree(session);
+        lineDestroy(transport);
         return false;
     }
 
-    tcpoverudp_fec_encoder_t *fec_encoder = NULL;
-    tcpoverudp_fec_decoder_t *fec_decoder = NULL;
+    *application_ls = (tcpoverudpclient_lstate_t) {.session = session, .role = kTcpOverUdpClientApplication};
+    tcpoverudpclient_lstate_t *transport_ls = lineGetState(transport, t);
+    *transport_ls = (tcpoverudpclient_lstate_t) {.session = session, .role = kTcpOverUdpClientTransport};
+    session->next = worker->sessions;
+    if (session->next != NULL)
+        session->next->prev = session;
+    worker->sessions = session;
 
-    if (ts->fec_enabled)
-    {
-        fec_encoder = tcpoverudpFecEncoderCreate(ts->fec_data_shards, ts->fec_parity_shards);
-        fec_decoder = tcpoverudpFecDecoderCreate(ts->fec_data_shards, ts->fec_parity_shards);
-
-        if (fec_encoder == NULL || fec_decoder == NULL)
-        {
-            tcpoverudpFecEncoderDestroy(&fec_encoder);
-            tcpoverudpFecDecoderDestroy(&fec_decoder);
-            weventSetUserData(k_timer, NULL);
-            wtimerDelete(k_timer);
-            ikcp_release(k_handle);
-            LOGE("TcpOverUdpClient: failed to initialize the FEC state for this line");
-            return false;
-        }
-    }
-
-    *ls = (tcpoverudpclient_lstate_t) {.k_handle       = k_handle,
-                                       .k_timer        = k_timer,
-                                       .fec_encoder    = fec_encoder,
-                                       .fec_decoder    = fec_decoder,
-                                       .tunnel         = t,
-                                       .line           = l,
-                                       .last_recv      = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l))),
-                                       .cq_u           = contextqueueCreate(),
-                                       .source_paused  = false,
-                                       .can_downstream = true,
-                                       .ping_sent      = true};
-
-    // published only after the line state is committed, so the timer callback can never observe a partial state
-    weventSetUserData(k_timer, ls);
-
-    uint8_t ping_buf[kFrameHeaderLength] = {kFrameFlagPing};
-    ikcp_send(ls->k_handle, (const char *) ping_buf, (int) sizeof(ping_buf));
-    // ikcp_update(k_handle, wloopNowMS(getWorkerLoop(lineGetWID(l))));
-
+    tou_session_t *driver = session->driver;
+    touSessionRetain(driver);
+    lineRef(transport);
+    session->next_init_entered = true;
+    tunnelNextUpStreamInit(t, transport);
+    if (lineIsAlive(transport) && touSessionIsAlive(driver))
+        touSessionStart(driver);
+    lineUnref(transport);
+    touSessionRelease(driver);
+    /* Successful publication; reentry may already have closed the borrowed application. */
     return true;
-}
-
-void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls)
-{
-    assert(ls->k_handle != NULL && ls->k_timer != NULL);
-
-    weventSetUserData(ls->k_timer, NULL);
-    wtimerDelete(ls->k_timer);
-
-    contextqueueDestroy(&ls->cq_u);
-
-    tcpoverudpFecEncoderDestroy(&ls->fec_encoder);
-    tcpoverudpFecDecoderDestroy(&ls->fec_decoder);
-
-    ikcp_release(ls->k_handle);
-
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(tcpoverudpclient_lstate_t)));
 }

@@ -951,7 +951,8 @@ void speedtestserverProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         const bool alive = lineIsAlive(l);
         lineUnref(l);
-        if (! alive)
+        // Finish destroys this state, and a node before this one may keep the line alive to deliver queued data.
+        if (! alive || ls->recv_stream == NULL)
         {
             return;
         }

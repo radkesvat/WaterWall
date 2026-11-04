@@ -20,7 +20,8 @@ if(TARGET HttpClient)
   waterwall_add_native_executable(httpclient_wire_profile_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/http/httpclient_wire_profile_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(httpclient_wire_profile_test HttpClient)
-  target_link_options(httpclient_wire_profile_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(httpclient_wire_profile_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd" "-Wl,--wrap=wtimerReset")
   target_link_libraries(httpclient_wire_profile_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests httpclient_wire_profile_test)
   add_waterwall_unit_test(
@@ -93,6 +94,7 @@ if(TARGET HttpServer)
   target_link_options(httpserver_reentrant_finish_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=bufferpoolGetLargeBufferSize"
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd" "-Wl,--wrap=wtimerReset"
   )
   target_link_libraries(httpserver_reentrant_finish_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests httpserver_reentrant_finish_test)
@@ -209,6 +211,7 @@ if(TARGET JunkDatagramSender)
   waterwall_line_failure_test_use_tunnel(junkdatagramsender_packet_lifecycle_test JunkDatagramSender)
   target_link_options(junkdatagramsender_packet_lifecycle_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=sbufDuplicateByPool"
   )
   target_link_libraries(junkdatagramsender_packet_lifecycle_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests junkdatagramsender_packet_lifecycle_test)
@@ -488,41 +491,30 @@ if(TARGET Router)
   )
 endif()
 
-foreach(tcpoverudp_side Client Server)
-  string(TOLOWER "${tcpoverudp_side}" tcpoverudp_side_lower)
-  set(tcpoverudp_target "TcpOverUdp${tcpoverudp_side}")
-  set(tcpoverudp_test "tcpoverudp${tcpoverudp_side_lower}_line_failure_test")
-
-  if(TARGET ${tcpoverudp_target})
-    waterwall_add_native_executable(${tcpoverudp_test} SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/${tcpoverudp_test}.c"
-      ${WATERWALL_LINE_FAILURE_WW_SOURCES})
-    waterwall_line_failure_test_use_tunnel(${tcpoverudp_test} ${tcpoverudp_target})
-    # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its public structure.h.
-    target_include_directories(${tcpoverudp_test} PRIVATE
-      ${CMAKE_SOURCE_DIR}/tunnels/${tcpoverudp_target}/kcp
-      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
-    )
+if(TARGET TcpOverUdpClient AND TARGET TcpOverUdpServer)
+  foreach(tcpoverudp_test IN ITEMS tcpoverudpclient_line_failure_test tcpoverudpserver_line_failure_test tcp_over_udp_session_test)
+    waterwall_add_native_executable(${tcpoverudp_test} SUPPORT SOURCES
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/${tcpoverudp_test}.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/session_fixture.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/settings_geometry_client.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/settings_geometry_server.c")
+    target_link_libraries(${tcpoverudp_test} PRIVATE TcpOverUdpClient TcpOverUdpServer TcpOverUdpCommon ww)
     target_link_options(${tcpoverudp_test} PRIVATE
-      ${WATERWALL_LINE_FAILURE_WRAPS}
-      "-Wl,--wrap=wtimerAdd"
-      "-Wl,--wrap=wtimerDelete"
-      "-Wl,--wrap=ikcp_create"
-      "-Wl,--wrap=ikcp_release"
-      "-Wl,--wrap=tcpoverudpFecEncoderCreate"
-      "-Wl,--wrap=tcpoverudpFecDecoderCreate"
-      "-Wl,--wrap=tcpoverudpFecEncoderDestroy"
-      "-Wl,--wrap=tcpoverudpFecDecoderDestroy"
-    )
-    target_link_libraries(${tcpoverudp_test} PRIVATE ww)
+      "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd"
+      "-Wl,--wrap=touSessionCreate" "-Wl,--wrap=ikcp_create" "-Wl,--wrap=ikcp_release"
+      "-Wl,--wrap=tcpoverudpFecEncoderCreate" "-Wl,--wrap=tcpoverudpFecDecoderCreate"
+      "-Wl,--wrap=tcpoverudpFecDecodePacket"
+      "-Wl,--wrap=tcpoverudpFecEncoderDestroy" "-Wl,--wrap=tcpoverudpFecDecoderDestroy")
     add_dependencies(waterwall_unit_tests ${tcpoverudp_test})
-
-    add_waterwall_unit_test(
-      waterwall.${tcpoverudp_test}_unit
-      ${tcpoverudp_test}
-      "unit;tunnels;tcpoverudp;failure;line"
-    )
-  endif()
-endforeach()
+    if(tcpoverudp_test STREQUAL "tcp_over_udp_session_test")
+      set(tcpoverudp_registration waterwall.tcp_over_udp_session_unit)
+    else()
+      set(tcpoverudp_registration waterwall.${tcpoverudp_test}_unit)
+    endif()
+    add_waterwall_unit_test(${tcpoverudp_registration} ${tcpoverudp_test}
+      "unit;tunnels;tcpoverudp;failure;line;session;close" 120)
+  endforeach()
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET AuthenticationServer)
   waterwall_add_native_executable(authenticationserver_audit_config_test SUPPORT SOURCES

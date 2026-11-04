@@ -51,14 +51,14 @@ static inline bool tunIoErrnoIsTransient(int io_errno)
  * bytes and must stay a per-packet drop: making it fatal would hand any peer a
  * one-packet process kill.
  *
- * EMSGSIZE is deliberately NOT in this set. The writer already drops anything
- * larger than the configured MTU before calling write(), so EMSGSIZE means the
- * configured MTU exceeds the device's real MTU - an operator misconfiguration
- * that will reject traffic forever, not a property of one packet.
+ * EMSGSIZE rejects this packet's size, not the device. Injection is OS receive,
+ * so the configured transmit MTU is not an admission bound. A platform can still
+ * refuse an individual packet within the supported IP size range; later packets
+ * must remain deliverable.
  */
 static inline bool tunWriteErrnoIsPacketLocal(int io_errno)
 {
-    return io_errno == EINVAL;
+    return io_errno == EINVAL || io_errno == EMSGSIZE;
 }
 
 // Outcome of one read-drain cycle, so the reader loop cannot silently ignore a

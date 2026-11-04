@@ -45,7 +45,7 @@ void tcpconnectorOnClose(wio_t *io)
 
         if (lineIsFallback(l) && wioHasPeerWriteShutdown(io) && wioGetError(io) == 0)
         {
-            lineMarkFallbackPeerWriteClosed(l);
+            lineRequestCloseLinger(l, kLineCloseLingerPeerWriteShutdown);
         }
 
         local_idle_item_t *idle_item = ls->idle_handle;

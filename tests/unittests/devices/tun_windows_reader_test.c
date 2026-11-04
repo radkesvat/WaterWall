@@ -49,6 +49,9 @@ static atomic_uint      refusals;
 static uint64_t         warning_now_ms;
 static unsigned         packet_warnings, output_recycles;
 static bool             count_output_recycles;
+static const sbuf_t    *expected_output;
+static DWORD            allocated_output_size;
+static unsigned         output_allocations, output_sends;
 
 static bool fixtureWarningGate(atomic_log_rate_limiter_t *limiter, uint64_t interval)
 {
@@ -62,8 +65,26 @@ static void captureWarning(int level, const char *bytes, int length)
     const size_t size = min((size_t) max(length, 0), sizeof(text) - 1);
     memcpy(text, bytes, size);
     text[size] = '\0';
-    if (strstr(text, "exceeds device MTU") != NULL)
+    if (strstr(text, "exceeds maximum IP packet size") != NULL)
         ++packet_warnings;
+}
+
+static BYTE *WINAPI fixtureAllocateSendPacket(WINTUN_SESSION_HANDLE session, DWORD length)
+{
+    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && expected_output != NULL &&
+                length == sbufGetLength(expected_output) && length <= sizeof(native_packet),
+            "Wintun allocation changed the IP packet size or selected the wrong session");
+    ++output_allocations;
+    allocated_output_size = length;
+    return native_packet;
+}
+
+static void WINAPI fixtureSendPacket(WINTUN_SESSION_HANDLE session, const BYTE *packet)
+{
+    require(session == (WINTUN_SESSION_HANDLE) (uintptr_t) 123 && packet == native_packet && expected_output != NULL &&
+                memoryEqual(packet, sbufGetRawPtr(expected_output), allocated_output_size),
+            "Wintun send changed the complete IP packet");
+    ++output_sends;
 }
 
 static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
@@ -198,8 +219,8 @@ static void testOversizedOutputWarnings(buffer_pool_t *pool)
         const unsigned count = burst == 0 ? 4 : 1;
         for (unsigned i = 0; i < count; ++i)
         {
-            buffers[i] = bufferpoolGetSmallBuffer(pool);
-            sbufSetLength(buffers[i], 1501);
+            buffers[i] = bufferpoolGetBestFit(pool, UINT16_MAX + 1U, 0);
+            sbufSetLength(buffers[i], UINT16_MAX + 1U);
         }
         count_output_recycles = true;
         require(tunWriteBatch(&device, getCurrentWorker(), buffers, count), "oversized drop failed device lifecycle");
@@ -207,6 +228,44 @@ static void testOversizedOutputWarnings(buffer_pool_t *pool)
         require(packet_warnings == burst + 1 && output_recycles == 4 + burst,
                 "oversized output warnings were unbounded or leaked a buffer");
         warning_now_ms += kTunDiscardReportIntervalMs;
+    }
+}
+
+static void testWriterPacketSizeIndependentOfDeviceMtu(buffer_pool_t *pool)
+{
+    const uint16_t lengths[] = {1200, 1500, UINT16_MAX};
+    tun_device_t   device    = {.mtu = 1200, .session_handle = (HANDLE) (uintptr_t) 123};
+    atomic_init(&device.lifecycle, kTunLifecycleUp);
+    wintun_api.allocate_send_packet = fixtureAllocateSendPacket;
+    wintun_api.send_packet          = fixtureSendPacket;
+    output_allocations = output_sends = output_recycles = 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i)
+    {
+        sbuf_t  *buffer = bufferpoolGetBestFit(pool, lengths[i], 0);
+        uint8_t *packet = sbufGetMutablePtr(buffer);
+        memorySet(packet, 0x5a, lengths[i]);
+        memoryZero(packet, 20);
+        packet[0] = 0x45;
+        packet[8] = 64;
+        packet[9] = 253;
+        PUT_BE16(packet + 2, lengths[i]);
+        PUT_BE32(packet + 12, UINT32_C(0x0A000001));
+        PUT_BE32(packet + 16, UINT32_C(0x0A000002));
+        uint32_t sum = 0;
+        for (unsigned offset = 0; offset < 20; offset += 2)
+            sum += GET_BE16(packet + offset);
+        while (sum >> 16)
+            sum = (sum & UINT16_MAX) + (sum >> 16);
+        PUT_BE16(packet + 10, (uint16_t) ~sum);
+        sbufSetLength(buffer, lengths[i]);
+        expected_output       = buffer;
+        count_output_recycles = true;
+        require(tunWriteBatch(&device, getCurrentWorker(), &buffer, 1), "valid IP packet failed the Wintun writer");
+        count_output_recycles = false;
+        expected_output       = NULL;
+        require(output_allocations == i + 1 && output_sends == i + 1 && output_recycles == i + 1 &&
+                    tundeviceIsUp(&device),
+                "Wintun writer restricted incoming packets to the configured transmit MTU");
     }
 }
 
@@ -556,6 +615,7 @@ int main(void)
     testStartupRefusalAndTerminalReceive();
     testStopRacesWithAdmittedRearm();
     testRefusedNativeNotification();
+    testWriterPacketSizeIndependentOfDeviceMtu(pool);
     testOversizedOutputWarnings(pool);
     require(tokenCount() == 0 && atomicLoadRelaxed(&foreign_notifications) > 0 && ends == 12,
             "fixture missed foreign notification or leaked sessions");

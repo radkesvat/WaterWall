@@ -1,0 +1,207 @@
+{
+  "name": "http2-upload-close-probe",
+  "nodes": [
+    {
+      "name": "normal-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26800,
+        "nodelay": true
+      },
+      "next": "normal-http"
+    },
+    {
+      "name": "normal-http",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "method": "POST",
+        "http-version": "2",
+        "verbose": true
+      },
+      "next": "normal-carrier"
+    },
+    {
+      "name": "normal-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "timed-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26802,
+        "nodelay": true
+      },
+      "next": "timed-http"
+    },
+    {
+      "name": "timed-http",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "method": "POST",
+        "http-version": "2",
+        "verbose": true,
+        "close-drain-timeout-ms": 1000
+      },
+      "next": "timed-carrier"
+    },
+    {
+      "name": "timed-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "pair-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26803,
+        "nodelay": true
+      },
+      "next": "pair-client"
+    },
+    {
+      "name": "pair-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26804,
+        "method": "POST",
+        "http-version": "2"
+      },
+      "next": "pair-carrier-out"
+    },
+    {
+      "name": "pair-carrier-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26804,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "pair-carrier-in",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26804,
+        "nodelay": true
+      },
+      "next": "pair-server"
+    },
+    {
+      "name": "pair-server",
+      "type": "HttpServer",
+      "settings": {
+        "http-version": "2",
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "method": "POST",
+        "status": 200
+      },
+      "next": "pair-service"
+    },
+    {
+      "name": "pair-service",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26805,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "upgrade-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26806,
+        "nodelay": true
+      },
+      "next": "upgrade-client"
+    },
+    {
+      "name": "upgrade-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "method": "POST",
+        "http-version": "both",
+        "upgrade": true,
+        "verbose": true
+      },
+      "next": "upgrade-carrier"
+    },
+    {
+      "name": "upgrade-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "websocket-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26807,
+        "nodelay": true
+      },
+      "next": "websocket-client"
+    },
+    {
+      "name": "websocket-client",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "http-version": "2",
+        "websocket": true,
+        "verbose": true
+      },
+      "next": "websocket-carrier"
+    },
+    {
+      "name": "websocket-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

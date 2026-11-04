@@ -16,7 +16,7 @@
  * CTest: waterwall.disturber_packet_lifecycle_unit
  */
 /*
- * Disturber packet-line lifecycle coverage.
+ * Disturber packet-line and borrowed normal-line lifecycle coverage.
  *
  * Disturber is a transparent packet transform.  A packet Finish must travel in
  * the same direction, retained out-of-order traffic must be settled, and a
@@ -46,6 +46,22 @@ typedef struct disturber_fixture_s
     line_t          *packet_lines[kDisturberTestWorkerCount];
 } disturber_fixture_t;
 
+static void fixtureUpstreamInit(tunnel_t *t, line_t *line)
+{
+    disturber_lstate_t *ls = lineGetState(line, t->prev);
+    twfRequire(ls->upstream.publication_open && ls->downstream.publication_open,
+               "upstream Init called out before opening publication");
+    twfNextInit(t, line);
+}
+
+static void fixtureDownstreamInit(tunnel_t *t, line_t *line)
+{
+    disturber_lstate_t *ls = lineGetState(line, t->next);
+    twfRequire(ls->upstream.publication_open && ls->downstream.publication_open,
+               "downstream Init called out before opening publication");
+    twfPrevInit(t, line);
+}
+
 static void fixtureSetup(disturber_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
@@ -55,6 +71,8 @@ static void fixtureSetup(disturber_fixture_t *fixture)
     fixture->disturber = tunnelCreate(NULL, sizeof(disturber_tstate_t), sizeof(disturber_lstate_t));
     fixture->next      = twfCreateNextTunnel(&fixture->trace);
     twfRequire(fixture->disturber != NULL, "failed to create the Disturber tunnel");
+    fixture->prev->fnInitD = fixtureDownstreamInit;
+    fixture->next->fnInitU = fixtureUpstreamInit;
     tunnelBind(fixture->prev, fixture->disturber);
     tunnelBind(fixture->disturber, fixture->next);
 
@@ -138,6 +156,177 @@ static sbuf_t *fixturePayload(line_t *line, uint8_t value)
     return buf;
 }
 
+typedef enum disturber_pending_kind_e
+{
+    kDisturberPendingDelay,
+    kDisturberPendingDuplicate,
+    kDisturberPendingReorder,
+} disturber_pending_kind_e;
+
+typedef enum disturber_normal_finish_e
+{
+    kDisturberNormalNoFinish,
+    kDisturberNormalUpstreamFinish,
+    kDisturberNormalDownstreamFinish,
+} disturber_normal_finish_e;
+
+static void caseNormalPendingOutput(disturber_pending_kind_e pending, disturber_normal_finish_e finish)
+{
+    char name[128];
+    snprintf(name,
+             sizeof(name),
+             "disturber borrowed normal output kind %u, Finish %u",
+             (unsigned) pending,
+             (unsigned) finish);
+    twfSetCase(name);
+    tosResetProcessApi(true);
+
+    disturber_fixture_t fixture;
+    fixtureSetup(&fixture);
+    disturber_tstate_t *state = tunnelGetState(fixture.disturber);
+    switch (pending)
+    {
+    case kDisturberPendingDelay:
+        state->chance_payload_delay = 100;
+        state->delay_min_ms         = 1;
+        state->delay_max_ms         = 1;
+        break;
+    case kDisturberPendingDuplicate:
+        state->chance_payload_duplication = 100;
+        break;
+    case kDisturberPendingReorder:
+        state->chance_payload_out_of_order = 100;
+        break;
+    }
+
+    /* The fixture owns this pooled normal line. Neither exact packet slot is
+     * changed, and recording neighbors absorb Finish while this line drains. */
+    twf_line_pool_t line_pool;
+    twfLinePoolSetup(&line_pool, fixture.disturber->lstate_size, 4);
+    line_t *line = twfLinePoolCreateLine(&line_pool);
+    twfRequire(! disturberIsWorkerPacketLine(fixture.disturber, line), "normal fixture became a packet line");
+    if (finish == kDisturberNormalDownstreamFinish)
+    {
+        disturberTunnelDownStreamInit(fixture.disturber, line);
+        twfRequireEqualU32(fixture.trace.prev_init, 1, "downstream Init did not reach prev");
+    }
+    else
+    {
+        disturberTunnelUpStreamInit(fixture.disturber, line);
+        twfRequireEqualU32(fixture.trace.next_init, 1, "upstream Init did not reach next");
+    }
+    const uint32_t refs_before = twfLineRefCount(line);
+
+    disturberTunnelUpStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x91)));
+    disturberTunnelDownStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x92)));
+    if (pending == kDisturberPendingReorder)
+    {
+        twfRequireEqualU32(fixture.trace.next_payload, 0, "reorder did not retain its first upstream payload");
+        twfRequireEqualU32(fixture.trace.prev_payload, 0, "reorder did not retain its first downstream payload");
+        disturberTunnelUpStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x93)));
+        disturberTunnelDownStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x94)));
+    }
+
+    const uint32_t immediate = pending == kDisturberPendingDelay ? 0 : 1;
+    twfRequireEqualU32(fixture.trace.next_payload, immediate, "upstream scheduled output ran inline");
+    twfRequireEqualU32(fixture.trace.prev_payload, immediate, "downstream scheduled output ran inline");
+    twfRequireEqualU32(twfLineRefCount(line), refs_before + 2, "pending output did not retain both task references");
+    if (pending == kDisturberPendingDelay)
+    {
+        twfRequireEqualU32((uint32_t) fixture.env.loops[0]->ntimers, 2, "both delayed tasks were not armed");
+    }
+
+    if (finish == kDisturberNormalUpstreamFinish)
+    {
+        disturberTunnelUpStreamFinish(fixture.disturber, line);
+    }
+    else if (finish == kDisturberNormalDownstreamFinish)
+    {
+        disturberTunnelDownStreamFinish(fixture.disturber, line);
+    }
+    if (finish != kDisturberNormalNoFinish)
+    {
+        twfRequireLineStateZeroed(line, fixture.disturber, "normal Finish did not zero all Disturber state");
+        twfRequireEqualU32(twfLineRefCount(line), refs_before + 2, "Finish settled scheduler-owned tasks early");
+    }
+    twfRequire(lineIsAlive(line), "Disturber destroyed the borrowed normal line");
+
+    wwSleepMS(20);
+    tosPumpWorker(&fixture.env, 0);
+
+    const uint32_t expected = immediate + (finish == kDisturberNormalNoFinish ? 1 : 0);
+    twfRequireEqualU32(fixture.trace.next_payload, expected, "queued upstream output crossed normal Finish");
+    twfRequireEqualU32(fixture.trace.prev_payload, expected, "queued downstream output crossed normal Finish");
+    twfRequireEqualU32(fixture.trace.next_finish,
+                       finish == kDisturberNormalUpstreamFinish ? 1 : 0,
+                       "upstream Finish count includes a missing, reflected, or late callback");
+    twfRequireEqualU32(fixture.trace.prev_finish,
+                       finish == kDisturberNormalDownstreamFinish ? 1 : 0,
+                       "downstream Finish count includes a missing, reflected, or late callback");
+    twfRequireEqualU32(twfLineRefCount(line), refs_before, "pending output leaked a task reference");
+    twfRequireNoLeakedBuffers();
+    /* Event-loop reads also use the ledger. Every acquisition must settle;
+     * duplicate mode additionally creates exactly two non-pool buffers. */
+    twfRequireEqualU32(g_twf_buffers.total_recycled,
+                       g_twf_buffers.total_acquired + (pending == kDisturberPendingDuplicate ? 2 : 0),
+                       "normal scheduled output did not settle every buffer exactly once");
+    tosRequireNoProcessApiCall();
+    if (finish != kDisturberNormalNoFinish)
+    {
+        twfRequireLineStateZeroed(line, fixture.disturber, "late output changed retired normal state");
+    }
+    else
+    {
+        disturberLinestateDestroy(line, lineGetState(line, fixture.disturber));
+    }
+    lineDestroy(line);
+    twfLinePoolTeardown(&line_pool);
+    fixtureTeardown(&fixture);
+}
+
+static void caseNormalOwnerDestroysBeforeDelayedOutput(void)
+{
+    twfSetCase("disturber normal owner destroys its line before delayed output");
+    tosResetProcessApi(true);
+    disturber_fixture_t fixture;
+    fixtureSetup(&fixture);
+    disturber_tstate_t *state   = tunnelGetState(fixture.disturber);
+    state->chance_payload_delay = 100;
+    state->delay_min_ms         = 1;
+    state->delay_max_ms         = 1;
+
+    twf_line_pool_t line_pool;
+    twfLinePoolSetup(&line_pool, fixture.disturber->lstate_size, 4);
+    line_t *line = twfLinePoolCreateLine(&line_pool);
+    twfRequire(! disturberIsWorkerPacketLine(fixture.disturber, line), "owner fixture became a packet line");
+    disturberTunnelUpStreamInit(fixture.disturber, line);
+    disturberTunnelUpStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x95)));
+    disturberTunnelDownStreamPayload(fixture.disturber, line, fixturePayload(line, UINT8_C(0x96)));
+    disturberTunnelDownStreamFinish(fixture.disturber, line);
+    twfRequireLineStateZeroed(line, fixture.disturber, "normal Finish did not zero state before owner destruction");
+
+    lineRef(line);
+    lineDestroy(line);
+    wwSleepMS(20);
+    tosPumpWorker(&fixture.env, 0);
+
+    twfRequire(! lineIsAlive(line), "scheduler revived the owner's destroyed normal line");
+    twfRequireEqualU32(twfLineRefCount(line), 1, "dead-line cancellation leaked a task reference");
+    twfRequireEqualU32(fixture.trace.next_payload, 0, "dead normal line published upstream");
+    twfRequireEqualU32(fixture.trace.prev_payload, 0, "dead normal line published downstream");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "dead-line cancellation reflected Finish");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "dead-line cancellation repeated Finish");
+    twfRequireNoLeakedBuffers();
+    twfRequireEqualU32(g_twf_buffers.total_recycled,
+                       g_twf_buffers.total_acquired,
+                       "dead-line cancellation did not settle every buffer exactly once");
+    tosRequireNoProcessApiCall();
+
+    lineUnref(line);
+    twfLinePoolTeardown(&line_pool);
+    fixtureTeardown(&fixture);
+}
+
 static void caseUpstreamFinishSuppressesScheduledDelayedPayload(void)
 {
     twfSetCase("disturber upstream packet Finish suppresses a scheduled delayed payload");
@@ -165,7 +354,7 @@ static void caseUpstreamFinishSuppressesScheduledDelayedPayload(void)
     disturberTunnelUpStreamFinish(fixture.disturber, line);
     twfRequireEqualU32(fixture.trace.next_finish, 1, "upstream packet Finish was not forwarded toward next");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "upstream packet Finish was reflected toward prev");
-    twfRequire(((disturber_lstate_t *) lineGetState(line, fixture.disturber))->upstream.finished,
+    twfRequire(! ((disturber_lstate_t *) lineGetState(line, fixture.disturber))->upstream.publication_open,
                "upstream packet Finish did not close the upstream publish direction");
     twfRequire(lineIsAlive(line), "Disturber destroyed the chain-owned packet line on upstream Finish");
 
@@ -213,7 +402,8 @@ static void caseDownstreamFinishSettlesHeldPayload(void)
     disturberTunnelDownStreamFinish(fixture.disturber, line);
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "downstream packet Finish was not forwarded toward prev");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "downstream packet Finish was reflected toward next");
-    twfRequire(ls->downstream.finished, "downstream packet Finish did not close the downstream publish direction");
+    twfRequire(! ls->downstream.publication_open,
+               "downstream packet Finish did not close the downstream publish direction");
     twfRequire(ls->downstream.held_payload == NULL, "downstream held payload survived Finish");
     twfRequireEqualU32(twfRecycleCount() - recycles_before, 1, "downstream held payload was not recycled exactly once");
     twfRequire(lineIsAlive(line), "Disturber destroyed the chain-owned packet line on downstream Finish");
@@ -245,7 +435,7 @@ static void caseUpstreamFinishSuppressesQueuedDownstreamReflection(void)
 
     disturberTunnelUpStreamFinish(fixture.disturber, line);
     disturber_lstate_t *ls = lineGetState(line, fixture.disturber);
-    twfRequire(ls->upstream.finished && ls->downstream.finished,
+    twfRequire(! ls->upstream.publication_open && ! ls->downstream.publication_open,
                "upstream packet Finish did not terminalize both publication directions");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "upstream packet Finish did not propagate toward next");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "upstream packet Finish reflected toward prev");
@@ -285,7 +475,7 @@ static void caseDownstreamFinishSuppressesQueuedUpstreamReflection(void)
 
     disturberTunnelDownStreamFinish(fixture.disturber, line);
     disturber_lstate_t *ls = lineGetState(line, fixture.disturber);
-    twfRequire(ls->upstream.finished && ls->downstream.finished,
+    twfRequire(! ls->upstream.publication_open && ! ls->downstream.publication_open,
                "downstream packet Finish did not terminalize both publication directions");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "downstream packet Finish did not propagate toward prev");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "downstream packet Finish reflected toward next");
@@ -582,6 +772,23 @@ static void caseDestroyRejectsUndrainedFinalizedPacketState(void)
     tosResetProcessApi(true);
 }
 
+static void activePacketStateDestroyBody(void *argument)
+{
+    discard             argument;
+    disturber_fixture_t fixture;
+    fixtureSetup(&fixture);
+    /* Open publication alone is active state, even without retained bytes. */
+    disturberTunnelDestroy(fixture.disturber, wwLifecycleProcessShutdown());
+}
+
+static void caseDestroyRejectsOpenPacketPublication(void)
+{
+    twfSetCase("disturber Destroy rejects open packet publication");
+    tosResetProcessApi(true);
+    tosRequireChildExit("open packet publication", activePacketStateDestroyBody, NULL, kTosChildDirectAbort);
+    tosResetProcessApi(true);
+}
+
 static void caseConstructorPreservesUpstreamEst(void)
 {
     disturber_fixture_t fixture;
@@ -606,6 +813,13 @@ int main(void)
     frandInit();
 
     caseConstructorPreservesUpstreamEst();
+    for (disturber_pending_kind_e pending = kDisturberPendingDelay; pending <= kDisturberPendingReorder; ++pending)
+    {
+        caseNormalPendingOutput(pending, kDisturberNormalUpstreamFinish);
+        caseNormalPendingOutput(pending, kDisturberNormalDownstreamFinish);
+        caseNormalPendingOutput(pending, kDisturberNormalNoFinish);
+    }
+    caseNormalOwnerDestroysBeforeDelayedOutput();
     caseUpstreamFinishSuppressesScheduledDelayedPayload();
     caseDownstreamFinishSettlesHeldPayload();
     caseUpstreamFinishSuppressesQueuedDownstreamReflection();
@@ -615,6 +829,7 @@ int main(void)
     caseValidNormalLineInPacketChainKeepsNormalFinishRole();
     caseFinalizedPacketGeometryAborts();
     caseDestroyRejectsUndrainedFinalizedPacketState();
+    caseDestroyRejectsOpenPacketPublication();
 
     frandThreadCleanup();
     frandGlobalCleanup();

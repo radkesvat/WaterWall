@@ -21,11 +21,20 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
         .kcp_send_buffer_limit     = kTcpOverUdpServerKcpSendBufferLimitDefault,
         .ping_interval_ms          = kTcpOverUdpServerPingintervalMsDefault,
         .no_recv_timeout_ms        = kTcpOverUdpServerNoRecvTimeOutDefault,
+        .close_drain_timeout_ms    = kTcpOverUdpServerCloseDrainTimeOutDefault,
     };
+
+    int64_t close_ms = kTcpOverUdpServerCloseDrainTimeOutDefault;
+    if (jsonGetObjectIntegerInRange(settings, "close-drain-timeout-ms", 1, INT_MAX, &close_ms) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TcpOverUdpServer->settings->close-drain-timeout-ms must be an integer between 1 and INT_MAX");
+        return false;
+    }
+    ts->close_drain_timeout_ms = (uint32_t) close_ms;
 
     if (! cJSON_IsObject(settings))
     {
-        goto validate_mtu;
+        goto validate_send_mtu;
     }
 
     getBoolFromJsonObjectOrDefault(&ts->fec_enabled, settings, "fec", false);
@@ -120,19 +129,22 @@ static bool tcpoverudpserverParseSettings(tcpoverudpserver_tstate_t *ts, node_t 
         ts->fec_parity_shards = (uint8_t) parity_shards;
     }
 
-validate_mtu:;
-    int64_t       mtu     = CORE_DEFAULT_MTU;
+validate_send_mtu:;
+    int64_t       send_mtu = CORE_DEFAULT_MTU;
     const int64_t minimum = kTcpOverUdpServerKcpMinimumMtu + kTcpOverUdpServerIpv4HeaderSize +
-                            kTcpOverUdpServerUdpHeaderSize + (int64_t) tcpoverudpserverGetOuterFecOverhead(ts);
-    const json_value_status_t status = jsonGetObjectIntegerInRange(settings, "mtu", minimum, UINT16_MAX, &mtu);
-    if (status == kJsonValueInvalid || mtu < minimum || mtu > UINT16_MAX)
+                            kTcpOverUdpServerUdpHeaderSize + kTouEnvelopeSize +
+                            (int64_t) tcpoverudpserverGetOuterFecOverhead(ts);
+    const json_value_status_t status =
+        jsonGetObjectIntegerInRange(settings, "send-mtu", minimum, UINT16_MAX, &send_mtu);
+    if (status == kJsonValueInvalid || send_mtu < minimum || send_mtu > UINT16_MAX)
     {
-        LOGF("JSON Error: TcpOverUdpServer->settings->mtu must be an integer between %lld and 65535%s",
+        LOGF("JSON Error: TcpOverUdpServer->settings->send-mtu must be an integer between %lld and 65535%s",
              (long long) minimum,
-             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node mtu" : "");
+             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node send-mtu"
+                                         : "");
         return false;
     }
-    ts->mtu = (uint16_t) mtu;
+    ts->send_mtu = (uint16_t) send_mtu;
 
     assert(tcpoverudpserverGetKcpMtu(ts) >= kTcpOverUdpServerKcpMinimumMtu);
     assert(tcpoverudpserverGetKcpWriteMtu(ts) > 0);
@@ -153,10 +165,17 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
     t->fnPayloadU = &tcpoverudpserverTunnelUpStreamPayload;
     t->fnPauseU   = &tcpoverudpserverTunnelUpStreamPause;
     t->fnResumeU  = &tcpoverudpserverTunnelUpStreamResume;
+    t->fnEstU     = &tcpoverudpserverTunnelUpStreamEst;
+    t->fnEstD     = &tcpoverudpserverTunnelDownStreamEst;
+    t->fnPauseD   = &tcpoverudpserverTunnelDownStreamPause;
+    t->fnResumeD  = &tcpoverudpserverTunnelDownStreamResume;
     t->fnFinD     = &tcpoverudpserverTunnelDownStreamFinish;
     t->fnPayloadD = &tcpoverudpserverTunnelDownStreamPayload;
 
     t->onQuiesceRequest = &tcpoverudpserverTunnelOnQuiesceRequest;
+    t->onWorkerQuiesce  = &tcpoverudpserverTunnelOnWorkerQuiesce;
+    t->onWorkerStop     = &tcpoverudpserverTunnelOnWorkerStop;
+    t->onDestroy        = &tcpoverudpserverTunnelDestroy;
 
     tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
 
@@ -166,6 +185,8 @@ tunnel_t *tcpoverudpserverTunnelCreate(node_t *node)
         return NULL;
     }
     atomic_init(&ts->stopping, false);
+    ts->workers_count = getWorkersCount();
+    ts->workers       = memoryAllocateZero(sizeof(*ts->workers) * ts->workers_count);
 
     ikcp_allocator(&memoryAllocate, &memoryFree);
 

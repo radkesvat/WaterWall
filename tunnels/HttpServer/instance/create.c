@@ -310,6 +310,22 @@ static bool parseHttp1SplitSettings(httpserver_tstate_t *ts, const cJSON *settin
     return true;
 }
 
+static bool parseCloseDrainTimeout(httpserver_tstate_t *ts, const cJSON *settings)
+{
+    int64_t timeout_ms = kHttpServerDefaultCloseDrainTimeoutMs;
+    if (! jsonObjectFieldStringsAreExact(settings, "close-drain-timeout-ms") ||
+        jsonGetObjectIntegerInRange(
+            settings, "close-drain-timeout-ms", 1, kHttpServerMaxCloseDrainTimeoutMs, &timeout_ms) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: HttpServer->settings->close-drain-timeout-ms must be an integer in 1..%d",
+             kHttpServerMaxCloseDrainTimeoutMs);
+        return false;
+    }
+
+    ts->close_drain_timeout_ms = (uint32_t) timeout_ms;
+    return true;
+}
+
 static bool parseBasicFields(httpserver_tstate_t *ts, const cJSON *settings)
 {
     getStringFromJsonObject(&ts->expected_host, settings, "host");
@@ -431,7 +447,7 @@ tunnel_t *httpserverTunnelCreate(node_t *node)
     }
 
     if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
-        ! parseBasicFields(ts, settings))
+        ! parseBasicFields(ts, settings) || ! parseCloseDrainTimeout(ts, settings))
     {
         httpserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

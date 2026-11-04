@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: schedule refusals, mixed ordinary/pipe fragments, coalesced frames, UDP verification modes,
- * malformed lengths and borrowed-line cleanup.
+ * malformed lengths, borrowed-line cleanup and deferred Finish after upload END.
  * Checks: Assertion labels include: SpeedTestServer scheduled Report after Send refusal closed the line;
  * SpeedTestServer finished an unexpected borrowed line; SpeedTestServer Hello exceeded test buffer; Send
  * refusal did not close the borrowed server line
@@ -275,6 +275,59 @@ static void fixtureCloseReceiver(speedtestserver_fixture_t *fixture)
     fixtureTeardownAfterClose(fixture);
 }
 
+static void caseEndStopsParsingBeforeOwnerFinish(bool pipe_body)
+{
+    twfSetCase(pipe_body ? "SpeedTestServer stops parsing splice END before deferred owner Finish"
+                         : "SpeedTestServer stops parsing ordinary END before deferred owner Finish");
+    speedtestserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestserver_lstate_t *ls = fixturePrepareReceiver(&fixture, false, false);
+    ls->duration_ms              = 1000;
+
+    // This intermediary borrows the line and defers Finish; fixture.prev remains the owner.
+    twf_trace_t deferred_trace = {0};
+    tunnel_t   *intermediary   = twfCreatePrevTunnel(&deferred_trace);
+    intermediary->fnPayloadD   = tunnelDefaultDownStreamPayload;
+    tunnelBind(fixture.prev, intermediary);
+    tunnelBind(intermediary, fixture.speed);
+
+    uint8_t report_bytes[kSpeedTestServerFrameHeaderSize + kSpeedTestServerReportSize];
+    fixture.trace.capture          = report_bytes;
+    fixture.trace.capture_capacity = sizeof(report_bytes);
+    uint8_t end[kSpeedTestServerFrameHeaderSize];
+    speedtestserverWriteHeader(
+        end, kSpeedTestServerFrameEnd, kSpeedTestServerFlagUpload | kSpeedTestServerFlagTcp, 7, 0, 0, 0, 0, 0);
+
+    lineRef(fixture.line);
+    speedtestserverTunnelUpStreamPayload(
+        fixture.speed, fixture.line, makeInputBytes(&fixture, end, sizeof(end), pipe_body));
+
+    twfRequire(lineIsAlive(fixture.line), "deferred Finish reached the owner before the parser returned");
+    twfRequireLineStateZeroed(fixture.line, fixture.speed, "END retained SpeedTestServer receive state");
+    twfRequireEqualU32(deferred_trace.prev_finish, 1, "END did not defer exactly one downstream Finish");
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "END bypassed deferred Finish and notified the owner");
+    twfRequireEqualU32(fixture.trace.prev_payload, 1, "END did not emit exactly one final Report");
+    twfRequireEqualU32(fixture.trace.capture_len, sizeof(report_bytes), "END emitted an incomplete Report");
+    speedtestserver_frame_t report;
+    twfRequire(speedtestserverReadHeader(report_bytes, sizeof(report_bytes), &report) &&
+                   report.type == kSpeedTestServerFrameReport && report.stream_id == 7 &&
+                   report.payload_len == kSpeedTestServerReportSize,
+               "END did not complete through a valid Report");
+    speedtestserver_tstate_t *state = tunnelGetState(fixture.speed);
+    twfRequireEqualU32(atomicLoadRelaxed(&state->completed_streams), 1, "END did not complete exactly one stream");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 2, "END leaked a temporary line reference");
+    twfRequireNoLeakedBuffers();
+
+    tunnelPrevDownStreamFinish(intermediary, fixture.line);
+    twfRequire(! lineIsAlive(fixture.line), "deferred Finish did not destroy the owned line");
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "deferred Finish did not notify the owner exactly once");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 1, "deferred Finish leaked the owner reference");
+    lineUnref(fixture.line);
+    fixture.line = NULL;
+    tunnelDestroy(intermediary);
+    fixtureTeardownAfterClose(&fixture);
+}
+
 static void casePacingCounterBeyondMultiplyRange(uint64_t rate, bool saturated_delay)
 {
     twfSetCase("SpeedTestServer large byte count preserves pacing");
@@ -424,10 +477,12 @@ int main(void)
     caseOrdinaryUdpReceive(false);
     caseOrdinaryUdpReceive(true);
     caseMalformedFrameLength(false);
+    caseEndStopsParsingBeforeOwnerFinish(false);
 #if WW_HAVE_SPLICE
     caseFragmentedSpliceReceive(false);
     caseFragmentedSpliceReceive(true);
     caseMalformedFrameLength(true);
+    caseEndStopsParsingBeforeOwnerFinish(true);
 #endif
     puts("speedtestserver_schedule_rejection_test: all cases passed");
     return 0;

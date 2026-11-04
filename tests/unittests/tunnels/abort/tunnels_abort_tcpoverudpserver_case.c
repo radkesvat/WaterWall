@@ -1,55 +1,29 @@
-/*
- * Covers: tunnels abort tcpoverudpserver case; the explicit inputs, callbacks and expected results below
- * define this suite.
- * Setup: Auxiliary translation unit; linked into its owning suite with the same feature/seam
- * definitions. The suite driver owns initialization and teardown.
- * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
- * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
- * or application-throughput behavior.
- * CTest: owning suite registration in tests/cmake/native/; this is a helper/conditional source, not a
- * separate selectable test
+/* CTest: waterwall.tunnels_abort_runtime_unit (Release).
+ * Constructor validation makes rejected KCP geometry impossible. Corrupt that
+ * already-validated geometry and require the shared driver's hard fatal guard.
+ * The sentinel pool is never accessed before ikcp_setmtu rejects the geometry.
  */
-/*
- * TcpOverUdpServer impossible-MTU invariant fixture.
- *
- * Mirror of the TcpOverUdpClient case; the two implementations must stay behaviorally symmetric.
- */
-#include "TcpOverUdpServer/structure.h"
-
+#include "TcpOverUdpCommon/session.h"
 #include "tunnels_abort_runtime_cases.h"
+
+static void discardWire(void *user, sbuf_t *packet)
+{
+    discard user;
+    discard packet;
+}
 
 int tunnelsAbortTcpOverUdpServerMtuCase(void)
 {
-    tunnel_t *t = tunnelCreate(NULL, sizeof(tcpoverudpserver_tstate_t), sizeof(tcpoverudpserver_lstate_t));
-    if (t == NULL)
-    {
-        return kAbortCaseAllocationFailed;
-    }
-
-    tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
-
-    ts->fec_enabled     = false;
-    ts->kcp_nodelay     = true;
-    ts->kcp_interval_ms = kTcpOverUdpServerKcpIntervalDefault;
-    ts->kcp_resend      = kTcpOverUdpServerKcpResendDefault;
-    ts->kcp_send_window = kTcpOverUdpServerKcpSendWindowDefault;
-    ts->kcp_recv_window = kTcpOverUdpServerKcpRecvWindowDefault;
-
-    // Below kTcpOverUdpServerKcpMinimumMtu, which tcpoverudpserverTunnelCreate() would have rejected.
-    ts->mtu = 10;
-
-    line_t *l = memoryAllocateCacheAlignedZero(sizeof(line_t) + t->lstate_size);
-    if (l == NULL)
-    {
-        return kAbortCaseAllocationFailed;
-    }
-    atomic_init(&l->refc, 1);
-    l->active_tunnels_mask = UINT64_MAX;
-    l->alive = true;
-    l->wid   = 0;
-
-    discard tcpoverudpserverLinestateInitialize(lineGetState(l, t), l, t);
-
-    memoryFreeAligned(l);
+    const tou_config_t    config               = {.send_mtu               = 10,
+                                                  .kcp_nodelay            = true,
+                                                  .kcp_interval_ms        = 10,
+                                                  .kcp_resend             = 2,
+                                                  .kcp_send_window        = 128,
+                                                  .kcp_recv_window        = 128,
+                                                  .close_drain_timeout_ms = 30000,
+                                                  .pool                   = (buffer_pool_t *) (uintptr_t) 1};
+    const tou_callbacks_t callbacks            = {.emit = discardWire};
+    const uint8_t         nonce[kTouNonceSize] = {1};
+    discard               touSessionCreate(&config, &callbacks, NULL, false, nonce, nonce, NULL);
     return 0;
 }

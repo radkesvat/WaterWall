@@ -249,13 +249,10 @@ bool sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge)
 
 size_t sbufGetQueueCharge(const sbuf_t *buf)
 {
-    size_t charge;
-    if (UNLIKELY(! sbufTryGetQueueCharge(buf, &charge)))
-    {
-        printError("sbuf: unrepresentable queue capacity charge");
-        abortProgramNow(1);
-    }
-    return charge;
+    const size_t   overhead = sizeof(sbuf_t) + (size_t) kSbufAllocationAlignment;
+    const uint32_t capacity = sbufGetTotalCapacity(buf);
+    assert((uint64_t) capacity <= SIZE_MAX - overhead);
+    return overhead + (size_t) capacity;
 }
 
 uint16_t sbufAlignLeftPadding(uint16_t pad_left)

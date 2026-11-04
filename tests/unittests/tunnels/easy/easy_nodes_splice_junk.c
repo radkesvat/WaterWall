@@ -43,8 +43,8 @@ void testJunkSplice(bool splice)
             easyExpect(&f, buf, "prebody", 7, 3);
             junkdatagramsenderTunnelDownStreamPayload(f.node, f.line, buf);
             easyRequire(f.expected == NULL && f.downstream == 1, "opaque downstream application");
-            ls->upstream_finished = ls->downstream_finished = true;
-            buf                                             = easyPayload(splice);
+            ls->upstream_publication_open = ls->downstream_publication_open = false;
+            buf                                                             = easyPayload(splice);
             easyWatch(buf);
             junkdatagramsenderTunnelUpStreamPayload(f.node, f.line, buf);
             easyRequireDisposed();

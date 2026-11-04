@@ -1,10 +1,11 @@
 /*
  * Covers: HttpClient's bounded HTTP/1 chunks and Chrome-reference HTTP/2 startup/DATA framing.
  * Setup: Production constructor and callbacks, worker-zero pools, captured next-neighbour buffers,
- *        an nghttp2 peer, and fixture-owned normal lines borrowed by HttpClient.
+ *        an nghttp2 peer, borrowed application lines, and HttpClient-owned HTTP/2 carriers.
  * Checks: Exact framing/payload bytes, settings and windows, one request stream, WebSocket/h2c
  *         settings, nested-payload FIFO order, custom-upgrade bypass, flow-control resumption,
- *         readiness queue byte/charge limits, and reentrant Finish cleanup.
+ *         readiness/provider limits, reentrant Finish, retained uploads, fixed deadlines,
+ *         timer refusal/quiescence, pressure, cancellation and exact line ownership.
  * Limits: No TLS record, network-packet, browser traffic timing, or multi-stream equivalence claims.
  * CTest: waterwall.httpclient_wire_profile_unit
  */
@@ -12,6 +13,7 @@
 
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "wfrand.h"
+#include "wloop_internal.h"
 
 enum
 {
@@ -39,7 +41,10 @@ typedef struct fixture_s
     cJSON           *settings;
     node_t           node;
     tunnel_t        *prev, *http, *next;
-    line_t          *line;
+    line_t          *line, *carrier;
+    tunnel_chain_t  *chain;
+    master_pool_t   *context_master;
+    generic_pool_t  *contexts;
     uint8_t          wire[kWireCapacity];
     uint32_t         lengths[kMaxWrites];
     size_t           wire_length, writes, peer_offset;
@@ -47,13 +52,58 @@ typedef struct fixture_s
     bool             h2_startup_payload;
     bool             h2_finish_during_data, h2_fin_in_progress;
     bool             custom_startup_reply, raw_up_reentry, raw_down_reentry, raw_down_finish;
-    bool             pending_refill;
+    bool             pending_refill, expire_drain_output;
     nghttp2_session *peer;
     size_t           received_body;
     unsigned         request_streams, end_streams;
 } fixture_t;
 
 static fixture_t *active;
+static uint64_t   now_us;
+static unsigned   timer_add_calls, timer_reset_calls;
+static uint32_t   timer_reset_ms;
+static bool       refuse_timer_add, refuse_timer_reset;
+
+uint64_t __wrap_getHRTimeUs(void);
+uint64_t __wrap_getHRTimeUs(void)
+{
+    return now_us;
+}
+
+wtimer_t *__real_wtimerAdd(wloop_t *, wtimer_cb, uint32_t, uint32_t);
+wtimer_t *__wrap_wtimerAdd(wloop_t *, wtimer_cb, uint32_t, uint32_t);
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb callback, uint32_t timeout_ms, uint32_t repeat)
+{
+    ++timer_add_calls;
+    return refuse_timer_add ? NULL : __real_wtimerAdd(loop, callback, timeout_ms, repeat);
+}
+
+bool __real_wtimerReset(wtimer_t *, uint32_t);
+bool __wrap_wtimerReset(wtimer_t *, uint32_t);
+bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
+{
+    ++timer_reset_calls;
+    timer_reset_ms = timeout_ms;
+    return ! refuse_timer_reset && __real_wtimerReset(timer, timeout_ms);
+}
+
+static void captureInit(tunnel_t *next, line_t *line)
+{
+    twfNextInit(next, line);
+    active->carrier = line;
+    if (line != active->line)
+    {
+        routing_context_t *routing = lineGetRoutingContext(line);
+        twfRequire(routing->src_ctx.port == 12345 && routing->dest_ctx.port == 23456 &&
+                       routing->local_listener_port == 34567 && routing->peer_source_port == 45678 &&
+                       ip_addr_cmp(&routing->src_ctx.ip_address, &active->line->routing_context.src_ctx.ip_address) &&
+                       ip_addr_cmp(&routing->dest_ctx.ip_address, &active->line->routing_context.dest_ctx.ip_address),
+                   "carrier Init lost routing context or source-port metadata");
+        twfRequire(lineHasAuthenticatedCredentials(line, "fixture-user", "fixture-password"),
+                   "carrier Init lost application authentication markers");
+        lineRef(line); /* Inspect the owned carrier after HttpClient destroys it. */
+    }
+}
 
 static sbuf_t *textPayload(fixture_t *f, const char *text)
 {
@@ -126,13 +176,19 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
     memoryCopy(f->wire + f->wire_length, sbufGetRawPtr(buf), length);
     f->wire_length += length;
     lineReuseBuffer(line, buf);
+    if (f->expire_drain_output)
+    {
+        httpclient_lstate_t *ls = lineGetState(line, f->http);
+        twfRequire(ls->close_drain_deadline_ms != 0, "final output preceded the drain deadline");
+        now_us = ls->close_drain_deadline_ms * 1000;
+    }
     if (f->pending_refill)
     {
         f->pending_refill       = false;
         httpclient_lstate_t *ls = lineGetState(line, f->http);
         twfRequire(bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge - 192,
                    "readiness replay did not release exactly the dispatched buffer's charge");
-        httpclientTunnelUpStreamPayload(f->http, line, chargedPayload(192, "nested!"));
+        httpclientTunnelUpStreamPayload(f->http, f->line, chargedPayload(192, "nested!"));
         twfRequire(lineIsAlive(line) && f->writes == 1 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
                        bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge,
                    "nested readiness input overtook the backlog or failed to use released capacity");
@@ -147,11 +203,7 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
                    "reentrant H2 close did not retain both active and pending providers");
         twfRequireEqualU32(g_twf_buffers.live_count, 2, "H2 provider payloads were released before close");
         httpclientTunnelDownStreamFinish(f->http, line);
-        if (f->h2_fin_in_progress)
-        {
-            twfRequire(lineIsAlive(line) && ls->tunnel == f->http && ls->next_finished,
-                       "nested H2 Finish did not defer cleanup to the active upstream Finish");
-        }
+        twfRequire(! lineIsAlive(line), "owned H2 carrier survived its downstream Finish");
     }
     else if (f->custom_startup_reply)
     {
@@ -178,7 +230,7 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
     else if (f->h2_startup_payload)
     {
         f->h2_startup_payload = false;
-        httpclientTunnelUpStreamPayload(f->http, line, payload(f, 20000, false));
+        httpclientTunnelUpStreamPayload(f->http, f->line, payload(f, 20000, false));
     }
     else if (f->nested_payload)
     {
@@ -186,7 +238,7 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
         sbuf_t *nested    = bufferpoolGetBestFit(f->env.pool, 7, kHttpClientRequiredPaddingLeft);
         sbufSetLength(nested, 7);
         sbufWrite(nested, "nested!", 7);
-        httpclientTunnelUpStreamPayload(f->http, line, nested);
+        httpclientTunnelUpStreamPayload(f->http, f->line, nested);
     }
 }
 
@@ -196,7 +248,13 @@ static void setupWithStartupAction(fixture_t *f, const char *json, unsigned acti
     static char node_type[] = "HttpClient";
     memoryZero(f, sizeof(*f));
     active = f;
+    now_us          = UINT64_C(1000123456);
+    timer_add_calls = timer_reset_calls = 0;
+    refuse_timer_add = refuse_timer_reset = false;
     twfWorkerEnvSetup(&f->env, 65536, 96);
+    f->context_master = masterpoolCreateWithCapacity(8);
+    f->contexts       = genericpoolCreateWithDefaultAllocatorAndCapacity(f->context_master, sizeof(context_t), 8);
+    GSTATE.shortcut_context_pools = &f->contexts;
     f->settings = cJSON_Parse(json);
     twfRequire(f->settings != NULL, "invalid fixture settings");
     f->node = (node_t) {.name = node_name, .type = node_type, .node_settings_json = f->settings};
@@ -206,14 +264,26 @@ static void setupWithStartupAction(fixture_t *f, const char *json, unsigned acti
     twfRequire(f->http != NULL, "HttpClient construction failed");
     f->prev->fnFinD     = ownerFinish;
     f->next->fnPayloadU = capture;
+    f->next->fnInitU    = captureInit;
     tunnelBind(f->prev, f->http);
     tunnelBind(f->http, f->next);
     f->prev->chain_index = 0;
     f->http->chain_index = 1;
     f->next->chain_index = 2;
     twfLinePoolSetup(&f->lines, f->http->lstate_size, 4);
+    f->chain                = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
+    f->chain->workers_count = 1;
+    f->chain->line_pools[0] = f->lines.pools[0];
+    f->http->chain          = f->chain;
     f->line = twfLinePoolCreateLine(&f->lines);
     lineRef(f->line); /* The fixture owns the line; retain allocation across reentrant owner Finish. */
+    routing_context_t *routing = lineGetRoutingContext(f->line);
+    twfRequire(addresscontextSetIpAddressPortProtocol(&routing->src_ctx, "127.0.0.9", 12345, IPPROTO_TCP) &&
+                   addresscontextSetIpAddressPortProtocol(&routing->dest_ctx, "127.0.0.10", 23456, IPPROTO_TCP),
+               "fixture routing context initialization failed");
+    routing->local_listener_port = 34567;
+    routing->peer_source_port    = 45678;
+    lineAddAuthenticatedCredentials(f->line, "fixture-user", "fixture-password");
     f->h2_startup_payload = action == 1;
     f->finish_first       = action == 2;
     f->custom_startup_reply = action == 3;
@@ -233,21 +303,37 @@ static void resetWire(fixture_t *f)
 
 static void teardown(fixture_t *f)
 {
+    if (f->carrier != f->line && lineIsAlive(f->carrier))
+        httpclientTunnelDownStreamFinish(f->http, f->carrier);
     httpclient_lstate_t *ls = lineGetState(f->line, f->http);
     if (ls->tunnel != NULL)
         httpclientLinestateDestroy(ls);
     if (lineIsAlive(f->line))
         lineDestroy(f->line);
     twfRequireLineStateZeroed(f->line, f->http, "HttpClient state remained at line release");
+    twfRequireEqualU32(twfLineRefCount(f->line), 1, "HttpClient retained an application reference");
     lineUnref(f->line);
+    if (f->carrier != f->line)
+    {
+        twfRequire(! lineIsAlive(f->carrier), "HttpClient retained an owned carrier");
+        twfRequireLineStateZeroed(f->carrier, f->http, "HttpClient retained carrier state");
+        twfRequireEqualU32(twfLineRefCount(f->carrier), 1, "HttpClient retained a carrier reference");
+        lineUnref(f->carrier);
+    }
     if (f->peer != NULL)
         nghttp2_session_del(f->peer);
     twfRequireNoLeakedBuffers();
+    twfRequire(wloopNTimers(f->env.loop) == 0, "HttpClient retained a drain timer");
     twfLinePoolTeardown(&f->lines);
     httpclientTunnelDestroy(f->http, wwLifecycleStartupRollback());
     tunnelDestroy(f->prev);
     tunnelDestroy(f->next);
     cJSON_Delete(f->settings);
+    memoryFree(f->chain);
+    GSTATE.shortcut_context_pools = NULL;
+    genericpoolDestroy(f->contexts);
+    masterpoolMakeEmpty(f->context_master);
+    masterpoolDestroy(f->context_master);
     twfWorkerEnvTeardown(&f->env);
     active = NULL;
 }
@@ -341,7 +427,7 @@ static void setupPending(fixture_t *f, unsigned mode)
           mode == 1   ? "{\"host\":\"unit.test\",\"http-version\":\"both\",\"upgrade\":true}"
           : mode == 2 ? "{\"host\":\"unit.test\",\"http-version\":1,\"websocket\":true}"
                       : "{\"host\":\"unit.test\",\"http-version\":1}");
-    httpclient_lstate_t *ls = lineGetState(f->line, f->http);
+    httpclient_lstate_t *ls = lineGetState(f->carrier, f->http);
     if (mode == 0)
         ls->runtime_proto = kHttpClientRuntimeUnknown;
     else if (mode == 3)
@@ -358,7 +444,7 @@ static void casePendingLimits(unsigned mode, bool charge_limit)
                             : "HttpClient readiness admits exact byte limit and closes on one excess byte");
     fixture_t f;
     setupPending(&f, mode);
-    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
     sbuf_t              *first =
         charge_limit ? chargedPayload(kHttpClientPendingMaxCharge, "") : payload(&f, kHttpClientPendingMaxBytes, false);
     size_t charge = sbufGetQueueCharge(first);
@@ -368,7 +454,7 @@ static void casePendingLimits(unsigned mode, bool charge_limit)
     buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->pending_up_budget);
     twfRequire(used.bytes == (charge_limit ? 0 : kHttpClientPendingMaxBytes) && used.charge == charge,
                "readiness queue did not account its retained input");
-    twfRequire(httpclientTransportFlushPendingUp(f.http, f.line, ls) && f.writes == 0 &&
+    twfRequire(httpclientTransportFlushPendingUp(f.http, f.carrier, ls) && f.writes == 0 &&
                    bufferqueueGetBufCount(&ls->pending_up) == 1 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).charge == charge,
                "not-ready flush changed or uncharged the backlog");
@@ -385,7 +471,7 @@ static void casePendingWebSocketReplay(bool finish)
                       : "HttpClient readiness replay preserves FIFO and reuses popped charge during nested input");
     fixture_t f;
     setupPending(&f, 2);
-    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
     httpclientTunnelUpStreamPayload(f.http, f.line, chargedPayload(192, "first!"));
     httpclientTunnelUpStreamPayload(f.http, f.line, chargedPayload(kHttpClientPendingMaxCharge - 192, "second!"));
     twfRequire(bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge,
@@ -393,7 +479,7 @@ static void casePendingWebSocketReplay(bool finish)
     ls->websocket_active = true;
     f.pending_refill     = ! finish;
     f.finish_first       = finish;
-    bool ok              = httpclientTransportFlushPendingUp(f.http, f.line, ls);
+    bool ok              = httpclientTransportFlushPendingUp(f.http, f.carrier, ls);
     if (finish)
     {
         twfRequire(! ok && ! lineIsAlive(f.line) && f.writes == 1 && f.trace.prev_finish == 1 &&
@@ -431,7 +517,7 @@ static void casePendingManyBuffers(void)
     setupPending(&f, 0);
     for (unsigned i = 0; i < 32; ++i)
         httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, ""));
-    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
     twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 32 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).bytes == 0 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).charge != 0,
@@ -504,8 +590,12 @@ static void peerPump(fixture_t *f)
         sbuf_t *buffer = bufferpoolGetBestFit(f->env.pool, (uint32_t) length, 0);
         sbufSetLength(buffer, (uint32_t) length);
         sbufWrite(buffer, data, (uint32_t) length);
-        httpclientTunnelDownStreamPayload(f->http, f->line, buffer);
-        twfRequire(lineIsAlive(f->line), "peer control frame closed HttpClient");
+        httpclientTunnelDownStreamPayload(f->http, f->carrier, buffer);
+        if (! lineIsAlive(f->carrier))
+        {
+            peerConsume(f);
+            return;
+        }
     }
     twfRequire(false, "unbounded H2 fixture control exchange");
 }
@@ -567,7 +657,7 @@ static void caseHttp2WireProfile(void)
     setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
     checkStartup(&f, false);
     createPeer(&f);
-    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
     twfRequire(nghttp2_session_get_local_settings(ls->session, NGHTTP2_SETTINGS_MAX_FRAME_SIZE) == 16384,
                "receive max frame did not retain protocol default");
     twfRequire(nghttp2_session_get_local_window_size(ls->session) == 15 * 1024 * 1024,
@@ -638,7 +728,7 @@ static void caseHttp2FinishWithActiveAndPending(bool upstream_finish)
     resetWire(&f);
     const uint32_t       initial_refs     = twfLineRefCount(f.line);
     const uint32_t       initial_recycles = twfRecycleCount();
-    httpclient_lstate_t *ls               = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls               = lineGetState(f.carrier, f.http);
     h2DataAppend(&ls->h2_data, payload(&f, kLargeBody, false), false);
     f.h2_finish_during_data = true;
     f.h2_fin_in_progress    = upstream_finish;
@@ -673,7 +763,7 @@ static void caseHttp2FlowControlResumes(void)
     const uint32_t window = 20000, first_length = 251 * 256, pending_length = 251;
     createPeerWithWindow(&f, window, true);
     resetWire(&f);
-    httpclient_lstate_t *ls = lineGetState(f.line, f.http);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
     httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, first_length, false));
     twfRequire(ls->h2_data.active != NULL && ls->h2_data.head == NULL && f.writes == 2,
                "stream window did not stop a partially consumed H2 provider");
@@ -800,6 +890,339 @@ static void caseCustomUpgrade(unsigned action)
     teardown(&f);
 }
 
+static void advanceClock(fixture_t *f, uint64_t time_us)
+{
+    twfRequire(time_us >= now_us, "fixture moved its clock backwards");
+    now_us = time_us;
+    twfRequire(wloopProcessEvents(f->env.loop, 0) >= 0, "HttpClient timer dispatch failed");
+}
+
+static void finishApplication(fixture_t *f)
+{
+    twfRequire(f->carrier != f->line, "HTTP/2 Init reused the borrowed application line for its carrier");
+    httpclientTunnelUpStreamFinish(f->http, f->line);
+    twfRequire(lineIsAlive(f->line), "HttpClient destroyed its borrowed application line");
+    twfRequireLineStateZeroed(f->line, f->http, "application Finish retained HTTP state on the borrowed line");
+    twfRequire(f->trace.prev_finish == 0, "application Finish reflected toward its sender");
+    lineDestroy(f->line); /* The source owner may destroy this exact line immediately. */
+}
+
+static void setupBlockedUpload(fixture_t *f)
+{
+    setup(f, "{\"host\":\"unit.test\",\"http-version\":2,\"close-drain-timeout-ms\":1000}");
+    createPeerWithWindow(f, 0, true);
+    resetWire(f);
+    httpclientTunnelUpStreamPayload(f->http, f->line, payload(f, kLargeBody, false));
+    httpclient_lstate_t *ls = lineGetState(f->carrier, f->http);
+    twfRequire(h2DataPendingBytes(&ls->h2_data) == kLargeBody && f->writes == 0,
+               "zero peer window did not retain the complete upload");
+    twfRequire(wloopNTimers(f->env.loop) == 0, "HttpClient armed close timeout before application Finish");
+}
+
+static void requireCarrierClosed(fixture_t *f, unsigned next_finish)
+{
+    twfRequire(! lineIsAlive(f->carrier), "HttpClient retained its owned carrier after terminal close");
+    twfRequireLineStateZeroed(f->carrier, f->http, "carrier close retained protocol state");
+    twfRequireEqualU32(twfLineRefCount(f->carrier), 1, "carrier close leaked a line reference");
+    twfRequireEqualU32(f->trace.next_finish, next_finish, "carrier close used the wrong Finish direction/count");
+    twfRequire(wloopNTimers(f->env.loop) == 0, "carrier close retained a drain timer");
+    twfRequireNoLeakedBuffers();
+}
+
+static void feedWire(fixture_t *f, const uint8_t *bytes, uint32_t length)
+{
+    sbuf_t *buf = bufferpoolGetBestFit(f->env.pool, length, 0);
+    sbufSetLength(buf, length);
+    sbufWrite(buf, bytes, length);
+    httpclientTunnelDownStreamPayload(f->http, f->carrier, buf);
+}
+
+static void peerStartResponse(fixture_t *f, bool end_stream)
+{
+    nghttp2_nv header = {(uint8_t *) ":status", (uint8_t *) "200", 7, 3, NGHTTP2_NV_FLAG_NONE};
+    twfRequire(nghttp2_submit_headers(
+                   f->peer, end_stream ? NGHTTP2_FLAG_END_STREAM : NGHTTP2_FLAG_NONE, 1, NULL, &header, 1, NULL) == 0,
+               "peer response headers submission failed");
+    peerPump(f);
+}
+
+static void caseHttp2FinishDrainsAfterApplicationDies(void)
+{
+    twfSetCase("HttpClient retains blocked upload on its owned carrier after application Finish");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    finishApplication(&f);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
+    twfRequire(lineIsAlive(f.carrier) && ls->session != NULL && h2DataPendingBytes(&ls->h2_data) == kLargeBody &&
+                   ls->close_drain_timer != NULL && f.trace.next_finish == 0,
+               "application Finish discarded flow-controlled upload data");
+
+    peerStartResponse(&f, false);
+    const uint8_t late_data[] = {0, 0, 1, NGHTTP2_DATA, 0, 0, 0, 0, 1, 'x'};
+    feedWire(&f, late_data, sizeof(late_data));
+    twfRequire(f.trace.prev_payload == 0 && f.trace.prev_finish == 0 && lineIsAlive(f.carrier),
+               "late response DATA reached the closed application or prevented upload draining");
+    twfRequire(nghttp2_submit_window_update(f.peer, NGHTTP2_FLAG_NONE, 1, kLargeBody + 1) == 0,
+               "peer could not reopen the upload window");
+    peerPump(&f);
+    peerConsume(&f);
+    twfRequire(f.received_body == kLargeBody && f.end_streams == 1,
+               "draining lost accepted bytes or failed to emit exactly one END_STREAM");
+    twfRequire(lineShouldLingerOnClose(f.carrier), "completed upload did not request TCP close linger");
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2DrainDeadline(bool progress)
+{
+    twfSetCase(progress ? "HttpClient upload progress does not extend the first drain deadline"
+                        : "HttpClient blocked upload expires without incoming traffic");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    finishApplication(&f);
+    httpclient_lstate_t *ls       = lineGetState(f.carrier, f.http);
+    const uint64_t       deadline = ls->close_drain_deadline_ms;
+    wtimer_t *const      timer    = ls->close_drain_timer;
+    twfRequire(deadline == now_us / 1000 + 1000 && timer != NULL && timer_add_calls == 1,
+               "application Finish did not arm its fixed configured deadline");
+    if (progress)
+    {
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            advanceClock(&f, now_us + 250000);
+            twfRequire(nghttp2_submit_window_update(f.peer, NGHTTP2_FLAG_NONE, 1, 7) == 0,
+                       "partial upload window submission failed");
+            peerPump(&f);
+            twfRequire(h2DataPendingBytes(&ls->h2_data) == kLargeBody - 7 * (i + 1) &&
+                           ls->close_drain_deadline_ms == deadline && ls->close_drain_timer == timer &&
+                           timer_add_calls == 1 && timer_reset_calls == 0,
+                       "upload progress failed or changed the original close deadline");
+        }
+    }
+    advanceClock(&f, deadline * 1000 + 1000);
+    twfRequire(f.end_streams == 0 && ! lineShouldLingerOnClose(f.carrier),
+               "timed-out upload falsely completed or requested successful-drain linger");
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2DeadlineDuringSynchronousOutput(void)
+{
+    twfSetCase("HttpClient synchronous final output observes fresh time before the next frame");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
+    createPeer(&f);
+    resetWire(&f);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
+    h2DataAppend(&ls->h2_data, payload(&f, kLargeBody, false), false);
+    f.expire_drain_output = true;
+    finishApplication(&f);
+    twfRequire(f.wire_length == 9 + kH2BodyLimit && f.writes == 1,
+               "final drain emitted another HTTP/2 frame after its fixed deadline");
+    twfRequire(! lineShouldLingerOnClose(f.carrier), "expired synchronous output requested successful-drain linger");
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2DrainTimerFailure(unsigned failure)
+{
+    twfSetCase(failure == 0   ? "HttpClient timer admission refusal closes a blocked upload"
+               : failure == 1 ? "HttpClient early timer preserves the original upload deadline"
+                              : "HttpClient early timer reset refusal closes a blocked upload");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    refuse_timer_add = failure == 0;
+    finishApplication(&f);
+    if (failure != 0)
+    {
+        httpclient_lstate_t *ls       = lineGetState(f.carrier, f.http);
+        const uint64_t       deadline = ls->close_drain_deadline_ms;
+        twfRequire(ls->close_drain_timer != NULL && ls->close_drain_timer->next_timeout < deadline * 1000,
+                   "fixture did not exercise early timer rounding");
+        refuse_timer_reset = failure == 2;
+        advanceClock(&f, ls->close_drain_timer->next_timeout + 1);
+        twfRequire(timer_reset_calls == 1, "early drain wakeup did not rearm remaining time");
+        if (failure == 1)
+        {
+            twfRequire(lineIsAlive(f.carrier) && ls->close_drain_deadline_ms == deadline &&
+                           timer_reset_ms == deadline - now_us / 1000,
+                       "early timer moved the fixed deadline or closed prematurely");
+            advanceClock(&f, deadline * 1000 + 1000);
+        }
+    }
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2CarrierFinishDuringDrain(void)
+{
+    twfSetCase("HttpClient carrier Finish immediately destroys the owned draining line");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    finishApplication(&f);
+    httpclientTunnelDownStreamFinish(f.http, f.carrier);
+    requireCarrierClosed(&f, 0);
+    twfRequire(f.trace.prev_finish == 0, "carrier Finish reflected toward the closed application");
+    teardown(&f);
+}
+
+static void caseHttp2PeerReset(bool draining)
+{
+    twfSetCase(draining ? "HttpClient peer reset cancels a retained upload"
+                        : "HttpClient peer reset closes the active application and carrier");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    if (draining)
+        finishApplication(&f);
+    twfRequire(nghttp2_submit_rst_stream(f.peer, NGHTTP2_FLAG_NONE, 1, NGHTTP2_CANCEL) == 0,
+               "peer reset submission failed");
+    peerPump(&f);
+    requireCarrierClosed(&f, 1);
+    twfRequire(! lineIsAlive(f.line) && f.trace.prev_finish == (draining ? 0U : 1U),
+               "peer reset reflected Finish or failed to close its active application");
+    teardown(&f);
+}
+
+static void caseHttp2ResponseEndDoesNotCancelUpload(void)
+{
+    twfSetCase("HttpClient ordinary response END_STREAM does not cancel an unfinished upload");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    peerStartResponse(&f, true);
+    twfRequire(lineIsAlive(f.carrier) && lineIsAlive(f.line) && f.trace.next_finish == 0 && f.trace.prev_finish == 0,
+               "response END_STREAM was mistaken for an unusable HTTP/2 stream");
+    finishApplication(&f);
+    twfRequire(nghttp2_submit_window_update(f.peer, NGHTTP2_FLAG_NONE, 1, kLargeBody + 1) == 0,
+               "response-ended peer could not reopen the upload window");
+    peerPump(&f);
+    twfRequire(f.received_body == kLargeBody && f.end_streams == 1, "response-ended stream lost its remaining upload");
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2ShutdownCancelsDrain(bool draining)
+{
+    twfSetCase(draining ? "HttpClient owner-worker shutdown settles a quiesced upload timer and carrier"
+                        : "HttpClient owner-worker shutdown closes an active application and carrier");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    if (draining)
+        finishApplication(&f);
+    f.http->onQuiesceRequest(f.http, NULL);
+    wloopCloseNormalAdmission(f.env.loop);
+    wloopQuiesceNormalWork(f.env.loop);
+    f.http->onWorkerQuiesce(f.http, 0, NULL);
+    f.http->onWorkerStop(f.http, 0, NULL);
+    requireCarrierClosed(&f, 1);
+    twfRequire(f.trace.prev_finish == (draining ? 0U : 1U) && ! lineIsAlive(f.line),
+               "shutdown reflected Finish toward a detached application or left an active application alive");
+    teardown(&f);
+}
+
+static void caseHttp2FinishBeforeWebSocketReady(void)
+{
+    twfSetCase("HttpClient application Finish retains pre-handshake bytes until its fixed deadline");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2,\"websocket\":true,\"close-drain-timeout-ms\":40}");
+    httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, "queued"));
+    finishApplication(&f);
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
+    twfRequire(lineIsAlive(f.carrier) && bufferqueueGetBufCount(&ls->pending_up) == 1 && ls->close_drain_timer != NULL,
+               "application Finish discarded an upload waiting for WebSocket readiness");
+    advanceClock(&f, ls->close_drain_deadline_ms * 1000 + 1000);
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void discardPressureWire(tunnel_t *next, line_t *line, sbuf_t *buf)
+{
+    discard next;
+    twfRequire(line == active->carrier, "HTTP/2 output used the application line");
+    lineReuseBuffer(line, buf);
+}
+
+static void caseHttp2PressureCombinesTransportPause(void)
+{
+    twfSetCase("HttpClient upload high/low pressure combines with the next transport's Pause");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
+    createPeerWithWindow(&f, 0, true);
+    f.trace.len          = 0;
+    f.trace.seq[0]       = '\0';
+    const uint32_t bytes = 1024 * 1024 + 1;
+    httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, bytes, false));
+    twfRequireEqualText(f.trace.seq, "u", "upload above high water did not Pause its application once");
+    httpclientTunnelDownStreamPause(f.http, f.carrier);
+    twfRequireEqualText(f.trace.seq, "uu", "transport Pause did not reach the held application");
+    f.next->fnPayloadU      = discardPressureWire;
+    const uint32_t credit   = bytes - 128 * 1024;
+    const uint8_t  update[] = {0,
+                               0,
+                               4,
+                               NGHTTP2_WINDOW_UPDATE,
+                               0,
+                               0,
+                               0,
+                               0,
+                               1,
+                               (uint8_t) (credit >> 24),
+                               (uint8_t) (credit >> 16),
+                               (uint8_t) (credit >> 8),
+                               (uint8_t) credit};
+    feedWire(&f, update, sizeof(update));
+    httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
+    twfRequire(h2DataPendingBytes(&ls->h2_data) == 128 * 1024,
+               "WINDOW_UPDATE did not lower retained upload below low water");
+    twfRequireEqualText(f.trace.seq, "uu", "low water resumed the application while its transport remained paused");
+    httpclientTunnelDownStreamResume(f.http, f.carrier);
+    twfRequireEqualText(f.trace.seq, "uur", "clearing both pressure reasons did not Resume once");
+    teardown(&f);
+}
+
+static void caseHttp2QueueHardLimit(bool charge)
+{
+    twfSetCase(charge ? "HttpClient HTTP/2 upload rejects excess retained allocation charge"
+                      : "HttpClient HTTP/2 upload rejects an over-limit body");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":2}");
+    createPeerWithWindow(&f, 0, true);
+    if (charge)
+    {
+        httpclientTunnelUpStreamPayload(f.http, f.line, chargedPayload(16 * 1024 * 1024, "x"));
+        httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
+        twfRequire(lineIsAlive(f.carrier) && h2DataRetainedCharge(&ls->h2_data) == 16 * 1024 * 1024 &&
+                       h2DataPendingBytes(&ls->h2_data) == 1,
+                   "HTTP/2 provider rejected its inclusive allocation-charge limit");
+        httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, "x"));
+    }
+    else
+        httpclientTunnelUpStreamPayload(f.http, f.line, payload(&f, 16 * 1024 * 1024 + 1, false));
+    requireCarrierClosed(&f, 1);
+    twfRequire(! lineIsAlive(f.line) && f.trace.prev_finish == 1,
+               "HTTP/2 provider limit did not settle the affected application");
+    teardown(&f);
+}
+
+static void caseHttp2FinishReleasesApplicationReadPause(void)
+{
+    twfSetCase("HttpClient application Finish releases response-read Pause for upload control frames");
+    fixture_t f;
+    setupBlockedUpload(&f);
+    f.trace.len    = 0;
+    f.trace.seq[0] = '\0';
+    httpclientTunnelUpStreamPause(f.http, f.line);
+    twfRequireEqualText(f.trace.seq, "U", "application read Pause did not reach its owned carrier");
+    finishApplication(&f);
+    twfRequireEqualText(f.trace.seq, "UR", "application Finish did not release the carrier read hold");
+    twfRequire(nghttp2_submit_window_update(f.peer, NGHTTP2_FLAG_NONE, 1, kLargeBody + 1) == 0,
+               "resumed carrier could not receive upload credit");
+    peerPump(&f);
+    twfRequire(f.received_body == kLargeBody && f.end_streams == 1 && f.trace.prev_finish == 0,
+               "released carrier read hold did not complete the upload without application callbacks");
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom() && frandGlobalInit(), "fixture random initialization failed");
@@ -826,6 +1249,24 @@ int main(void)
     caseHttp2FinishWithActiveAndPending(false);
     caseHttp2FinishWithActiveAndPending(true);
     caseHttp2FlowControlResumes();
+    caseHttp2FinishDrainsAfterApplicationDies();
+    caseHttp2DrainDeadline(false);
+    caseHttp2DrainDeadline(true);
+    caseHttp2DeadlineDuringSynchronousOutput();
+    caseHttp2DrainTimerFailure(0);
+    caseHttp2DrainTimerFailure(1);
+    caseHttp2DrainTimerFailure(2);
+    caseHttp2CarrierFinishDuringDrain();
+    caseHttp2PeerReset(false);
+    caseHttp2PeerReset(true);
+    caseHttp2ResponseEndDoesNotCancelUpload();
+    caseHttp2ShutdownCancelsDrain(false);
+    caseHttp2ShutdownCancelsDrain(true);
+    caseHttp2FinishBeforeWebSocketReady();
+    caseHttp2PressureCombinesTransportPause();
+    caseHttp2QueueHardLimit(false);
+    caseHttp2QueueHardLimit(true);
+    caseHttp2FinishReleasesApplicationReadPause();
     caseWebSocketStartup();
     caseH2cSettings();
     caseCustomUpgrade(0);

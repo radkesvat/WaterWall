@@ -1,3 +1,4 @@
+#include "TcpAdapterCommon/close_linger.h"
 #include "loggers/network_logger.h"
 #include "structure.h"
 
@@ -21,7 +22,8 @@ void tcplistenerTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     wioSetCallBackWrite(ls->io, NULL);
 
     tcplistenerFlushWriteQueue(ls);
-    if (! lineFallbackShouldLinger(l) || ! tcplistenerBeginFallbackLinger(t, ls->io))
+    if (! lineShouldLingerOnClose(l) || atomicLoadRelaxed(&ts->stopping) ||
+        ! tcpAdapterBeginCloseLinger(ls->io, tcplistenerGetLineIdleTable(ts, l)))
         wioClose(ls->io);
     tcplistenerLinestateDestroy(ls);
     lineDestroy(l);

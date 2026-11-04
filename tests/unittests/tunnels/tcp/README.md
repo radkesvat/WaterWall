@@ -6,5 +6,8 @@ Real socketpair writes verify retained allocation charge across partial progress
 combined active/queued ceiling, FIFO suffix release and asynchronous write failure.
 A resolver/connector composition covers DNS and literal payload admission before Est;
 DNS completion and socket-connect timing are controlled while writes use real sockets.
+Both adapters also cover detached close linger: queued bytes precede FIN, late input
+is discarded after line destruction, peer EOF and worker stop release the socket,
+and traffic cannot extend the absolute deadline. Quiescence refuses a new linger.
 
 See [tcp_adapter_pause_close_test.c](tcp_adapter_pause_close_test.c) for the native fixture and exact CTest variants.

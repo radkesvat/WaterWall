@@ -81,7 +81,7 @@ static bool quicAdmitApplication(quic_context_t *context, sbuf_t *buffer)
     {
         return false;
     }
-    size_t marker = state->client && storage.send_bytes == 0 && ! ww_quic_engine_ready(context->engine) ? 1 : 0;
+    size_t marker  = state->client && storage.send_bytes == 0 && ! ww_quic_engine_ready(context->engine) ? 1 : 0;
     size_t entries = quicApplicationEntries(context);
     if (cost.bytes + used.bytes + storage.send_bytes + marker > state->max_bytes ||
         1 + entries + storage.send_entries + marker > state->max_buffers ||
@@ -107,14 +107,15 @@ static void quicSubmit(tunnel_t *t, line_t *l, sbuf_t *buffer, quic_input_kind_t
 {
     quic_context_t *context = quicGetContext(t, l);
     assert(context != NULL);
-    if (context->finish_up || context->finish_down)
+    const bool application = kind == kQuicInputApplication;
+    assert(l == (application ? context->application_line : context->carrier_line));
+    if (! context->attached)
     {
         bufferpoolReuseBuffer(context->pool, buffer);
         return;
     }
-    bool           entered     = quicEnter(context);
-    quic_tstate_t *state       = tunnelGetState(t);
-    bool           application = kind == kQuicInputApplication;
+    bool           entered = quicEnter(context);
+    quic_tstate_t *state   = tunnelGetState(t);
     bool           admitted;
     if (application)
     {

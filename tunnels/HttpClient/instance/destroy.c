@@ -8,6 +8,9 @@ void httpclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     assert(t != NULL);
 
     httpclient_tstate_t *ts = tunnelGetState(t);
+    for (wid_t wid = 0; wid < ts->worker_count; ++wid)
+        assert(ts->carrier_heads[wid] == NULL);
+    memoryFree(ts->carrier_heads);
 
     if (ts->cbs != NULL)
     {

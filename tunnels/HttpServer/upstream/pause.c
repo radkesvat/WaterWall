@@ -28,5 +28,6 @@ void httpserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     {
         return;
     }
+    ls->prev_paused = true;
     tunnelNextUpStreamPause(t, l);
 }

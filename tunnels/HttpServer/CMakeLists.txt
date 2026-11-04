@@ -6,6 +6,7 @@ add_library(HttpServer STATIC
                     common/helpers.c
                     common/http_base64.c
                     common/line_state.c
+                    common/close.c
                     common/transport.c
                     common/split.c
                     upstream/init.c

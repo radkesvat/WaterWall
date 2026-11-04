@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -86,7 +86,7 @@ selected core file's directory.
     "domain-strategy": "prefer-ipv4",
     "timeout-ms": 1000,
     "max-timeout-ms": 5000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 1800,
     "ndots": 1,
     "udp-port": 53,
@@ -479,10 +479,29 @@ That form is rejected. Use `dns.domain-strategy`.
 
 | Option | Type | Default | Validation | Description |
 | --- | --- | --- | --- | --- |
-| `timeout-ms` | integer | `1000` | greater than `0` | Initial DNS query timeout in milliseconds. |
-| `max-timeout-ms` | integer | `5000` | greater than `0` | Maximum DNS query timeout in milliseconds. |
-| `tries` | integer | `2` | greater than `0` | Number of DNS query tries. |
+| `timeout-ms` | integer | `1000` | greater than `0` | Initial per-attempt timeout base in milliseconds, before c-ares has enough response history for that server. |
+| `max-timeout-ms` | integer | `5000` | greater than `0` | Maximum timeout for one attempt, including retries; not a total lookup deadline. |
+| `tries` | integer | `5` | greater than `0` | Number of DNS query tries for each server. |
 | `query-cache-max-ttl` | integer | `1800` | greater than or equal to `0` | Maximum TTL, in seconds, for the resolver query cache. |
+
+After three responses from a DNS server, c-ares uses five times its average
+response time as the timeout base, normally with a 250 ms minimum and capped by
+`max-timeout-ms`. Each additional round through the servers doubles the base,
+with random jitter and the same cap. `timeout-ms` is an initial value, not a
+minimum wait or a total lookup deadline. A fast local caching resolver can
+therefore get only 250 ms on its first attempt, even for a name it must look up
+upstream.
+
+For illustration, measurements with one previously fast DNS server and otherwise
+default timing settings gave about 5–7 seconds before timeout with `tries: 5`,
+compared with 0.5–0.75 seconds with `tries: 2`. With no response history and a
+server that never answered, `tries: 5` gave about 12–14 seconds. These are measured
+examples, not guaranteed limits. Random jitter, server count, response history,
+and search domains can change the total lookup time.
+
+A lookup that completes successfully does not wait for unused retries. More
+tries can keep requests and pending connections around longer when DNS is
+unavailable. An explicit `dns.tries` setting overrides the default.
 
 Example:
 
@@ -491,7 +510,7 @@ Example:
   "dns": {
     "timeout-ms": 750,
     "max-timeout-ms": 3000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 600
   }
 }
@@ -706,7 +725,7 @@ Example:
     ],
     "timeout-ms": 1000,
     "max-timeout-ms": 5000,
-    "tries": 2,
+    "tries": 5,
     "query-cache-max-ttl": 600,
     "lookups": "bf",
     "flags": [

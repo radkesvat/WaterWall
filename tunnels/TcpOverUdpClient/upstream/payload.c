@@ -1,32 +1,8 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void tcpoverudpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
-
-    assert(ls->k_handle != NULL);
-
-    // Admit the complete input in MTU-sized chunks before a pressure callback can reenter.
-
-    tcpoverudpclient_tstate_t *ts            = tunnelGetState(t);
-    int                        kcp_write_mtu = tcpoverudpclientGetKcpWriteMtu(ts);
-
-    assert(kcp_write_mtu > 0);
-
-    while (sbufGetLength(buf) > 0)
-    {
-        int write_size = (int) min((uint32_t) kcp_write_mtu, sbufGetLength(buf));
-
-        sbufShiftLeft(buf, kFrameHeaderLength);
-        sbufWriteUI8(buf, kFrameFlagData);
-
-        ikcp_send(ls->k_handle, (void *) sbufGetMutablePtr(buf), write_size + kFrameHeaderLength);
-        sbufShiftRight(buf, write_size + kFrameHeaderLength);
-    }
-    lineReuseBuffer(l, buf);
-
-    // Update KCP state after sending to trigger immediate transmission
-    tcpoverudpclientUpdateKcp(ls, false);
+    assert(ls->role == kTcpOverUdpClientApplication && ls->session != NULL);
+    touSessionSend(ls->session->driver, buf);
 }

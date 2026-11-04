@@ -177,6 +177,13 @@ When delayed delivery triggers:
 
 This is useful for testing timeout behavior, jitter tolerance, retransmission logic, and buffering correctness.
 
+Scheduled output requires both a live line and this node's publication permission.
+Handling `Finish` closes publication in both directions, including when a borrowed
+normal line remains alive while another node drains. Pending tasks keep their
+scheduler-owned buffers and references until execution or cancellation; `Finish`
+does not remove them immediately. A task that runs after publication closes
+recycles its buffer without forwarding it.
+
 ### Dead-hang model
 
 If dead-hang triggers on a line:
