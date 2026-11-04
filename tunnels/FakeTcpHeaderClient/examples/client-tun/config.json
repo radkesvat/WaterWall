@@ -59,8 +59,7 @@
         ],
         "capture-protocols": [
           6
-        ],
-        "capture-tcp-source-port": 40000
+        ]
       }
     }
   ]

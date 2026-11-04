@@ -247,9 +247,9 @@ def run(binary, directory, tun, multi_queue, tcp):
                 assert time.monotonic() < deadline, "TUN did not activate"
                 time.sleep(0.05)
 
-        # Genuine TCP from either captured peer IP must stay in the host stack.
-        # It differs from the reserved fake carrier tuple only in its TCP ports.
-        for local, peer in (("192.0.2.10", "198.51.100.10"), ("198.51.100.10", "192.0.2.10")):
+        # TCP from unselected source IPs must stay in the host stack. Selected
+        # peer IPs deliberately capture all TCP ports, including ordinary TCP.
+        for local, peer in (("127.0.0.1", "127.0.0.2"), ("127.0.0.2", "127.0.0.1")):
             with socket.socket() as listener, socket.socket() as ordinary:
                 listener.bind((peer, 0))
                 listener.listen(1)
@@ -261,9 +261,9 @@ def run(binary, directory, tun, multi_queue, tcp):
                 with accepted:
                     accepted.settimeout(5)
                     ordinary.sendall(b"ordinary-tcp-request")
-                    assert accepted.recv(128) == b"ordinary-tcp-request", "filter stole genuine TCP"
+                    assert receive_exact(accepted, 20) == b"ordinary-tcp-request", "filter captured unselected TCP"
                     accepted.sendall(b"ordinary-tcp-reply")
-                    assert ordinary.recv(128) == b"ordinary-tcp-reply", "filter stole genuine TCP reply"
+                    assert receive_exact(ordinary, 18) == b"ordinary-tcp-reply", "filter captured unselected TCP reply"
 
         # Protocol 17 must reach ordinary host UDP sockets on each receive side.
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_backend:
@@ -274,6 +274,27 @@ def run(binary, directory, tun, multi_queue, tcp):
                     ordinary.bind((address, 0))
                     ordinary.sendto(b"unrelated-udp", udp_backend.getsockname())
                     assert udp_backend.recv(65535) == b"unrelated-udp", "allowlist captured ordinary UDP"
+
+        # A selected source IP and protocol must reach the decoder even with
+        # different TCP ports. Its explicit port rejection proves broad capture
+        # without waiting for a genuine TCP connection to time out.
+        other_port = 1 if server_port != 1 else 2
+        with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW) as injector:
+            for process, role, source, destination in (
+                    (processes[0], "server", "192.0.2.10", "198.51.100.10"),
+                    (processes[1], "client", "198.51.100.10", "192.0.2.10")):
+                segment = bytearray(struct.pack("!HHIIBBHHH", other_port, other_port, 1, 0,
+                                                0x50, 0x02, 65535, 0, 0))
+                pseudo = socket.inet_aton(source) + socket.inet_aton(destination) + struct.pack("!BBH", 0, 6, len(segment))
+                struct.pack_into("!H", segment, 16, checksum(pseudo + segment))
+                injector.sendto(native_packet(source, destination, 6, segment), (destination, 0))
+                marker = (f"FakeTcpHeader{role.title()}: dropping incoming carrier: "
+                          "carrier ports do not match the configured mapping")
+                deadline = time.monotonic() + 5
+                while marker not in (directory / role / "stdout.log").read_text():
+                    process.check_running(role + " exited during broad TCP capture check")
+                    assert time.monotonic() < deadline, "selected-peer TCP on other ports did not reach the decoder"
+                    time.sleep(0.01)
 
         wire = stack.enter_context(socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)))
         wire.bind(("lo", 0))

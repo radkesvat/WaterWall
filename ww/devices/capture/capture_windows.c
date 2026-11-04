@@ -62,17 +62,13 @@ static bool capturedeviceAppendFilter(char *filter, size_t filter_len, size_t *o
 static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t range_count,
                                                const capture_protocol_filter_t *protocol_filter)
 {
-    /* Longest TCP port clause: both qualifiers with five-digit ports. */
-    static const char kTcpPortClauseBound[] =
-        " and tcp and not fragment and tcp.SrcPort == 65535 and tcp.DstPort == 65535";
-    size_t ranges_size;
-    const size_t protocol_extra = (captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U) +
-                                  (captureProtocolFilterHasTcpPorts(protocol_filter) ? sizeof(kTcpPortClauseBound) : 0);
+    size_t       ranges_size;
+    const size_t protocol_extra = captureProtocolFilterIsEmpty(protocol_filter) ? 0 : kCaptureIpProtocolCount * 32U;
     if (! memoryTryComputeArraySize(range_count, 80U, &ranges_size) || ranges_size > SIZE_MAX - 10U - protocol_extra)
     {
         return NULL;
     }
-    const size_t filter_len = 10U + ranges_size + protocol_extra; // "ip and (" + ")" + exclusions + ports + NUL
+    const size_t filter_len = 10U + ranges_size + protocol_extra; // "ip and (" + ")" + exclusions + NUL
 
     char  *filter = memoryAllocate(filter_len);
     size_t offset = 0;
@@ -161,27 +157,6 @@ static char *capturedeviceBuildWinDivertFilter(const ipmask_t *ranges, uint32_t 
         }
     }
 
-    if (captureProtocolFilterHasTcpPorts(protocol_filter))
-    {
-        const size_t clause_start = offset;
-        bool         appended     = capturedeviceAppendFilter(filter, filter_len, &offset, " and tcp and not fragment");
-        if (appended && protocol_filter->tcp_source_port != 0)
-            appended = capturedeviceAppendFilter(
-                filter, filter_len, &offset, " and tcp.SrcPort == %u", (unsigned int) protocol_filter->tcp_source_port);
-        if (appended && protocol_filter->tcp_destination_port != 0)
-            appended = capturedeviceAppendFilter(filter,
-                                                 filter_len,
-                                                 &offset,
-                                                 " and tcp.DstPort == %u",
-                                                 (unsigned int) protocol_filter->tcp_destination_port);
-        assert(! appended || offset - clause_start < sizeof(kTcpPortClauseBound));
-        discard clause_start;
-        if (! appended)
-        {
-            memoryFree(filter);
-            return NULL;
-        }
-    }
     return filter;
 }
 

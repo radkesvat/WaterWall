@@ -533,7 +533,7 @@ recomputing an expected native-flow index.
 
 ## Receive Filtering
 
-On the client, capture the server's public IPv4 and fake TCP source port:
+On the client, capture IPv4 TCP from the server's public source address:
 
 ```json
 {
@@ -542,17 +542,18 @@ On the client, capture the server's public IPv4 and fake TCP source port:
   "settings": {
     "capture-filter-mode": "source-ip",
     "capture-ips": ["198.51.100.10"],
-    "capture-protocols": [6],
-    "capture-tcp-source-port": 40000
+    "capture-protocols": [6]
   }
 }
 ```
 
-The server uses the client's public IPv4 and `capture-tcp-dest-port: 40000`.
-Decode rejects client ports outside the configured range. Reserve `server-port`
-between these hosts: genuine TCP using that server-side port is captured and
-dropped. Keep it out of the server's ephemeral port range, for example through
-`net.ipv4.ip_local_reserved_ports`. Tuple filtering provides no authentication.
+The server selects the client's public source address and also uses
+`"capture-protocols": [6]`. RawSocket captures **all TCP from the selected
+source addresses**, regardless of port. Ordinary SSH or HTTPS between these
+endpoints can therefore be intercepted. Decode still requires `server-port`
+and a client port in the configured range, but rejecting a captured packet
+cannot return it to the host stack. IP/protocol selection and the codec's port
+checks provide no authentication.
 
 ## Composition
 
@@ -593,9 +594,9 @@ Use this node's `flags` script to choose outgoing fake TCP flags. An
 `up-tcp-bit-*` on the client and `dw-tcp-bit-*` on the server, but those later
 rewrites do not change the sequence increment already reserved by this node.
 To carry fake TCP under another IP protocol, place `IpManipulator` with
-`protoswap-tcp` next to each codec and capture that protocol without TCP port qualifiers, for
-example `"capture-protocols": [253]`. ProtoSwap must restore protocol 6 before
-fake TCP decoding. RawSocket's default `opaque-flow-mode: "prefix"` steers that
+`protoswap-tcp` next to each codec and capture that protocol, for example
+`"capture-protocols": [253]`. ProtoSwap must restore protocol 6 before fake TCP
+decoding. RawSocket's default `opaque-flow-mode: "prefix"` steers that
 opaque protocol using the first four payload bytes, the fake TCP ports.
 
 ## MTU and Validation

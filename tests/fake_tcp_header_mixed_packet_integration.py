@@ -54,8 +54,7 @@ def prepare(directory, role):
     raw = {"name": "raw", "type": "RawSocket", "settings": {
         "capture-device-name": "fake-tcp-mixed-" + role, "skip-sysctl": True,
         "multi-queue": False, "capture-filter-mode": "source-ip",
-        "capture-ips": [CARRIER[1 if client else 0]], "capture-protocols": [6],
-        "capture-tcp-source-port" if client else "capture-tcp-dest-port": SERVER_PORT}}
+        "capture-ips": [CARRIER[1 if client else 0]], "capture-protocols": [6]}}
     nodes = [tun, fake, rewrite, raw] if client else [raw, rewrite, fake, tun]
     for node, following in zip(nodes, nodes[1:]):
         node["next"] = following["name"]

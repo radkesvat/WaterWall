@@ -482,7 +482,7 @@ produce stable distribution. See
 
 ## Receive Filtering
 
-Capture the client's public IPv4 and fake TCP destination port:
+Capture IPv4 TCP from the client's public source address:
 
 ```json
 {
@@ -491,16 +491,17 @@ Capture the client's public IPv4 and fake TCP destination port:
   "settings": {
     "capture-filter-mode": "source-ip",
     "capture-ips": ["192.0.2.10"],
-    "capture-protocols": [6],
-    "capture-tcp-dest-port": 40000
+    "capture-protocols": [6]
   },
   "next": "carrier-addresses"
 }
 ```
 
-Decode rejects client ports outside its range. Reserve `server-port` between
-these hosts, avoiding a genuine TCP service or ephemeral use on it: matching
-native TCP would be captured and dropped. Tuple filtering is not authentication.
+RawSocket captures **all TCP from the selected source addresses**, regardless
+of port. Ordinary SSH or HTTPS between these endpoints can therefore be
+intercepted. Decode still requires `server-port` and a client port in its
+configured range, but rejecting a captured packet cannot return it to the host
+stack. IP/protocol selection and the codec's port checks provide no authentication.
 
 ## Composition
 
@@ -540,8 +541,8 @@ Use this node's `flags` script to choose outgoing fake TCP flags. An
 `IpManipulator` between this node and RawSocket can further rewrite them with
 `dw-tcp-bit-*` for server egress, but those later rewrites do not change the
 sequence increment already reserved by this node. For another visible carrier
-protocol, use `protoswap-tcp` next to both codecs and capture that protocol without TCP port
-qualifiers, restoring protocol 6 before decode. See
+protocol, use `protoswap-tcp` next to both codecs and capture that protocol,
+restoring protocol 6 before decode. See
 [client composition](../FakeTcpHeaderClient/description.md#composition).
 
 ## MTU and Validation

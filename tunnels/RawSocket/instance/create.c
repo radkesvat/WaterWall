@@ -183,30 +183,6 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
         for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
             filter->excluded[i] = ~filter->excluded[i];
     }
-    /* Port qualifiers apply only to a TCP-only selection, so they never
-     * silently override another selected protocol. */
-    bool tcp_only = allow != NULL;
-    for (unsigned int byte = 0; byte < kCaptureIpProtocolCount; ++byte)
-        tcp_only = tcp_only && captureProtocolFilterExcludes(filter, (uint8_t) byte) == (byte != IPPROTO_TCP);
-    const char *const port_keys[]   = {"capture-tcp-source-port", "capture-tcp-dest-port"};
-    uint16_t *const   port_values[] = {&filter->tcp_source_port, &filter->tcp_destination_port};
-    for (size_t i = 0; i < ARRAY_SIZE(port_keys); ++i)
-    {
-        int64_t                   value;
-        const json_value_status_t status = jsonGetObjectIntegerInRange(settings, port_keys[i], 1, UINT16_MAX, &value);
-        if (status == kJsonValueInvalid)
-        {
-            LOGF("JSON Error: RawSocket->settings->%s : expected an integer from 1 to 65535", port_keys[i]);
-            return false;
-        }
-        if (status == kJsonValuePresent && ! tcp_only)
-        {
-            LOGF("JSON Error: RawSocket->settings->%s : requires \"capture-protocols\": [6]", port_keys[i]);
-            return false;
-        }
-        if (status == kJsonValuePresent)
-            *port_values[i] = (uint16_t) value;
-    }
     return true;
 }
 

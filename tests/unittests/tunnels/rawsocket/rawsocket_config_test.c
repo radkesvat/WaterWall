@@ -394,74 +394,8 @@ static void testProtocolAllowlist(void)
     destroyRawSocket(t, settings);
 }
 
-static void testTcpPortFilters(void)
+static void testAllProtocolsAllowed(void)
 {
-    static const struct
-    {
-        const char *json;
-        uint16_t    source;
-        uint16_t    destination;
-    } valid[] = {
-        {"{}", 0, 0},
-        {"{\"capture-protocols\":[6],\"capture-tcp-source-port\":1}", 1, 0},
-        {"{\"capture-protocols\":[6],\"capture-tcp-dest-port\":65535}", 0, 65535},
-        {"{\"capture-protocols\":[6],\"capture-tcp-source-port\":12345,\"capture-tcp-dest-port\":443}", 12345, 443},
-        {"{\"capture-protocols\":[6,6],\"capture-tcp-source-port\":65535,\"capture-tcp-dest-port\":1}", 65535, 1},
-    };
-    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
-    {
-        cJSON    *settings;
-        tunnel_t *t = createRawSocket(valid[i].json, &settings);
-        require(t != NULL, "RawSocket rejected a valid TCP capture port filter");
-        const capture_protocol_filter_t *filter = &((rawsocket_tstate_t *) tunnelGetState(t))->capture_protocol_filter;
-        require(filter->tcp_source_port == valid[i].source && filter->tcp_destination_port == valid[i].destination,
-                "RawSocket lost a TCP capture port or changed its omitted default");
-        require(captureProtocolFilterHasTcpPorts(filter) == (valid[i].source != 0 || valid[i].destination != 0),
-                "RawSocket did not activate its configured TCP tuple filter");
-        for (unsigned int protocol = 0; protocol < kCaptureIpProtocolCount; ++protocol)
-        {
-            require(captureProtocolFilterExcludes(filter, (uint8_t) protocol) == (i != 0 && protocol != 6),
-                    "TCP port qualifiers changed the protocol selection");
-        }
-        require(captureProtocolFilterIsEmpty(filter) == (i == 0),
-                "TCP port qualifiers changed the protocol exclusion predicate");
-        destroyRawSocket(t, settings);
-    }
-
-    const char *const names[]   = {"capture-tcp-source-port", "capture-tcp-dest-port"};
-    const char *const invalid[] = {"null", "0", "-1", "65536", "1.5", "1e100", "true", "\"443\"", "[]", "{}"};
-    for (size_t field = 0; field < ARRAY_SIZE(names); ++field)
-    {
-        for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
-        {
-            char json[128];
-            snprintf(json, sizeof(json), "{\"capture-protocols\":[6],\"%s\":%s}", names[field], invalid[i]);
-            cJSON    *settings;
-            tunnel_t *t = createRawSocket(json, &settings);
-            require(t == NULL, "RawSocket accepted an invalid TCP capture port");
-            destroyRawSocket(t, settings);
-        }
-
-        /* Port qualifiers require the protocol selection to be exactly TCP. */
-        const char *const conflicts[] = {"",
-                                         ",\"capture-protocols\":[6,17]",
-                                         ",\"capture-protocols\":[17]",
-                                         ",\"capture-protocols\":[]",
-                                         ",\"capture-protocols\":[0,6]",
-                                         ",\"dont-capture-protocols\":[]",
-                                         ",\"dont-capture-protocols\":[17]",
-                                         ",\"dont-capture-protocols\":[6]"};
-        for (size_t i = 0; i < ARRAY_SIZE(conflicts); ++i)
-        {
-            char json[160];
-            snprintf(json, sizeof(json), "{\"%s\":443%s}", names[field], conflicts[i]);
-            cJSON    *settings;
-            tunnel_t *t = createRawSocket(json, &settings);
-            require(t == NULL, "RawSocket accepted a TCP capture port without capture-protocols [6]");
-            destroyRawSocket(t, settings);
-        }
-    }
-
     /* Every protocol allowed is the unrestricted selection: no exclusion predicate. */
     char json[1200] = "{\"capture-protocols\":[0";
     for (unsigned int protocol = 1; protocol < kCaptureIpProtocolCount; ++protocol)
@@ -491,6 +425,6 @@ int main(void)
     testConntrackSetting();
     testProtocolExclusions();
     testProtocolAllowlist();
-    testTcpPortFilters();
+    testAllProtocolsAllowed();
     return 0;
 }

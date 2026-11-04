@@ -10,8 +10,6 @@
 #include "wthread.h"
 
 #if defined(OS_LINUX)
-#include "devices/capture/capture_linux_steering.h"
-
 typedef enum capture_rule_state_e
 {
     kCaptureRuleAbsent = 0,
@@ -52,7 +50,6 @@ struct capture_device_s
     uint32_t                            kernel_queue_profile;
     bool                                skip_sysctl;
     char                                protocol_filter[kCaptureLinuxProtocolFilterSize];
-    char                                tcp_port_filter[kCaptureLinuxSteeringFilterSize];
     capture_range_rule_states_t        *rule_states;
     uint64_t                            rule_token;
     bool                                queue_restartable;
