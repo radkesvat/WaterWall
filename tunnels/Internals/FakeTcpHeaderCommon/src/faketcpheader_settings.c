@@ -13,20 +13,17 @@ static const faketcpheader_settings_integer_t kSettingsServerPort      = {"serve
 static const faketcpheader_settings_integer_t kSettingsClientPort      = {"client-port", 1, UINT16_MAX};
 static const faketcpheader_settings_integer_t kSettingsClientPortCount = {
     "client-port-count", 1, kFakeTcpHeaderWireMaxClientPortCount};
-static const faketcpheader_settings_integer_t kSettingsSequence        = {"sequence", 0, UINT32_MAX};
-static const faketcpheader_settings_integer_t kSettingsAcknowledgment  = {"acknowledgment", 0, UINT32_MAX};
-static const faketcpheader_settings_integer_t kSettingsWindow          = {"window", 0, UINT16_MAX};
-static const faketcpheader_settings_integer_t kSettingsUrgentPointer   = {"urgent-pointer", 0, UINT16_MAX};
-static const faketcpheader_settings_integer_t kSettingsPayloadProtocol = {"payload-protocol", 6, 17};
-
-static const faketcpheader_settings_integer_t *const kSettingsIntegers[] = {&kSettingsPayloadProtocol,
-                                                                            &kSettingsServerPort,
-                                                                            &kSettingsClientPort,
-                                                                            &kSettingsClientPortCount,
-                                                                            &kSettingsSequence,
-                                                                            &kSettingsAcknowledgment,
-                                                                            &kSettingsWindow,
-                                                                            &kSettingsUrgentPointer};
+static const faketcpheader_settings_integer_t        kSettingsSequence       = {"sequence", 0, UINT32_MAX};
+static const faketcpheader_settings_integer_t        kSettingsAcknowledgment = {"acknowledgment", 0, UINT32_MAX};
+static const faketcpheader_settings_integer_t        kSettingsWindow         = {"window", 0, UINT16_MAX};
+static const faketcpheader_settings_integer_t        kSettingsUrgentPointer  = {"urgent-pointer", 0, UINT16_MAX};
+static const faketcpheader_settings_integer_t *const kSettingsIntegers[]     = {&kSettingsServerPort,
+                                                                                &kSettingsClientPort,
+                                                                                &kSettingsClientPortCount,
+                                                                                &kSettingsSequence,
+                                                                                &kSettingsAcknowledgment,
+                                                                                &kSettingsWindow,
+                                                                                &kSettingsUrgentPointer};
 
 static const char *const kSettingsOptions = "options";
 
@@ -125,14 +122,6 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
         LOGF("JSON Error: %s->settings : expected an object", node_name);
         return false;
     }
-    int64_t payload_protocol = 0;
-    if (jsonGetObjectIntegerInRange(settings, kSettingsPayloadProtocol.key, 6, 17, &payload_protocol) !=
-            kJsonValuePresent ||
-        (payload_protocol != IPPROTO_TCP && payload_protocol != IPPROTO_UDP))
-    {
-        LOGF("JSON Error: %s->settings->payload-protocol : required integer 6 (TCP) or 17 (UDP)", node_name);
-        return false;
-    }
     if (! faketcpheaderSettingsKeysAreKnown(settings, node_name))
     {
         return false;
@@ -172,7 +161,6 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
     config.server_port       = (uint16_t) server_port;
     config.client_port       = (uint16_t) client_port;
     config.client_port_count = (uint16_t) client_port_count;
-    config.payload_protocol  = (uint8_t) payload_protocol;
     config.window            = (uint16_t) window;
     config.urgent_pointer    = (uint16_t) urgent_pointer;
     *out                     = config;

@@ -18,7 +18,7 @@
         "source-ipv4": "10.90.0.1",
         "target-address": "10.90.0.2",
         "port": 5300,
-        "mtu": 1480
+        "mtu": 1479
       }
     },
     {
@@ -26,7 +26,6 @@
       "type": "FakeTcpHeaderClient",
       "next": "carrier-addresses",
       "settings": {
-        "payload-protocol": 17,
         "server-port": 40000,
         "client-port": 40001,
         "client-port-count": 16,

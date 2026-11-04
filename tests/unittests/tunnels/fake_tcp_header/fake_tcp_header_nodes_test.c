@@ -1,7 +1,7 @@
 /*
  * Covers: FakeTcpHeaderClient and FakeTcpHeaderServer node metadata and constructors.
- * Contract: both nodes are Layer-3 packet transforms with 60 bytes of left padding, explicit native TCP/UDP
- * protocol and no line state. Constructors retain the other defaults and report invalid settings by node/key.
+ * Contract: both nodes are Layer-3 packet transforms with 61 bytes of left padding, per-packet native
+ * protocol tags and no line state. Constructors retain the other defaults and report invalid settings by node/key.
  * All four actual payload callbacks forward the exact sbuf once or recycle it once, preserving the packet line.
  * Cases: testMetadata, testDefaults, testConfigured, testRejections, testPayloadCallbacks (both nodes);
  * testIpOverriderComposition (when IpOverrider is available).
@@ -100,8 +100,8 @@ static void testMetadata(const node_case_t *c)
     require(node.hash_type == calcHashBytes(c->type_name, stringLength(c->type_name)), "node type hash mismatch");
     require(node.version == 0001, "node version changed");
     require(node.flags == kNodeFlagNone, "node flags changed");
-    require(node.required_padding_left == kFakeTcpHeaderWireRequiredPaddingLeft && node.required_padding_left == 60,
-            "node does not advertise the 60-byte fake TCP padding");
+    require(node.required_padding_left == kFakeTcpHeaderWireRequiredPaddingLeft && node.required_padding_left == 61,
+            "node does not advertise the 61-byte framing padding");
     require(node.layer_group == kNodeLayer3 && node.layer_group_prev_node == kNodeLayer3 &&
                 node.layer_group_next_node == kNodeLayer3,
             "node is not a Layer-3 packet transform between Layer-3 neighbours");
@@ -121,7 +121,7 @@ static void requireDefaults(const faketcpheader_wire_config_t *wire)
 
 static void testDefaults(const node_case_t *c)
 {
-    const char *const fixtures[] = {"{\"payload-protocol\":6}", "{\"payload-protocol\":17}"};
+    const char *const fixtures[] = {NULL, "{}", "{\"window\":65535}"};
     for (size_t i = 0; i < ARRAY_SIZE(fixtures); ++i)
     {
         tunnel_t *t = createWithSettings(c, fixtures[i]);
@@ -132,18 +132,16 @@ static void testDefaults(const node_case_t *c)
         require(t->onDestroy == tunnelDefaultOnDestroy, "constructor replaced the default destroy");
         require(t->lstate_size == 0, "packet transform must not reserve line state");
         requireDefaults(c->wire(t));
-        require(c->wire(t)->payload_protocol == (i == 0 ? 6 : 17), "required native protocol was not loaded");
         destroyTunnel(t);
     }
 }
 
 static void testConfigured(const node_case_t *c)
 {
-    tunnel_t *t = createWithSettings(
-        c,
-        "{\"payload-protocol\":6,\"server-port\":443,\"client-port\":50000,\"client-port-count\":1024,"
-        "\"sequence\":4294967295,\"acknowledgment\":7,\"window\":0,"
-        "\"urgent-pointer\":65535,\"options\":\"0101080a\"}");
+    tunnel_t *t = createWithSettings(c,
+                                     "{\"server-port\":443,\"client-port\":50000,\"client-port-count\":1024,"
+                                     "\"sequence\":4294967295,\"acknowledgment\":7,\"window\":0,"
+                                     "\"urgent-pointer\":65535,\"options\":\"0101080a\"}");
     require(t != NULL, "constructor refused a valid configuration");
     const faketcpheader_wire_config_t *wire = c->wire(t);
     require(wire->server_port == 443 && wire->client_port == 50000 && wire->client_port_count == 1024,
@@ -173,15 +171,14 @@ static void requireRejected(const node_case_t *c, const char *json, const char *
 
 static void testRejections(const node_case_t *c)
 {
-    const char *const bad_protocol[] = {NULL,
-                                        "{}",
+    const char *const bad_protocol[] = {"{\"payload-protocol\":6}",
+                                        "{\"payload-protocol\":17}",
                                         "{\"payload-protocol\":null}",
                                         "{\"payload-protocol\":6.5}",
                                         "{\"payload-protocol\":6.0}",
                                         "{\"payload-protocol\":6e0}",
                                         "{\"payload-protocol\":7}",
                                         "{\"payload-protocol\":16}",
-                                        "{\"window\":1}",
                                         "{\"payload-protocol\":\"17\"}",
                                         "{\"payload-protocol\":true}",
                                         "{\"payload-protocol\":false}",
@@ -198,15 +195,15 @@ static void testRejections(const node_case_t *c)
     for (size_t i = 0; i < ARRAY_SIZE(removed); ++i)
     {
         char json[96];
-        snprintf(json, sizeof(json), "{\"payload-protocol\":17,\"%s\":1}", removed[i]);
+        snprintf(json, sizeof(json), "{\"%s\":1}", removed[i]);
         requireRejected(c, json, removed[i]);
     }
 
-    requireRejected(c, "{\"payload-protocol\":17,\"client-port-count\":1025}", "client-port-count");
-    requireRejected(c, "{\"payload-protocol\":17,\"server-port\":0}", "server-port");
-    requireRejected(c, "{\"payload-protocol\":17,\"window\":65536}", "window");
-    requireRejected(c, "{\"payload-protocol\":17,\"server-port\":40001}", "server-port");
-    requireRejected(c, "{\"payload-protocol\":17,\"options\":\"010101\"}", "options");
+    requireRejected(c, "{\"client-port-count\":1025}", "client-port-count");
+    requireRejected(c, "{\"server-port\":0}", "server-port");
+    requireRejected(c, "{\"window\":65536}", "window");
+    requireRejected(c, "{\"server-port\":40001}", "server-port");
+    requireRejected(c, "{\"options\":\"010101\"}", "options");
 
     char expected[128];
     snprintf(expected, sizeof(expected), "JSON Error: %s->settings : expected an object", c->type_name);
@@ -277,8 +274,13 @@ static void makeNative(uint8_t *packet, uint8_t protocol)
         PUT_BE32(packet + 24, 0x87654321U);
         PUT_BE32(packet + 28, 0xfedcba98U);
     }
-    else
+    else if (protocol == 17)
         PUT_BE16(packet + 24, 60);
+    else if (protocol == 1)
+    {
+        packet[20] = 8; /* ICMP echo request; addresses are outside its checksum. */
+        packet[21] = 0;
+    }
     for (unsigned i = 40; i < 80; ++i)
         packet[i] = (uint8_t) i;
     require(calcFullPacketChecksum(packet, 80), "native fixture checksum");
@@ -286,7 +288,7 @@ static void makeNative(uint8_t *packet, uint8_t protocol)
 static sbuf_t *pooledPacket(line_t *line, const uint8_t *packet, uint32_t length)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
-    require(sbufGetLeftCapacity(buf) >= 60, "fixture did not advertise fake TCP headroom");
+    require(sbufGetLeftCapacity(buf) >= 61, "fixture did not advertise framing headroom");
     sbufSetLength(buf, length);
     memoryCopy(sbufGetMutablePtr(buf), packet, length);
     return buf;
@@ -302,18 +304,17 @@ static void requireForwarded(bool upstream, line_t *line, sbuf_t *buf)
 static void testPayloadCallbacks(const node_case_t *c)
 {
     twf_worker_env_t env;
-    twfWorkerEnvSetup(&env, 8192, 60);
+    twfWorkerEnvSetup(&env, 8192, 61);
     line_t        *line    = twfLineCreate(0);
     line_t        *lines[] = {line};
     tunnel_chain_t chain = {.workers_count = 1, .contains_packet_node = true, .finalized = true, .packet_lines = lines};
     tunnel_t      *prev = recordingTunnel(), *next = recordingTunnel();
     uint8_t        packet[80];
-    for (unsigned p = 0; p < 2; ++p)
+    tunnel_t      *t           = createWithSettings(c, NULL);
+    const uint8_t  protocols[] = {6, 17, 1, 253, 17, 6, 253, 1};
+    for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
     {
-        const uint8_t protocol = p == 0 ? 6 : 17;
-        char          settings[64];
-        snprintf(settings, sizeof(settings), "{\"payload-protocol\":%u}", protocol);
-        tunnel_t *t = createWithSettings(c, settings);
+        const uint8_t protocol = protocols[p];
         require(t != NULL, "callback fixture constructor");
         t->chain = &chain;
         tunnelBind(prev, t);
@@ -342,7 +343,9 @@ static void testPayloadCallbacks(const node_case_t *c)
             require(twfRecycleCount() == recycled, "successful forwarding recycled a transferred buffer");
             if (encoding)
             {
-                require(sbufGetLength(buf) == 100, "callback did not insert exactly fake TCP");
+                require(sbufGetLength(buf) == 101, "callback did not insert fake TCP and one protocol byte");
+                require(((const uint8_t *) sbufGetRawPtr(buf))[40] == protocol,
+                        "callback did not tag the actual native protocol");
                 require(faketcpheaderWireDecode(c->wire(t),
                                                 side == kFakeTcpHeaderWireClient ? kFakeTcpHeaderWireServer
                                                                                  : kFakeTcpHeaderWireClient,
@@ -365,9 +368,37 @@ static void testPayloadCallbacks(const node_case_t *c)
             require(twfRecycleCount() == refused_recycles + 1, "refused payload was not recycled exactly once");
             twfRequireLastRecycle(buf, lineGetBufferPool(line), "refusal used another line's pool");
             require(lineIsAlive(line), "refusal destroyed packet line");
+
+            const uint16_t fragments[] = {0x2000, 0x2001, 0x0001};
+            for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
+            {
+                for (unsigned repair = 0; repair < 2; ++repair)
+                {
+                    buf = pooledPacket(line, packet, sizeof(packet));
+                    if (! encoding)
+                        require(faketcpheaderWireEncode(c->wire(t),
+                                                        side == kFakeTcpHeaderWireClient ? kFakeTcpHeaderWireServer
+                                                                                         : kFakeTcpHeaderWireClient,
+                                                        buf) == kFakeTcpHeaderWireOk,
+                                "fragmented carrier fixture");
+                    PUT_BE16((uint8_t *) sbufGetMutablePtr(buf) + 6, fragments[f]);
+                    sbufSetRecalculateChecksum(buf, repair != 0);
+                    const uint32_t fragment_recycles = twfRecycleCount();
+                    resetForwarding();
+                    if (upstream)
+                        t->fnPayloadU(t, line, buf);
+                    else
+                        t->fnPayloadD(t, line, buf);
+                    require(forwarded_up == 0 && forwarded_down == 0 && unexpected_callbacks == 0,
+                            "fragment emitted a neighbor callback");
+                    require(twfRecycleCount() == fragment_recycles + 1, "fragment was not recycled exactly once");
+                    twfRequireLastRecycle(buf, lineGetBufferPool(line), "fragment refusal used another pool");
+                    require(lineIsAlive(line), "fragment refusal destroyed packet line");
+                }
+            }
         }
-        destroyTunnel(t);
     }
+    destroyTunnel(t);
     twfLineDestroy(line); /* Bare fixture allocation; production chain owns packet-line teardown. */
     tunnelDestroy(prev);
     tunnelDestroy(next);
@@ -398,7 +429,7 @@ static tunnel_t *createOverride(const char *up_source, const char *up_dest, cons
 static void testIpOverriderComposition(const node_case_t *client, const node_case_t *server)
 {
     twf_worker_env_t env;
-    twfWorkerEnvSetup(&env, 8192, 120);
+    twfWorkerEnvSetup(&env, 8192, 122);
     line_t        *line    = twfLineCreate(0);
     line_t        *lines[] = {line};
     tunnel_chain_t chain = {.workers_count = 1, .contains_packet_node = true, .finalized = true, .packet_lines = lines};
@@ -406,12 +437,11 @@ static void testIpOverriderComposition(const node_case_t *client, const node_cas
     tunnel_t      *before  = createOverride("192.0.2.1", "192.0.2.2", "192.0.2.2", "192.0.2.1");
     tunnel_t      *between = createOverride("198.51.100.1", "198.51.100.2", "198.51.100.2", "198.51.100.1");
     tunnel_t      *after   = createOverride("203.0.113.1", "203.0.113.2", "203.0.113.2", "203.0.113.1");
-    for (unsigned p = 0; p < 2; ++p)
+    tunnel_t      *c = createWithSettings(client, NULL), *s = createWithSettings(server, "{}");
+    const uint8_t  protocols[] = {6, 17, 1, 253};
+    for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
     {
-        const uint8_t protocol = p == 0 ? 6 : 17;
-        char          settings[64];
-        snprintf(settings, sizeof(settings), "{\"payload-protocol\":%u}", protocol);
-        tunnel_t *c = createWithSettings(client, settings), *s = createWithSettings(server, settings);
+        const uint8_t protocol = protocols[p];
         require(c != NULL && s != NULL, "composition constructors");
         c->chain = s->chain = &chain;
         tunnelBind(prev, before);
@@ -443,9 +473,9 @@ static void testIpOverriderComposition(const node_case_t *client, const node_cas
             require(! sbufGetRecalculateChecksum(buf), "composition left checksum repair pending");
             lineReuseBuffer(line, buf);
         }
-        destroyTunnel(c);
-        destroyTunnel(s);
     }
+    destroyTunnel(c);
+    destroyTunnel(s);
     before->onDestroy(before, wwLifecycleStartupRollback());
     between->onDestroy(between, wwLifecycleStartupRollback());
     after->onDestroy(after, wwLifecycleStartupRollback());

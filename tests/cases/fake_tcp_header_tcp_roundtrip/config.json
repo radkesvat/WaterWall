@@ -33,7 +33,7 @@
         "source-ipv4": "10.90.0.1",
         "target-address": "10.90.0.2",
         "port": 9001,
-        "mtu": 1480,
+        "mtu": 1479,
         "domain-strategy": "only-ipv4"
       },
       "next": "fake-client"
@@ -42,9 +42,7 @@
       "name": "fake-client",
       "type": "FakeTcpHeaderClient",
       "next": "client-addresses",
-      "settings": {
-        "payload-protocol": 6
-      }
+      "settings": {}
     },
     {
       "name": "client-addresses",
@@ -96,16 +94,14 @@
       "name": "fake-server",
       "type": "FakeTcpHeaderServer",
       "next": "packets-to-connection",
-      "settings": {
-        "payload-protocol": 6
-      }
+      "settings": {}
     },
     {
       "name": "packets-to-connection",
       "type": "PacketsToConnection",
       "next": "target-connector",
       "settings": {
-        "mtu": 1480
+        "mtu": 1479
       }
     },
     {

@@ -1,10 +1,11 @@
 # fake_tcp_header_tcp_roundtrip
 
 Tests real native TCP connection establishment and bidirectional verified
-payload through FakeTcpHeaderClient and FakeTcpHeaderServer. Both require
-`payload-protocol: 6`: the existing TCP header remains after the inserted fake
-TCP header, within one IPv4 packet. Neither node negotiates a carrier connection
-or adds reliability; the native TCP endpoints provide the handshake and stream.
+payload through FakeTcpHeaderClient and FakeTcpHeaderServer. Each encoded
+packet records protocol 6 in a byte after fake TCP/options, followed by the
+original TCP header and body within one IPv4 packet. No protocol setting is
+needed. Neither node negotiates a carrier connection or adds reliability; the
+native TCP endpoints provide the handshake and stream.
 
 ```text
 TesterClient -> TcpConnector ~> TcpListener -> ConnectionToPackets
@@ -21,9 +22,10 @@ Receive-side rewrites precede decode. Hidden native checksums normalize address
 contributions to zero during encoding and restore the current native addresses
 after decode, so both CTP routing and reply delivery retain their original tuple.
 
-The peers use no fake TCP options, and CTP's 1480-byte native IP MTU leaves
-20 bytes below the 1500-byte final-packet limit. Complete unfragmented IPv4
-packets are required; upstream device reassembly handles fragmented input.
+The peers use no fake TCP options, and CTP's 1479-byte native IP MTU leaves
+21 bytes (20 for fake TCP and one for the protocol byte) below the 1500-byte
+final-packet limit. Complete unfragmented IPv4 packets are required; upstream
+device reassembly handles fragmented input.
 This case uses the small existing CTP TCP bridge workload with one worker.
 
 CTest: `waterwall.fake_tcp_header_tcp_roundtrip`. Both FakeTcpHeader nodes,
@@ -33,4 +35,9 @@ completion marker and runner exit status; missing connection establishment,
 incorrect bytes, early exit or timeout fail. The privileged
 `waterwall.fake_tcp_header_raw_tcp_roundtrip` additionally captures real native
 SYN/SYN-ACK/ACK and data through two raw peers, independently checks the
-IPv4/fake-TCP/native-TCP layout and both checksum layers, and verifies cleanup.
+IPv4/fake-TCP/protocol-byte/native-TCP layout and both checksum layers, and
+verifies cleanup.
+
+The direct-TUN `waterwall.fake_tcp_header_mixed_packet_roundtrip` case separately
+exercises TCP, UDP, ICMP and opaque protocol 253 on the same running pair in both
+directions. This CTP/PTC case remains TCP-only because of its endpoints.

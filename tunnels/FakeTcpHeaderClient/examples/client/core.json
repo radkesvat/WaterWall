@@ -8,7 +8,7 @@
   "misc": {
     "workers": 2,
     "ram-profile": "client",
-    "mtu": 1480,
+    "mtu": 1479,
     "try-enabling-bbr": false
   }
 }

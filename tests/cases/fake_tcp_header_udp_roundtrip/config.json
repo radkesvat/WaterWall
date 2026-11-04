@@ -62,7 +62,7 @@
       "type": "ConnectionToPackets",
       "settings": {
         "source-ipv4": "10.90.0.1",
-        "mtu": 1476,
+        "mtu": 1475,
         "domain-strategy": "only-ipv4"
       },
       "next": "fake-client"
@@ -74,8 +74,7 @@
       "settings": {
         "sequence": 12345,
         "acknowledgment": 67890,
-        "options": "01010101",
-        "payload-protocol": 17
+        "options": "01010101"
       }
     },
     {
@@ -131,8 +130,7 @@
       "settings": {
         "sequence": 67890,
         "acknowledgment": 12345,
-        "options": "01010101",
-        "payload-protocol": 17
+        "options": "01010101"
       }
     },
     {
@@ -140,7 +138,7 @@
       "type": "PacketsToConnection",
       "next": "target-connector",
       "settings": {
-        "mtu": 1476
+        "mtu": 1475
       }
     },
     {

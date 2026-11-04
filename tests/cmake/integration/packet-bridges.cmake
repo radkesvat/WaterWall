@@ -59,6 +59,15 @@ endif()
 
 if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
   if(TARGET RawSocket AND TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer AND TARGET IpOverrider
+     AND TARGET TunDevice)
+    add_test(NAME waterwall.fake_tcp_header_mixed_packet_roundtrip
+      COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+        "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_mixed_packet_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+    set_tests_properties(waterwall.fake_tcp_header_mixed_packet_roundtrip PROPERTIES
+      TIMEOUT 90 LABELS "integration;linux;privileged;tun;capture;fake-tcp;network-isolated")
+  endif()
+  if(TARGET RawSocket AND TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer AND TARGET IpOverrider
      AND TARGET ConnectionToPackets AND TARGET PacketsToConnection
      AND TARGET UdpListener AND TARGET UdpConnector)
     add_test(NAME waterwall.fake_tcp_header_raw_roundtrip

@@ -1,12 +1,12 @@
 /*
- * Covers: single-IPv4 FakeTcpHeader wire layout, native TCP/UDP checksum normalization, bounds and settings.
- * Contract: insert/remove only fake TCP after the actual IHL; preserve native checksum residuals and current IPs.
- * Every refusal preserves bytes including headroom, cursor, length and checksum intent.
- * Cases: known answers; both protocols/orientations; IHL/options/alignment matrix; address composition;
- * corruption, repair and checksum-zero representations; native/carrier framing, fragments, limits and settings.
- * Setup: in-memory sbufs with an independent RFC 1071 serializer/checksum oracle. No production checksum or
- * serialization helper constructs expected bytes. The node fixture covers actual callbacks and IpOverrider.
- * CTest: waterwall.fake_tcp_header_wire_unit (Debug and Release).
+ * Covers: single-IPv4 FakeTcpHeader protocol tag, TCP/UDP normalization, ICMP/opaque carriage, bounds and settings.
+ * Contract: insert/remove fake TCP and the protocol byte after the actual IHL; preserve native checksum residuals and
+ * current IPs. Every refusal preserves bytes including headroom, cursor, length and checksum intent. Cases: known
+ * answers; both protocols/orientations; IHL/options/alignment matrix; address composition; corruption, repair and
+ * checksum-zero representations; native/carrier framing, fragments, limits and settings. Setup: in-memory sbufs with an
+ * independent RFC 1071 serializer/checksum oracle. No production checksum or serialization helper constructs expected
+ * bytes. The node fixture covers actual callbacks and IpOverrider. CTest: waterwall.fake_tcp_header_wire_unit (Debug
+ * and Release).
  */
 #include "FakeTcpHeaderCommon/faketcpheader_wire.h"
 
@@ -59,7 +59,7 @@ static uint16_t totalLength(const uint8_t *p)
 }
 static uint16_t checksumOffset(uint8_t protocol)
 {
-    return protocol == 6 ? 16 : 6;
+    return protocol == 6 ? 16 : protocol == 17 ? 6 : 2;
 }
 static uint16_t nativeLength(const uint8_t *native, uint16_t available, uint8_t protocol)
 {
@@ -69,8 +69,8 @@ static uint16_t nativeLength(const uint8_t *native, uint16_t available, uint8_t 
 static uint16_t oracleResidual(const uint8_t *native, uint16_t available, uint8_t protocol, const uint8_t *addresses)
 {
     const uint16_t length = nativeLength(native, available, protocol);
-    uint32_t       sum    = protocol + length;
-    if (addresses != NULL)
+    uint32_t       sum    = protocol == 1 ? 0 : protocol + length;
+    if (protocol != 1 && addresses != NULL)
         sum = oracleAdd(sum, addresses, 8);
     return oracleFold(oracleAdd(sum, native, length));
 }
@@ -93,7 +93,8 @@ static void oracleSetTransport(uint8_t *native, uint16_t available, uint8_t prot
 static void oracleSetChecksums(uint8_t *p)
 {
     oracleIpChecksum(p);
-    oracleSetTransport(p + headerLength(p), (uint16_t) (totalLength(p) - headerLength(p)), p[9], p + 12);
+    if (p[9] == 1 || p[9] == 6 || p[9] == 17)
+        oracleSetTransport(p + headerLength(p), (uint16_t) (totalLength(p) - headerLength(p)), p[9], p + 12);
 }
 
 static bool oracleIpValid(const uint8_t *p)
@@ -123,7 +124,7 @@ static void oracleAdjustAddresses(uint8_t *native, uint8_t protocol, const uint8
     PUT_BE16(native + checksumOffset(protocol), value);
 }
 
-static faketcpheader_wire_config_t baseConfig(uint8_t protocol)
+static faketcpheader_wire_config_t baseConfig(void)
 {
     return (faketcpheader_wire_config_t) {.sequence          = 0x01020304U,
                                           .acknowledgment    = 0x0a0b0c0dU,
@@ -131,8 +132,7 @@ static faketcpheader_wire_config_t baseConfig(uint8_t protocol)
                                           .urgent_pointer    = 7,
                                           .server_port       = 40000,
                                           .client_port       = 40001,
-                                          .client_port_count = 16,
-                                          .payload_protocol  = protocol};
+                                          .client_port_count = 16};
 }
 
 static void setOptions(faketcpheader_wire_config_t *config, uint8_t length)
@@ -144,7 +144,7 @@ static void setOptions(faketcpheader_wire_config_t *config, uint8_t length)
 
 static uint16_t buildNative(uint8_t *out, uint8_t protocol, uint8_t ihl, uint16_t length)
 {
-    const uint16_t minimum = (uint16_t) (ihl + (protocol == 6 ? 24 : 8));
+    const uint16_t minimum = (uint16_t) (ihl + (protocol == 6 ? 24 : protocol == 1 || protocol == 17 ? 8 : 0));
     require(length >= minimum && length <= kTestPacketCapacity, "bad native fixture length");
     memoryZero(out, length);
     out[0] = (uint8_t) (0x40U | ihl / 4U);
@@ -159,8 +159,11 @@ static uint16_t buildNative(uint8_t *out, uint8_t protocol, uint8_t ihl, uint16_
     for (uint8_t i = 20; i < ihl; ++i)
         out[i] = (uint8_t) (0x80U + i);
     uint8_t *native = out + ihl;
-    PUT_BE16(native, 5000);
-    PUT_BE16(native + 2, 53);
+    if (protocol == 6 || protocol == 17)
+    {
+        PUT_BE16(native, 5000);
+        PUT_BE16(native + 2, 53);
+    }
     if (protocol == 6)
     {
         PUT_BE32(native + 4, 0x87654321U);
@@ -171,8 +174,14 @@ static uint16_t buildNative(uint8_t *out, uint8_t protocol, uint8_t ihl, uint16_
         PUT_BE16(native + 18, 17);
         PUT_BE32(native + 20, 0x01010101U);
     }
-    else
+    else if (protocol == 17)
         PUT_BE16(native + 4, (uint16_t) (length - ihl));
+    else if (protocol == 1)
+    {
+        native[0] = 8; /* Echo request, no IPv4-address pseudo-header. */
+        PUT_BE16(native + 4, 0x1234);
+        PUT_BE16(native + 6, 7);
+    }
     for (uint16_t i = minimum; i < length; ++i)
         out[i] = (uint8_t) (i * 37U + length);
     oracleSetChecksums(out);
@@ -187,10 +196,12 @@ static uint16_t oracleCarrier(uint8_t *out, const uint8_t *packet, const faketcp
     const uint16_t length = totalLength(packet);
     memoryCopy(out, packet, h);
     memoryZero(out + h, f);
-    memoryCopy(out + h + f, packet + h, length - h);
-    oracleAdjustAddresses(out + h + f, config->payload_protocol, packet + 12, NULL);
+    out[h + f] = packet[9];
+    memoryCopy(out + h + f + 1, packet + h, length - h);
+    if (packet[9] == 6 || packet[9] == 17)
+        oracleAdjustAddresses(out + h + f + 1, packet[9], packet + 12, NULL);
     out[9] = 6;
-    PUT_BE16(out + 2, (uint16_t) (length + f));
+    PUT_BE16(out + 2, (uint16_t) (length + f + 1));
     uint8_t *tcp = out + h;
     PUT_BE16(tcp, side == kFakeTcpHeaderWireClient ? config->client_port + index : config->server_port);
     PUT_BE16(tcp + 2, side == kFakeTcpHeaderWireClient ? config->server_port : config->client_port + index);
@@ -202,12 +213,12 @@ static uint16_t oracleCarrier(uint8_t *out, const uint8_t *packet, const faketcp
     PUT_BE16(tcp + 18, config->urgent_pointer);
     memoryCopy(tcp + 20, config->options, config->options_length);
     oracleSetChecksums(out);
-    return (uint16_t) (length + f);
+    return (uint16_t) (length + f + 1);
 }
 
 static sbuf_t *makeBuffer(const uint8_t *bytes, uint32_t length, uint32_t headroom)
 {
-    sbuf_t *buf = sbufCreateWithPadding(headroom + length + 1U, 0);
+    sbuf_t *buf = sbufCreateWithPadding(headroom + length, 0);
     require(sbufGetLeftCapacity(buf) == 0, "fixture starts with unexpected headroom");
     sbufSetLength(buf, headroom + length);
     memset(sbufGetMutablePtr(buf), 0xa5, headroom + length);
@@ -269,7 +280,6 @@ static void testResultNames(void)
 {
     const faketcpheader_wire_result_t results[] = {kFakeTcpHeaderWireOk,
                                                    kFakeTcpHeaderWireMalformedNative,
-                                                   kFakeTcpHeaderWireNativeProtocol,
                                                    kFakeTcpHeaderWireFragmented,
                                                    kFakeTcpHeaderWireOversizedNative,
                                                    kFakeTcpHeaderWireMissingHeadroom,
@@ -293,28 +303,77 @@ static const uint8_t kKnownNative6[]   = {0x46, 0xab, 0x00, 0x33, 0x12, 0x34, 0x
                                           0x00, 0x35, 0x87, 0x65, 0x43, 0x21, 0xfe, 0xdc, 0xba, 0x98, 0x60, 0x19, 0x30,
                                           0x39, 0xe2, 0x5a, 0x00, 0x11, 0x01, 0x01, 0x01, 0x01, 0x6b, 0x61, 0x74};
 static const uint8_t kKnownCarrier60[] = {
-    0x46, 0xab, 0x00, 0x4b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xca, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00,
+    0x46, 0xab, 0x00, 0x4c, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xc9, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00,
     0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18,
-    0x72, 0x10, 0xc5, 0x12, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x13, 0x88, 0x00, 0x35, 0x87, 0x65, 0x43, 0x21, 0xfe,
-    0xdc, 0xba, 0x98, 0x60, 0x19, 0x30, 0x39, 0xf6, 0x5d, 0x00, 0x11, 0x01, 0x01, 0x01, 0x01, 0x6b, 0x61, 0x74};
+    0x72, 0x10, 0xdf, 0xf0, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x06, 0x13, 0x88, 0x00, 0x35, 0x87, 0x65, 0x43, 0x21,
+    0xfe, 0xdc, 0xba, 0x98, 0x60, 0x19, 0x30, 0x39, 0xf6, 0x5d, 0x00, 0x11, 0x01, 0x01, 0x01, 0x01, 0x6b, 0x61, 0x74,
+};
 static const uint8_t kKnownCarrier61[] = {
-    0x46, 0xab, 0x00, 0x4b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xca, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00,
+    0x46, 0xab, 0x00, 0x4c, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xc9, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00,
     0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18,
-    0x72, 0x10, 0xc5, 0x12, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x13, 0x88, 0x00, 0x35, 0x87, 0x65, 0x43, 0x21, 0xfe,
-    0xdc, 0xba, 0x98, 0x60, 0x19, 0x30, 0x39, 0xf6, 0x5d, 0x00, 0x11, 0x01, 0x01, 0x01, 0x01, 0x6b, 0x61, 0x74};
+    0x72, 0x10, 0xdf, 0xf0, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x06, 0x13, 0x88, 0x00, 0x35, 0x87, 0x65, 0x43, 0x21,
+    0xfe, 0xdc, 0xba, 0x98, 0x60, 0x19, 0x30, 0x39, 0xf6, 0x5d, 0x00, 0x11, 0x01, 0x01, 0x01, 0x01, 0x6b, 0x61, 0x74,
+};
 static const uint8_t kKnownNative17[]   = {0x46, 0xab, 0x00, 0x23, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x11, 0x21, 0xe7,
                                            0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01,
                                            0x13, 0x88, 0x00, 0x35, 0x00, 0x0b, 0xf8, 0xb6, 0x6b, 0x61, 0x74};
-static const uint8_t kKnownCarrier170[] = {0x46, 0xab, 0x00, 0x3b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xda,
-                                           0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01,
-                                           0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
-                                           0x60, 0x18, 0x72, 0x10, 0xc5, 0x1d, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01,
-                                           0x13, 0x88, 0x00, 0x35, 0x00, 0x0b, 0x0c, 0xba, 0x6b, 0x61, 0x74};
-static const uint8_t kKnownCarrier171[] = {0x46, 0xab, 0x00, 0x3b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xda,
-                                           0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01,
-                                           0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
-                                           0x60, 0x18, 0x72, 0x10, 0xc5, 0x1d, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01,
-                                           0x13, 0x88, 0x00, 0x35, 0x00, 0x0b, 0x0c, 0xba, 0x6b, 0x61, 0x74};
+static const uint8_t kKnownCarrier170[] = {
+    0x46, 0xab, 0x00, 0x3c, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xd9, 0x0a, 0x00, 0x00,
+    0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02,
+    0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18, 0x72, 0x10, 0xd0, 0x00, 0x00, 0x07, 0x01,
+    0x01, 0x01, 0x01, 0x11, 0x13, 0x88, 0x00, 0x35, 0x00, 0x0b, 0x0c, 0xba, 0x6b, 0x61, 0x74,
+};
+static const uint8_t kKnownCarrier171[] = {
+    0x46, 0xab, 0x00, 0x3c, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xd9, 0x0a, 0x00, 0x00,
+    0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02,
+    0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18, 0x72, 0x10, 0xd0, 0x00, 0x00, 0x07, 0x01,
+    0x01, 0x01, 0x01, 0x11, 0x13, 0x88, 0x00, 0x35, 0x00, 0x0b, 0x0c, 0xba, 0x6b, 0x61, 0x74,
+};
+
+static const uint8_t kKnownNative1[] = {
+    0x46, 0xab, 0x00, 0x24, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x01, 0x21, 0xf6, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00,
+    0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x08, 0x00, 0x06, 0x63, 0x12, 0x34, 0x00, 0x07, 0x6b, 0x61, 0x74, 0x00,
+};
+static const uint8_t kKnownCarrier1_0[] = {
+    0x46, 0xab, 0x00, 0x3d, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xd8, 0x0a, 0x00, 0x00, 0x01,
+    0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02, 0x03, 0x04,
+    0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18, 0x72, 0x10, 0xc3, 0xff, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01,
+    0x01, 0x08, 0x00, 0x06, 0x63, 0x12, 0x34, 0x00, 0x07, 0x6b, 0x61, 0x74, 0x00,
+};
+static const uint8_t kKnownCarrier1_1[] = {
+    0x46, 0xab, 0x00, 0x3d, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xd8, 0x0a, 0x00, 0x00, 0x01,
+    0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02, 0x03, 0x04,
+    0x0a, 0x0b, 0x0c, 0x0d, 0x60, 0x18, 0x72, 0x10, 0xc3, 0xff, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01,
+    0x01, 0x08, 0x00, 0x06, 0x63, 0x12, 0x34, 0x00, 0x07, 0x6b, 0x61, 0x74, 0x00,
+};
+static const uint8_t kKnownNative0[] = {
+    0x46, 0xab, 0x00, 0x1b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x00, 0x22, 0x00, 0x0a, 0x00,
+    0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x00, 0xff, 0x6b,
+};
+static const uint8_t kKnownCarrier0_0[] = {
+    0x46, 0xab, 0x00, 0x34, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xe1, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00,
+    0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
+    0x60, 0x18, 0x72, 0x10, 0xc5, 0x9c, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0xff, 0x6b,
+};
+static const uint8_t kKnownCarrier0_1[] = {
+    0x46, 0xab, 0x00, 0x34, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xe1, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00,
+    0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
+    0x60, 0x18, 0x72, 0x10, 0xc5, 0x9c, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0x00, 0x00, 0xff, 0x6b,
+};
+static const uint8_t kKnownNative255[] = {
+    0x46, 0xab, 0x00, 0x1b, 0x12, 0x34, 0x40, 0x00, 0x2f, 0xff, 0x21, 0x01, 0x0a, 0x00,
+    0x00, 0x01, 0x0a, 0x00, 0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x00, 0xff, 0x6b,
+};
+static const uint8_t kKnownCarrier255_0[] = {
+    0x46, 0xab, 0x00, 0x34, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xe1, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00,
+    0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x41, 0x9c, 0x40, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
+    0x60, 0x18, 0x72, 0x10, 0xc6, 0x9b, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0xff, 0x00, 0xff, 0x6b,
+};
+static const uint8_t kKnownCarrier255_1[] = {
+    0x46, 0xab, 0x00, 0x34, 0x12, 0x34, 0x40, 0x00, 0x2f, 0x06, 0x21, 0xe1, 0x0a, 0x00, 0x00, 0x01, 0x0a, 0x00,
+    0x00, 0x02, 0x01, 0x01, 0x01, 0x01, 0x9c, 0x40, 0x9c, 0x41, 0x01, 0x02, 0x03, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,
+    0x60, 0x18, 0x72, 0x10, 0xc6, 0x9b, 0x00, 0x07, 0x01, 0x01, 0x01, 0x01, 0xff, 0x00, 0xff, 0x6b,
+};
 
 static void testKnownAnswers(void)
 {
@@ -341,14 +400,30 @@ static void testKnownAnswers(void)
          sizeof(kKnownNative17),
          kKnownCarrier171,
          sizeof(kKnownCarrier171)},
+        {1, kFakeTcpHeaderWireClient, kKnownNative1, sizeof(kKnownNative1), kKnownCarrier1_0, sizeof(kKnownCarrier1_0)},
+        {1, kFakeTcpHeaderWireServer, kKnownNative1, sizeof(kKnownNative1), kKnownCarrier1_1, sizeof(kKnownCarrier1_1)},
+        {0, kFakeTcpHeaderWireClient, kKnownNative0, sizeof(kKnownNative0), kKnownCarrier0_0, sizeof(kKnownCarrier0_0)},
+        {0, kFakeTcpHeaderWireServer, kKnownNative0, sizeof(kKnownNative0), kKnownCarrier0_1, sizeof(kKnownCarrier0_1)},
+        {255,
+         kFakeTcpHeaderWireClient,
+         kKnownNative255,
+         sizeof(kKnownNative255),
+         kKnownCarrier255_0,
+         sizeof(kKnownCarrier255_0)},
+        {255,
+         kFakeTcpHeaderWireServer,
+         kKnownNative255,
+         sizeof(kKnownNative255),
+         kKnownCarrier255_1,
+         sizeof(kKnownCarrier255_1)},
     };
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
-        faketcpheader_wire_config_t config = baseConfig(cases[i].protocol);
+        faketcpheader_wire_config_t config = baseConfig();
         config.client_port_count           = 1;
         config.options_length              = 4;
         memset(config.options, 1, 4);
-        sbuf_t *buf = encodeOk(&config, cases[i].side, cases[i].native, (uint32_t) cases[i].length, 24, false);
+        sbuf_t *buf = encodeOk(&config, cases[i].side, cases[i].native, (uint32_t) cases[i].length, 25, false);
         requireResult(sbufGetLength(buf), cases[i].encoded, "known-answer length");
         requireBytes(bufferBytes(buf), cases[i].carrier, cases[i].encoded, "known-answer single-IP bytes");
         decodeOk(&config, peerSide(cases[i].side), buf, cases[i].native, (uint32_t) cases[i].length);
@@ -358,29 +433,41 @@ static void testKnownAnswers(void)
 
 static void testWireAndMovement(void)
 {
+    const uint8_t protocols[] = {6, 17, 1, 0, 255, 253};
     const uint8_t ihls[] = {20, 24, 60}, options[] = {0, 4, 40};
     uint8_t       packet[kTestPacketCapacity], expected[kTestPacketCapacity];
-    for (size_t p = 0; p < ARRAY_SIZE(kProtocols); ++p)
+    for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
         for (size_t h = 0; h < ARRAY_SIZE(ihls); ++h)
             for (size_t o = 0; o < ARRAY_SIZE(options); ++o)
                 for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
                 {
-                    faketcpheader_wire_config_t config = baseConfig(kProtocols[p]);
+                    faketcpheader_wire_config_t config = baseConfig();
                     setOptions(&config, options[o]);
-                    const uint16_t f       = (uint16_t) (20U + options[o]);
-                    const uint16_t length  = buildNative(packet, kProtocols[p], ihls[h], (uint16_t) (ihls[h] + 43U));
-                    const uint16_t index   = faketcpheaderWirePortIndex(&config, packet, length);
-                    const uint16_t encoded = oracleCarrier(expected, packet, &config, kSides[s], index);
+                    const uint16_t overhead = (uint16_t) (21U + options[o]);
+                    const uint16_t length   = buildNative(packet, protocols[p], ihls[h], (uint16_t) (ihls[h] + 43U));
+                    const uint16_t index    = faketcpheaderWirePortIndex(&config, packet, length);
+                    const uint16_t encoded  = oracleCarrier(expected, packet, &config, kSides[s], index);
                     for (uint32_t alignment = 0; alignment < kTestAlignments; ++alignment)
                     {
-                        sbuf_t *buf = encodeOk(&config, kSides[s], packet, length, f + alignment, false);
+                        sbuf_t *buf = encodeOk(&config, kSides[s], packet, length, overhead + alignment, false);
                         requireResult(sbufGetLength(buf), encoded, "single-header carrier length");
                         requireBytes(bufferBytes(buf), expected, encoded, "independent carrier serialization");
                         const uint8_t *carrier = bufferBytes(buf);
                         require(oracleIpValid(carrier) && oracleTransportValid(carrier),
                                 "visible checksums fail oracle");
-                        require(oracleResidual(carrier + ihls[h] + f, length - ihls[h], kProtocols[p], NULL) == 0xffffU,
-                                "hidden native checksum was not normalized to zero addresses");
+                        require(carrier[ihls[h] + overhead - 1] == protocols[p],
+                                "protocol tag is not after actual fake TCP header");
+                        require((uint16_t) ((carrier[ihls[h] + 12] >> 4U) * 4U) == overhead - 1,
+                                "protocol tag counted in TCP data offset");
+                        if (protocols[p] == 6 || protocols[p] == 17)
+                            require(oracleResidual(
+                                        carrier + ihls[h] + overhead, length - ihls[h], protocols[p], NULL) == 0xffffU,
+                                    "hidden native checksum was not normalized to zero addresses");
+                        else
+                            requireBytes(carrier + ihls[h] + overhead,
+                                         packet + ihls[h],
+                                         length - ihls[h],
+                                         "ICMP/opaque body changed while encoding");
                         /* A peer's outgoing options do not control received data offset. */
                         faketcpheader_wire_config_t peer = config;
                         setOptions(&peer, options[(o + 1) % ARRAY_SIZE(options)]);
@@ -392,7 +479,7 @@ static void testWireAndMovement(void)
                                            true,
                                            packet,
                                            length,
-                                           f - 1U,
+                                           overhead - 1U,
                                            kFakeTcpHeaderWireMissingHeadroom,
                                            "one-byte-short headroom");
                 }
@@ -409,7 +496,7 @@ static void testHeaderAndAddressComposition(void)
                 for (size_t a = 0; a < ARRAY_SIZE(source_cases); ++a)
                     for (unsigned rewrite = 0; rewrite < 4; ++rewrite)
                     {
-                        const faketcpheader_wire_config_t config = baseConfig(kProtocols[p]);
+                        const faketcpheader_wire_config_t config = baseConfig();
                         const uint16_t                    length = buildNative(packet, kProtocols[p], 60, 111);
                         PUT_BE32(packet + 12, source_cases[a]);
                         PUT_BE32(packet + 16, dest_cases[a]);
@@ -447,15 +534,15 @@ static void testCorruptionRepairAndZeros(void)
     for (size_t p = 0; p < ARRAY_SIZE(kProtocols); ++p)
         for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
         {
-            const faketcpheader_wire_config_t config = baseConfig(kProtocols[p]);
-            const uint16_t                    h = 24, f = 20;
+            const faketcpheader_wire_config_t config = baseConfig();
+            const uint16_t                    h = 24, overhead = 21;
             const uint16_t                    length = buildNative(packet, kProtocols[p], h, 89);
             packet[h + checksumOffset(kProtocols[p])] ^= 0x5a;
             packet[10] ^= 0xa5;
             const uint16_t residual = oracleResidual(packet + h, length - h, kProtocols[p], packet + 12);
             require(residual != 0xffffU, "invalid native checksum fixture was valid");
             sbuf_t *buf = encodeOk(&config, kSides[s], packet, length, 60, false);
-            require(oracleResidual(bufferBytes(buf) + h + f, length - h, kProtocols[p], NULL) == residual,
+            require(oracleResidual(bufferBytes(buf) + h + overhead, length - h, kProtocols[p], NULL) == residual,
                     "normalization repaired native corruption");
             uint8_t *wire = sbufGetMutablePtr(buf);
             memoryCopy(expected, packet, length);
@@ -479,7 +566,7 @@ static void testCorruptionRepairAndZeros(void)
             /* Visible repair intent authorizes neither a hidden payload repair nor hidden checksum repair. */
             const uint16_t valid_length = buildNative(packet, kProtocols[p], h, 89);
             const uint16_t wire_length  = oracleCarrier(carrier, packet, &config, kSides[s], 3);
-            carrier[h + f + 30] ^= 0x80;
+            carrier[h + overhead + 30] ^= 0x80;
             expectRefusal(&config,
                           peerSide(kSides[s]),
                           false,
@@ -500,9 +587,10 @@ static void testCorruptionRepairAndZeros(void)
             PUT_BE16(packet + h + checksumOffset(kProtocols[p]), 0);
             buf = encodeOk(&config, kSides[s], packet, length, 60, false);
             if (kProtocols[p] == 17)
-                require(GET_BE16(bufferBytes(buf) + h + f + 6) == 0, "disabled UDP checksum enabled by normalization");
+                require(GET_BE16(bufferBytes(buf) + h + overhead + 6) == 0,
+                        "disabled UDP checksum enabled by normalization");
             else
-                require(GET_BE16(bufferBytes(buf) + h + f + 16) != 0, "TCP zero mistaken for disabled checksum");
+                require(GET_BE16(bufferBytes(buf) + h + overhead + 16) != 0, "TCP zero mistaken for disabled checksum");
             decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
             sbufDestroy(buf);
 
@@ -515,7 +603,7 @@ static void testCorruptionRepairAndZeros(void)
             PUT_BE16(native + adjust_at, (uint16_t) ~oracleResidual(native, 90 - h, kProtocols[p], NULL));
             oracleSetTransport(native, 90 - h, kProtocols[p], packet + 12);
             buf                       = encodeOk(&config, kSides[s], packet, 90, 60, false);
-            const uint16_t normalized = GET_BE16(bufferBytes(buf) + h + f + checksumOffset(kProtocols[p]));
+            const uint16_t normalized = GET_BE16(bufferBytes(buf) + h + overhead + checksumOffset(kProtocols[p]));
             require(normalized == (kProtocols[p] == 17 ? 0xffffU : 0), "normalized arithmetic zero representation");
             decodeOk(&config, peerSide(kSides[s]), buf, NULL, 90);
             require(oracleTransportValid(bufferBytes(buf)), "zero-checksum restoration invalid");
@@ -526,14 +614,14 @@ static void testCorruptionRepairAndZeros(void)
 static void testUdpPadding(void)
 {
     uint8_t                           packet[100];
-    const faketcpheader_wire_config_t config = baseConfig(17);
+    const faketcpheader_wire_config_t config = baseConfig();
     buildNative(packet, 17, 24, sizeof(packet));
     PUT_BE16(packet + 24 + 4, 35); /* Trailing IP bytes are outside the UDP datagram checksum. */
     oracleSetChecksums(packet);
     for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
     {
         sbuf_t *buf = encodeOk(&config, kSides[s], packet, sizeof(packet), 60, false);
-        require(oracleResidual(bufferBytes(buf) + 44, sizeof(packet) - 24, 17, NULL) == 0xffffU,
+        require(oracleResidual(bufferBytes(buf) + 45, sizeof(packet) - 24, 17, NULL) == 0xffffU,
                 "UDP normalization used padded IP payload length");
         decodeOk(&config, peerSide(kSides[s]), buf, packet, sizeof(packet));
         sbufDestroy(buf);
@@ -547,7 +635,7 @@ static void testPortMapping(void)
     for (size_t p = 0; p < ARRAY_SIZE(kProtocols); ++p)
         for (size_t c = 0; c < ARRAY_SIZE(counts); ++c)
         {
-            faketcpheader_wire_config_t config = baseConfig(kProtocols[p]);
+            faketcpheader_wire_config_t config = baseConfig();
             config.client_port                 = 50000;
             config.client_port_count           = counts[c];
             for (unsigned i = 0; i < 32; ++i)
@@ -584,19 +672,19 @@ static void testLimitsAndFraming(void)
         for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
             for (size_t o = 0; o < ARRAY_SIZE(options); ++o)
             {
-                faketcpheader_wire_config_t config = baseConfig(kProtocols[p]);
+                faketcpheader_wire_config_t config = baseConfig();
                 setOptions(&config, options[o]);
-                const uint16_t f = (uint16_t) (20 + options[o]);
-                require(faketcpheaderWireOverhead(&config) == f &&
-                            faketcpheaderWireMaxNativeLength(&config) == 1500U - f,
+                const uint16_t overhead = (uint16_t) (21 + options[o]);
+                require(faketcpheaderWireOverhead(&config) == overhead &&
+                            faketcpheaderWireMaxNativeLength(&config) == 1500U - overhead,
                         "native MTU/overhead arithmetic");
-                uint16_t length = buildNative(packet, kProtocols[p], 60, (uint16_t) (1500 - f));
-                sbuf_t  *buf    = encodeOk(&config, kSides[s], packet, length, f, false);
+                uint16_t length = buildNative(packet, kProtocols[p], 60, (uint16_t) (1500 - overhead));
+                sbuf_t  *buf    = encodeOk(&config, kSides[s], packet, length, overhead, false);
                 require(sbufGetLength(buf) == 1500 && sbufGetLeftCapacity(buf) == 0,
                         "exact carrier size/headroom limit");
                 decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
                 sbufDestroy(buf);
-                length = buildNative(packet, kProtocols[p], 20, (uint16_t) (1501 - f));
+                length = buildNative(packet, kProtocols[p], 20, (uint16_t) (1501 - overhead));
                 expectRefusalAnyIntent(&config,
                                        kSides[s],
                                        true,
@@ -673,26 +761,6 @@ static void testLimitsAndFraming(void)
                                            kFakeTcpHeaderWireMalformedNative,
                                            "native IP framing");
                 }
-                memoryCopy(bad, packet, length);
-                bad[9] = kProtocols[1 - p];
-                expectRefusalAnyIntent(&config,
-                                       kSides[s],
-                                       true,
-                                       bad,
-                                       length,
-                                       60,
-                                       kFakeTcpHeaderWireNativeProtocol,
-                                       "native configured protocol mismatch");
-                memoryCopy(bad, packet, length);
-                bad[9] = 1;
-                expectRefusalAnyIntent(&config,
-                                       kSides[s],
-                                       true,
-                                       bad,
-                                       length,
-                                       60,
-                                       kFakeTcpHeaderWireNativeProtocol,
-                                       "unsupported native protocol");
                 for (unsigned malformed = 0; malformed < 3; ++malformed)
                 {
                     memoryCopy(bad, packet, length);
@@ -720,14 +788,14 @@ static void testLimitsAndFraming(void)
                                            kFakeTcpHeaderWireMalformedNative,
                                            "invalid native transport");
                     /* Construct malformed hidden native data with a valid visible fake checksum. */
-                    const uint16_t malformed_wire = (uint16_t) (malformed_length + f);
-                    memoryCopy(bad, carrier, 20 + f);
-                    memoryCopy(bad + 20 + f, packet + 20, malformed_length - 20);
+                    const uint16_t malformed_wire = (uint16_t) (malformed_length + overhead);
+                    memoryCopy(bad, carrier, 20 + overhead);
+                    memoryCopy(bad + 20 + overhead, packet + 20, malformed_length - 20);
                     PUT_BE16(bad + 2, malformed_wire);
                     if (malformed != 0 && kProtocols[p] == 6)
-                        bad[20 + f + 12] = malformed == 1 ? 0x40 : 0xf0;
+                        bad[20 + overhead + 12] = malformed == 1 ? 0x40 : 0xf0;
                     if (malformed != 0 && kProtocols[p] == 17)
-                        PUT_BE16(bad + 20 + f + 4, malformed == 1 ? 7 : 81);
+                        PUT_BE16(bad + 20 + overhead + 4, malformed == 1 ? 7 : 81);
                     oracleSetChecksums(bad);
                     expectRefusalAnyIntent(&config,
                                            peerSide(kSides[s]),
@@ -774,14 +842,14 @@ static void testLimitsAndFraming(void)
                                            "invalid carrier geometry");
                 }
                 /* No hidden native bytes; fake TCP geometry remains valid. */
-                memoryCopy(bad, carrier, 20 + f);
-                PUT_BE16(bad + 2, (uint16_t) (20 + f));
+                memoryCopy(bad, carrier, 20 + overhead);
+                PUT_BE16(bad + 2, (uint16_t) (20 + overhead));
                 oracleSetChecksums(bad);
                 expectRefusalAnyIntent(&config,
                                        peerSide(kSides[s]),
                                        false,
                                        bad,
-                                       20 + f,
+                                       20 + overhead,
                                        0,
                                        kFakeTcpHeaderWireNativeFraming,
                                        "missing hidden native transport");
@@ -850,6 +918,252 @@ static void testLimitsAndFraming(void)
                 }
             }
 }
+
+static void testAllProtocolBytes(void)
+{
+    uint8_t                     packet[128], expected[256], carrier[256];
+    faketcpheader_wire_config_t config = baseConfig();
+    setOptions(&config, 4);
+    require(kFakeTcpHeaderWireRequiredPaddingLeft == 61 && faketcpheaderWireTcpHeaderLength(&config) == 24 &&
+                faketcpheaderWireOverhead(&config) == 25,
+            "maximum padding/header/metadata contract");
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (unsigned p = 0; p <= UINT8_MAX; ++p)
+            for (unsigned body = 0; body < 3; ++body)
+            {
+                const bool     known = p == 1 || p == 6 || p == 17;
+                const uint16_t length =
+                    buildNative(packet, (uint8_t) p, 20, known ? 63 : (uint16_t) (20 + (body == 2 ? 17 : body)));
+                const uint16_t wire_length = oracleCarrier(
+                    expected, packet, &config, kSides[s], faketcpheaderWirePortIndex(&config, packet, length));
+                sbuf_t *buf = encodeOk(&config, kSides[s], packet, length, 25, false);
+                requireBytes(bufferBytes(buf), expected, wire_length, "protocol-byte independent oracle");
+                require(bufferBytes(buf)[44] == p, "protocol byte value was not preserved");
+                decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
+                sbufDestroy(buf);
+            }
+
+    /* Odd native body with exactly the advertised headroom and no tail capacity. */
+    const uint16_t length = buildNative(packet, 255, 20, 39);
+    sbuf_t        *buf    = makeBuffer(packet, length, 25);
+    require(sbufGetTailCapacity(buf) == 0, "no-tail-space fixture has spare tail space");
+    requireResult(faketcpheaderWireEncode(&config, kFakeTcpHeaderWireClient, buf),
+                  kFakeTcpHeaderWireOk,
+                  "protocol tag needed spare tail space");
+    require(sbufGetLeftCapacity(buf) == 0 && sbufGetTailCapacity(buf) == 0, "framing changed end of occupied storage");
+    decodeOk(&config, kFakeTcpHeaderWireServer, buf, packet, length);
+    sbufDestroy(buf);
+
+    /* A tag-only carrier is accepted only for an opaque protocol, including zero. */
+    buildNative(packet, 0, 20, 20);
+    const uint16_t encoded = oracleCarrier(carrier, packet, &config, kFakeTcpHeaderWireClient, 0);
+    for (unsigned p = 0; p <= UINT8_MAX; ++p)
+    {
+        memoryCopy(expected, carrier, encoded);
+        expected[44] = (uint8_t) p;
+        oracleSetChecksums(expected);
+        if (p == 1 || p == 6 || p == 17)
+            expectRefusalAnyIntent(&config,
+                                   kFakeTcpHeaderWireServer,
+                                   false,
+                                   expected,
+                                   encoded,
+                                   3,
+                                   kFakeTcpHeaderWireNativeFraming,
+                                   "tag-only known protocol accepted");
+        else
+        {
+            buf = makeBuffer(expected, encoded, 3);
+            decodeOk(&config, kFakeTcpHeaderWireServer, buf, NULL, 20);
+            require(bufferBytes(buf)[9] == p, "tag-only opaque protocol lost");
+            sbufDestroy(buf);
+        }
+    }
+    PUT_BE16(carrier + 2, (uint16_t) (encoded - 1));
+    oracleSetChecksums(carrier);
+    expectRefusalAnyIntent(&config,
+                           kFakeTcpHeaderWireServer,
+                           false,
+                           carrier,
+                           encoded - 1,
+                           0,
+                           kFakeTcpHeaderWireNativeFraming,
+                           "carrier without metadata accepted");
+
+    buildNative(packet, 255, 20, 39);
+    const uint16_t tampered_length = oracleCarrier(carrier, packet, &config, kFakeTcpHeaderWireClient, 0);
+    carrier[44] ^= 1;
+    expectRefusal(&config,
+                  kFakeTcpHeaderWireServer,
+                  false,
+                  carrier,
+                  tampered_length,
+                  0,
+                  false,
+                  kFakeTcpHeaderWireCarrierChecksum,
+                  "tag omitted from visible checksum coverage");
+
+    /* Known-protocol truncations are measured after removing the tag. */
+    const uint8_t protocols[] = {1, 6, 17};
+    for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
+    {
+        const uint16_t minimum = protocols[p] == 6 ? 20 : 8;
+        buildNative(packet, 255, 20, (uint16_t) (20 + minimum - 1));
+        packet[9] = protocols[p];
+        expectRefusalAnyIntent(&config,
+                               kFakeTcpHeaderWireClient,
+                               true,
+                               packet,
+                               20 + minimum - 1,
+                               25,
+                               kFakeTcpHeaderWireMalformedNative,
+                               "truncated known native accepted");
+        const uint16_t malformed = oracleCarrier(carrier, packet, &config, kFakeTcpHeaderWireClient, 0);
+        expectRefusalAnyIntent(&config,
+                               kFakeTcpHeaderWireServer,
+                               false,
+                               carrier,
+                               malformed,
+                               0,
+                               kFakeTcpHeaderWireNativeFraming,
+                               "tag counted toward native minimum header");
+    }
+}
+
+static void testIcmpAndOpaqueRepair(void)
+{
+    const uint8_t                     protocols[] = {1, 0, 255, 136, 51};
+    uint8_t                           packet[128], expected[128], carrier[256];
+    const faketcpheader_wire_config_t config = baseConfig();
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
+            for (unsigned kind = 0; kind < 3; ++kind)
+            {
+                const uint16_t h = 24, length = 89;
+                buildNative(packet, protocols[p], h, length);
+                if (protocols[p] == 1)
+                {
+                    packet[h]     = kind == 0 ? 8 : kind == 1 ? 0 : 3;
+                    packet[h + 1] = kind == 2 ? 1 : 0;
+                    if (kind == 2)
+                    {
+                        /* An error quote remains bytes; no embedded-address translation. */
+                        packet[h + 8] = 0x45;
+                        PUT_BE32(packet + h + 20, 0xc0000201U);
+                        PUT_BE32(packet + h + 24, 0xc6336402U);
+                    }
+                    oracleSetChecksums(packet);
+                    packet[h + 2] ^= 0x5a;
+                }
+                packet[10] ^= 0xa5;
+                memoryCopy(expected, packet, length);
+                oracleIpChecksum(expected);
+                sbuf_t  *buf  = encodeOk(&config, kSides[s], packet, length, 21, false);
+                uint8_t *wire = sbufGetMutablePtr(buf);
+                requireBytes(wire + h + 21, packet + h, length - h, "normal encoding changed ICMP/opaque body");
+                PUT_BE32(wire + 12, 0xcb007101U);
+                PUT_BE32(wire + 16, 0xcb007102U);
+                memoryCopy(expected + 12, wire + 12, 8);
+                oracleIpChecksum(expected);
+                oracleSetChecksums(wire);
+                decodeOk(&config, peerSide(kSides[s]), buf, expected, length);
+                requireBytes(bufferBytes(buf) + h, packet + h, length - h, "address rewrite changed ICMP/opaque body");
+                sbufDestroy(buf);
+
+                /* Native repair applies full known-protocol repair or IPv4-only opaque repair. */
+                memoryCopy(expected, packet, length);
+                oracleSetChecksums(expected);
+                buf = encodeOk(&config, kSides[s], packet, length, 21, true);
+                decodeOk(&config, peerSide(kSides[s]), buf, expected, length);
+                sbufDestroy(buf);
+
+                const uint16_t wire_length = oracleCarrier(carrier, packet, &config, kSides[s], 0);
+                carrier[10] ^= 1;
+                carrier[h + 16] ^= 2;
+                memoryCopy(expected, packet, length);
+                oracleIpChecksum(expected);
+                buf = makeBuffer(carrier, wire_length, 5);
+                sbufSetRecalculateChecksum(buf, true);
+                decodeOk(&config, peerSide(kSides[s]), buf, expected, length);
+                requireBytes(
+                    bufferBytes(buf) + h, packet + h, length - h, "carrier request repaired hidden ICMP/opaque bytes");
+                sbufDestroy(buf);
+            }
+}
+
+static void testFragmentAdmission(void)
+{
+    const uint8_t                     protocols[]       = {6, 17, 1, 255};
+    const uint16_t                    fragment_fields[] = {0x2000, 0x2001, 0x0001, 0x4000};
+    uint8_t                           packet[128], carrier[256], bad[256];
+    const faketcpheader_wire_config_t config = baseConfig();
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
+        {
+            const uint16_t length  = buildNative(packet, protocols[p], 20, 89);
+            const uint16_t encoded = oracleCarrier(carrier, packet, &config, kSides[s], 0);
+            for (size_t f = 0; f < ARRAY_SIZE(fragment_fields); ++f)
+                for (unsigned repair = 0; repair < 2; ++repair)
+                {
+                    memoryCopy(bad, packet, length);
+                    PUT_BE16(bad + 6, fragment_fields[f]);
+                    oracleIpChecksum(bad);
+                    if (f == 3)
+                    {
+                        sbuf_t *buf = encodeOk(&config, kSides[s], bad, length, 21, repair != 0);
+                        sbufSetRecalculateChecksum(buf, repair != 0);
+                        decodeOk(&config, peerSide(kSides[s]), buf, bad, length);
+                        require(GET_BE16(bufferBytes(buf) + 6) == 0x4000, "DF was not preserved");
+                        sbufDestroy(buf);
+                        continue;
+                    }
+                    expectRefusal(&config,
+                                  kSides[s],
+                                  true,
+                                  bad,
+                                  length,
+                                  21,
+                                  repair != 0,
+                                  kFakeTcpHeaderWireFragmented,
+                                  "fragmented native admitted");
+                    /* A first fragment may not even contain the native header. */
+                    PUT_BE16(bad + 2, 21);
+                    oracleIpChecksum(bad);
+                    expectRefusal(&config,
+                                  kSides[s],
+                                  true,
+                                  bad,
+                                  21,
+                                  21,
+                                  repair != 0,
+                                  kFakeTcpHeaderWireFragmented,
+                                  "native fragment parsed before refusal");
+                    memoryCopy(bad, carrier, encoded);
+                    PUT_BE16(bad + 6, fragment_fields[f]);
+                    oracleIpChecksum(bad);
+                    expectRefusal(&config,
+                                  peerSide(kSides[s]),
+                                  false,
+                                  bad,
+                                  encoded,
+                                  7,
+                                  repair != 0,
+                                  kFakeTcpHeaderWireFragmented,
+                                  "fragmented carrier admitted");
+                    PUT_BE16(bad + 2, 21);
+                    oracleIpChecksum(bad);
+                    expectRefusal(&config,
+                                  peerSide(kSides[s]),
+                                  false,
+                                  bad,
+                                  21,
+                                  7,
+                                  repair != 0,
+                                  kFakeTcpHeaderWireFragmented,
+                                  "carrier fragment parsed before refusal");
+                }
+        }
+}
 /* ---- Settings --------------------------------------------------------------------------------- */
 
 static bool loadSettingsText(const char *text, faketcpheader_wire_config_t *out)
@@ -903,24 +1217,21 @@ static void requireDefaults(const faketcpheader_wire_config_t *config)
 static void testSettings(void)
 {
     faketcpheader_wire_config_t config = {0};
-    requireSettingsRejected(NULL);
-    requireSettingsRejected("{}");
-    config = requireSettingsLoaded("{\"payload-protocol\":6}");
-    require(config.payload_protocol == 6, "native TCP setting was not loaded");
+    config                             = requireSettingsLoaded(NULL);
     requireDefaults(&config);
-    config = requireSettingsLoaded("{\"payload-protocol\":17}");
-    require(config.payload_protocol == 17, "native UDP setting was not loaded");
+    config = requireSettingsLoaded("{}");
     requireDefaults(&config);
+    requireSettingsRejected("{\"payload-protocol\":6}");
+    requireSettingsRejected("{\"payload-protocol\":17}");
 
-    config = requireSettingsLoaded(
-        "{\"payload-protocol\":17,\"server-port\":1,\"client-port\":2,\"client-port-count\":1,\"sequence\":0,"
-        "\"acknowledgment\":0,\"window\":0,\"urgent-pointer\":0,\"options\":\"\"}");
+    config = requireSettingsLoaded("{\"server-port\":1,\"client-port\":2,\"client-port-count\":1,\"sequence\":0,"
+                                   "\"acknowledgment\":0,\"window\":0,\"urgent-pointer\":0,\"options\":\"\"}");
     require(config.server_port == 1 && config.client_port == 2 && config.client_port_count == 1 && config.window == 0 &&
                 config.options_length == 0,
             "lower edges were not loaded");
 
     config = requireSettingsLoaded(
-        "{\"payload-protocol\":17,\"server-port\":65535,\"client-port\":63488,\"client-port-count\":1024,\"sequence\":"
+        "{\"server-port\":65535,\"client-port\":63488,\"client-port-count\":1024,\"sequence\":"
         "4294967295,"
         "\"acknowledgment\":4294967295,\"window\":65535,\"urgent-pointer\":65535,"
         "\"options\":\"000102030405060708090a0b0c0d0e0f101112131415161718191A1B1C1D1E1F2021222324252627\"}");
@@ -933,20 +1244,17 @@ static void testSettings(void)
         require(config.options[i] == i, "options were not decoded verbatim");
     }
 
-    config = requireSettingsLoaded(
-        "{\"payload-protocol\":17,\"client-port\":1,\"client-port-count\":1,\"server-port\":65535}");
+    config = requireSettingsLoaded("{\"client-port\":1,\"client-port-count\":1,\"server-port\":65535}");
     require(config.client_port == 1, "client-port 1 was not loaded");
-    config = requireSettingsLoaded("{\"payload-protocol\":17,\"client-port\":65535,\"client-port-count\":1}");
+    config = requireSettingsLoaded("{\"client-port\":65535,\"client-port-count\":1}");
     require(config.client_port == 65535 && config.client_port_count == 1, "client-port 65535 was not loaded");
-    config = requireSettingsLoaded("{\"payload-protocol\":17,\"client-port\":65530,\"client-port-count\":6}");
+    config = requireSettingsLoaded("{\"client-port\":65530,\"client-port-count\":6}");
     require(config.client_port_count == 6, "range ending at 65535 was not loaded");
-    config = requireSettingsLoaded(
-        "{\"payload-protocol\":17,\"server-port\":40017,\"client-port\":40001,\"client-port-count\":16}");
+    config = requireSettingsLoaded("{\"server-port\":40017,\"client-port\":40001,\"client-port-count\":16}");
     require(config.server_port == 40017, "server-port just above the client range was rejected");
-    config = requireSettingsLoaded(
-        "{\"payload-protocol\":17,\"server-port\":40000,\"client-port\":40001,\"client-port-count\":16}");
+    config = requireSettingsLoaded("{\"server-port\":40000,\"client-port\":40001,\"client-port-count\":16}");
     require(config.server_port == 40000, "server-port just below the client range was rejected");
-    config = requireSettingsLoaded("{\"payload-protocol\":17,\"options\":\"020405B4\"}");
+    config = requireSettingsLoaded("{\"options\":\"020405B4\"}");
     require(config.options_length == 4 && config.options[0] == 0x02 && config.options[3] == 0xB4,
             "four option bytes were not loaded");
 
@@ -957,7 +1265,6 @@ static void testSettings(void)
         "{\"payload-protocol\":6e0}",
         "{\"payload-protocol\":7}",
         "{\"payload-protocol\":16}",
-        "{\"window\":1}",
         "{\"payload-protocol\":\"17\"}",
         "{\"payload-protocol\":true}",
         "{\"payload-protocol\":false}",
@@ -970,62 +1277,62 @@ static void testSettings(void)
         "null",
         "1",
         "\"settings\"",
-        "{\"payload-protocol\":17,\"role\":\"client\"}",
-        "{\"payload-protocol\":17,\"protocol-number\":6}",
-        "{\"payload-protocol\":17,\"flags\":24}",
-        "{\"payload-protocol\":17,\"mtu\":1500}",
-        "{\"payload-protocol\":17,\"local-ipv4\":\"192.0.2.1\"}",
-        "{\"payload-protocol\":17,\"peer-ipv4\":\"192.0.2.2\"}",
-        "{\"payload-protocol\":17,\"local-port\":40001}",
-        "{\"payload-protocol\":17,\"peer-port\":40000}",
-        "{\"payload-protocol\":17,\"unknown\":1}",
-        "{\"payload-protocol\":17,\"window\\u0000x\":1}",
-        "{\"payload-protocol\":17,\"server-port\":0}",
-        "{\"payload-protocol\":17,\"server-port\":65536}",
-        "{\"payload-protocol\":17,\"client-port\":0}",
-        "{\"payload-protocol\":17,\"client-port\":65536}",
-        "{\"payload-protocol\":17,\"client-port-count\":0}",
-        "{\"payload-protocol\":17,\"client-port-count\":1025}",
-        "{\"payload-protocol\":17,\"sequence\":-1}",
-        "{\"payload-protocol\":17,\"sequence\":4294967296}",
-        "{\"payload-protocol\":17,\"acknowledgment\":-1}",
-        "{\"payload-protocol\":17,\"acknowledgment\":4294967296}",
-        "{\"payload-protocol\":17,\"window\":-1}",
-        "{\"payload-protocol\":17,\"window\":65536}",
-        "{\"payload-protocol\":17,\"urgent-pointer\":-1}",
-        "{\"payload-protocol\":17,\"urgent-pointer\":65536}",
-        "{\"payload-protocol\":17,\"server-port\":1.5}",
-        "{\"payload-protocol\":17,\"client-port\":40001.0}",
-        "{\"payload-protocol\":17,\"window\":1e3}",
-        "{\"payload-protocol\":17,\"server-port\":\"40000\"}",
-        "{\"payload-protocol\":17,\"client-port\":true}",
-        "{\"payload-protocol\":17,\"client-port-count\":[16]}",
-        "{\"payload-protocol\":17,\"sequence\":{}}",
-        "{\"payload-protocol\":17,\"server-port\":null}",
-        "{\"payload-protocol\":17,\"client-port\":null}",
-        "{\"payload-protocol\":17,\"client-port-count\":null}",
-        "{\"payload-protocol\":17,\"sequence\":null}",
-        "{\"payload-protocol\":17,\"acknowledgment\":null}",
-        "{\"payload-protocol\":17,\"window\":null}",
-        "{\"payload-protocol\":17,\"urgent-pointer\":null}",
-        "{\"payload-protocol\":17,\"options\":null}",
-        "{\"payload-protocol\":17,\"options\":1234}",
-        "{\"payload-protocol\":17,\"options\":\"0101010\"}",
-        "{\"payload-protocol\":17,\"options\":\"0101\"}",
-        "{\"payload-protocol\":17,\"options\":\"010101010101\"}",
-        "{\"payload-protocol\":17,\"options\":"
+        "{\"role\":\"client\"}",
+        "{\"protocol-number\":6}",
+        "{\"flags\":24}",
+        "{\"mtu\":1500}",
+        "{\"local-ipv4\":\"192.0.2.1\"}",
+        "{\"peer-ipv4\":\"192.0.2.2\"}",
+        "{\"local-port\":40001}",
+        "{\"peer-port\":40000}",
+        "{\"unknown\":1}",
+        "{\"window\\u0000x\":1}",
+        "{\"server-port\":0}",
+        "{\"server-port\":65536}",
+        "{\"client-port\":0}",
+        "{\"client-port\":65536}",
+        "{\"client-port-count\":0}",
+        "{\"client-port-count\":1025}",
+        "{\"sequence\":-1}",
+        "{\"sequence\":4294967296}",
+        "{\"acknowledgment\":-1}",
+        "{\"acknowledgment\":4294967296}",
+        "{\"window\":-1}",
+        "{\"window\":65536}",
+        "{\"urgent-pointer\":-1}",
+        "{\"urgent-pointer\":65536}",
+        "{\"server-port\":1.5}",
+        "{\"client-port\":40001.0}",
+        "{\"window\":1e3}",
+        "{\"server-port\":\"40000\"}",
+        "{\"client-port\":true}",
+        "{\"client-port-count\":[16]}",
+        "{\"sequence\":{}}",
+        "{\"server-port\":null}",
+        "{\"client-port\":null}",
+        "{\"client-port-count\":null}",
+        "{\"sequence\":null}",
+        "{\"acknowledgment\":null}",
+        "{\"window\":null}",
+        "{\"urgent-pointer\":null}",
+        "{\"options\":null}",
+        "{\"options\":1234}",
+        "{\"options\":\"0101010\"}",
+        "{\"options\":\"0101\"}",
+        "{\"options\":\"010101010101\"}",
+        "{\"options\":"
         "\"0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243\"}",
-        "{\"payload-protocol\":17,\"options\":\"zz010101\"}",
-        "{\"payload-protocol\":17,\"options\":\"0x010101\"}",
-        "{\"payload-protocol\":17,\"options\":\"0101 101\"}",
-        "{\"payload-protocol\":17,\"options\":\"0101\\u00000101\"}",
-        "{\"payload-protocol\":17,\"server-port\":40001}",
-        "{\"payload-protocol\":17,\"server-port\":40008}",
-        "{\"payload-protocol\":17,\"server-port\":40016}",
-        "{\"payload-protocol\":17,\"server-port\":5,\"client-port\":5,\"client-port-count\":1}",
-        "{\"payload-protocol\":17,\"client-port\":65530,\"client-port-count\":7}",
-        "{\"payload-protocol\":17,\"client-port\":65535,\"client-port-count\":2}",
-        "{\"payload-protocol\":17,\"client-port\":64513,\"client-port-count\":1024}",
+        "{\"options\":\"zz010101\"}",
+        "{\"options\":\"0x010101\"}",
+        "{\"options\":\"0101 101\"}",
+        "{\"options\":\"0101\\u00000101\"}",
+        "{\"server-port\":40001}",
+        "{\"server-port\":40008}",
+        "{\"server-port\":40016}",
+        "{\"server-port\":5,\"client-port\":5,\"client-port-count\":1}",
+        "{\"client-port\":65530,\"client-port-count\":7}",
+        "{\"client-port\":65535,\"client-port-count\":2}",
+        "{\"client-port\":64513,\"client-port-count\":1024}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
     {
@@ -1046,6 +1353,9 @@ int main(void)
     TEST_RUN_CASE(testUdpPadding);
     TEST_RUN_CASE(testPortMapping);
     TEST_RUN_CASE(testLimitsAndFraming);
+    TEST_RUN_CASE(testAllProtocolBytes);
+    TEST_RUN_CASE(testIcmpAndOpaqueRepair);
+    TEST_RUN_CASE(testFragmentAdmission);
     TEST_RUN_CASE(testSettings);
     return 0;
 }

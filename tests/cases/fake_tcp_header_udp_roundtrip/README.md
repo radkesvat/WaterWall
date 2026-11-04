@@ -1,9 +1,9 @@
 # fake_tcp_header_udp_roundtrip
 
-Carries UDP through both FakeTcpHeader nodes in one process. Both explicitly
-select `payload-protocol: 17`. Fake TCP is inserted after the existing IPv4
-header, leaving the native UDP header and application bytes immediately after
-it. There is one IPv4 header and no preserved inner address tuple.
+Carries UDP through both FakeTcpHeader nodes in one process. Fake TCP is inserted
+after the existing IPv4 header, followed by a byte containing native protocol 17
+and then the original UDP header and application bytes. No protocol setting is
+needed. There is one IPv4 header and no preserved inner address tuple.
 
 ```text
 TesterClient -> Socks5Client -> TcpUdpConnector ~> TcpUdpListener -> Socks5Server
@@ -21,10 +21,12 @@ decoding. This exercises checksum normalization and restoration through the
 actual IpOverrider callbacks while keeping CTP's original connection tuple.
 
 The peers use different sequence/acknowledgment templates and four fake TCP
-option bytes. Each native packet is limited to 1476 bytes, leaving 24 bytes for
-the fake TCP header within the 1500-byte final-packet limit. This is a native IP
-MTU, not a UDP payload limit. Complete unfragmented native datagrams are required;
-reassemble upstream when accepting fragments. The transform adds no handshake,
+option bytes. Each native packet is limited to 1475 bytes, leaving 25 bytes for
+the fake TCP header/options and protocol byte within the 1500-byte final-packet
+limit. This is a native IP MTU, not a UDP payload limit: with 20-byte IPv4 and
+8-byte UDP headers, data can
+use at most 1447 bytes; 1448 is one byte too large. Complete unfragmented native
+datagrams are required; reassemble upstream when accepting fragments. The transform adds no handshake,
 retransmission, encryption or reliability.
 
 The default runner uses four workers, each exchanging nine verified payloads
@@ -40,3 +42,14 @@ privileged `fake_tcp_header_raw`, `fake_tcp_header_raw_multiqueue` and
 `fake_tcp_header_tun` roundtrip tests. The TUN case chooses deterministic native
 UDP tuples and checks their exact carrier-port distribution; the raw CTP cases
 check their actual ephemeral native tuples and stable reverse mapping.
+
+The direct-TUN `waterwall.fake_tcp_header_mixed_packet_roundtrip` case uses
+`tests/fake_tcp_header_mixed_packet_integration.py <Waterwall-binary>` to exchange
+TCP, UDP, ICMP echo and opaque protocol 253 through the same running pair in both
+directions. It has no CTP/PTC endpoints: native TUN subnets `10.253.90.0/24` and
+`10.253.91.0/24` route two fixed mixed exchange rounds through the codec. With four
+fake TCP option bytes, the native MTU is 1475. Independent carrier captures check
+actual tags 1, 6, 17 and 253, visible checksums, protocol-specific native checksum
+rules and exact opaque bytes; bounded teardown checks processes, TUNs, capture
+rules and temporary resources. This UDP case and the existing `--tun` raw probe
+remain TCP/UDP-limited by their connection bridge endpoints.

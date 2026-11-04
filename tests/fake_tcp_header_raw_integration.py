@@ -27,12 +27,12 @@ from wwtest.run_directory import RunDirectory
 
 WORKERS = 2
 FLOWS = 6
-NATIVE_MTU = 1476
+NATIVE_MTU = 1475
 FAKE_OPTIONS = bytes((1, 1, 1, 1))
 
 
 def checksum(data):
-    data += bytes(len(data) % 2)
+    data = bytes(data) + bytes(len(data) % 2)
     total = sum(struct.unpack(f"!{len(data) // 2}H", data))
     while total >> 16:
         total = (total & 65535) + (total >> 16)
@@ -103,7 +103,7 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
             settings.update({"capture-device-name": "fake-tcp-" + role, "skip-sysctl": True,
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
-            settings.update({"payload-protocol": 6 if tcp else 17, "options": FAKE_OPTIONS.hex()})
+            settings["options"] = FAKE_OPTIONS.hex()
             carrier_ports = tuple(settings.get(key, default) for key, default in
                                   (("server-port", 40000), ("client-port", 40001), ("client-port-count", 16)))
         elif node["type"] in ("ConnectionToPackets", "PacketsToConnection"):
@@ -259,11 +259,14 @@ def run(binary, directory, tun, multi_queue, tcp):
             assert checksum(pseudo + carrier) == 0, "invalid fake TCP wire checksum"
             fake_length = (carrier[12] >> 4) * 4
             assert fake_length == 24
-            native = carrier[fake_length:]
+            assert len(carrier) > fake_length, "missing native protocol byte"
+            protocol = carrier[fake_length]
+            assert protocol == (6 if tcp else 17), "wire protocol byte does not identify the native packet"
+            native = carrier[fake_length + 1:]
             assert len(native) >= (20 if tcp else 8), "missing native transport header"
             native_ports = struct.unpack_from("!HH", native)
             native_client, native_server = native_ports if forward else native_ports[::-1]
-            assert native_server == native_target, "native header is not immediately after fake TCP"
+            assert native_server == native_target, "native header is not immediately after the protocol byte"
             # CTP chooses its own ephemeral native port; TUN tuples are chosen in advance.
             if native_client not in user_ports:
                 assert forward, "reply arrived without its native request tuple"
@@ -274,7 +277,6 @@ def run(binary, directory, tun, multi_queue, tcp):
             if tun:
                 assert native_client == chosen_ports[user], "TUN source tuple changed"
             addresses = native_ips if forward else native_ips[::-1]
-            protocol = 6 if tcp else 17
             native_pseudo = bytes(8) + struct.pack("!BBH", 0, protocol, len(native))
             assert (not tcp and native[6:8] == bytes(2)) or checksum(native_pseudo + native) == 0, \
                 "hidden native checksum does not use zero address contributions"
@@ -300,9 +302,9 @@ def run(binary, directory, tun, multi_queue, tcp):
             sequence, acknowledgment = (12345, 67890) if forward else (67890, 12345)
             expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
                                                  0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
-            struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + native))
+            struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + bytes((protocol,)) + native))
             assert carrier[:fake_length] == expected_fake, "configured fake TCP header did not reach wire"
-            assert total == 20 + 24 + len(native) and total - 24 <= NATIVE_MTU
+            assert total == 20 + 24 + 1 + len(native) and total - 25 <= NATIVE_MTU
             if tcp:
                 native_length = (native[12] >> 4) * 4
                 assert 20 <= native_length <= len(native), "invalid native TCP data offset"
@@ -324,8 +326,8 @@ def run(binary, directory, tun, multi_queue, tcp):
                 expected_udp = bytearray(struct.pack("!HHHH", *native_ports, 8 + len(payload), 0) + payload)
                 if native[6:8] != bytes(2):
                     struct.pack_into("!H", expected_udp, 6, checksum(native_pseudo + expected_udp) or 65535)
-                assert native == expected_udp and total == 20 + 24 + 8 + len(payload), \
-                    "wire is not exactly IPv4/fake-TCP/native-UDP/application"
+                assert native == expected_udp and total == 20 + 24 + 1 + 8 + len(payload), \
+                    "wire is not exactly IPv4/fake-TCP/protocol/native-UDP/application"
                 seen[source].add(payload)
 
         def drain():
@@ -360,13 +362,13 @@ def run(binary, directory, tun, multi_queue, tcp):
             if tun:
                 application.setsockopt(socket.IPPROTO_IP, 10, 2)  # IP_MTU_DISCOVER, IP_PMTUDISC_DO
                 try:
-                    application.sendto(bytes(1449), destination)
+                    application.sendto(bytes(1448), destination)
                 except OSError as error:
                     assert error.errno == errno.EMSGSIZE, "wrong oversized TUN datagram refusal"
                 else:
                     raise AssertionError("TUN MTU admitted an oversized UDP datagram")
             sent, received = bytearray(), bytearray()
-            for length in (1, 513, 1400) if tcp else (1, 513, 1448):
+            for length in (1, 513, 1400) if tcp else (1, 513, 1447):
                 payload = bytes((i * 37 + user) & 255 for i in range(length))
                 reply = bytes(value ^ 0xa5 for value in payload)
                 if tcp:
