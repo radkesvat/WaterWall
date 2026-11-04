@@ -5,7 +5,8 @@ CTest: waterwall.fake_tcp_header_mixed_packet_roundtrip. Run only through the
 network namespace wrapper; the two unassigned native peers must route into TUN.
 Fake sequences use the random-port, incrementing defaults across interleaved
 protocols; captured byte ranges are checked per direction/client port
-independently of arrival order.
+independently of arrival order. Per-packet random ACKs must preserve those
+sequences and remain covered by the visible carrier checksum.
 """
 import contextlib
 import json
@@ -46,7 +47,7 @@ def prepare(directory, role):
             "settings": {"server-port": SERVER_PORT,
                          "client-port-range": [CLIENT_PORT, CLIENT_PORT + PORT_COUNT - 1],
                          "options": FAKE_OPTIONS.hex(),
-                         "acknowledgment": 67890 if client else 12345}}
+                         "acknowledgment": "random_packet"}}
     rewrite = {"name": "addresses", "type": "IpOverrider", "settings": {
         "up" if client else "down": addresses(*(CARRIER if client else CARRIER[::-1])),
         "down" if client else "up": addresses(native[1], native[0])}}
@@ -178,9 +179,13 @@ def run(binary, directory):
             reconstructed = native_packet(*native_addresses, protocol, native)
             assert client_port == CLIENT_PORT + flow_index(reconstructed, PORT_COUNT), \
                 "carrier port does not match this encoder's native tuple"
-            acknowledgment = 67890 if forward else 12345
-            sequence, actual_acknowledgment = struct.unpack_from("!II", carrier, 4)
-            assert actual_acknowledgment == acknowledgment, "fake acknowledgment changed from its configured value"
+            sequence, acknowledgment = struct.unpack_from("!II", carrier, 4)
+            # A random draw may repeat or be zero. Use the actual ACK when
+            # independently rebuilding the carrier header and its checksum.
+            expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
+                                                 0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
+            struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + bytes((protocol,)) + native))
+            assert carrier[:fake_length] == expected_fake, "configured fake TCP header did not reach wire"
             ranges = sequence_ranges.setdefault((source, client_port), {})
             entry = (1 + len(native), packet)
             assert ranges.setdefault(sequence, entry) == entry, "different packets reused a fake sequence range"

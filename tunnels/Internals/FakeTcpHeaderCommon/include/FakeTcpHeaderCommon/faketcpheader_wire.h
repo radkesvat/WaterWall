@@ -35,34 +35,50 @@ typedef enum faketcpheader_wire_side_e
     kFakeTcpHeaderWireServer,
 } faketcpheader_wire_side_t;
 
-typedef enum faketcpheader_sequence_mode_e
+typedef enum faketcpheader_field_mode_e
 {
-    kFakeTcpHeaderSequenceNumeric = 0,
-    kFakeTcpHeaderSequenceRandomNode,
-    kFakeTcpHeaderSequenceRandomPort,
-} faketcpheader_sequence_mode_t;
+    kFakeTcpHeaderFieldNumeric = 0,
+    kFakeTcpHeaderFieldRandomNode,
+    kFakeTcpHeaderFieldRandomPort,
+    kFakeTcpHeaderFieldRandomPacket,
+} faketcpheader_field_mode_t;
 
 /* Host-order outgoing TCP template. Peers must agree on ports; their outgoing
  * TCP templates and options lengths can differ. Each packet carries its protocol. */
 typedef struct faketcpheader_wire_config_s
 {
-    faketcpheader_sequence_mode_t sequence_mode;
-    uint32_t                      sequence;
-    uint32_t                      acknowledgment;
-    uint16_t                      window;
-    uint16_t                      urgent_pointer;
-    uint16_t                      server_port;
-    uint16_t                      client_port;
-    uint16_t                      client_port_count;
-    bool                          increment_sequence;
-    uint8_t                       options_length;
-    uint8_t                       options[kFakeTcpHeaderWireMaxOptionsLength];
+    faketcpheader_field_mode_t sequence_mode;
+    faketcpheader_field_mode_t acknowledgment_mode;
+    uint32_t                   sequence;
+    uint32_t                   acknowledgment;
+    uint16_t                   window;
+    uint16_t                   urgent_pointer;
+    uint16_t                   server_port;
+    uint16_t                   client_port;
+    uint16_t                   client_port_count;
+    bool                       increment_sequence;
+    bool                       increment_acknowledgment;
+    uint8_t                    options_length;
+    uint8_t                    options[kFakeTcpHeaderWireMaxOptionsLength];
 } faketcpheader_wire_config_t;
 
 /* Per-port random seeds remain stored even when increments are disabled. */
 static inline bool faketcpheaderWireNeedsSequences(const faketcpheader_wire_config_t *config)
 {
-    return config->increment_sequence || config->sequence_mode == kFakeTcpHeaderSequenceRandomPort;
+    return config->increment_sequence || config->sequence_mode == kFakeTcpHeaderFieldRandomPort;
+}
+
+static inline bool faketcpheaderWireNeedsAcknowledgments(const faketcpheader_wire_config_t *config)
+{
+    return config->increment_acknowledgment || config->acknowledgment_mode == kFakeTcpHeaderFieldRandomPort;
+}
+
+/* Optional sequence slots precede optional per-port ACK slots. Both arrays
+ * share the node allocation; at most two 32-bit values per selected port. */
+static inline size_t faketcpheaderWireStateCount(const faketcpheader_wire_config_t *config)
+{
+    return (size_t) config->client_port_count *
+           ((size_t) faketcpheaderWireNeedsSequences(config) + (size_t) faketcpheaderWireNeedsAcknowledgments(config));
 }
 
 /* Every non-Ok value leaves all bytes (including headroom), cursor, length and
@@ -107,19 +123,21 @@ WW_EXPORT uint16_t faketcpheaderWirePortIndex(const faketcpheader_wire_config_t 
                                               uint32_t native_length);
 
 /* Initialize once before publishing the node, after runtime RNG initialization.
- * random_node resolves config->sequence once; random_port seeds each slot.
- * NeedsSequences requires client_port_count atomic entries, otherwise NULL is valid.
+ * Resolve random_node fields and independently seed random_port fields. values
+ * has StateCount atomic entries, or may be NULL when that count is zero.
  * Config is immutable after initialization; do not copy live counters. */
-WW_EXPORT void faketcpheaderWireInitSequences(faketcpheader_wire_config_t *config, atomic_u32_t *sequences);
+WW_EXPORT void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, atomic_u32_t *values);
 
 /* Insert fake TCP and a protocol byte into one complete unfragmented IPv4 packet.
  * Honor native repair intent before normalizing TCP/UDP checksum addresses to zero.
- * Otherwise retain native checksum residuals. Enabled mode reserves the selected
- * port's fake TCP payload bytes from sequences; refusals never advance counters.
- * Fixed random_port mode reads its stored seed without advancing. Other fixed
- * modes ignore sequences (which may be NULL). Requires an ordinary buffer. */
+ * Otherwise retain native checksum residuals. Sequence incrementing reserves the
+ * selected port's fake TCP payload bytes from values; ACK incrementing uses its
+ * current value then adds one per accepted encoding. Refusals advance neither.
+ * Fixed random_port fields read their stored values without advancing. ACK
+ * random_packet draws only after every expected refusal, before checksumming.
+ * Requires initialized field state and an ordinary buffer. */
 WW_EXPORT faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config,
-                                                              atomic_u32_t *sequences, faketcpheader_wire_side_t side,
+                                                              atomic_u32_t *values, faketcpheader_wire_side_t side,
                                                               sbuf_t *buf);
 
 /* Verify and remove fake TCP and the tag, restore its protocol and TCP/UDP checksum

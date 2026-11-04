@@ -8,6 +8,9 @@ RawSocket receive queue per worker on both peers. UDP uses the random-port
 sequence default, --multi-queue uses random-node starts, --tcp uses numeric
 starts, and --tun explicitly disables increments with numeric starts. Advancing
 byte ranges are checked per direction/client port without assuming arrival order.
+ACK modes are random-packet for UDP, random-node for --multi-queue, numeric for
+--tcp, and random-port for --tun. TCP/TUN ACKs advance once per encoded packet;
+multiqueue ACKs remain fixed within each node.
 """
 import contextlib
 import errno
@@ -32,6 +35,7 @@ WORKERS = 2
 FLOWS = 6
 NATIVE_MTU = 1475
 FAKE_OPTIONS = bytes((1, 1, 1, 1))
+TCP_ACK_STARTS = (0xFFFFFFFE, 0xFFFFFFFD)
 
 
 def checksum(data):
@@ -90,10 +94,10 @@ def deterministic_ports(source, destination, target_port, count):
     raise AssertionError("could not select deterministic native flow tuples")
 
 
-def check_sequence_ranges(ranges, key, expected_initial=None):
-    """Check captured byte progression, allowing reordering and uint32 wrap."""
-    assert len(ranges) > 1, f"fake sequence did not advance for {key}"
-    # The finite workload occupies fewer than 2^31 bytes. Relative signed
+def check_sequence_ranges(ranges, key, expected_initial=None, field="sequence"):
+    """Check captured counter ranges, allowing reordering and uint32 wrap."""
+    assert len(ranges) > 1, f"fake {field} did not advance for {key}"
+    # The finite workload occupies fewer than 2^31 counter units. Relative signed
     # offsets put earlier packets before the first observed packet, even when
     # a random starting value wraps during the capture.
     anchor = next(iter(ranges))
@@ -102,11 +106,11 @@ def check_sequence_ranges(ranges, key, expected_initial=None):
     first_offset = expected_offset = ordered[0][0]
     initial = (anchor + first_offset) & 0xFFFFFFFF
     if expected_initial is not None:
-        assert initial == expected_initial, f"fake sequence did not start at its configured value for {key}"
+        assert initial == expected_initial, f"fake {field} did not start at its configured value for {key}"
     for offset, (length, _) in ordered:
-        assert offset == expected_offset, f"fake sequence ranges overlap or leave a gap for {key}"
-        expected_offset += length  # Native IP payload plus its protocol byte, excluding fake options.
-    assert expected_offset - first_offset < 1 << 31, "fake sequence escaped the bounded probe workload"
+        assert offset == expected_offset, f"fake {field} ranges overlap or leave a gap for {key}"
+        expected_offset += length  # Sequence: fake payload bytes; acknowledgment: one packet.
+    assert expected_offset - first_offset < 1 << 31, f"fake {field} escaped the bounded probe workload"
     return initial
 
 
@@ -127,7 +131,18 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = FAKE_OPTIONS.hex()
-            settings["acknowledgment"] = 67890 if role == "client" else 12345
+            if tun:
+                settings["acknowledgment"] = "random_port"
+            elif tcp:
+                settings["acknowledgment"] = TCP_ACK_STARTS[0 if role == "client" else 1]
+            elif multi_queue:
+                settings["acknowledgment"] = "random_node"
+            else:
+                settings["acknowledgment"] = "random_packet"
+            if tun or tcp:
+                settings["increment-acknowledgment"] = True
+            else:
+                settings.pop("increment-acknowledgment", None)
             if tun or tcp:
                 settings["sequence"] = 12345 if role == "client" else 67890
             elif multi_queue:
@@ -266,6 +281,8 @@ def run(binary, directory, tun, multi_queue, tcp):
         tcp_flags = {"192.0.2.10": set(), "198.51.100.10": set()}
         observed_client_ports = set()
         sequence_ranges = {}
+        acknowledgment_ranges = {}
+        fixed_acknowledgments = {}
         current_user = 0
 
         def inspect(frame):
@@ -337,8 +354,20 @@ def run(binary, directory, tun, multi_queue, tcp):
 
             # Independently serialize the configured fake header. Comparing its
             # exact placement and total length excludes an extra IPv4 header.
-            initial_sequence, acknowledgment = (12345, 67890) if forward else (67890, 12345)
-            sequence = struct.unpack_from("!I", carrier, 4)[0]
+            initial_sequence = 12345 if forward else 67890
+            sequence, acknowledgment = struct.unpack_from("!II", carrier, 4)
+            if tun or tcp:
+                # ACK reservations may be ordered differently from sequence
+                # reservations across workers; validate each counter separately.
+                ranges = acknowledgment_ranges.setdefault((source, client_side), {})
+                entry = (1, packet)
+                assert ranges.setdefault(acknowledgment, entry) == entry, "different packets reused a fake ACK"
+            elif multi_queue:
+                assert fixed_acknowledgments.setdefault(source, acknowledgment) == acknowledgment, \
+                    "random fake acknowledgment changed within its configured node scope"
+            # random_packet permits repeated values, including zero; native
+            # units check its random draws. Verify the actual ACK's checksum
+            # contribution here without a probabilistic uniqueness assertion.
             if tun:
                 assert sequence == initial_sequence, "disabled fake sequence increment changed its configured value"
             else:
@@ -462,6 +491,13 @@ def run(binary, directory, tun, multi_queue, tcp):
             assert 0x12 in tcp_flags["198.51.100.10"], "native SYN/ACK was not carried"
             assert any(flags & 0x10 and not flags & 0x02 for flags in tcp_flags["192.0.2.10"]), \
                 "native handshake ACK was not carried"
+        if tun or tcp:
+            assert acknowledgment_ranges, "no incrementing fake acknowledgments were inspected"
+            for key, ranges in acknowledgment_ranges.items():
+                initial = TCP_ACK_STARTS[0 if key[0] == "192.0.2.10" else 1] if tcp else None
+                check_sequence_ranges(ranges, key, initial, field="acknowledgment")
+                if tun:
+                    assert len(ranges) == 3, "TUN ACK count did not match the three accepted UDP packets"
         if not tun:
             assert sequence_ranges, "no incrementing fake sequence ranges were inspected"
             node_starts = {}
@@ -494,7 +530,8 @@ def main():
             for log in directory.rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-12000:]}", file=sys.stderr)
             raise
-    print("Single-IP fake TCP layout/checksums/sequences, native flow ports, exact UDP/TCP/TUN request/reply, MTU, "
+    print("Single-IP fake TCP layout/checksums/sequences/acknowledgments, native flow ports, "
+          "exact UDP/TCP/TUN request/reply, MTU, "
           "capture exclusions and cleanup passed")
 
 

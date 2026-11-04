@@ -83,34 +83,51 @@ static uint32_t faketcpheaderWirePseudoHeaderSum(const uint8_t *ipv4, uint16_t s
     return sum;
 }
 
-void faketcpheaderWireInitSequences(faketcpheader_wire_config_t *config, atomic_u32_t *sequences)
+void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, atomic_u32_t *values)
 {
     assert(config->client_port_count >= 1 && config->client_port_count <= kFakeTcpHeaderWireMaxClientPortCount);
-    assert(config->sequence_mode >= kFakeTcpHeaderSequenceNumeric &&
-           config->sequence_mode <= kFakeTcpHeaderSequenceRandomPort);
-    if (config->sequence_mode == kFakeTcpHeaderSequenceRandomNode)
+    assert(config->sequence_mode >= kFakeTcpHeaderFieldNumeric &&
+           config->sequence_mode <= kFakeTcpHeaderFieldRandomPort);
+    assert(config->acknowledgment_mode >= kFakeTcpHeaderFieldNumeric &&
+           config->acknowledgment_mode <= kFakeTcpHeaderFieldRandomPacket);
+    assert(! config->increment_acknowledgment || config->acknowledgment_mode != kFakeTcpHeaderFieldRandomPacket);
+    assert(faketcpheaderWireStateCount(config) == 0 || values != NULL);
+    if (config->sequence_mode == kFakeTcpHeaderFieldRandomNode)
     {
         config->sequence = fastRand32();
     }
-    if (! faketcpheaderWireNeedsSequences(config))
+    size_t offset = 0;
+    if (faketcpheaderWireNeedsSequences(config))
     {
-        return;
+        for (uint16_t i = 0; i < config->client_port_count; ++i)
+        {
+            const uint32_t seed =
+                config->sequence_mode == kFakeTcpHeaderFieldRandomPort ? fastRand32() : config->sequence;
+            atomicStoreU32Relaxed(&values[i], seed);
+        }
+        offset = config->client_port_count;
     }
-    assert(sequences != NULL);
-    for (uint16_t i = 0; i < config->client_port_count; ++i)
+    if (config->acknowledgment_mode == kFakeTcpHeaderFieldRandomNode)
     {
-        const uint32_t seed =
-            config->sequence_mode == kFakeTcpHeaderSequenceRandomPort ? fastRand32() : config->sequence;
-        atomicStoreU32Relaxed(&sequences[i], seed);
+        config->acknowledgment = fastRand32();
+    }
+    if (faketcpheaderWireNeedsAcknowledgments(config))
+    {
+        for (uint16_t i = 0; i < config->client_port_count; ++i)
+        {
+            const uint32_t seed =
+                config->acknowledgment_mode == kFakeTcpHeaderFieldRandomPort ? fastRand32() : config->acknowledgment;
+            atomicStoreU32Relaxed(&values[offset + i], seed);
+        }
     }
 }
 
-faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config, atomic_u32_t *sequences,
+faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config, atomic_u32_t *values,
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
     assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
     assert(! sbufIsSplice(buf));
-    assert(! faketcpheaderWireNeedsSequences(config) || sequences != NULL);
+    assert(faketcpheaderWireStateCount(config) == 0 || values != NULL);
 
     const uint32_t     length             = sbufGetLength(buf);
     const uint16_t     overhead           = faketcpheaderWireOverhead(config);
@@ -171,16 +188,28 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
     uint32_t sequence = config->sequence;
     if (config->increment_sequence)
     {
-        sequence = atomicAddU32Explicit(&sequences[index],
+        sequence = atomicAddU32Explicit(&values[index],
                                         (uint32_t) native.transport_length + kFakeTcpHeaderWireProtocolLength,
                                         memory_order_relaxed);
     }
-    else if (config->sequence_mode == kFakeTcpHeaderSequenceRandomPort)
+    else if (config->sequence_mode == kFakeTcpHeaderFieldRandomPort)
     {
-        sequence = atomicLoadU32Relaxed(&sequences[index]);
+        sequence = atomicLoadU32Relaxed(&values[index]);
     }
     PUT_BE32(tcp + 4, sequence);
-    PUT_BE32(tcp + 8, config->acknowledgment);
+    uint32_t acknowledgment = config->acknowledgment;
+    if (faketcpheaderWireNeedsAcknowledgments(config))
+    {
+        const size_t offset = faketcpheaderWireNeedsSequences(config) ? config->client_port_count : 0;
+        acknowledgment      = config->increment_acknowledgment
+                                  ? atomicAddU32Explicit(&values[offset + index], 1U, memory_order_relaxed)
+                                  : atomicLoadU32Relaxed(&values[offset + index]);
+    }
+    else if (config->acknowledgment_mode == kFakeTcpHeaderFieldRandomPacket)
+    {
+        acknowledgment = fastRand32();
+    }
+    PUT_BE32(tcp + 8, acknowledgment);
     tcp[12] = (uint8_t) ((fake_header_length / 4U) << 4U);
     tcp[13] = kFakeTcpHeaderWireTcpFlags;
     PUT_BE16(tcp + 14, config->window);

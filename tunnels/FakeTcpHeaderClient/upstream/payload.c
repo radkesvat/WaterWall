@@ -10,7 +10,7 @@ void faketcpheaderclientUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     const faketcpheader_wire_result_t result =
         faketcpheaderWireEncode(&state->wire,
-                                faketcpheaderWireNeedsSequences(&state->wire) ? state->sequences : NULL,
+                                faketcpheaderWireStateCount(&state->wire) != 0 ? state->values : NULL,
                                 kFakeTcpHeaderWireClient,
                                 buf);
     if (result != kFakeTcpHeaderWireOk)

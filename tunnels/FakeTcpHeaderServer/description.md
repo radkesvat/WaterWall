@@ -13,8 +13,10 @@ added. Encoding adds this framing; decoding removes it.
 The fake TCP layer does not establish a connection, track a TCP session, or
 retransmit lost packets. By default, each client port starts from an
 independently chosen random sequence number, then advances by the fake TCP
-payload length using its own counter. Its acknowledgment stays fixed. Original TCP traffic still has its own real handshake and
-reliability; original UDP traffic does not gain those features. The node only
+payload length using its own counter. Its acknowledgment defaults to a fixed
+zero; optional modes choose random values per node, port or packet. Original
+TCP traffic still has its own real handshake and reliability; original UDP
+traffic does not gain those features. The node only
 transforms packets. Chain configuration determines addresses and restores the
 addresses expected by the receiving TUN or connection stack.
 
@@ -157,7 +159,8 @@ needed; each received packet supplies its own protocol byte.
 | `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
 | `increment-sequence` | `true` | Advance the outgoing sequence counter for the selected client port by the fake TCP payload length. Boolean only. Set `false` to use a fixed sequence. |
 | `sequence` | `"random_port"` | Starting value: an integer `0..4294967295`, `"random_node"` for one random start shared by all client ports, or `"random_port"` for an independent random start per port. See [Sequence Progression](#sequence-progression). |
-| `acknowledgment` | `0` | Fixed acknowledgment number of every outgoing fake header. Integer `0..4294967295`; never derived from received packets. |
+| `acknowledgment` | `0` | An integer `0..4294967295`, `"random_node"`, `"random_port"`, or `"random_packet"`. Never derived from received packets. See [Acknowledgment Modes](#acknowledgment-modes). |
+| `increment-acknowledgment` | `false` | Advance the selected client port's ACK by one per successfully encoded packet. Boolean only; incompatible with `"acknowledgment": "random_packet"`. |
 | `window` | `65535` | Fake TCP window, integer `0..65535`. |
 | `urgent-pointer` | `0` | Fake TCP urgent pointer, integer `0..65535`. |
 | `options` | `""` | Verbatim hexadecimal fake TCP options: `0..40` bytes, in four-byte groups. |
@@ -190,7 +193,9 @@ The recommended profile is also the default:
 ```json
 {
   "sequence": "random_port",
-  "increment-sequence": true
+  "increment-sequence": true,
+  "acknowledgment": 0,
+  "increment-acknowledgment": false
 }
 ```
 
@@ -246,9 +251,9 @@ numbers and `null` are invalid. For `sequence`, only an integer in the stated
 range or the exact strings `"random_node"` and `"random_port"` are accepted.
 There is no mode that chooses a fresh random sequence for every packet.
 
-In every mode, `acknowledgment` remains fixed at its configured value. Sending a
-packet does not acknowledge the peer's traffic, and receiving one neither
-advances an outgoing counter nor updates an acknowledgment.
+Acknowledgment selection is independent of sequence progression, as explained
+below. Receiving a packet neither advances an outgoing counter nor updates an
+ACK value; ACKs are never derived from the peer's traffic.
 
 The client uses this logic when encoding upstream; the server uses it when
 encoding downstream. They have independent counters and can use different
@@ -258,6 +263,84 @@ no handshake, retransmission, flow control or delivery guarantee, and does not
 promise acceptance by TCP-aware networks.
 
 See the client's [worked sequence example](../FakeTcpHeaderClient/description.md#sequence-progression).
+
+## Acknowledgment Modes
+
+`acknowledgment` controls the fake header's ACK value independently of
+`sequence` and `increment-sequence`. It is never calculated from packets
+received from the peer. `increment-acknowledgment` defaults to `false`; enable
+it to use a separate counter for each selected client port.
+
+| `acknowledgment` value | With `increment-acknowledgment: false` (default) | With `increment-acknowledgment: true` |
+| --- | --- | --- |
+| An integer `0..4294967295` (default `0`) | Write that fixed number into every outgoing fake header. | Start every client port's counter at that number. |
+| `"random_node"` | Draw one random 32-bit value during node creation; use it for every outgoing packet on all selected client ports. | Start every client port's counter at the same chosen random value; ports then advance independently. |
+| `"random_port"` | Draw an independent random 32-bit value for each selected client port during creation; keep each port's chosen value fixed. | Start each port's counter at its independently chosen random value. |
+| `"random_packet"` | Draw a fresh random 32-bit value for each successfully encoded packet. | Invalid combination; node creation fails. |
+
+ACK draws are separate from sequence draws. All 32-bit values, including zero,
+are possible; separate draws can match, even on consecutive packets in
+`random_packet` mode. Random does not mean unique. Creation-time ACK values
+and any counters are shared by all workers and by all native flows selecting
+that port. New native connections do not redraw or reset them. Recreating the
+node draws new values for the creation-time random modes or restores the
+configured numeric start.
+
+With `"increment-acknowledgment": true`, each successful encoding writes the
+selected port's current ACK, then advances its counter by **one**, regardless
+of payload size. For example:
+
+```json
+{
+  "acknowledgment": 5000,
+  "increment-acknowledgment": true
+}
+```
+
+Three packets selecting the same client port use ACKs `5000`, `5001`, and
+`5002`. Another port starts its own counter at `5000`. If `acknowledgment` is
+omitted, the counters start at `0`. Arithmetic wraps modulo `2^32`, so
+`4294967295` is followed by `0`. Worker scheduling and network reordering can
+change arrival order; consecutive values are not guaranteed on the wire.
+This is a synthetic packet counter, not a real TCP acknowledgment or a count
+of received bytes.
+
+To keep the default sequence progression while varying the apparent ACK history
+randomly on every packet, explicitly select:
+
+```json
+{
+  "sequence": "random_port",
+  "increment-sequence": true,
+  "acknowledgment": "random_packet",
+  "increment-acknowledgment": false
+}
+```
+
+`random_packet` neither disables sequence incrementing nor requires it to be
+disabled. It also works with `"increment-sequence": false`. Likewise, ACK
+incrementing can be enabled with either sequence setting. Combining
+`"acknowledgment": "random_packet"` with `"increment-acknowledgment": true`
+is rejected instead of silently changing either setting.
+
+The defaults remain a fixed ACK of `0` and no ACK incrementing; all other ACK
+behavior requires explicit selection. `acknowledgment` accepts only integers
+in the stated range and the exact strings in the table. Numeric strings,
+other strings, booleans, fractions and `null` are invalid.
+`increment-acknowledgment` accepts only JSON `true` or `false`; strings,
+numbers and `null` are invalid.
+
+A refused encoding draws no per-packet ACK and advances neither sequence nor
+ACK state. After successful encoding, a later drop does not undo a draw or
+counter increment. The fake TCP checksum covers the sequence and acknowledgment
+actually written into that packet. Decode neither draws an ACK nor advances
+either counter, and does not check these fields against local outgoing settings;
+it retains normal carrier checksum verification.
+
+Randomizing or incrementing ACKs can deliberately perturb the apparent
+acknowledgment history. Neither tracks received bytes or confirms delivery.
+An observer might ignore inconsistent values or recognize the pattern; no
+improvement in concealment or network acceptance is guaranteed.
 
 ## Wire Rules
 
@@ -467,5 +550,6 @@ requirements are `FakeTcpHeaderCommon` and `ww`, independent of the client and
 IpManipulator modules.
 
 The implementation is a pure packet tunnel created with `packettunnelCreate()`.
-It keeps no per-line connection state. Sequence counters belong to the node
-instance and are shared across its workers.
+It keeps no per-line connection state. Sequence counters, optional ACK counters
+and any fixed random ACK values belong to the node instance and are shared
+across its workers.
