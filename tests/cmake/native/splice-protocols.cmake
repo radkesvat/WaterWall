@@ -206,6 +206,24 @@ if(LINUX AND TARGET DomainResolver)
   target_link_libraries(domainresolver_flow_test PRIVATE DomainResolver ww)
   add_dependencies(waterwall_unit_tests domainresolver_flow_test)
   add_waterwall_unit_test(waterwall.domainresolver_flow_unit domainresolver_flow_test "unit;tunnels;dns;flow;lifetime")
+
+  # Chain mode observes the DnsLineClient runtime boundary; dnslineclientConfigParse stays real.
+  waterwall_add_native_executable(domainresolver_chain_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/domainresolver/domainresolver_chain_test.c)
+  target_link_options(domainresolver_chain_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=lineResolveDomainServiceAsync"
+    "-Wl,--wrap=dnslineclientCreate"
+    "-Wl,--wrap=dnslineclientDestroy"
+    "-Wl,--wrap=dnslineclientWorkerQuiesce"
+    "-Wl,--wrap=dnslineclientWorkerStop"
+    "-Wl,--wrap=dnslineclientResolve"
+    "-Wl,--wrap=dnslineclientOnLineEst"
+    "-Wl,--wrap=dnslineclientOnLinePayload"
+    "-Wl,--wrap=dnslineclientOnLineFinish"
+    "-Wl,--wrap=dnslineclientOnLinePause"
+    "-Wl,--wrap=dnslineclientOnLineResume")
+  target_link_libraries(domainresolver_chain_test PRIVATE DomainResolver ww)
+  add_dependencies(waterwall_unit_tests domainresolver_chain_test)
+  add_waterwall_unit_test(waterwall.domainresolver_chain_unit domainresolver_chain_test "unit;tunnels;dns;flow;lifetime")
 endif()
 
 if(LINUX AND TARGET ConnectionFisherServer)

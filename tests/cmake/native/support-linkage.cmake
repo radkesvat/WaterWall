@@ -10,6 +10,7 @@ foreach(fixture_target IN ITEMS
   connectionfisherserver_est_reentry_test
   connectiontopackets_schedule_rejection_test
   disturber_packet_lifecycle_test
+  domainresolver_chain_test
   domainresolver_flow_test
   halfduplexclient_framing_random_test
   halfduplexclient_no_splice_test

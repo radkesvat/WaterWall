@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
@@ -7,13 +7,16 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `DomainResolver` is a middle node that resolves a line's destination domain before forwarding that line's upstream `Init`.
 
-It does not open sockets, transform payload bytes, prepend protocol data, or create new lines. It only reads and updates
+It does not open sockets, transform payload bytes, or prepend protocol data. It only reads and updates
 `line->routing_context.dest_ctx`. When the destination is already an IP address, it forwards `Init` immediately. When the
-destination is a domain, it resolves it on the current worker's c-ares resolver, applies the configured address-selection
-strategy, and only then forwards `Init`.
+destination is a domain, it resolves it, applies the configured address-selection strategy, and only then forwards
+`Init`. By default (`mode: "core"`) the lookup runs on the current worker's c-ares resolver and the node creates no
+lines. In `mode: "chain"` the lookup is sent as DNS queries over short-lived UDP lines that travel through the chain
+(see [DNS Through The Chain](#dns-through-the-chain)).
 
-DNS is submitted through Waterwall's line-bound DNS helper, so the temporary line reference and dead-line/shutdown guard
-are handled by the shared network layer rather than by this node.
+In `mode: "core"`, DNS is submitted through Waterwall's line-bound DNS helper, so the temporary line reference and
+dead-line/shutdown guard are handled by the shared network layer rather than by this node. In `mode: "chain"` the
+internal DNS client holds the waiting line's reference and cancels its own queries at shutdown.
 
 ## Typical Placement
 
@@ -63,6 +66,55 @@ nodes. Protocol clients also use an internal resolver with a target-prepare hook
 - `verbose` `(optional boolean, default: false)`
   Emit debug DNS logs when a resolve is started. Resolved-address logs use the normal DNS debug log level.
 
+- `mode` `(optional string, default: "core")`
+  `"core"` resolves on the worker c-ares resolver. `"chain"` sends DNS queries through this node's `next` (see
+  [DNS Through The Chain](#dns-through-the-chain)).
+
+- `servers`, `timeout-ms`, `tries`, `cache-size`, `min-ttl`, `max-ttl`, `fallback-to-core`
+  Chain-mode keys, read directly from this node's `settings` (flat, not inside a `dns` object). They have the same
+  meaning, defaults and limits as Router's `dns` object:
+
+  | key | default | limits / meaning |
+  | --- | --- | --- |
+  | `servers` | — | required for `"chain"`; 1 to 8 IPv4/IPv6 literals with optional port (`"1.1.1.1:53"`, `"[::1]:53"`), default port `53`; domain names rejected |
+  | `timeout-ms` | `2000` | wait per try, `100` to `60000` |
+  | `tries` | `2` | total attempts across `servers`, rotating, `1` to `16` |
+  | `cache-size` | `4096` | names cached per worker, at most `1048576`; `0` disables the cache |
+  | `min-ttl` | `30` | seconds, `0` to `604800`; lower bound for the cached answer TTL |
+  | `max-ttl` | `3600` | seconds; at least `min-ttl`, at most `604800` |
+  | `fallback-to-core` | `false` | after every chain try failed, ask the worker c-ares resolver once (outside the chain) |
+
+  Wrong types and out-of-range values fail node creation and name the JSON path.
+
+## DNS Through The Chain
+
+In `mode: "chain"` each lookup creates one short-lived UDP line per try whose destination is the selected server. The
+query carries a random ID and asks for recursion; the configured `strategy` selects the query types (`only-ipv4` →
+`A`, `only-ipv6` → `AAAA`, otherwise both). Replies must match the ID and question; `A`/`AAAA` answers are collected,
+following `CNAME` only inside the same reply, and replies larger than 4096 bytes are dropped. `NXDOMAIN`, or `NODATA`
+for every requested type, ends the lookup at once. `SERVFAIL`, `REFUSED`, malformed and truncated replies (`TC=1`, no
+TCP retry) count as a failed try, like a try without a valid reply within `timeout-ms`, and move to the next server
+(these rules apply only when no requested type returned addresses; a question-less server error also ends the try); after `tries` attempts the lookup fails, or goes to the worker c-ares resolver once when
+`fallback-to-core` is `true`. Answers are cached per worker with the smallest TTL clamped to `[min-ttl, max-ttl]`;
+concurrent identical lookups on one worker share one query, and cache hits are still delivered asynchronously.
+Each worker starts new lookups at the server that last answered; a server that fails a try moves later lookups to the next one. A partial answer (one type failed or timed out) is cached for `min-ttl` only. Names must use hostname characters (letters, digits, `-`, `_`). The query line must reach Router with its destination unchanged: the resolver-origin mark lives on that destination, so a tunnel that rewrites it loses the mark, and one that copies it into a new line passes the mark on.
+
+Where the query lines go:
+
+- **Standalone node:** they are sent into this node's own `next`, so the chain after it decides the route. That `next`
+  must accept UDP lines whose destination is the DNS server, for example a `TcpUdpConnector` or `UdpConnector` using
+  `dest_context->address`/`dest_context->port`, a `Router` with a UDP-capable DNS rule, or a proxy client in UDP mode.
+  A TCP-only path needs `UdpOverTcpClient`.
+- **Router's internal resolver:** Router forwards its `dns` object here and the query lines enter Router's rule
+  classification directly, where `protocol: "dns"` matches them.
+- **Embedded resolvers** in connectors and protocol clients always stay in core mode.
+
+The query lines are created by the resolver, not by a client: they carry no authenticated user, no credential markers
+and no source address of the client whose connection needed the lookup, so per-user rules, accounting and limiters on
+the DNS route cannot attribute them to that client. Their downstream callbacks return to this node, which consumes
+them; they are never forwarded to `prev`. A query line that itself carries a domain destination is never resolved
+through the chain again. In core mode none of this applies and the node creates no lines.
+
 ## Lifecycle Behavior
 
 - On upstream `Init`, the node initializes its line state and resolves `dest_ctx.domain` when needed. Success forwards
@@ -106,6 +158,7 @@ packet lines remain active.
 - It requires no left padding and does not touch `sbuf_t` layout.
 - It resolves only the destination address context (`dest_ctx`), not the source context.
 - A line whose destination is neither an IP address nor a valid domain is rejected.
+- In core mode the node never retries DNS. In chain mode it retries only within the configured `tries`.
 
 ## Node Metadata
 

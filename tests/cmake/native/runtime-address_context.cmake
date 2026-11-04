@@ -6,6 +6,12 @@
 
   add_waterwall_unit_test(waterwall.address_context_unit address_context_test "unit;net;address-context")
 
+  waterwall_add_native_executable(generic_sniffer_dns_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/generic_sniffer_dns_test.c)
+  target_link_libraries(generic_sniffer_dns_test PRIVATE ww)
+  add_dependencies(waterwall_unit_tests generic_sniffer_dns_test)
+
+  add_waterwall_unit_test(waterwall.generic_sniffer_dns_unit generic_sniffer_dns_test "unit;net;sniffer;dns")
+
   waterwall_add_native_executable(wchecksum_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/wchecksum_test.c)
   target_link_libraries(wchecksum_test PRIVATE ww_test_support)
   target_link_libraries(wchecksum_test PRIVATE ww)

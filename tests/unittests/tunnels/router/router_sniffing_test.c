@@ -885,6 +885,10 @@ static void testProtocolConfig(void)
     uint32_t expected = kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent;
     require(rule.protocol.wanted_flags == expected, "protocol parser did not build the expected flag mask");
     routerProtocolDestroy(&rule);
+
+    rule = parseProtocolRule("{\"protocol\":\"DNS\"}", (tunnel_t *) (uintptr_t) 0x71);
+    require(rule.protocol.wanted_flags == kAddressContextProtocolDns, "protocol parser did not map dns");
+    routerProtocolDestroy(&rule);
 }
 
 static void testProtocolDescriptorTable(void)
@@ -893,7 +897,7 @@ static void testProtocolDescriptorTable(void)
     const router_protocol_descriptor_t *descriptors = routerProtocolDescriptors(&count);
     uint32_t                            mask        = 0;
 
-    require(count == 3, "Router protocol descriptor count changed unexpectedly");
+    require(count == 4, "Router protocol descriptor count changed unexpectedly");
     for (uint32_t i = 0; i < count; ++i)
     {
         require(descriptors[i].name != NULL, "Router protocol descriptor has no name");
@@ -905,8 +909,11 @@ static void testProtocolDescriptorTable(void)
         mask |= descriptors[i].flag;
     }
 
-    uint32_t expected = kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent;
-    require(mask == expected, "Router protocol descriptor table does not cover every protocol flag");
+    require(mask == kAddressContextDetectedProtocolMask,
+            "Router protocol descriptor table does not cover every protocol flag");
+    require(routerProtocolFindDescriptorByName("dns")->datagram_only &&
+                ! routerProtocolFindDescriptorByName("tls")->datagram_only,
+            "only the DNS descriptor is datagram-only");
     require(routerProtocolFindDescriptorByName("missing") == NULL, "unknown Router protocol descriptor was found");
 }
 
@@ -1065,6 +1072,194 @@ static void testRouterInitCommitsStaticRoute(void)
     memoryFree(ts->rules);
     tunnelDestroy(fallback);
     tunnelDestroy(target);
+    tunnelDestroy(router);
+}
+
+static const uint8_t kDnsQuery[] = {
+    0x12, 0x34, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,         // header: RD, QDCOUNT=1
+    7,    'e',  'x',  'a',  'm',  'p',  'l',  'e',  4,    't',  'e',  's',  't', 0, // example.test
+    0x00, 0x01, 0x00, 0x01,                                                         // A, IN
+};
+
+static void setDatagramDestination(line_t *line, const char *ip, uint16_t port, uint8_t proto)
+{
+    require(addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, ip, port, proto),
+            "failed to set DNS test destination");
+}
+
+static void testProtocolDnsSniffedOnUdpLine(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x76;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":\"dns\"}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags};
+    setDatagramDestination(line, "192.0.2.53", 53, IP_PROTO_UDP);
+
+    expectMatch("sniffed udp dns query route",
+                classifyOneRule(&ts, &rule, line, kDnsQuery, (uint32_t) sizeof(kDnsQuery)),
+                kRouterClassifyTarget,
+                target);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolDns) != 0,
+            "DNS protocol bit was not set for a sniffed UDP query");
+    testLineDestroy(line);
+
+    line = testLineCreate();
+    setDatagramDestination(line, "192.0.2.53", 53, IP_PROTO_UDP);
+    const uint8_t not_dns[] = "GET / HTTP/1.1\r\nHost: dns.example.test\r\n\r\n";
+    expectMatch("non-dns udp payload route",
+                classifyOneRule(&ts, &rule, line, not_dns, (uint32_t) sizeof(not_dns) - 1U),
+                kRouterClassifyDefault,
+                NULL);
+    testLineDestroy(line);
+
+    // DNS is datagram-only: the same bytes on a stream line are never sniffed and never wait for more.
+    line = testLineCreate();
+    setDatagramDestination(line, "192.0.2.53", 53, IP_PROTO_TCP);
+    expectMatch("dns bytes on tcp route",
+                classifyOneRule(&ts, &rule, line, kDnsQuery, (uint32_t) sizeof(kDnsQuery)),
+                kRouterClassifyDefault,
+                NULL);
+    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolDns) == 0,
+            "DNS protocol bit was set on a TCP line");
+    testLineDestroy(line);
+
+    routerProtocolDestroy(&rule);
+}
+
+static void testProtocolDnsMatchesResolverOriginLine(void)
+{
+    tunnel_t *target = (tunnel_t *) (uintptr_t) 0x77;
+
+    line_t         *line = testLineCreate();
+    router_rule_t   rule = parseProtocolRule("{\"protocol\":[\"tls\",\"dns\"]}", target);
+    router_tstate_t ts   = {.needed_protocols = rule.protocol.wanted_flags, .sniffing_modes = kRouterSniffTls};
+    setDatagramDestination(line, "192.0.2.53", 53, IP_PROTO_UDP);
+    addresscontextSetResolverOrigin(&line->routing_context.dest_ctx, true);
+
+    // No payload yet: a resolver-origin line must classify without sniffing.
+    expectMatch("resolver-origin dns route", classifyOneRule(&ts, &rule, line, NULL, 0), kRouterClassifyTarget, target);
+    routerProtocolDestroy(&rule);
+
+    rule                = parseProtocolRule("{\"protocol\":\"tls\"}", target);
+    ts.needed_protocols = rule.protocol.wanted_flags;
+    expectMatch("resolver-origin line does not match other protocols",
+                classifyOneRule(&ts, &rule, line, NULL, 0),
+                kRouterClassifyDefault,
+                NULL);
+    routerProtocolDestroy(&rule);
+    testLineDestroy(line);
+}
+
+static void testRouterInjectedResolverLineCommitsDuringInit(void)
+{
+    tunnel_t *router   = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
+    tunnel_t *tls_path = tunnelCreate(NULL, 0, 0);
+    tunnel_t *dns_path = tunnelCreate(NULL, 0, 0);
+    tunnel_t *fallback = tunnelCreate(NULL, 0, 0);
+    require(router != NULL && tls_path != NULL && dns_path != NULL && fallback != NULL,
+            "failed to allocate injected Router test tunnels");
+    tls_path->fnInitU = recordRouterFallbackInit;
+    dns_path->fnInitU = recordRouterTargetInit;
+    fallback->fnInitU = recordRouterFallbackInit;
+    tunnelBind(router, fallback);
+
+    router_tstate_t *ts = tunnelGetState(router);
+    ts->rules           = memoryAllocateZero(sizeof(*ts->rules) * 2U);
+    require(ts->rules != NULL, "failed to allocate injected Router rules");
+    ts->rules_count      = 2;
+    ts->rules[0]         = parseProtocolRule("{\"protocol\":\"tls\"}", tls_path);
+    ts->rules[1]         = parseProtocolRule("{\"protocol\":\"dns\"}", dns_path);
+    ts->needed_protocols = ts->rules[0].protocol.wanted_flags | ts->rules[1].protocol.wanted_flags;
+    ts->sniffing_modes   = kRouterSniffTls | kRouterSniffHttp1;
+
+    line_t *line = testLineCreate();
+    setDatagramDestination(line, "192.0.2.53", 53, IP_PROTO_UDP);
+    addresscontextSetResolverOrigin(&line->routing_context.dest_ctx, true);
+
+    gRouterTargetInitCalls   = 0;
+    gRouterFallbackInitCalls = 0;
+    routerInjectResolverLine(router, line);
+
+    router_lstate_t *ls = lineGetState(line, router);
+    require(gRouterTargetInitCalls == 1 && gRouterFallbackInitCalls == 0,
+            "injected resolver line did not commit to the dns rule during Init");
+    require(ls->route == kRouterRouteTarget && ls->target == dns_path, "injected resolver route was not recorded");
+    require(addresscontextIsResolverOrigin(&line->routing_context.dest_ctx),
+            "Router Init cleared the resolver-origin route-control flag");
+
+    // An ordinary UDP line with the same rule set still waits for its first payload.
+    line_t *ordinary = testLineCreate();
+    setDatagramDestination(ordinary, "192.0.2.53", 53, IP_PROTO_UDP);
+    routerTunnelUpStreamInit(router, ordinary);
+    require(gRouterTargetInitCalls == 1 && gRouterFallbackInitCalls == 0 &&
+                ((router_lstate_t *) lineGetState(ordinary, router))->route == kRouterRouteUndecided,
+            "ordinary UDP line committed before its first payload");
+    routerLinestateDestroy(ordinary, lineGetState(ordinary, router));
+    testLineDestroy(ordinary);
+
+    routerLinestateDestroy(line, ls);
+    testLineDestroy(line);
+    routerProtocolDestroy(&ts->rules[0]);
+    routerProtocolDestroy(&ts->rules[1]);
+    memoryFree(ts->rules);
+    tunnelDestroy(fallback);
+    tunnelDestroy(dns_path);
+    tunnelDestroy(tls_path);
+    tunnelDestroy(router);
+}
+
+static void testDnsOnlyRuleDoesNotHoldStreamLines(void)
+{
+    tunnel_t *router   = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
+    tunnel_t *dns_path = tunnelCreate(NULL, 0, 0);
+    tunnel_t *tcp_path = tunnelCreate(NULL, 0, 0);
+    tunnel_t *fallback = tunnelCreate(NULL, 0, 0);
+    require(router != NULL && dns_path != NULL && tcp_path != NULL && fallback != NULL,
+            "failed to allocate dns-only Router test tunnels");
+    dns_path->fnInitU = recordRouterTargetInit;
+    tcp_path->fnInitU = recordRouterFallbackInit;
+    fallback->fnInitU = recordRouterFallbackInit;
+    tunnelBind(router, fallback);
+
+    router_tstate_t *ts = tunnelGetState(router);
+    ts->rules           = memoryAllocateZero(sizeof(*ts->rules) * 2U);
+    require(ts->rules != NULL, "failed to allocate dns-only Router rules");
+    ts->rules_count      = 2;
+    ts->rules[0]         = parseProtocolRule("{\"protocol\":\"dns\"}", dns_path);
+    ts->rules[1]         = parseDestinationPortRule("{\"destination-port\":22}", tcp_path);
+    ts->needed_protocols = ts->rules[0].protocol.wanted_flags;
+
+    // A TCP line (SOCKS CONNECT, server-first protocol) commits at Init: dns is never sniffed on it.
+    line_t *tcp = testLineCreate();
+    require(addresscontextSetIpAddressPortProtocol(&tcp->routing_context.dest_ctx, "203.0.113.10", 22, IP_PROTO_TCP),
+            "failed to set TCP destination");
+    gRouterTargetInitCalls   = 0;
+    gRouterFallbackInitCalls = 0;
+    routerTunnelUpStreamInit(router, tcp);
+    router_lstate_t *tcp_ls = lineGetState(tcp, router);
+    require(gRouterFallbackInitCalls == 1 && gRouterTargetInitCalls == 0 && tcp_ls->route == kRouterRouteTarget &&
+                tcp_ls->target == tcp_path,
+            "TCP line waited for payload under a dns-only rule set");
+
+    // A UDP line still waits for its first datagram so the dns sniffer can run.
+    line_t *udp = testLineCreate();
+    setDatagramDestination(udp, "192.0.2.53", 53, IP_PROTO_UDP);
+    routerTunnelUpStreamInit(router, udp);
+    require(gRouterFallbackInitCalls == 1 && gRouterTargetInitCalls == 0 &&
+                ((router_lstate_t *) lineGetState(udp, router))->route == kRouterRouteUndecided,
+            "UDP line committed before its first datagram under a dns rule");
+
+    routerLinestateDestroy(udp, lineGetState(udp, router));
+    testLineDestroy(udp);
+    routerLinestateDestroy(tcp, tcp_ls);
+    testLineDestroy(tcp);
+    routerProtocolDestroy(&ts->rules[0]);
+    routerDestinationPortDestroy(&ts->rules[1]);
+    memoryFree(ts->rules);
+    tunnelDestroy(fallback);
+    tunnelDestroy(tcp_path);
+    tunnelDestroy(dns_path);
     tunnelDestroy(router);
 }
 
@@ -1876,6 +2071,10 @@ int main(void)
     testPortMatchers();
     testRouterInitClearsDetectedProtocolsAndPreservesRouteControl();
     testRouterInitCommitsStaticRoute();
+    testProtocolDnsSniffedOnUdpLine();
+    testProtocolDnsMatchesResolverOriginLine();
+    testRouterInjectedResolverLineCommitsDuringInit();
+    testDnsOnlyRuleDoesNotHoldStreamLines();
     testHttpSniffingMatchesDestinationDomain();
     testTlsSniffingMatchesDestinationDomain();
     testTlsSniffingAcrossRecords();

@@ -1,0 +1,61 @@
+{
+  "name": "router-dns-core-mode-regression-probe",
+  "nodes": [
+    {
+      "name": "socks-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27630,
+        "nodelay": true
+      },
+      "next": "socks-server"
+    },
+    {
+      "name": "socks-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "router"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": true,
+        "dns": {
+          "mode": "core",
+          "servers": ["127.0.0.1:27632"]
+        },
+        "rules": [
+          {
+            "protocol": "dns",
+            "target": "dns-connector"
+          }
+        ]
+      },
+      "next": "direct-connector"
+    },
+    {
+      "name": "dns-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "direct-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

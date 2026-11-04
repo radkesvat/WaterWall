@@ -1,0 +1,52 @@
+{
+  "name": "router-dns-config-chain-without-resolve-domains",
+  "nodes": [
+    {
+      "name": "listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27645,
+        "nodelay": true
+      },
+      "next": "router"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": false,
+        "dns": {
+          "mode": "chain",
+          "servers": [
+            "127.0.0.1:27641"
+          ]
+        },
+        "rules": [
+          {
+            "protocol": "dns",
+            "target": "dns-connector"
+          }
+        ]
+      },
+      "next": "direct-connector"
+    },
+    {
+      "name": "dns-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "direct-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true
+      }
+    }
+  ]
+}

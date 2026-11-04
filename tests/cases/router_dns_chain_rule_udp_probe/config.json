@@ -1,0 +1,67 @@
+{
+  "name": "router-dns-chain-rule-udp-probe",
+  "nodes": [
+    {
+      "name": "socks-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27600,
+        "nodelay": true
+      },
+      "next": "socks-server"
+    },
+    {
+      "name": "socks-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "router"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": true,
+        "dns": {
+          "mode": "chain",
+          "servers": [
+            "127.0.0.1:27602"
+          ],
+          "timeout-ms": 1000,
+          "tries": 3,
+          "cache-size": 64,
+          "fallback-to-core": false
+        },
+        "rules": [
+          {
+            "protocol": "dns",
+            "target": "dns-connector"
+          }
+        ]
+      },
+      "next": "direct-connector"
+    },
+    {
+      "name": "dns-connector",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "direct-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

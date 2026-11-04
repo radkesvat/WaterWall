@@ -435,3 +435,88 @@ generic_sniffer_result_t genericsnifferSniffBittorrentHandshake(const uint8_t *p
 
     return payload_len < (uint32_t) sizeof(bittorrent_prefix) ? kGenericSnifferNeedMore : kGenericSnifferFound;
 }
+
+enum
+{
+    kDnsHeaderBytes         = 12U,
+    kDnsQuestionTailBytes   = 4U, // QTYPE + QCLASS
+    kDnsMaxLabelBytes       = 63U,
+    kDnsMaxEncodedNameBytes = 255U,
+    kDnsFlagQr              = 0x80U,  // first flags byte
+    kDnsOpcodeMask          = 0x78U,  // first flags byte
+    kDnsQclassUnicastBit    = 0x8000U // mDNS "QU" bit (RFC 6762 section 5.4)
+};
+
+static bool dnsQclassIsKnown(uint32_t qclass)
+{
+    // IN, CH, HS, NONE, ANY. Bounds false positives on TCP payloads (e.g. a TLS record header) that pass the header.
+    qclass &= ~(uint32_t) kDnsQclassUnicastBit;
+    return qclass == 1U || qclass == 3U || qclass == 4U || qclass == 254U || qclass == 255U;
+}
+
+generic_sniffer_result_t genericsnifferSniffDnsQuery(const uint8_t *payload, uint32_t payload_len)
+{
+    /*
+     * Router sniffs the first payload window and, for UDP lines, that window starts with
+     * one complete datagram (later datagrams are only appended behind it). A DNS query
+     * datagram is a complete message, so a non-empty prefix that is too short or ends
+     * inside the question is not a DNS query: report Missing instead of NeedMore. Waiting
+     * would stall single-datagram UDP flows for follow-up datagrams that are separate
+     * messages, not a continuation. Only empty input asks for more, like the other sniffers.
+     */
+    if (payload_len == 0)
+    {
+        return kGenericSnifferNeedMore;
+    }
+    if (payload_len < kDnsHeaderBytes)
+    {
+        return kGenericSnifferMissing;
+    }
+
+    // TC, AD, CD, RD and RCODE are left unchecked: real resolvers set AD/CD/RD and mDNS uses TC in queries.
+    if ((payload[2] & kDnsFlagQr) != 0 || (payload[2] & kDnsOpcodeMask) != 0)
+    {
+        return kGenericSnifferMissing;
+    }
+
+    uint32_t qdcount = GET_BE16(payload + 4U);
+    if (qdcount == 0 || qdcount > (uint32_t) kGenericSnifferDnsMaxQuestions)
+    {
+        return kGenericSnifferMissing;
+    }
+
+    uint32_t offset = kDnsHeaderBytes;
+    for (;;)
+    {
+        if (offset >= payload_len)
+        {
+            return kGenericSnifferMissing;
+        }
+
+        uint32_t label_len = payload[offset];
+        if (label_len == 0)
+        {
+            offset += 1U;
+            break;
+        }
+        // Rejects compression pointers (0xC0) and reserved/extended label types (0x40, 0x80) too.
+        if (label_len > kDnsMaxLabelBytes)
+        {
+            return kGenericSnifferMissing;
+        }
+
+        offset += 1U + label_len;
+        // Encoded name so far plus the terminating root label must fit the 255-byte limit.
+        if (offset - kDnsHeaderBytes + 1U > kDnsMaxEncodedNameBytes)
+        {
+            return kGenericSnifferMissing;
+        }
+    }
+
+    if (payload_len - offset < kDnsQuestionTailBytes)
+    {
+        return kGenericSnifferMissing;
+    }
+
+    return dnsQclassIsKnown(GET_BE16(payload + offset + 2U)) ? kGenericSnifferFound : kGenericSnifferMissing;
+}

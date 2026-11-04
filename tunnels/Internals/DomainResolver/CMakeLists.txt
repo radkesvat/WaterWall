@@ -2,7 +2,9 @@ add_library(DomainResolver STATIC
                     instance/create.c
                     instance/api.c
                     instance/node.c
+                    instance/lifecycle.c
                     common/helpers.c
+                    common/chain_dns.c
                     common/line_state.c
                     upstream/init.c
                     upstream/fin.c
@@ -19,7 +21,7 @@ add_library(DomainResolver STATIC
 target_include_directories(DomainResolver PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(DomainResolver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/DomainResolver)
 
-target_link_libraries(DomainResolver ww)
+target_link_libraries(DomainResolver PUBLIC ww DnsLineClient)
 if(NOT APPLE)
     target_precompile_headers(DomainResolver REUSE_FROM ww)
 endif()

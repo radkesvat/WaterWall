@@ -6,6 +6,7 @@ add_library(Router STATIC
     common/line_state.c
     common/match_ip.c
     common/match_port.c
+    common/resolver_inject.c
     common/rules.c
     common/sniffing.c
     common/stc_regex.c
@@ -40,7 +41,7 @@ target_include_directories(Router PRIVATE
 target_include_directories(Router PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(Router PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/Router)
 
-target_link_libraries(Router PUBLIC ww DomainResolver)
+target_link_libraries(Router PUBLIC ww DomainResolver DnsLineClient)
 
 if(router_enable_quic_sniffing)
     if(NOT TARGET OpenSSL::Crypto)
