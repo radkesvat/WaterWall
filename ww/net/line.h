@@ -33,19 +33,18 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
 {
     line_t *l = genericpoolGetItem(pools[current]);
 
-    *l = (line_t) {.refc                       = 1,
-                   .user_auths                 = {0},
-                   .user_count                 = 0,
-                   .wid                        = wid,
-                   .alive                      = true,
-                   .active_tunnels_mask        = UINT64_MAX,
-                   .pools                      = pools,
-                   .established                = false,
-                   .prefer_ordinary_read_u     = false,
-                   .prefer_ordinary_read_d     = false,
-                   .fallback_mode              = false,
-                   .fallback_peer_write_closed = false,
-                   .close_linger               = false,
+    *l = (line_t) {.refc                   = 1,
+                   .user_auths             = {0},
+                   .user_count             = 0,
+                   .wid                    = wid,
+                   .alive                  = true,
+                   .active_tunnels_mask    = UINT64_MAX,
+                   .pools                  = pools,
+                   .established            = false,
+                   .prefer_ordinary_read_u = false,
+                   .prefer_ordinary_read_d = false,
+                   .fallback_mode          = false,
+                   .close_linger_reasons   = 0,
                    // to set a port we need to know the AF family, default v4
                    .routing_context =
                        (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
@@ -383,32 +382,39 @@ static inline bool lineIsFallback(const line_t *line)
     return line->fallback_mode;
 }
 
-static inline void lineMarkFallbackPeerWriteClosed(line_t *line)
+typedef enum line_close_linger_reason_e
 {
-    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line) && lineIsFallback(line));
-    line->fallback_peer_write_closed = true;
-}
+    kLineCloseLingerProtocolDrain     = 1U << 0,
+    kLineCloseLingerPeerWriteShutdown = 1U << 1
+} line_close_linger_reason_t;
 
-/**
- * The peer may still be sending when this line closes, as an HTTP/2 client's
- * WINDOW_UPDATE frames do. Closing a socket with unread input makes the kernel
- * reset it and drop what it has not delivered yet, so a socket owner half-closes
- * and drains instead.
- */
-static inline void lineRequestCloseLinger(line_t *line)
+/* Request bounded socket-only cleanup after normal line destruction. A protocol
+ * can finish output while its peer still sends control data; a transport can
+ * independently observe a peer that shut down only its sending direction.
+ * Each reason is idempotent. Retiring a branch clears only its own reason. */
+static inline void lineRequestCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
     assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
-    line->close_linger = true;
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    line->close_linger_reasons |= (uint8_t) reason;
 }
 
-static inline bool lineFallbackShouldLinger(const line_t *line)
+static inline void lineClearCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
-    return line->fallback_mode && line->fallback_peer_write_closed;
+    assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    line->close_linger_reasons &= (uint8_t) ~reason;
+}
+
+static inline bool lineHasCloseLingerReason(const line_t *line, line_close_linger_reason_t reason)
+{
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    return (line->close_linger_reasons & (uint8_t) reason) != 0;
 }
 
 static inline bool lineShouldLingerOnClose(const line_t *line)
 {
-    return line->close_linger || lineFallbackShouldLinger(line);
+    return line->close_linger_reasons != 0;
 }
 
 /**

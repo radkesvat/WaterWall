@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "TcpAdapterCommon/close_linger.h"
+
 #include "loggers/network_logger.h"
 
 void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
@@ -28,7 +30,8 @@ void tcpconnectorTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     tcpconnectorFlushWriteQueue(ls);
 
-    wioClose(ls->io);
+    if (! lineShouldLingerOnClose(l) || ! tcpAdapterBeginCloseLinger(ls->io, tcpconnectorGetLineIdleTable(ts, l)))
+        wioClose(ls->io);
 
     tcpconnectorLinestateDestroy(ls);
 }

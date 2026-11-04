@@ -142,7 +142,7 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->runtime_proto == kHttpServerRuntimeHttp2)
     {
-        lineRequestCloseLinger(l);
+        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
     }
 
     ls->prev_finished = true;
