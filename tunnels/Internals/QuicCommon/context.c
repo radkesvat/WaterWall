@@ -133,8 +133,8 @@ static void quicCopyContext(line_t *next, line_t *previous, const quic_tstate_t 
     if (lineIsFallback(previous))
     {
         lineMarkFallback(next);
-        if (lineFallbackShouldLinger(previous))
-            lineMarkFallbackPeerWriteClosed(next);
+        if (lineHasCloseLingerReason(previous, kLineCloseLingerPeerWriteShutdown))
+            lineRequestCloseLinger(next, kLineCloseLingerPeerWriteShutdown);
     }
     if (linePrefersOrdinaryReadUpstream(previous))
         linePreferOrdinaryReadUpstream(next);

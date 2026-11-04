@@ -138,10 +138,11 @@ bool tcpoverudpclientSessionCreate(tunnel_t *t, line_t *application)
     transport->routing_context.local_listener_port = application->routing_context.local_listener_port;
     transport->routing_context.peer_source_port    = application->routing_context.peer_source_port;
     lineCopyUsers(transport, application);
-    transport->prefer_ordinary_read_u     = application->prefer_ordinary_read_u;
-    transport->prefer_ordinary_read_d     = application->prefer_ordinary_read_d;
-    transport->fallback_mode              = application->fallback_mode;
-    transport->fallback_peer_write_closed = application->fallback_peer_write_closed;
+    transport->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
+    transport->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
+    transport->fallback_mode          = application->fallback_mode;
+    if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
+        lineRequestCloseLinger(transport, kLineCloseLingerPeerWriteShutdown);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(transport), IP_PROTO_UDP);

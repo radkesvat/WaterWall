@@ -385,9 +385,14 @@ static void checkMetadata(line_t *copy, line_t *original, bool udp)
             "split line lost listener/peer port context");
     require(lineGetUserAuthCount(copy) == 1 && lineHasAuthenticatedUsername(copy, "fixture-user"),
             "split line lost authenticated credentials");
-    require(copy->prefer_ordinary_read_u && copy->prefer_ordinary_read_d && copy->fallback_mode &&
-                copy->fallback_peer_write_closed,
+    require(copy->prefer_ordinary_read_u && copy->prefer_ordinary_read_d && lineIsFallback(copy),
             "split line lost routing/read policy fields");
+    require(lineHasCloseLingerReason(copy, kLineCloseLingerPeerWriteShutdown) &&
+                ! lineHasCloseLingerReason(copy, kLineCloseLingerProtocolDrain),
+            "split line copied unrelated close-linger reasons or lost peer shutdown");
+    require(lineHasCloseLingerReason(original, kLineCloseLingerPeerWriteShutdown) &&
+                lineHasCloseLingerReason(original, kLineCloseLingerProtocolDrain),
+            "split line changed the source close-linger reasons");
 }
 static void serviceInit(tunnel_t *t, line_t *line)
 {
@@ -628,7 +633,9 @@ static void wireInit(tunnel_t *t, line_t *line)
         active->carrier->routing_context.peer_source_port    = 45678;
         lineCopyUsers(active->carrier, line);
         active->carrier->prefer_ordinary_read_u = active->carrier->prefer_ordinary_read_d = true;
-        active->carrier->fallback_mode = active->carrier->fallback_peer_write_closed = true;
+        lineMarkFallback(active->carrier);
+        lineRequestCloseLinger(active->carrier, kLineCloseLingerPeerWriteShutdown);
+        lineRequestCloseLinger(active->carrier, kLineCloseLingerProtocolDrain);
         tunnelNextUpStreamInit(t, active->carrier);
         require(active->service_inits == 0 || active->count > 1, "carrier Init eagerly initialized a service");
     }
@@ -767,7 +774,9 @@ static endpoint_t *openApp(void)
     ep->app->routing_context.peer_source_port    = 45678;
     lineAddAuthenticatedCredentials(ep->app, "fixture-user", "fixture-password");
     ep->app->prefer_ordinary_read_u = ep->app->prefer_ordinary_read_d = true;
-    ep->app->fallback_mode = ep->app->fallback_peer_write_closed = true;
+    lineMarkFallback(ep->app);
+    lineRequestCloseLinger(ep->app, kLineCloseLingerPeerWriteShutdown);
+    lineRequestCloseLinger(ep->app, kLineCloseLingerProtocolDrain);
     tunnelNextUpStreamInit(active->source, ep->app);
     refreshSessions();
     return ep;

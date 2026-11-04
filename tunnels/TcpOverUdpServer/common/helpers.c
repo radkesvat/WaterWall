@@ -215,9 +215,9 @@ static void copyServiceContext(line_t *service, line_t *carrier)
     if (lineIsFallback(carrier))
     {
         lineMarkFallback(service);
-        if (lineFallbackShouldLinger(carrier))
+        if (lineHasCloseLingerReason(carrier, kLineCloseLingerPeerWriteShutdown))
         {
-            lineMarkFallbackPeerWriteClosed(service);
+            lineRequestCloseLinger(service, kLineCloseLingerPeerWriteShutdown);
         }
     }
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(service), IP_PROTO_TCP);

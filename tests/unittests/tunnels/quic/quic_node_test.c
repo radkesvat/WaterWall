@@ -409,43 +409,56 @@ static void testSplitLineContexts(void)
         if (! roleEnabled(client != 0))
             continue;
         for (unsigned stream = 0; stream < 2; ++stream)
-        {
-            est_fixture_t f;
-            setupQuic(&f, client != 0, stream != 0);
-            twfRequire(addresscontextSetIpAddressPortProtocol(
-                           lineGetSourceAddressContext(f.line), "127.0.0.2", 12345, IP_PROTO_TCP),
-                       "source fixture address failed");
-            address_context_t *destination = lineGetDestinationAddressContext(f.line);
-            addresscontextDomainSetByString(destination, "fixture.example");
-            addresscontextSetPort(destination, 443);
-            addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
-            destination->optional_flags.detected_protocols     = kAddressContextProtocolTls;
-            lineGetRoutingContext(f.line)->local_listener_port = 8443;
-            lineGetRoutingContext(f.line)->peer_source_port    = 23456;
-            lineAddAuthenticatedCredentials(f.line, "fixture-user", "fixture-secret");
-            lineMarkFallback(f.line);
-            lineMarkFallbackPeerWriteClosed(f.line);
-            linePreferOrdinaryReadUpstream(f.line);
-            linePreferOrdinaryReadDownstream(f.line);
-            tunnelUpStreamInit(f.node, f.line);
-            const address_context_t *copied = lineGetDestinationAddressContext(owned_line);
-            twfRequire(lineGetSourceAddressContext(owned_line)->port == 12345 && copied->port == 443 &&
-                           strcmp(copied->domain, "fixture.example") == 0 && copied->domain != destination->domain &&
-                           copied->optional_flags.detected_protocols == kAddressContextProtocolTls,
-                       "split QUIC line lost endpoint identity or aliased owned domain memory");
-            twfRequire(copied->proto_udp == (client && ! stream) && copied->proto_tcp == (! client || stream),
-                       "split QUIC line copied the wrong transport protocol");
-            twfRequire(lineGetRoutingContext(owned_line)->local_listener_port == 8443 &&
-                           lineGetRoutingContext(owned_line)->peer_source_port == 23456 &&
-                           lineGetUserAuthCount(owned_line) == 1 &&
-                           strcmp(lineGetAuthenticatedUsername(owned_line), "fixture-user") == 0 &&
-                           strcmp(lineGetAuthenticatedPassword(owned_line), "fixture-secret") == 0 &&
-                           lineIsFallback(owned_line) && lineFallbackShouldLinger(owned_line) &&
-                           linePrefersOrdinaryReadUpstream(owned_line) && linePrefersOrdinaryReadDownstream(owned_line),
-                       "split QUIC line lost routing, authentication, fallback or read-preference context");
-            abortCarrier(&f);
-            destroyQuic(&f);
-        }
+            for (unsigned linger_reasons = 0; linger_reasons < 4; ++linger_reasons)
+            {
+                est_fixture_t f;
+                setupQuic(&f, client != 0, stream != 0);
+                twfRequire(addresscontextSetIpAddressPortProtocol(
+                               lineGetSourceAddressContext(f.line), "127.0.0.2", 12345, IP_PROTO_TCP),
+                           "source fixture address failed");
+                address_context_t *destination = lineGetDestinationAddressContext(f.line);
+                addresscontextDomainSetByString(destination, "fixture.example");
+                addresscontextSetPort(destination, 443);
+                addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+                destination->optional_flags.detected_protocols     = kAddressContextProtocolTls;
+                lineGetRoutingContext(f.line)->local_listener_port = 8443;
+                lineGetRoutingContext(f.line)->peer_source_port    = 23456;
+                lineAddAuthenticatedCredentials(f.line, "fixture-user", "fixture-secret");
+                lineMarkFallback(f.line);
+                const bool protocol_drain = (linger_reasons & kLineCloseLingerProtocolDrain) != 0;
+                const bool peer_shutdown  = (linger_reasons & kLineCloseLingerPeerWriteShutdown) != 0;
+                if (protocol_drain)
+                    lineRequestCloseLinger(f.line, kLineCloseLingerProtocolDrain);
+                if (peer_shutdown)
+                    lineRequestCloseLinger(f.line, kLineCloseLingerPeerWriteShutdown);
+                linePreferOrdinaryReadUpstream(f.line);
+                linePreferOrdinaryReadDownstream(f.line);
+                tunnelUpStreamInit(f.node, f.line);
+                const address_context_t *copied = lineGetDestinationAddressContext(owned_line);
+                twfRequire(lineGetSourceAddressContext(owned_line)->port == 12345 && copied->port == 443 &&
+                               strcmp(copied->domain, "fixture.example") == 0 &&
+                               copied->domain != destination->domain &&
+                               copied->optional_flags.detected_protocols == kAddressContextProtocolTls,
+                           "split QUIC line lost endpoint identity or aliased owned domain memory");
+                twfRequire(copied->proto_udp == (client && ! stream) && copied->proto_tcp == (! client || stream),
+                           "split QUIC line copied the wrong transport protocol");
+                twfRequire(lineGetRoutingContext(owned_line)->local_listener_port == 8443 &&
+                               lineGetRoutingContext(owned_line)->peer_source_port == 23456 &&
+                               lineGetUserAuthCount(owned_line) == 1 &&
+                               strcmp(lineGetAuthenticatedUsername(owned_line), "fixture-user") == 0 &&
+                               strcmp(lineGetAuthenticatedPassword(owned_line), "fixture-secret") == 0 &&
+                               lineIsFallback(owned_line) && linePrefersOrdinaryReadUpstream(owned_line) &&
+                               linePrefersOrdinaryReadDownstream(owned_line),
+                           "split QUIC line lost routing, authentication, fallback or read-preference context");
+                twfRequire(lineHasCloseLingerReason(owned_line, kLineCloseLingerPeerWriteShutdown) == peer_shutdown &&
+                               ! lineHasCloseLingerReason(owned_line, kLineCloseLingerProtocolDrain),
+                           "split QUIC line copied unrelated close-linger reasons or lost peer shutdown");
+                twfRequire(lineHasCloseLingerReason(f.line, kLineCloseLingerPeerWriteShutdown) == peer_shutdown &&
+                               lineHasCloseLingerReason(f.line, kLineCloseLingerProtocolDrain) == protocol_drain,
+                           "split QUIC line changed the source close-linger reasons");
+                abortCarrier(&f);
+                destroyQuic(&f);
+            }
     }
 }
 
