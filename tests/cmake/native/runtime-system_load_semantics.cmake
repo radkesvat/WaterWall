@@ -220,7 +220,9 @@
         "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
         "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetBestFit"
         "-Wl,--wrap=bufferpoolTryGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
-        "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+        "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy"
+        "-Wl,--wrap=nodelibraryLoadByTypeName" "-Wl,--wrap=nodemanagerGetConfigNodeByHash"
+        "-Wl,--wrap=cJSON_Delete")
       if(TARGET IpOverrider)
         target_link_libraries(fake_tcp_header_nodes_test PRIVATE IpOverrider)
         target_compile_definitions(fake_tcp_header_nodes_test PRIVATE FAKE_TCP_HEADER_IPOVERRIDER_FIXTURE=1)

@@ -1,6 +1,7 @@
 add_library(FakeTcpHeaderCommon STATIC
     src/faketcpheader_settings.c
     src/faketcpheader_wire.c
+    src/faketcpheader_encryption.c
 )
 
 target_include_directories(FakeTcpHeaderCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

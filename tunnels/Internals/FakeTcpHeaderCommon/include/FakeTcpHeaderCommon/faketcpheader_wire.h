@@ -21,6 +21,7 @@ enum
     kFakeTcpHeaderWireRequiredPaddingLeft =
         TCP_HLEN + kFakeTcpHeaderWireMaxOptionsLength + kFakeTcpHeaderWireProtocolLength,
     kFakeTcpHeaderWireMaxCarrierLength   = kMaxAllowedPacketLength,
+    kFakeTcpHeaderWireEncryptionOverhead = WCRYPTO_XCHACHA20POLY1305_NONCE_SIZE + WCRYPTO_AEAD_TAG_SIZE,
     kFakeTcpHeaderWireTcpFlags           = TCP_ACK | TCP_PSH,
     kFakeTcpHeaderWireMaxClientPortCount = 1024,
     kFakeTcpHeaderWireMaxFlagCount       = 32,
@@ -28,6 +29,7 @@ enum
 
 _Static_assert(kFakeTcpHeaderWireRequiredPaddingLeft == 61, "FakeTcpHeader padding contract changed unexpectedly");
 _Static_assert(kFakeTcpHeaderWireTcpFlags == 0x18, "FakeTcpHeader default flags are ACK|PSH");
+_Static_assert(kFakeTcpHeaderWireEncryptionOverhead == 40, "FakeTcpHeader packet encryption format changed");
 
 /* Which endpoint of the carrier pair is encoding or decoding. */
 typedef enum faketcpheader_wire_side_e
@@ -59,6 +61,7 @@ typedef struct faketcpheader_wire_config_s
     uint16_t                   client_port_count;
     bool                       increment_sequence;
     bool                       increment_acknowledgment;
+    bool                       encryption_enabled;
     uint8_t                    flags_count;
     uint8_t                    flags[kFakeTcpHeaderWireMaxFlagCount];
     uint8_t                    options_length;
@@ -117,9 +120,17 @@ static inline uint16_t faketcpheaderWireOverhead(const faketcpheader_wire_config
     return (uint16_t) (faketcpheaderWireTcpHeaderLength(config) + kFakeTcpHeaderWireProtocolLength);
 }
 
+/* The private XChaCha20-Poly1305 packet helper runs after fake TCP encoding.
+ * Its bytes affect size admission and sequence reservation, not this prepend. */
+static inline uint16_t faketcpheaderWireEncryptionOverhead(const faketcpheader_wire_config_t *config)
+{
+    return config->encryption_enabled ? kFakeTcpHeaderWireEncryptionOverhead : 0;
+}
+
 static inline uint16_t faketcpheaderWireMaxNativeLength(const faketcpheader_wire_config_t *config)
 {
-    return (uint16_t) (kFakeTcpHeaderWireMaxCarrierLength - faketcpheaderWireOverhead(config));
+    return (uint16_t) (kFakeTcpHeaderWireMaxCarrierLength - faketcpheaderWireOverhead(config) -
+                       faketcpheaderWireEncryptionOverhead(config));
 }
 
 /* Short static description of a result, for drop diagnostics. */
@@ -141,7 +152,8 @@ WW_EXPORT void faketcpheaderWireInitState(faketcpheader_wire_config_t *config, a
 /* Insert fake TCP and a protocol byte into one complete unfragmented IPv4 packet.
  * Honor native repair intent before normalizing TCP/UDP checksum addresses to zero.
  * Otherwise retain native checksum residuals. Sequence incrementing reserves the
- * selected port's fake TCP payload bytes plus one each for SYN/FIN from values;
+ * selected port's fake TCP payload bytes, including enabled encryption overhead,
+ * plus one each for SYN/FIN from values;
  * ACK incrementing uses its current value then adds one per accepted encoding.
  * Flags advance per port through their list, then stay at the final entry.
  * Refusals advance no state. Flags never control packet or node lifetime.
@@ -155,15 +167,17 @@ WW_EXPORT faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheade
 /* Verify and remove fake TCP and the tag, restore its protocol and TCP/UDP checksum
  * current address contributions. A pending request waives visible checksums only
  * and is consumed on success; it never repairs hidden native corruption.
- * Requires an ordinary buffer. */
+ * The private Encryption helper must have removed its nonce and tag first when
+ * enabled; size admission includes those removed bytes. Requires an ordinary buffer. */
 WW_EXPORT faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_config_t *config,
                                                               faketcpheader_wire_side_t side, sbuf_t *buf);
 
 /* Strict settings loader: client-port selects one port; client-port-range selects
  * inclusive endpoints. These settings are mutually exclusive. Omitting both
  * selects 40001..40016; omitted settings and {} select ordinary defaults.
- * Unknown settings are refused. Failures name the node/settings key and leave
- * *out unchanged. */
+ * A nonempty password enables private packet encryption; config retains only
+ * the enabled flag, never the password. Unknown settings are refused. Failures
+ * name the node/settings key and leave *out unchanged. */
 WW_EXPORT bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
                                              faketcpheader_wire_config_t *out);
 

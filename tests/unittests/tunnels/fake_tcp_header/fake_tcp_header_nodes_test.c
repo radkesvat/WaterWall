@@ -165,6 +165,7 @@ static void requireDefaults(const faketcpheader_wire_config_t *wire)
     require(wire->options_length == 0, "default TCP options are not empty");
     require(wire->increment_sequence, "sequence progression is not enabled by default");
     require(! wire->increment_acknowledgment, "ACK progression is not disabled by default");
+    require(! wire->encryption_enabled, "omitting password enabled encryption");
     require(wire->flags_count == 1 && wire->flags[0] == 0x18, "default flags are not one ACK|PSH template");
 }
 
@@ -523,6 +524,201 @@ static void testRejections(const node_case_t *c)
 }
 
 #if FAKE_TCP_HEADER_CALLBACK_FIXTURE
+/* Exercise real private-child construction and topology without linking either Encryption module. */
+static bool        encryption_module_available, encryption_child_refused;
+static const char *encryption_expected_type;
+static unsigned    encryption_lookups, encryption_creates, encryption_live, encryption_destroys;
+static cJSON      *encryption_owned_settings;
+static size_t      encryption_password_length;
+static node_t     *encryption_configured_next;
+
+node_t  __wrap_nodelibraryLoadByTypeName(const char *name);
+node_t *__wrap_nodemanagerGetConfigNodeByHash(node_manager_config_t *config, hash_t hash);
+void    __real_cJSON_Delete(cJSON *item);
+void    __wrap_cJSON_Delete(cJSON *item);
+
+void __wrap_cJSON_Delete(cJSON *item)
+{
+    if (item != NULL && item == encryption_owned_settings)
+    {
+        const cJSON *password = cJSON_GetObjectItemCaseSensitive(item, "password");
+        require(cJSON_IsString(password), "private child lost its password before cleanup");
+        for (size_t i = 0; i < encryption_password_length; ++i)
+            require(password->valuestring[i] == '\0', "private password was not wiped before deleting settings");
+        encryption_owned_settings = NULL;
+    }
+    __real_cJSON_Delete(item);
+}
+
+static void encryptionChildDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    require(context->scope == kWwLifecycleOwnedChildStop, "private helper destruction lost child ownership");
+    require(encryption_live == 1, "private helper destroyed more than once");
+    --encryption_live;
+    ++encryption_destroys;
+    require(tunnelGetNode(t)->node_settings_json == encryption_owned_settings,
+            "private settings were freed before helper destruction");
+    tunnelDefaultOnDestroy(t, context);
+}
+
+static tunnel_t *encryptionChildCreate(node_t *node)
+{
+    ++encryption_creates;
+    require(stringCompare(node->type, encryption_expected_type) == 0, "wrong Encryption orientation");
+    const cJSON *settings  = node->node_settings_json;
+    const cJSON *algorithm = cJSON_GetObjectItemCaseSensitive(settings, "algorithm");
+    const cJSON *password  = cJSON_GetObjectItemCaseSensitive(settings, "password");
+    require(cJSON_GetArraySize(settings) == 3 &&
+                cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(settings, "packet-mode")) && cJSON_IsString(algorithm) &&
+                stringCompare(algorithm->valuestring, "xchacha20-poly1305") == 0 && cJSON_IsString(password) &&
+                stringCompare(password->valuestring, "private test secret") == 0,
+            "private helper did not receive exact packet encryption settings");
+    encryption_owned_settings  = node->node_settings_json;
+    encryption_password_length = stringLength(password->valuestring);
+    if (encryption_child_refused)
+        return NULL;
+    tunnel_t *t = tunnelCreate(node, 0, 0);
+    require(t != NULL, "mock Encryption constructor failed");
+    t->onDestroy = encryptionChildDestroy;
+    ++encryption_live;
+    return t;
+}
+
+node_t __wrap_nodelibraryLoadByTypeName(const char *name)
+{
+    ++encryption_lookups;
+    require(encryption_expected_type != NULL && stringCompare(name, encryption_expected_type) == 0,
+            "unexpected registry lookup from a FakeTcpHeader node");
+    if (! encryption_module_available)
+        return (node_t) {0};
+    return (node_t) {.type                  = (char *) encryption_expected_type,
+                     .hash_type             = calcHashBytes(name, stringLength(name)),
+                     .createHandle          = encryptionChildCreate,
+                     .required_padding_left = 24,
+                     .layer_group           = kNodeLayer3,
+                     .layer_group_prev_node = kNodeLayer3,
+                     .layer_group_next_node = kNodeLayer3,
+                     .can_have_prev         = true,
+                     .can_have_next         = true};
+}
+
+node_t *__wrap_nodemanagerGetConfigNodeByHash(node_manager_config_t *config, hash_t hash)
+{
+    discard config;
+    require(encryption_configured_next != NULL && hash == encryption_configured_next->hash_name,
+            "private helper lost the configured next link");
+    return encryption_configured_next;
+}
+
+static faketcpheader_encryption_t *nodeEncryption(const node_case_t *c, tunnel_t *t)
+{
+    return c->get == nodeFakeTcpHeaderClientGet ? &((faketcpheaderclient_tstate_t *) tunnelGetState(t))->encryption
+                                                : &((faketcpheaderserver_tstate_t *) tunnelGetState(t))->encryption;
+}
+
+static void testEncryptionHelper(const node_case_t *c)
+{
+    const bool client           = c->get == nodeFakeTcpHeaderClientGet;
+    encryption_expected_type    = client ? "EncryptionClient" : "EncryptionServer";
+    encryption_lookups          = 0;
+    encryption_creates          = 0;
+    encryption_destroys         = 0;
+    encryption_module_available = false;
+    tunnel_t *t                 = createWithSettings(c, "{}");
+    require(t != NULL && encryption_lookups == 0, "unencrypted node requires the Encryption module");
+    destroyTunnel(t);
+
+    t = createWithSettings(c, "{\"password\":\"private test secret\"}");
+    require(t == NULL && encryption_lookups == 1 && encryption_creates == 0 && encryption_live == 0,
+            "missing Encryption module allowed plaintext or attempted a child constructor");
+    require(strstr(log_capture, c->type_name) != NULL && strstr(log_capture, encryption_expected_type) != NULL &&
+                strstr(log_capture, "unavailable") != NULL && strstr(log_capture, "private test secret") == NULL,
+            "missing module diagnostic is unclear or exposes the password");
+
+    encryption_module_available = true;
+    encryption_child_refused    = true;
+    t                           = createWithSettings(c, "{\"password\":\"private test secret\"}");
+    require(t == NULL && encryption_creates == 1 && encryption_live == 0 && encryption_owned_settings == NULL,
+            "child construction refusal leaked settings or fell back to plaintext");
+    encryption_child_refused = false;
+
+    for (unsigned int manual = 0; manual < 2; ++manual)
+    {
+        node_t owner             = c->get();
+        owner.name               = (char *) "fake";
+        owner.next               = (char *) "next";
+        owner.hash_next          = 17;
+        owner.node_settings_json = cJSON_Parse("{\"password\":\"private test secret\"}");
+        require(owner.node_settings_json != NULL, "encrypted owner settings fixture");
+        t = owner.createHandle(&owner);
+        require(t != NULL && c->wire(t)->encryption_enabled, "password did not create an encrypted parent");
+        faketcpheader_encryption_t *child = nodeEncryption(c, t);
+        require(child->tunnel != NULL && child->node.instance == child->tunnel &&
+                    child->settings != owner.node_settings_json && child->node.node_settings_json == child->settings &&
+                    stringCompare(child->node.name, "fake.encryption") == 0,
+                "private child metadata or settings ownership is wrong");
+        require(client ? child->node.hash_next == owner.hash_next && stringCompare(child->node.next, owner.next) == 0
+                       : child->node.hash_next == 0 && child->node.next == NULL,
+                "private child copied the wrong traversal link");
+        cJSON_Delete(owner.node_settings_json);
+        owner.node_settings_json = NULL;
+        require(stringCompare(cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(child->settings, "password")),
+                              "private test secret") == 0,
+                "private settings borrowed the parent's password");
+
+        node_t    previous_node = {.type = (char *) (manual && ! client ? "EncryptionServer" : "Previous")};
+        node_t    next_node     = {.type = (char *) (manual && client ? "EncryptionClient" : "Next"), .hash_name = 17};
+        tunnel_t *previous      = tunnelCreate(&previous_node, 0, 0);
+        tunnel_t *next          = tunnelCreate(&next_node, 0, 0);
+        require(previous != NULL && next != NULL, "encryption chain neighbor construction");
+        next_node.instance           = next;
+        encryption_configured_next   = &next_node;
+        ww_startup_context_t startup = {0};
+        wwStartupContextBegin(&startup);
+        if (! client && manual == 0)
+        {
+            tunnel_chain_t *deferred = tunnelchainCreate(1);
+            t->onChain(t, deferred); /* The server releases an empty chain until its predecessor is bound. */
+            require(! startupFailurePending() && t->chain == NULL && child->tunnel->chain == NULL && t->prev == NULL &&
+                        child->tunnel->prev == NULL,
+                    "server helper failed to defer until its predecessor exists");
+        }
+        tunnelBind(previous, t);
+        tunnel_chain_t *chain = tunnelchainCreate(1);
+        t->onChain(t, chain);
+        const bool succeeded = wwStartupSucceeded(wwStartupContextEnd(&startup));
+        if (manual)
+        {
+            require(! succeeded && chain->tunnels.len == 0 && t->chain == NULL && child->tunnel->chain == NULL,
+                    "password accepted an adjacent manual Encryption node");
+            require(strstr(log_capture, "adjacent Encryption") != NULL, "duplicate encryption diagnostic missing");
+        }
+        else
+        {
+            require(succeeded && chain->tunnels.len == 3 && chain->sum_padding_left == 85,
+                    "private helper is absent from chain indexing/padding");
+            require(client ? previous->next == t && t->next == child->tunnel && child->tunnel->prev == t &&
+                                 child->tunnel->next == next && next->prev == child->tunnel
+                           : previous->next == child->tunnel && child->tunnel->prev == previous &&
+                                 child->tunnel->next == t && t->prev == child->tunnel && t->next == next,
+                    "encryption helper is on the wrong side or broke neighbor links");
+            require(tunnelGetBranchEntry(previous, t) == (client ? t : child->tunnel),
+                    "encryption helper changed the callable branch entry");
+        }
+        destroyTunnel(t);
+        require(encryption_live == 0 && encryption_owned_settings == NULL,
+                "parent destruction leaked its child or settings");
+        tunnelDestroy(previous);
+        tunnelDestroy(next);
+        tunnelchainDestroy(chain);
+        memoryFree(owner.type);
+        encryption_configured_next = NULL;
+    }
+    require(encryption_destroys == 2, "private helper destruction was missing or repeated");
+    encryption_module_available = false;
+    encryption_expected_type    = NULL;
+}
+
 static unsigned forwarded_up, forwarded_down, unexpected_callbacks;
 static line_t  *forwarded_line;
 static sbuf_t  *forwarded_buffer;
@@ -912,6 +1108,7 @@ int main(void)
         testFlagSettings(&cases[i]);
         testRejections(&cases[i]);
 #if FAKE_TCP_HEADER_CALLBACK_FIXTURE
+        testEncryptionHelper(&cases[i]);
         testPayloadCallbacks(&cases[i], NULL);
         testPayloadCallbacks(&cases[i], "{\"increment-sequence\":true,\"sequence\":4294967270,\"acknowledgment\":321}");
         testPayloadCallbacks(&cases[i], "{\"increment-sequence\":false,\"sequence\":123,\"acknowledgment\":321}");

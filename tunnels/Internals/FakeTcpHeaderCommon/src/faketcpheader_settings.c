@@ -23,6 +23,7 @@ static const char *const kSettingsIncrementAcknowledgment = "increment-acknowled
 static const char *const kSettingsSequence          = "sequence";
 static const char *const kSettingsAcknowledgment    = "acknowledgment";
 static const char *const kSettingsFlags                   = "flags";
+static const char *const kSettingsPassword                = "password";
 
 static bool faketcpheaderSettingsKeyIsKnown(const char *key)
 {
@@ -40,7 +41,8 @@ static bool faketcpheaderSettingsKeyIsKnown(const char *key)
     return stringCompare(key, kSettingsOptions) == 0 || stringCompare(key, kSettingsClientPortRange) == 0 ||
            stringCompare(key, kSettingsIncrementSequence) == 0 || stringCompare(key, kSettingsSequence) == 0 ||
            stringCompare(key, kSettingsAcknowledgment) == 0 ||
-           stringCompare(key, kSettingsIncrementAcknowledgment) == 0 || stringCompare(key, kSettingsFlags) == 0;
+           stringCompare(key, kSettingsIncrementAcknowledgment) == 0 || stringCompare(key, kSettingsFlags) == 0 ||
+           stringCompare(key, kSettingsPassword) == 0;
 }
 
 static bool faketcpheaderSettingsKeysAreKnown(const cJSON *settings, const char *node_name)
@@ -83,6 +85,32 @@ static bool faketcpheaderSettingsLoadInteger(const cJSON *settings, const char *
         return false;
     }
     *value_out = status == kJsonValuePresent ? (uint32_t) value : fallback;
+    return true;
+}
+
+static bool faketcpheaderSettingsLoadPassword(const cJSON *settings, const char *node_name,
+                                              faketcpheader_wire_config_t *config)
+{
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, settings)
+    {
+        if (stringCompare(item->string, kSettingsPassword) != 0)
+        {
+            continue;
+        }
+        if (config->encryption_enabled)
+        {
+            LOGF("JSON Error: %s->settings->password : duplicate setting", node_name);
+            return false;
+        }
+        const char *password = cJSON_GetStringValue(item);
+        if (password == NULL || password[0] == '\0')
+        {
+            LOGF("JSON Error: %s->settings->password : expected a nonempty string", node_name);
+            return false;
+        }
+        config->encryption_enabled = true;
+    }
     return true;
 }
 
@@ -336,7 +364,8 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsWindow, UINT16_MAX, &window) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsUrgentPointer, 0, &urgent_pointer) ||
         ! faketcpheaderSettingsLoadOptions(settings, node_name, &config) ||
-        ! faketcpheaderSettingsLoadFlags(settings, node_name, &config))
+        ! faketcpheaderSettingsLoadFlags(settings, node_name, &config) ||
+        ! faketcpheaderSettingsLoadPassword(settings, node_name, &config))
     {
         return false;
     }

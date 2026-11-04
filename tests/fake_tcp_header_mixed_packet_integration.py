@@ -7,6 +7,8 @@ Fake sequences use the random-port, incrementing defaults across interleaved
 protocols; captured byte ranges are checked per direction/client port
 independently of arrival order. Per-packet random ACKs must preserve those
 sequences and remain covered by the visible carrier checksum.
+--encrypted adds only the FakeTcpHeader password setting: its private helpers
+must preserve these mixed native protocols and account for expanded sequences.
 """
 import contextlib
 import json
@@ -19,7 +21,8 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-from fake_tcp_header_raw_integration import (FAKE_OPTIONS, NATIVE_MTU, check_sequence_ranges, checksum,
+from fake_tcp_header_raw_integration import (ENCRYPTION_OVERHEAD, ENCRYPTION_PASSWORD, FAKE_OPTIONS, NATIVE_MTU,
+                                             check_sequence_ranges, checksum,
                                              flow_index, native_packet, receive_exact)
 from wwtest.linux_commands import command, iptables
 from wwtest.process import Process, install_termination_handler
@@ -37,17 +40,20 @@ def addresses(source, destination):
     return {"source-ip": {"ipv4": source}, "dest-ip": {"ipv4": destination}}
 
 
-def prepare(directory, role):
+def prepare(directory, role, encrypted=False):
+    native_mtu = NATIVE_MTU - (ENCRYPTION_OVERHEAD if encrypted else 0)
     client = role == "client"
     native = CLIENT if client else SERVER
     tun = {"name": "native", "type": "TunDevice", "settings": {
         "device-name": TUN_NAMES[0 if client else 1], "device-ip": native[0] + "/24",
-        "device-mtu": NATIVE_MTU, "gso": False, "multi-queue": False, "route-table": "off"}}
+        "device-mtu": native_mtu, "gso": False, "multi-queue": False, "route-table": "off"}}
     fake = {"name": "fake", "type": "FakeTcpHeaderClient" if client else "FakeTcpHeaderServer",
             "settings": {"server-port": SERVER_PORT,
                          "client-port-range": [CLIENT_PORT, CLIENT_PORT + PORT_COUNT - 1],
                          "options": FAKE_OPTIONS.hex(),
                          "acknowledgment": "random_packet"}}
+    if encrypted:
+        fake["settings"]["password"] = ENCRYPTION_PASSWORD
     rewrite = {"name": "addresses", "type": "IpOverrider", "settings": {
         "up" if client else "down": addresses(*(CARRIER if client else CARRIER[::-1])),
         "down" if client else "up": addresses(native[1], native[0])}}
@@ -59,7 +65,7 @@ def prepare(directory, role):
     for node, following in zip(nodes, nodes[1:]):
         node["next"] = following["name"]
     core = {"configs": ["config.json"],
-            "misc": {"workers": 2, "ram-profile": "client", "mtu": NATIVE_MTU,
+            "misc": {"workers": 2, "ram-profile": "client", "mtu": native_mtu,
                      "try-enabling-bbr": False},
             "log": {"path": "log/", **{
                 name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
@@ -69,7 +75,8 @@ def prepare(directory, role):
     (directory / "core.json").write_text(json.dumps(core))
 
 
-def wait_ready(process, work, role):
+def wait_ready(process, work, role, encrypted=False):
+    native_mtu = NATIVE_MTU - (ENCRYPTION_OVERHEAD if encrypted else 0)
     client = role == "client"
     name = TUN_NAMES[0 if client else 1]
     native = CLIENT if client else SERVER
@@ -78,7 +85,7 @@ def wait_ready(process, work, role):
     while True:
         process.check_running(role + " exited before packet inputs activated")
         interfaces = json.loads(command("ip", "-j", "address", "show"))
-        tun_up = any(item["ifname"] == name and "UP" in item["flags"] and item["mtu"] == NATIVE_MTU
+        tun_up = any(item["ifname"] == name and "UP" in item["flags"] and item["mtu"] == native_mtu
                      and any(address.get("local") == native[0] for address in item.get("addr_info", []))
                      for item in interfaces)
         if tun_up and marker in (work / "stdout.log").read_text():
@@ -97,7 +104,7 @@ def receive_raw(sock, protocol, source, destination):
     return packet[ihl:]
 
 
-def run(binary, directory):
+def run(binary, directory, encrypted=False):
     parent_netns = os.environ.get("WATERWALL_TEST_PARENT_NETNS")
     assert parent_netns and os.readlink("/proc/self/ns/net") != parent_netns, \
         "mixed packet test requires the private network namespace wrapper"
@@ -108,11 +115,11 @@ def run(binary, directory):
         processes = []
         for role in ("server", "client"):
             work = directory / role
-            prepare(work, role)
+            prepare(work, role, encrypted)
             process = stack.enter_context(Process([binary], cwd=work, log_path=work / "stdout.log",
                                                    cleanup_signal=signal.SIGTERM, terminate_timeout=15))
             processes.append(process)
-            wait_ready(process, work, role)
+            wait_ready(process, work, role, encrypted)
         # Assigning these peers locally would bypass the encoder entirely.
         assigned = {address.get("local") for item in json.loads(command("ip", "-j", "address", "show"))
                     for address in item.get("addr_info", [])}
@@ -143,6 +150,7 @@ def run(binary, directory):
         expected = {protocol: (set(), set()) for protocol in (17, 1, 253)}
         streams = (bytearray(), bytearray())
         sequence_ranges = {}
+        encrypted_packets = {source: set() for source in CARRIER}
 
         def inspect(frame):
             packet = frame[14:]
@@ -169,6 +177,20 @@ def run(binary, directory):
             assert checksum(pseudo + carrier) == 0, "bad visible TCP checksum, including the protocol byte"
             fake_length = (carrier[12] >> 4) * 4
             assert fake_length == 24 and carrier[20:fake_length] == FAKE_OPTIONS
+            if encrypted:
+                body = carrier[fake_length:]
+                assert len(body) >= ENCRYPTION_OVERHEAD + 1, "encrypted carrier lacks nonce/ciphertext/tag"
+                sequence, acknowledgment = struct.unpack_from("!II", carrier, 4)
+                expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
+                                                     0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
+                struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + body))
+                assert carrier[:fake_length] == expected_fake, "encryption changed the visible fake TCP template"
+                ranges = sequence_ranges.setdefault((source, client_port), {})
+                entry = (len(body), packet)
+                assert ranges.setdefault(sequence, entry) == entry, "encrypted packets reused a sequence range"
+                assert b"opaque-request-" not in body and b"opaque-reply-" not in body, "native payload was not encrypted"
+                encrypted_packets[source].add(packet)
+                return
             assert len(carrier) > fake_length, "carrier lacks a protocol byte"
             protocol = carrier[fake_length]
             assert protocol in PROTOCOLS, f"unexpected received protocol byte {protocol}"
@@ -283,6 +305,11 @@ def run(binary, directory):
             drain()
 
         def complete():
+            if encrypted:
+                # Exact application receives above prove all four native
+                # protocols. Six datagrams plus TCP handshake/data must also
+                # be visible as distinct encrypted carriers per direction.
+                return all(len(packets) >= 9 for packets in encrypted_packets.values())
             for index, source in enumerate(CARRIER):
                 if not all(seen[(source, protocol)] == expected[protocol][index] for protocol in (17, 1, 253)):
                     return False
@@ -295,9 +322,10 @@ def run(binary, directory):
         while not complete():
             assert time.monotonic() < deadline, "missing mixed-protocol carrier bytes"
             drain()
-        assert 2 in tcp_flags[CARRIER[0]] and 0x12 in tcp_flags[CARRIER[1]], "native TCP handshake was not carried"
-        assert any(flags & 0x10 and not flags & 2 for flags in tcp_flags[CARRIER[0]]), "native handshake ACK was not carried"
-        assert all(seen[key] for key in seen), "not every protocol byte reached both carrier directions"
+        if not encrypted:
+            assert 2 in tcp_flags[CARRIER[0]] and 0x12 in tcp_flags[CARRIER[1]], "native TCP handshake was not carried"
+            assert any(flags & 0x10 and not flags & 2 for flags in tcp_flags[CARRIER[0]]), "native handshake ACK was not carried"
+            assert all(seen[key] for key in seen), "not every protocol byte reached both carrier directions"
         for key, ranges in sequence_ranges.items():
             check_sequence_ranges(ranges, key)
 
@@ -313,9 +341,10 @@ def run(binary, directory):
 
 def main():
     binary = str(Path(sys.argv[1]).resolve())
+    assert set(sys.argv[2:]) <= {"--encrypted"}, "unknown mixed-packet option"
     with RunDirectory(prefix="waterwall-fake-tcp-mixed-") as directory:
         try:
-            run(binary, Path(directory))
+            run(binary, Path(directory), "--encrypted" in sys.argv[2:])
         except Exception:
             for log in Path(directory).rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-12000:]}", file=sys.stderr)

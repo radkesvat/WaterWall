@@ -2,6 +2,7 @@
 
 #include "wwapi.h"
 
+#include "FakeTcpHeaderCommon/faketcpheader_encryption.h"
 #include "FakeTcpHeaderCommon/faketcpheader_wire.h"
 
 enum
@@ -13,6 +14,7 @@ typedef struct faketcpheaderclient_tstate_s
 {
     faketcpheader_wire_config_t wire;
     atomic_log_rate_limiter_t   drop_log_limiter;
+    faketcpheader_encryption_t  encryption;
     atomic_u32_t                values[];
 } faketcpheaderclient_tstate_t;
 

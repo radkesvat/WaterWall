@@ -184,7 +184,8 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
     }
     /* Widen before adding and before narrowing to the IPv4 total-length field. */
     const uint32_t total = length + (uint32_t) overhead;
-    if (total > kFakeTcpHeaderWireMaxCarrierLength || total > UINT16_MAX)
+    if (total > (uint32_t) kFakeTcpHeaderWireMaxCarrierLength - faketcpheaderWireEncryptionOverhead(config) ||
+        total > UINT16_MAX)
     {
         return kFakeTcpHeaderWireOversizedNative;
     }
@@ -219,14 +220,15 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
 
     PUT_BE16(tcp, side == kFakeTcpHeaderWireClient ? client : config->server_port);
     PUT_BE16(tcp + 2, side == kFakeTcpHeaderWireClient ? config->server_port : client);
-    /* All refusals precede flag and counter reservations. SYN and FIN each
-     * occupy one sequence number in addition to the fake TCP payload. */
+    /* All refusals precede flag and counter reservations. The private encryption
+     * helper adds payload bytes later. SYN and FIN each occupy one extra sequence. */
     const uint8_t flags    = faketcpheaderWireTakeFlags(config, values, index);
     uint32_t sequence = config->sequence;
     if (config->increment_sequence)
     {
         sequence = atomicAddU32Explicit(&values[index],
                                         (uint32_t) native.transport_length + kFakeTcpHeaderWireProtocolLength +
+                                            faketcpheaderWireEncryptionOverhead(config) +
                                             ((flags & TCP_SYN) != 0 ? 1U : 0U) + ((flags & TCP_FIN) != 0 ? 1U : 0U),
                                         memory_order_relaxed);
     }
@@ -281,8 +283,8 @@ faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_con
     const uint32_t     length  = sbufGetLength(buf);
     uint8_t           *packet  = sbufGetMutablePtr(buf);
     ipv4_packet_view_t carrier = {0};
-    if (length > kFakeTcpHeaderWireMaxCarrierLength || ! ipv4packetviewParse(packet, length, &carrier) ||
-        carrier.ip_total_length != length)
+    if (length > (uint32_t) kFakeTcpHeaderWireMaxCarrierLength - faketcpheaderWireEncryptionOverhead(config) ||
+        ! ipv4packetviewParse(packet, length, &carrier) || carrier.ip_total_length != length)
     {
         return kFakeTcpHeaderWireMalformedCarrier;
     }

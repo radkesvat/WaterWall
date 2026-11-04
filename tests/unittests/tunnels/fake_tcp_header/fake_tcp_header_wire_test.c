@@ -820,6 +820,130 @@ static void testSequencePortIsolation(void)
     }
 }
 
+static void testEncryptionAccounting(void)
+{
+    uint8_t       packet[kTestPacketCapacity], expected[kTestPacketCapacity], carrier[kTestPacketCapacity];
+    const uint8_t protocols[] = {6, 17, 1, 253}, ihls[] = {20, 60}, options[] = {0, 40};
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
+            for (size_t h = 0; h < ARRAY_SIZE(ihls); ++h)
+                for (size_t o = 0; o < ARRAY_SIZE(options); ++o)
+                {
+                    faketcpheader_wire_config_t config = baseConfig();
+                    config.encryption_enabled          = true;
+                    config.client_port_count           = 1;
+                    config.sequence                    = UINT32_MAX - 17U;
+                    config.flags[0]                    = 0x03; /* SYN and FIN each reserve one extra byte. */
+                    setOptions(&config, options[o]);
+                    const uint16_t overhead = (uint16_t) (21U + options[o]);
+                    const uint16_t limit    = (uint16_t) (1439U - options[o]);
+                    require(faketcpheaderWireEncryptionOverhead(&config) == 40 &&
+                                faketcpheaderWireOverhead(&config) == overhead &&
+                                faketcpheaderWireMaxNativeLength(&config) == limit,
+                            "private encryption changed prepend or missed the final packet limit");
+
+                    /* The private helper will expand the accepted 1460-byte carrier to 1500. */
+                    uint16_t length = buildNative(packet, protocols[p], ihls[h], limit);
+                    sbuf_t  *buf    = encodeOk(&config, kSides[s], packet, length, overhead, false);
+                    require(sbufGetLength(buf) == 1460 && sbufGetLeftCapacity(buf) == 0,
+                            "encryption size reservation consumed helper padding or added bytes itself");
+                    require(oracleIpValid(bufferBytes(buf)) && oracleTransportValid(bufferBytes(buf)),
+                            "encrypted configuration changed visible checksum behavior");
+                    decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
+                    sbufDestroy(buf);
+
+                    length = buildNative(packet, protocols[p], ihls[h], (uint16_t) (limit + 1U));
+                    expectRefusalAnyIntent(&config,
+                                           kSides[s],
+                                           true,
+                                           packet,
+                                           length,
+                                           overhead,
+                                           kFakeTcpHeaderWireOversizedNative,
+                                           "encoding did not reserve private encryption overhead");
+                    const uint16_t encoded = oracleCarrier(carrier, packet, &config, kSides[s], 0);
+                    expectRefusalAnyIntent(&config,
+                                           peerSide(kSides[s]),
+                                           false,
+                                           carrier,
+                                           encoded,
+                                           7,
+                                           kFakeTcpHeaderWireMalformedCarrier,
+                                           "decrypted carrier exceeds its encrypted wire size limit");
+                    /* The peer's TCP option length, not our outgoing template, determines decode removal. */
+                    length                                  = buildNative(packet, protocols[p], ihls[h], limit);
+                    const uint16_t              peer_length = oracleCarrier(carrier, packet, &config, kSides[s], 0);
+                    faketcpheader_wire_config_t peer        = config;
+                    setOptions(&peer, options[o] == 0 ? 40 : 0);
+                    buf = makeBuffer(carrier, peer_length, 7);
+                    decodeOk(&peer, peerSide(kSides[s]), buf, packet, length);
+                    sbufDestroy(buf);
+
+                    for (unsigned int increment = 0; increment < 2; ++increment)
+                    {
+                        config.increment_sequence = increment != 0;
+                        atomic_u32_t sequence[1];
+                        faketcpheaderWireInitState(&config, increment != 0 ? sequence : NULL);
+                        uint32_t next = config.sequence;
+                        for (unsigned int i = 0; i < 3; ++i)
+                        {
+                            length = buildNative(packet, protocols[p], ihls[h], (uint16_t) (ihls[h] + 43U + i));
+                            memoryCopy(expected, packet, length);
+                            /* Native repair still happens before normalization and the later helper. */
+                            if (protocols[p] == 6 || protocols[p] == 17 || protocols[p] == 1)
+                                packet[ihls[h] + checksumOffset(protocols[p])] ^= 0x80U;
+                            else
+                                packet[10] ^= 0x80U;
+                            buf = makeBuffer(packet, length, overhead);
+                            sbufSetRecalculateChecksum(buf, true);
+                            requireResult(
+                                faketcpheaderWireEncode(&config, increment != 0 ? sequence : NULL, kSides[s], buf),
+                                kFakeTcpHeaderWireOk,
+                                "encrypted configuration refused native repair");
+                            requireResult(GET_BE32(bufferBytes(buf) + ihls[h] + 4),
+                                          next,
+                                          "encryption sequence reservation changed the current sequence");
+                            require(oracleIpValid(bufferBytes(buf)) && oracleTransportValid(bufferBytes(buf)),
+                                    "encryption accounting broke visible checksums");
+                            if (increment != 0)
+                            {
+                                next += (uint32_t) length - ihls[h] + 1U + 40U + 2U;
+                                requireResult(atomicLoadU32Relaxed(sequence),
+                                              next,
+                                              "sequence reservation omitted encryption or control bytes");
+                            }
+                            decodeOk(&config, peerSide(kSides[s]), buf, expected, length);
+                            sbufDestroy(buf);
+                        }
+                    }
+                }
+
+#if FAKE_TCP_HEADER_RANDOM_FIXTURE
+    faketcpheader_wire_config_t config = baseConfig();
+    config.encryption_enabled          = true;
+    config.increment_sequence          = true;
+    config.client_port_count           = 1;
+    config.acknowledgment_mode         = kFakeTcpHeaderFieldRandomPacket;
+    config.flags_count                 = 2;
+    config.flags[0]                    = 0x02;
+    config.flags[1]                    = 0x18;
+    atomic_u32_t state[2];
+    faketcpheaderWireInitState(&config, state);
+    const uint16_t length = buildNative(packet, 17, 20, 1440);
+    sbuf_t        *buf    = makeBuffer(packet, length, 21);
+    deterministic_random  = true;
+    random_draws          = 0;
+    requireResult(faketcpheaderWireEncode(&config, state, kFakeTcpHeaderWireClient, buf),
+                  kFakeTcpHeaderWireOversizedNative,
+                  "random ACK encoder admitted an encrypted oversized packet");
+    requireResult(random_draws, 0, "encrypted size refusal consumed an ACK random draw");
+    deterministic_random = false;
+    requireResult(atomicLoadU32Relaxed(&state[0]), config.sequence, "encrypted size refusal advanced sequence");
+    requireResult(atomicLoadU32Relaxed(&state[1]), 0, "encrypted size refusal consumed a flag position");
+    sbufDestroy(buf);
+#endif
+}
+
 static void testRandomSequenceModes(void)
 {
     const faketcpheader_field_mode_t modes[] = {kFakeTcpHeaderFieldRandomNode, kFakeTcpHeaderFieldRandomPort};
@@ -1884,8 +2008,34 @@ static void requireDefaults(const faketcpheader_wire_config_t *config)
                 config->acknowledgment_mode == kFakeTcpHeaderFieldNumeric && config->acknowledgment == 0 &&
                 config->window == 65535 && config->urgent_pointer == 0 && config->options_length == 0 &&
                 config->increment_sequence && ! config->increment_acknowledgment && config->flags_count == 1 &&
-                config->flags[0] == 0x18,
+                config->flags[0] == 0x18 && ! config->encryption_enabled,
             "default settings changed");
+}
+
+static void testPasswordSettings(void)
+{
+    const char *const accepted[] = {"{\"password\":\"test secret\"}",
+                                    "{\"password\":\"\\u0631\\u0645\\u0632\"}",
+                                    "{\"password\":\"x\",\"options\":\"01010101\"}"};
+    for (size_t i = 0; i < ARRAY_SIZE(accepted); ++i)
+    {
+        const faketcpheader_wire_config_t config = requireSettingsLoaded(accepted[i]);
+        require(config.encryption_enabled && faketcpheaderWireEncryptionOverhead(&config) == 40,
+                "nonempty password did not enable encrypted size accounting");
+    }
+    const char *const rejected[] = {"{\"password\":null}",
+                                    "{\"password\":false}",
+                                    "{\"password\":17}",
+                                    "{\"password\":[]}",
+                                    "{\"password\":{}}",
+                                    "{\"password\":\"\"}",
+                                    "{\"password\":\"one\",\"password\":\"two\"}",
+                                    "{\"password\":\"one\",\"password\":\"one\"}",
+                                    "{\"password\":\"test\\u0000suffix\"}",
+                                    "{\"password\\u0000suffix\":\"test\"}",
+                                    "{\"password\":\"\xc0\xaf\"}"};
+    for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
+        requireSettingsRejected(rejected[i]);
 }
 
 static void testFlagSettings(void)
@@ -2290,6 +2440,7 @@ int main(void)
     /* Settings are pure parsing: even random defaults must work before RNG startup. */
     TEST_RUN_CASE(testSettings);
     TEST_RUN_CASE(testFlagSettings);
+    TEST_RUN_CASE(testPasswordSettings);
     require(globalstateInitializeSecureRandom(), "OS random source unavailable");
     require(frandGlobalInit(), "fast random initialization failed");
     frandInit();
@@ -2302,6 +2453,7 @@ int main(void)
     TEST_RUN_CASE(testPortMapping);
     TEST_RUN_CASE(testSequenceProgression);
     TEST_RUN_CASE(testSequencePortIsolation);
+    TEST_RUN_CASE(testEncryptionAccounting);
     TEST_RUN_CASE(testRandomSequenceModes);
     TEST_RUN_CASE(testAcknowledgmentModes);
     TEST_RUN_CASE(testFlagProgression);

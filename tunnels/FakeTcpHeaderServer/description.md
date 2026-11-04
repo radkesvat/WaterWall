@@ -154,6 +154,7 @@ needed; each received packet supplies its own protocol byte.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
+| `password` | unset | Optional nonempty shared secret; creates an internal packet Encryption helper. See [Optional Payload Encryption](#optional-payload-encryption). |
 | `server-port` | `40000` | Fake TCP server port, integer `1..65535`. |
 | `client-port` | unset | Use exactly one fake TCP client port. Integer `1..65535`; mutually exclusive with `client-port-range`. |
 | `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
@@ -186,6 +187,76 @@ All ports and TCP-template fields in this table belong to the **fake header**.
 For example, fake TCP port 40000 can carry original UDP traffic for port 5300.
 The original application port is kept in the original transport header;
 `server-port` does not select or replace the backend application's port.
+
+## Optional Payload Encryption
+
+Set the same nonempty `password` on both FakeTcpHeader peers to encrypt the
+protocol byte and the complete original IP payload. Use a long random secret.
+Omitting `password` keeps the plain carrier format shown elsewhere on this page.
+An empty string, `null` or any non-string value is invalid.
+
+```json
+{
+  "password": "replace-with-a-long-random-shared-secret",
+  "client-port-range": [40001, 40016],
+  "server-port": 40000
+}
+```
+
+You do not add another node to the JSON chain. During construction the client
+adds a private `EncryptionClient` immediately after itself; the server adds a
+private `EncryptionServer` immediately before itself. Both helpers use
+`packet-mode: true` and `algorithm: "xchacha20-poly1305"`, with the Encryption
+nodes' default salt and KDF iteration count. The expanded chains are:
+
+```text
+client: ... -> FakeTcpHeaderClient -> internal EncryptionClient -> IpOverrider -> RawSocket
+server: RawSocket -> IpOverrider -> internal EncryptionServer -> FakeTcpHeaderServer -> ...
+```
+
+Each outgoing packet becomes:
+
+```text
+[IPv4][fake TCP + options][24-byte nonce][encrypted protocol byte + native IP payload][16-byte tag]
+```
+
+There is no TLS-like record header. The visible IPv4 header and fake TCP header
+stay available for routing and address rewriting; the original UDP/TCP header
+is inside the ciphertext. The receiver authenticates and decrypts first, then
+FakeTcpHeader restores the original protocol and checksum representation.
+Requests and replies use separate derived keys. Each packet has an independent
+random nonce, so packet loss and reordering do not prevent later decryption.
+Wrong passwords and modified ciphertext cause a packet drop, not a packet-line
+close. This does not add replay protection or reliable delivery.
+
+The helper adds **40 bytes**. FakeTcpHeader includes these bytes in outgoing
+sequence reservations and its 1500-byte final-carrier limit. For example, a
+100-byte fake TCP payload becomes 140 bytes, so an incrementing sequence of
+5000 reserves through 5139 and the next starts at 5140. SYN/FIN still add their
+usual sequence positions. Disabling sequence increments still keeps the selected
+sequence fixed; ACK behavior is unchanged. Encryption never changes either field.
+
+With no fake TCP options the maximum native IPv4 packet is **1439 bytes**
+(1411 application bytes for a 20-byte IPv4 header plus UDP). With four option
+bytes it is 1435; with forty it is 1399. Set the TUN or packet-bridge MTU to fit
+both peers' largest overhead. Only this automatically created helper's overhead
+is included; additional manually configured transforms need their own size and
+sequence planning.
+
+Do not also configure an Encryption node immediately outside this helper:
+`FakeTcpHeaderClient -> Encryption...` or `Encryption... -> FakeTcpHeaderServer`
+with `password` is rejected to avoid accidental duplicate encryption.
+
+The corresponding Encryption module must be available when `password` is set;
+otherwise construction fails clearly. Without a password, FakeTcpHeader has no
+runtime requirement for either Encryption node. No plaintext fallback is used.
+The private helper participates in ordinary chain padding, validation and cleanup
+and counts toward the chain's node limit.
+
+Encryption protects the carried contents, not the visible mutable IP/TCP fields,
+packet lengths or timing. IP/protocol capture and fake-port checks remain necessary
+for routing; they are not authentication by themselves. A ProtoSwap must run
+after encryption on send and restore protocol 6 before decryption on receive.
 
 ## Outgoing Flag Script
 
@@ -293,6 +364,7 @@ it by:
 
 ```text
 1 protocol byte + original IPv4 payload length
++ 40 if password encryption is enabled
 + 1 if the chosen fake SYN bit is set
 + 1 if the chosen fake FIN bit is set
 ```
@@ -302,7 +374,7 @@ to the selected client port. The original IPv4 payload includes the native
 TCP/UDP header and data, or the complete ICMP/opaque body. IPv4 and fake TCP
 headers/options are excluded. SYN and FIN each add one sequence position, not
 a packet byte. For example, with the default ACK|PSH flags, a UDP packet with
-100 application bytes advances its port's counter by `1 + 8 + 100 = 109`:
+100 application bytes without password encryption advances its port's counter by `1 + 8 + 100 = 109`:
 a starting sequence of `1000` becomes `1109` for the next packet selecting
 that port.
 
@@ -420,7 +492,7 @@ improvement in concealment or network acceptance is guaranteed.
 The server uses the same
 [single-IPv4 format](../FakeTcpHeaderClient/description.md#wire-rules) and
 [native checksum representation](../FakeTcpHeaderClient/description.md#native-checksum-representation)
-as the client. For UDP, the layout is:
+as the client. Without the optional password, the UDP layout is:
 
 ```text
 [existing IPv4, protocol 6][fake TCP + options][17: one byte][original UDP header][application bytes]
@@ -501,7 +573,8 @@ RawSocket captures **all TCP from the selected source addresses**, regardless
 of port. Ordinary SSH or HTTPS between these endpoints can therefore be
 intercepted. Decode still requires `server-port` and a client port in its
 configured range, but rejecting a captured packet cannot return it to the host
-stack. IP/protocol selection and the codec's port checks provide no authentication.
+stack. IP/protocol selection and the codec's port checks alone provide no authentication; optional password protection is applied
+by the internal Encryption helper before the codec sees a decoded carrier.
 
 ## Composition
 
@@ -547,7 +620,7 @@ restoring protocol 6 before decode. See
 
 ## MTU and Validation
 
-The overhead is `O = F + 1`, where `F = 20 + outgoing options length` counts
+Without a password, the overhead is `O = F + 1`, where `F = 20 + outgoing options length` counts
 only fake TCP and the additional byte records the native protocol. Thus overhead
 is `21..61` bytes and the native IP packet limit is `1500 - O`: 1479 without
 options, 1475 with four option bytes, and 1439 with forty. Existing IPv4 options
@@ -555,7 +628,9 @@ are already part of native length. Configure both peers' TUN/CTP/PTC and core MT
 for the largest outgoing fake header plus protocol byte and any lower path MTU.
 The node advertises 61 bytes of left padding and neither fragments, segments,
 discovers PMTU nor adjusts MSS. It moves only the IPv4 header; the native body
-stays in place and requires no extra tail space.
+stays in place and requires no extra tail space. With a password, add 40 bytes
+to `O` for the internal Encryption helper and subtract 40 from every native or
+application limit below. That helper supplies its own padding and encryption work.
 
 The native MTU counts the **whole original IPv4 packet**, not just application
 data. Without fake TCP options, a 1479-byte native packet becomes a 1500-byte
@@ -591,8 +666,9 @@ all workers, reasons and both directions. The worker packet line remains alive.
 ## Limits and Detectability
 
 The fake TCP framing and tagged native payload are easy to fingerprint. Stateful firewalls and NAT can drop carriers; rewriting fake TCP
-ports breaks decoding. There is no authentication, encryption or reliability
-at the fake TCP layer. Use appropriate traffic protection inside it. Native UDP
+ports breaks decoding. Without `password`, there is no authentication or
+encryption. The optional helper protects carried contents but does not prevent
+replays or add reliability. Native UDP
 retains loss/reordering behavior and native TCP retains its own TCP behavior.
 
 ## Examples
@@ -623,7 +699,8 @@ TUN at both ends.
 
 Build option: `INCLUDE_FAKE_TCP_HEADER_SERVER` (default `TRUE`). Its only module
 requirements are `FakeTcpHeaderCommon` and `ww`, independent of the client and
-IpManipulator modules.
+IpManipulator modules. A configured password additionally requires the
+EncryptionServer node at runtime, without a direct build dependency.
 
 The implementation is a pure packet tunnel created with `packettunnelCreate()`.
 It keeps no per-line connection state. Sequence counters, optional ACK counters,

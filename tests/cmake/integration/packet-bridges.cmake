@@ -66,6 +66,14 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
         "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
     set_tests_properties(waterwall.fake_tcp_header_mixed_packet_roundtrip PROPERTIES
       TIMEOUT 90 LABELS "integration;linux;privileged;tun;capture;fake-tcp;network-isolated")
+    if(TARGET EncryptionClient AND TARGET EncryptionServer)
+      add_test(NAME waterwall.fake_tcp_header_encrypted_mixed_packet_roundtrip
+        COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+          "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_mixed_packet_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --encrypted)
+      set_tests_properties(waterwall.fake_tcp_header_encrypted_mixed_packet_roundtrip PROPERTIES
+        TIMEOUT 90 LABELS "integration;linux;privileged;tun;capture;fake-tcp;encryption;network-isolated")
+    endif()
   endif()
   if(TARGET RawSocket AND TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer AND TARGET IpOverrider
      AND TARGET ConnectionToPackets AND TARGET PacketsToConnection
@@ -76,6 +84,14 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
         "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
     set_tests_properties(waterwall.fake_tcp_header_raw_roundtrip PROPERTIES
       TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;network-isolated")
+    if(TARGET EncryptionClient AND TARGET EncryptionServer)
+      add_test(NAME waterwall.fake_tcp_header_encrypted_raw_roundtrip
+        COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+          "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --encrypted)
+      set_tests_properties(waterwall.fake_tcp_header_encrypted_raw_roundtrip PROPERTIES
+        TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;encryption;network-isolated")
+    endif()
     if(TARGET TcpListener AND TARGET TcpConnector)
       add_test(NAME waterwall.fake_tcp_header_raw_tcp_roundtrip
         COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"

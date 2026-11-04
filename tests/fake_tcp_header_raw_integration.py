@@ -12,7 +12,10 @@ ACK modes are random-packet for UDP, random-node for --multi-queue, numeric for
 --tcp, and random-port for --tun. TCP/TUN ACKs advance once per encoded packet;
 multiqueue ACKs remain fixed within each node. TCP/TUN also use short flag scripts
 including SYN/FIN/RST and non-ACK carriers, with the last entry repeated.
+--encrypted exercises the optional password helper with UDP, checks its 40-byte
+expansion in packet lengths and sequences, and rejects a tampered carrier.
 """
+from collections import Counter
 import contextlib
 import errno
 import json
@@ -37,6 +40,8 @@ FLOWS = 6
 NATIVE_MTU = 1475
 FAKE_OPTIONS = bytes((1, 1, 1, 1))
 TCP_ACK_STARTS = (0xFFFFFFFE, 0xFFFFFFFD)
+ENCRYPTION_OVERHEAD = 40
+ENCRYPTION_PASSWORD = "fake-tcp-packet-integration-shared-secret"
 
 
 def checksum(data):
@@ -115,13 +120,14 @@ def check_sequence_ranges(ranges, key, expected_initial=None, field="sequence"):
     return initial
 
 
-def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
+def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp, encrypted=False):
+    native_mtu = NATIVE_MTU - (ENCRYPTION_OVERHEAD if encrypted else 0)
     example_role = "client-tun" if tun and role == "client" else role
     node_directory = "FakeTcpHeaderClient" if role == "client" else "FakeTcpHeaderServer"
     examples = Path(__file__).resolve().parent.parent / "tunnels" / node_directory / "examples" / example_role
     config = json.loads((examples / "config.json").read_text())
     core = json.loads((examples / "core.json").read_text())
-    core["misc"].update(workers=WORKERS, mtu=NATIVE_MTU)
+    core["misc"].update(workers=WORKERS, mtu=native_mtu)
     core["log"].update({name: {"loglevel": "DEBUG", "file": name + ".log", "console": True}
                          for name in ("core", "internal", "network", "dns")})
     carrier_ports = None
@@ -132,6 +138,8 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = FAKE_OPTIONS.hex()
+            if encrypted:
+                settings["password"] = ENCRYPTION_PASSWORD
             if tcp:
                 settings["flags"] = [{"syn": True}, {"fin": True, "rst": True}, {"ack": True, "psh": True}]
             elif tun:
@@ -166,9 +174,9 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                 first, last = settings.get("client-port-range", [40001, 40016])
             carrier_ports = settings.get("server-port", 40000), first, last - first + 1
         elif node["type"] in ("ConnectionToPackets", "PacketsToConnection"):
-            settings["mtu"] = NATIVE_MTU
+            settings["mtu"] = native_mtu
         elif node["type"] == "TunDevice":
-            settings.update({"device-ip": "10.253.90.1/24", "device-mtu": NATIVE_MTU, "multi-queue": False})
+            settings.update({"device-ip": "10.253.90.1/24", "device-mtu": native_mtu, "multi-queue": False})
         elif node["type"] == "IpOverrider" and tun:
             native = ("10.253.90.2", "10.253.90.1") if role == "client" else ("10.253.90.1", "10.253.90.2")
             settings["down" if role == "client" else "up"] = {
@@ -198,7 +206,8 @@ def receive_exact(sock, length):
     return bytes(result)
 
 
-def run(binary, directory, tun, multi_queue, tcp):
+def run(binary, directory, tun, multi_queue, tcp, encrypted=False):
+    native_mtu = NATIVE_MTU - (ENCRYPTION_OVERHEAD if encrypted else 0)
     for address in ("192.0.2.10", "198.51.100.10"):
         command("ip", "address", "add", address + "/32", "dev", "lo")
     with contextlib.ExitStack() as stack:
@@ -215,7 +224,7 @@ def run(binary, directory, tun, multi_queue, tcp):
         processes, carrier_ports = [], set()
         for role in ("server", "client"):
             work = directory / role
-            carrier_ports.add(prepare(work, role, listener_port, backend.getsockname()[1], tun, multi_queue, tcp))
+            carrier_ports.add(prepare(work, role, listener_port, backend.getsockname()[1], tun, multi_queue, tcp, encrypted))
             process = stack.enter_context(Process([binary], cwd=work, log_path=work / "stdout.log",
                                                    cleanup_signal=signal.SIGTERM, terminate_timeout=15))
             processes.append(process)
@@ -240,7 +249,7 @@ def run(binary, directory, tun, multi_queue, tcp):
                 result = subprocess.run(["ip", "-j", "address", "show", "dev", "wwfake0"],
                                         capture_output=True, text=True, timeout=10)
                 interfaces = json.loads(result.stdout) if result.returncode == 0 else []
-                if any("UP" in item["flags"] and item["mtu"] == NATIVE_MTU and
+                if any("UP" in item["flags"] and item["mtu"] == native_mtu and
                        any(address.get("local") == "10.253.90.1" for address in item.get("addr_info", []))
                        for item in interfaces):
                     break
@@ -288,7 +297,8 @@ def run(binary, directory, tun, multi_queue, tcp):
                 pseudo = socket.inet_aton(source) + socket.inet_aton(destination) + struct.pack("!BBH", 0, 6, len(segment))
                 struct.pack_into("!H", segment, 16, checksum(pseudo + segment))
                 injector.sendto(native_packet(source, destination, 6, segment), (destination, 0))
-                marker = (f"FakeTcpHeader{role.title()}: dropping incoming carrier: "
+                marker = (f"Encryption{role.title()}: dropping packet" if encrypted else
+                          f"FakeTcpHeader{role.title()}: dropping incoming carrier: "
                           "carrier ports do not match the configured mapping")
                 deadline = time.monotonic() + 5
                 while marker not in (directory / role / "stdout.log").read_text():
@@ -311,6 +321,8 @@ def run(binary, directory, tun, multi_queue, tcp):
         sequence_ranges = {}
         acknowledgment_ranges = {}
         fixed_acknowledgments = {}
+        encrypted_packets = {source: set() for source in seen}
+        encrypted_nonces = {}
         current_user = 0
 
         def inspect(frame):
@@ -342,6 +354,24 @@ def run(binary, directory, tun, multi_queue, tcp):
             assert checksum(pseudo + carrier) == 0, "invalid fake TCP wire checksum"
             fake_length = (carrier[12] >> 4) * 4
             assert fake_length == 24
+            if encrypted:
+                body = carrier[fake_length:]
+                assert len(body) >= ENCRYPTION_OVERHEAD + 9, "truncated encrypted UDP carrier"
+                assert total - fake_length - 1 - ENCRYPTION_OVERHEAD <= native_mtu
+                sequence, acknowledgment = struct.unpack_from("!II", carrier, 4)
+                assert carrier[13] == 0x18 and carrier[20:fake_length] == FAKE_OPTIONS
+                expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
+                                                     0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
+                struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + body))
+                assert carrier[:fake_length] == expected_fake, "encryption changed the visible fake TCP template"
+                ranges = sequence_ranges.setdefault((source, client_side), {})
+                entry = (len(body), packet)
+                assert ranges.setdefault(sequence, entry) == entry, "encrypted carriers reused a sequence range"
+                nonce_key = (source, body[:24])
+                assert encrypted_nonces.setdefault(nonce_key, body) == body, "nonce reused for different encrypted data"
+                encrypted_packets[source].add(packet)
+                observed_client_ports.add(client_side)
+                return
             assert len(carrier) > fake_length, "missing native protocol byte"
             protocol = carrier[fake_length]
             assert protocol == (6 if tcp else 17), "wire protocol byte does not identify the native packet"
@@ -476,7 +506,7 @@ def run(binary, directory, tun, multi_queue, tcp):
                 else:
                     raise AssertionError("TUN MTU admitted an oversized UDP datagram")
             sent, received = bytearray(), bytearray()
-            for length in (1, 513, 1400) if tcp else (1, 513, 1447):
+            for length in (1, 513, 1400) if tcp else (1, 513, native_mtu - 28):
                 payload = bytes((i * 37 + user) & 255 for i in range(length))
                 reply = bytes(value ^ 0xa5 for value in payload)
                 if tcp:
@@ -501,7 +531,8 @@ def run(binary, directory, tun, multi_queue, tcp):
             drain()
 
         deadline = time.monotonic() + 5
-        while not (tcp_complete() if tcp else
+        while not (all(len(packets) == len(requests) for packets in encrypted_packets.values()) if encrypted else
+                   tcp_complete() if tcp else
                    seen["192.0.2.10"] == requests and seen["198.51.100.10"] == responses):
             assert time.monotonic() < deadline, "missing native transport wire packets"
             try:
@@ -509,6 +540,17 @@ def run(binary, directory, tun, multi_queue, tcp):
             except TimeoutError:
                 continue
         assert observed_client_ports, "no fake TCP carrier was inspected"
+        if encrypted:
+            for source, payloads in zip(seen, (requests, responses)):
+                observed_lengths = Counter(len(packet) - 20 - 24 - ENCRYPTION_OVERHEAD - 1 - 8
+                                           for packet in encrypted_packets[source])
+                assert observed_lengths == Counter(map(len, payloads)), "encrypted carrier expansion is not exactly 40 bytes"
+                for packet in encrypted_packets[source]:
+                    for payload in payloads:
+                        if len(payload) >= 32:
+                            assert payload not in packet[44:], "application payload remained visible in encrypted carrier"
+            assert any(len(packet) == 1500 for packet in encrypted_packets["192.0.2.10"]), \
+                "encrypted MTU boundary was not exercised"
         for native_client in user_ports:
             assert observed_mapping[("192.0.2.10", native_client)] == observed_mapping[("198.51.100.10", native_client)], \
                 "reverse native tuple selected a different carrier port"
@@ -550,6 +592,32 @@ def run(binary, directory, tun, multi_queue, tcp):
                     assert node_starts.setdefault(source, initial) == initial, \
                         "random_node did not use the same starting sequence for every client port"
 
+        if encrypted:
+            # Corrupt only the authentication tag, preserving the encrypted
+            # protocol and body so downstream validation cannot mask an auth bypass.
+            # Repair the visible checksum; the packet line must stay usable afterward.
+            damaged = bytearray(next(iter(encrypted_packets["192.0.2.10"])))
+            ihl = (damaged[0] & 15) * 4
+            damaged[-1] ^= 1
+            damaged[ihl + 16:ihl + 18] = bytes(2)
+            pseudo = damaged[12:20] + struct.pack("!BBH", 0, 6, len(damaged) - ihl)
+            struct.pack_into("!H", damaged, ihl + 16, checksum(pseudo + damaged[ihl:]))
+            with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW) as injector:
+                injector.sendto(damaged, ("198.51.100.10", 0))
+            backend.settimeout(0.3)
+            try:
+                backend.recvfrom(65535)
+            except TimeoutError:
+                pass
+            else:
+                raise AssertionError("tampered encrypted packet reached the UDP application")
+            backend.settimeout(5)
+            application.sendto(b"valid-after-authentication-failure", destination)
+            actual, peer = backend.recvfrom(65535)
+            assert actual == b"valid-after-authentication-failure", "authentication drop broke later packet delivery"
+            backend.sendto(b"still-alive", peer)
+            assert application.recvfrom(65535)[0] == b"still-alive", "authentication drop closed the packet line"
+
         for process in reversed(processes):
             process.terminate()
             assert process.wait(timeout=15) in (0, 143), "peer failed orderly shutdown"
@@ -561,12 +629,15 @@ def run(binary, directory, tun, multi_queue, tcp):
 def main():
     binary = str(Path(sys.argv[1]).resolve())
     options = sys.argv[2:]
-    assert set(options) <= {"--tun", "--multi-queue", "--tcp"}, f"unknown options {options}"
+    assert set(options) <= {"--tun", "--multi-queue", "--tcp", "--encrypted"}, f"unknown options {options}"
     assert not ("--tun" in options and "--tcp" in options), "TCP mode uses the CTP input fixture"
+    assert not ("--encrypted" in options and set(options) & {"--tun", "--tcp", "--multi-queue"}), \
+        "encrypted raw mode uses the UDP fixture"
     with RunDirectory(prefix="waterwall-fake-tcp-") as temporary:
         directory = Path(temporary)
         try:
-            run(binary, directory, "--tun" in options, "--multi-queue" in options, "--tcp" in options)
+            run(binary, directory, "--tun" in options, "--multi-queue" in options, "--tcp" in options,
+                "--encrypted" in options)
         except Exception:
             for log in directory.rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-12000:]}", file=sys.stderr)
