@@ -6,6 +6,8 @@ void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, cons
 {
     *ls = (junkdatagramsender_lstate_t) {
         .remaining_resend_again_times = ts->resend_again_times,
+        .upstream_publication_open    = true,
+        .downstream_publication_open  = true,
     };
 }
 
@@ -53,7 +55,7 @@ static junkdatagramsender_protocol_t junkdatagramsenderPickProtocol(uint64_t mas
 static void junkdatagramsenderDelayedUpstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     junkdatagramsender_lstate_t *ls = lineGetState(l, t);
-    if (ls->upstream_finished)
+    if (! junkdatagramsenderCanPublish(ls, kJunkDatagramSenderDirectionUpstream))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -64,7 +66,7 @@ static void junkdatagramsenderDelayedUpstreamPayload(tunnel_t *t, line_t *l, sbu
 static void junkdatagramsenderDelayedDownstreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     junkdatagramsender_lstate_t *ls = lineGetState(l, t);
-    if (ls->downstream_finished)
+    if (! junkdatagramsenderCanPublish(ls, kJunkDatagramSenderDirectionDownstream))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -107,7 +109,7 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
     junkdatagramsender_lstate_t *ls = lineGetState(l, t);
 
-    if (junkdatagramsenderDirectionIsFinished(ls, direction))
+    if (! junkdatagramsenderCanPublish(ls, direction))
     {
         return false;
     }
@@ -130,7 +132,8 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
         sbuf_t  *scheduled = sbufDuplicateByPool(lineGetBufferPool(l), buf);
         uint32_t delay_ms  = fastRandRange32(1, ts->keep_sending_max_ms);
         /* Synthetic junk traffic is intentionally lossy on refusal or later
-         * cancellation; packet-line Finish is gated by the task callback. */
+         * cancellation. The task checks local publication permission, which
+         * also closes when normal-line teardown zeroes this node's state. */
         const line_task_submit_result_e result = lineScheduleDelayedTaskWithBuf(
             l, junkdatagramsenderDelayedPayloadFn(direction), delay_ms, t, scheduled, NULL);
         discard result;
@@ -149,7 +152,7 @@ static bool junkdatagramsenderSendOne(tunnel_t *t, line_t *l, junkdatagramsender
     {
         return false;
     }
-    return ! junkdatagramsenderDirectionIsFinished(lineGetState(l, t), direction);
+    return junkdatagramsenderCanPublish(lineGetState(l, t), direction);
 }
 
 bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l)
@@ -170,15 +173,15 @@ void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l)
      * payload must not overtake the propagated Finish, and opposite-direction
      * payload must not reflect toward its sender. */
     junkdatagramsender_lstate_t *ls = lineGetState(l, t);
-    ls->upstream_finished           = true;
-    ls->downstream_finished         = true;
+    ls->upstream_publication_open   = false;
+    ls->downstream_publication_open = false;
 }
 
 bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction)
 {
     junkdatagramsender_tstate_t *ts = tunnelGetState(t);
 
-    if (junkdatagramsenderDirectionIsFinished(lineGetState(l, t), direction))
+    if (! junkdatagramsenderCanPublish(lineGetState(l, t), direction))
     {
         return false;
     }

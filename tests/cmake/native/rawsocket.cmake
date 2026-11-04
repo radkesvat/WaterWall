@@ -211,6 +211,7 @@ if(TARGET JunkDatagramSender)
   waterwall_line_failure_test_use_tunnel(junkdatagramsender_packet_lifecycle_test JunkDatagramSender)
   target_link_options(junkdatagramsender_packet_lifecycle_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=sbufDuplicateByPool"
   )
   target_link_libraries(junkdatagramsender_packet_lifecycle_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests junkdatagramsender_packet_lifecycle_test)

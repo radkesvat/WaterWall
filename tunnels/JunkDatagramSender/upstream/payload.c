@@ -5,7 +5,7 @@
 void junkdatagramsenderTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     junkdatagramsender_lstate_t *ls = lineGetState(l, t);
-    if (ls->upstream_finished)
+    if (! junkdatagramsenderCanPublish(ls, kJunkDatagramSenderDirectionUpstream))
     {
         lineReuseBuffer(l, buf);
         return;
@@ -17,8 +17,8 @@ void junkdatagramsenderTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         ls->remaining_resend_again_times--;
 
         lineRef(l);
-        bool alive = junkdatagramsenderSendJunk(t, l, kJunkDatagramSenderDirectionUpstream);
-        if (! alive || ! lineIsAlive(l))
+        bool can_publish = junkdatagramsenderSendJunk(t, l, kJunkDatagramSenderDirectionUpstream);
+        if (! lineIsAlive(l) || ! can_publish)
         {
             lineUnref(l);
             bufferpoolReuseBuffer(pool, buf);

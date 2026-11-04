@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/JunkDatagramSender.mdx, and all files must keep the same documentation version.
 -->
 
@@ -91,9 +91,11 @@ The DNS module currently builds a real DNS query UDP payload with a question and
 
 ## Lifecycle Notes
 
-`JunkDatagramSender` stores a per-line remaining trigger count and directional Finish gates. For an immediate junk batch, it holds a temporary line reference with `lineRef()`, checks `lineIsAlive()` after the re-entrant sends, then releases that reference with `lineUnref()`. The reference preserves the allocation, not line contents or worker access. Delayed payloads are best effort and transfer their duplicate buffer to Waterwall's `lineScheduleDelayedTaskWithBuf()` on every submission result. The scheduler releases that buffer if a normal line closes before the task runs. A packet line remains allocated until chain destruction, so either packet-direction Finish closes both junk gates; an already armed duplicate is then recycled instead of being published after the terminal callback.
+`JunkDatagramSender` stores a per-line remaining trigger count and directional publication permissions. Init opens both directions; zeroed state means publication is closed. For an immediate junk batch, it holds a temporary line reference with `lineRef()`, checks `lineIsAlive()` and then local publication permission after each re-entrant send, and releases that reference with `lineUnref()`. The reference preserves the allocation, not line contents or worker access. If a send handles Finish while the normal line remains alive, the batch stops and its still-owned application buffer is recycled.
 
-Packet helper lines are not destroyed by this tunnel during runtime, and junk generation is skipped on worker packet lines so a layer-3 chain bootstrap does not emit connection-style junk payloads.
+Delayed payloads are best effort and transfer their duplicate buffer to Waterwall's `lineScheduleDelayedTaskWithBuf()` on every submission result. The scheduler checks line life; the task also checks this node's publication permission. Either Finish closes both publication directions before propagation, by zeroing normal-line state or closing the persistent packet-line permissions. Finish invalidates pending output without immediately removing scheduler-owned tasks. A duplicate remains owned by the scheduler until execution or cancellation; if it runs on a live line whose local publication is closed, the task recycles it instead of publishing.
+
+This tunnel never destroys borrowed normal lines or chain-owned packet lines. Init initializes state without generating junk payloads.
 
 ## Node Metadata
 
@@ -111,7 +113,7 @@ Source-backed metadata:
 
 ## Splice support
 
-Generated junk and its delayed duplicates remain ordinary buffers. Incoming application payloads pass through opaquely, preserving their private-pipe bodies and existing ordering relative to immediate junk. Terminal directions discard input; if sending junk closes the line, the still-owned application buffer is recycled.
+Generated junk and its delayed duplicates remain ordinary buffers. Incoming application payloads pass through opaquely, preserving their private-pipe bodies and existing ordering relative to immediate junk. Closed publication discards input; if sending junk closes the line or retires this node's state, the still-owned application buffer is recycled.
 
 Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
 
