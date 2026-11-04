@@ -10,6 +10,9 @@ add_waterwall_integration_test(waterwall.connection_to_packets_tcp_bridge_multiw
 add_waterwall_integration_test(waterwall.connection_to_packets_udp_bridge_roundtrip connection_to_packets_udp_bridge_roundtrip)
 if(TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer AND TARGET IpOverrider)
   add_waterwall_integration_test(waterwall.fake_tcp_header_udp_roundtrip fake_tcp_header_udp_roundtrip)
+  if(TARGET ConnectionToPackets AND TARGET PacketsToConnection AND TARGET TcpListener AND TARGET TcpConnector)
+    add_waterwall_integration_test(waterwall.fake_tcp_header_tcp_roundtrip fake_tcp_header_tcp_roundtrip)
+  endif()
 endif()
 # Unsupported fragments are bounded drops; both input directions and cleanup
 # are covered by the local_stack_fragment_input native fixtures.
@@ -64,6 +67,14 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
         "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
     set_tests_properties(waterwall.fake_tcp_header_raw_roundtrip PROPERTIES
       TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;network-isolated")
+    if(TARGET TcpListener AND TARGET TcpConnector)
+      add_test(NAME waterwall.fake_tcp_header_raw_tcp_roundtrip
+        COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+          "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --tcp)
+      set_tests_properties(waterwall.fake_tcp_header_raw_tcp_roundtrip PROPERTIES
+        TIMEOUT 90 LABELS "integration;linux;privileged;capture;fake-tcp;tcp;network-isolated")
+    endif()
     add_test(NAME waterwall.fake_tcp_header_raw_multiqueue_roundtrip
       COMMAND "${BASH_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
         "${PYTHON3_EXECUTABLE}" "${WATERWALL_TEST_SOURCE_ROOT}/fake_tcp_header_raw_integration.py"

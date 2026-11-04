@@ -210,6 +210,18 @@
   if(TARGET FakeTcpHeaderClient AND TARGET FakeTcpHeaderServer)
     waterwall_add_native_executable(fake_tcp_header_nodes_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/fake_tcp_header/fake_tcp_header_nodes_test.c)
     target_link_libraries(fake_tcp_header_nodes_test PRIVATE FakeTcpHeaderClient FakeTcpHeaderServer FakeTcpHeaderCommon ww)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
+      target_compile_definitions(fake_tcp_header_nodes_test PRIVATE FAKE_TCP_HEADER_CALLBACK_FIXTURE=1)
+      target_link_options(fake_tcp_header_nodes_test PRIVATE
+        "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+        "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetBestFit"
+        "-Wl,--wrap=bufferpoolTryGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+        "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+      if(TARGET IpOverrider)
+        target_link_libraries(fake_tcp_header_nodes_test PRIVATE IpOverrider)
+        target_compile_definitions(fake_tcp_header_nodes_test PRIVATE FAKE_TCP_HEADER_IPOVERRIDER_FIXTURE=1)
+      endif()
+    endif()
     add_dependencies(waterwall_unit_tests fake_tcp_header_nodes_test)
     add_waterwall_unit_test(waterwall.fake_tcp_header_nodes_unit fake_tcp_header_nodes_test "unit;tunnels;fake-tcp;configuration")
   endif()

@@ -62,7 +62,7 @@
       "type": "ConnectionToPackets",
       "settings": {
         "source-ipv4": "10.90.0.1",
-        "mtu": 1400,
+        "mtu": 1476,
         "domain-strategy": "only-ipv4"
       },
       "next": "fake-client"
@@ -70,17 +70,18 @@
     {
       "name": "fake-client",
       "type": "FakeTcpHeaderClient",
-      "next": "carrier-addresses",
+      "next": "client-addresses",
       "settings": {
         "sequence": 12345,
         "acknowledgment": 67890,
-        "options": "01010101"
+        "options": "01010101",
+        "payload-protocol": 17
       }
     },
     {
-      "name": "carrier-addresses",
+      "name": "client-addresses",
       "type": "IpOverrider",
-      "next": "fake-server",
+      "next": "server-addresses",
       "settings": {
         "up": {
           "source-ip": {
@@ -88,6 +89,29 @@
           },
           "dest-ip": {
             "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.90.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.1"
+          }
+        }
+      }
+    },
+    {
+      "name": "server-addresses",
+      "type": "IpOverrider",
+      "next": "fake-server",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "10.90.0.1"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.2"
           }
         },
         "down": {
@@ -107,13 +131,17 @@
       "settings": {
         "sequence": 67890,
         "acknowledgment": 12345,
-        "options": "0101010101010101"
+        "options": "01010101",
+        "payload-protocol": 17
       }
     },
     {
       "name": "packets-to-connection",
       "type": "PacketsToConnection",
-      "next": "target-connector"
+      "next": "target-connector",
+      "settings": {
+        "mtu": 1476
+      }
     },
     {
       "name": "target-connector",

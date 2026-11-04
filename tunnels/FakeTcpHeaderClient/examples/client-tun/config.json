@@ -8,7 +8,7 @@
       "settings": {
         "device-name": "wwfake0",
         "device-ip": "10.90.0.1/24",
-        "device-mtu": 1460,
+        "device-mtu": 1480,
         "gso": false,
         "route-table": "off"
       }
@@ -18,6 +18,7 @@
       "type": "FakeTcpHeaderClient",
       "next": "carrier-addresses",
       "settings": {
+        "payload-protocol": 17,
         "server-port": 40000,
         "client-port": 40001,
         "client-port-count": 16,
@@ -37,6 +38,14 @@
           },
           "dest-ip": {
             "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.90.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.90.0.1"
           }
         }
       }

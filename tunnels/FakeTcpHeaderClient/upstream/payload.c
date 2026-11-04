@@ -13,11 +13,11 @@ void faketcpheaderclientUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kFakeTcpHeaderClientDropLogIntervalMs))
         {
-            LOGE("FakeTcpHeaderClient: dropping outgoing inner packet: %s (packet-bytes=%u, max-inner-bytes=%u, "
+            LOGE("FakeTcpHeaderClient: dropping outgoing native packet: %s (packet-bytes=%u, max-native-bytes=%u, "
                  "overhead-bytes=%u, headroom-bytes=%u)",
                  faketcpheaderWireResultName(result),
                  (unsigned int) sbufGetLength(buf),
-                 (unsigned int) faketcpheaderWireMaxInnerLength(&state->wire),
+                 (unsigned int) faketcpheaderWireMaxNativeLength(&state->wire),
                  (unsigned int) faketcpheaderWireOverhead(&state->wire),
                  (unsigned int) sbufGetLeftCapacity(buf));
         }

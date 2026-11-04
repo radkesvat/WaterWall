@@ -1,16 +1,7 @@
 #include "FakeTcpHeaderCommon/faketcpheader_wire.h"
 
-/*
- * Every refusal is decided before the first write: encode preflights framing,
- * size and headroom before honoring a repair request, and the checksum API
- * refuses without modifying the packet. The repair request is read, never
- * taken, so a refused packet keeps its intent for the caller.
- */
-
-enum
-{
-    kFakeTcpHeaderWireTosEcnMask = 0x03,
-};
+/* Every expected refusal precedes mutation. Offsets survive cursor changes;
+ * only the IPv4 header moves, with memmove because actual IHL can exceed F. */
 
 const char *faketcpheaderWireResultName(faketcpheader_wire_result_t result)
 {
@@ -18,45 +9,65 @@ const char *faketcpheaderWireResultName(faketcpheader_wire_result_t result)
     {
     case kFakeTcpHeaderWireOk:
         return "ok";
-    case kFakeTcpHeaderWireMalformedInner:
-        return "inner packet is not one complete IPv4 packet";
-    case kFakeTcpHeaderWireOversizedInner:
-        return "inner packet exceeds the maximum inner size";
+    case kFakeTcpHeaderWireMalformedNative:
+        return "native packet is not one complete IPv4 TCP/UDP packet";
+    case kFakeTcpHeaderWireNativeProtocol:
+        return "native protocol is unsupported or does not match payload-protocol";
+    case kFakeTcpHeaderWireFragmented:
+        return "fragmented IPv4 datagram requires upstream reassembly";
+    case kFakeTcpHeaderWireOversizedNative:
+        return "native packet exceeds the maximum size after fake TCP insertion";
     case kFakeTcpHeaderWireMissingHeadroom:
-        return "insufficient left headroom for the carrier headers";
-    case kFakeTcpHeaderWireInnerRepairFailed:
-        return "requested inner checksum repair failed";
+        return "insufficient left headroom for fake TCP";
+    case kFakeTcpHeaderWireNativeRepairFailed:
+        return "requested native checksum repair failed";
     case kFakeTcpHeaderWireMalformedCarrier:
-        return "carrier is not one complete unfragmented IPv4/TCP packet";
+        return "carrier is not one complete IPv4/TCP packet within the size limit";
     case kFakeTcpHeaderWireCarrierPorts:
         return "carrier ports do not match the configured mapping";
-    case kFakeTcpHeaderWireOuterChecksum:
-        return "invalid outer IPv4 or TCP checksum";
-    case kFakeTcpHeaderWireInnerFraming:
-        return "carrier payload is not one complete IPv4 packet";
+    case kFakeTcpHeaderWireCarrierChecksum:
+        return "invalid visible IPv4 or fake TCP checksum";
+    case kFakeTcpHeaderWireNativeFraming:
+        return "carrier payload has malformed native TCP/UDP geometry";
     }
     return "unknown result";
 }
 
-static bool faketcpheaderWireIsExactIpv4(const uint8_t *packet, uint32_t length)
+/* Match the complete, unfragmented IPv4 transport parser and checksum helper.
+ * UDP may have IP payload bytes beyond its own declared datagram length. */
+static bool faketcpheaderWireNativeShape(const uint8_t *native, uint16_t length, uint8_t protocol)
 {
-    ipv4_packet_view_t view = {0};
-    return ipv4packetviewParse(packet, length, &view) && view.ip_total_length == length;
+    if (protocol == IPPROTO_TCP)
+    {
+        if (length < TCP_HLEN)
+        {
+            return false;
+        }
+        const uint16_t header_length = (uint16_t) ((native[12] >> 4U) * 4U);
+        return header_length >= TCP_HLEN && header_length <= length;
+    }
+    assert(protocol == IPPROTO_UDP);
+    if (length < UDP_HLEN)
+    {
+        return false;
+    }
+    const uint16_t datagram_length = GET_BE16(native + 4);
+    return datagram_length >= UDP_HLEN && datagram_length <= length;
 }
 
-uint16_t faketcpheaderWirePortIndex(const faketcpheader_wire_config_t *config, const uint8_t *inner,
-                                    uint32_t inner_length)
+uint16_t faketcpheaderWirePortIndex(const faketcpheader_wire_config_t *config, const uint8_t *native,
+                                    uint32_t native_length)
 {
     assert(config->client_port_count >= 1);
     uint32_t hash = 0;
-    if (! deviceFlowWorkerHash(inner, inner_length, &hash))
+    if (! deviceFlowWorkerHash(native, native_length, &hash))
     {
         return 0;
     }
     return (uint16_t) (hash % config->client_port_count);
 }
 
-/* Sum of the TCP pseudo-header (addresses, protocol, segment length) as the checksum seed. */
+/* Sum of the TCP pseudo-header with the packet's actual current addresses. */
 static uint32_t faketcpheaderWirePseudoHeaderSum(const uint8_t *ipv4, uint16_t segment_length)
 {
     uint32_t sum = IP_PROTO_TCP + (uint32_t) segment_length;
@@ -71,67 +82,75 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
     assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
+    assert(config->payload_protocol == IPPROTO_TCP || config->payload_protocol == IPPROTO_UDP);
     assert(! sbufIsSplice(buf));
 
-    const uint32_t inner_length = sbufGetLength(buf);
-    const uint16_t overhead     = faketcpheaderWireOverhead(config);
-    if (! faketcpheaderWireIsExactIpv4(sbufGetRawPtr(buf), inner_length))
+    const uint32_t     length   = sbufGetLength(buf);
+    const uint16_t     overhead = faketcpheaderWireOverhead(config);
+    uint8_t           *packet   = sbufGetMutablePtr(buf);
+    ipv4_packet_view_t native   = {0};
+    if (! ipv4packetviewParse(packet, length, &native) || native.ip_total_length != length)
     {
-        return kFakeTcpHeaderWireMalformedInner;
+        return kFakeTcpHeaderWireMalformedNative;
     }
-    if (inner_length > faketcpheaderWireMaxInnerLength(config))
+    if (native.fragmented)
     {
-        return kFakeTcpHeaderWireOversizedInner;
+        return kFakeTcpHeaderWireFragmented;
+    }
+    if (native.protocol != config->payload_protocol)
+    {
+        return kFakeTcpHeaderWireNativeProtocol;
+    }
+    if (! faketcpheaderWireNativeShape(packet + native.transport_offset, native.transport_length, native.protocol))
+    {
+        return kFakeTcpHeaderWireMalformedNative;
+    }
+    /* Widen before adding and before narrowing to the IPv4 total-length field. */
+    const uint32_t total = length + (uint32_t) overhead;
+    if (total > kFakeTcpHeaderWireMaxCarrierLength || total > UINT16_MAX)
+    {
+        return kFakeTcpHeaderWireOversizedNative;
     }
     if (sbufGetLeftCapacity(buf) < overhead)
     {
         return kFakeTcpHeaderWireMissingHeadroom;
     }
-    /* Without a request the inner checksums are carried unchanged, valid or not. */
-    if (sbufGetRecalculateChecksum(buf) && ! calcFullPacketChecksum(sbufGetMutablePtr(buf), inner_length))
+    /* The shared repair API refuses without mutation. Nothing fallible follows. */
+    if (sbufGetRecalculateChecksum(buf) && ! calcFullPacketChecksum(packet, length))
     {
-        return kFakeTcpHeaderWireInnerRepairFailed;
+        return kFakeTcpHeaderWireNativeRepairFailed;
     }
 
-    const uint16_t index      = faketcpheaderWirePortIndex(config, sbufGetRawPtr(buf), inner_length);
+    const uint16_t index      = faketcpheaderWirePortIndex(config, packet, length);
     const uint16_t client     = (uint16_t) (config->client_port + index);
-    const uint16_t total      = (uint16_t) (overhead + inner_length);
-    const uint8_t  inner_tos  = IPH_TOS((const struct ip_hdr *) sbufGetRawPtr(buf));
-    const uint32_t inner_src  = ((const struct ip_hdr *) sbufGetRawPtr(buf))->src.addr;
-    const uint32_t inner_dest = ((const struct ip_hdr *) sbufGetRawPtr(buf))->dest.addr;
+    const bool     normalized = updateIpv4TransportChecksumAddresses(
+        packet, length, config->payload_protocol, native.source_address, native.destination_address, 0, 0);
+    assert(normalized);
+    discard normalized;
 
     sbufShiftLeft(buf, overhead);
-    uint8_t       *packet = sbufGetMutablePtr(buf);
-    struct ip_hdr *ip     = (struct ip_hdr *) packet;
-    uint8_t       *tcp    = packet + kFakeTcpHeaderWireIpv4HeaderLength;
-
-    memoryZero(packet, overhead);
-    IPH_VHL_SET(ip, 4, kFakeTcpHeaderWireIpv4HeaderLength / 4U);
-    /* DSCP follows the inner packet; ECN is Not-ECT because decode cannot propagate CE. */
-    IPH_TOS_SET(ip, (uint8_t) (inner_tos & ~kFakeTcpHeaderWireTosEcnMask));
-    IPH_LEN_SET(ip, lwip_htons(total));
-    IPH_ID_SET(ip, 0);
-    IPH_OFFSET_SET(ip, lwip_htons(IP_DF));
-    IPH_TTL_SET(ip, kFakeTcpHeaderWireTtl);
+    packet = sbufGetMutablePtr(buf);
+    memmove(packet, packet + overhead, native.ip_header_length);
+    struct ip_hdr *ip  = (struct ip_hdr *) packet;
+    uint8_t       *tcp = packet + native.ip_header_length;
+    memoryZero(tcp, overhead);
+    IPH_LEN_SET(ip, lwip_htons((uint16_t) total));
     IPH_PROTO_SET(ip, IP_PROTO_TCP);
-    ip->src.addr  = inner_src;
-    ip->dest.addr = inner_dest;
 
     PUT_BE16(tcp, side == kFakeTcpHeaderWireClient ? client : config->server_port);
     PUT_BE16(tcp + 2, side == kFakeTcpHeaderWireClient ? config->server_port : client);
     PUT_BE32(tcp + 4, config->sequence);
     PUT_BE32(tcp + 8, config->acknowledgment);
-    tcp[12] = (uint8_t) (((kFakeTcpHeaderWireTcpHeaderLength + config->options_length) / 4U) << 4U);
+    tcp[12] = (uint8_t) ((overhead / 4U) << 4U);
     tcp[13] = kFakeTcpHeaderWireTcpFlags;
     PUT_BE16(tcp + 14, config->window);
     PUT_BE16(tcp + 18, config->urgent_pointer);
     memoryCopy(tcp + kFakeTcpHeaderWireTcpHeaderLength, config->options, config->options_length);
 
-    /* Computes the outer IPv4 header and TCP checksums; the inner packet is TCP payload. */
+    /* Only the exposed IP/fake TCP checksums are recalculated here. */
     const bool checksummed = calcFullPacketChecksum(packet, total);
     assert(checksummed);
     discard checksummed;
-
     sbufSetRecalculateChecksum(buf, false);
     return kFakeTcpHeaderWireOk;
 }
@@ -149,35 +168,59 @@ faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_con
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
     assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
+    assert(config->payload_protocol == IPPROTO_TCP || config->payload_protocol == IPPROTO_UDP);
     assert(! sbufIsSplice(buf));
 
-    const uint32_t     length = sbufGetLength(buf);
-    const uint8_t     *packet = sbufGetRawPtr(buf);
-    ipv4_packet_view_t outer  = {0};
-    if (length > kFakeTcpHeaderWireMaxCarrierLength || ! ipv4packetviewParseTcp(packet, length, &outer) ||
-        outer.ip_total_length != length || outer.fragmented)
+    const uint32_t     length  = sbufGetLength(buf);
+    uint8_t           *packet  = sbufGetMutablePtr(buf);
+    ipv4_packet_view_t carrier = {0};
+    if (length > kFakeTcpHeaderWireMaxCarrierLength || ! ipv4packetviewParse(packet, length, &carrier) ||
+        carrier.ip_total_length != length)
     {
         return kFakeTcpHeaderWireMalformedCarrier;
     }
-    if (! faketcpheaderWirePortsMatch(config, side, outer.source_port, outer.destination_port))
+    if (carrier.fragmented)
+    {
+        return kFakeTcpHeaderWireFragmented;
+    }
+    if (! ipv4packetviewParseTcp(packet, length, &carrier))
+    {
+        return kFakeTcpHeaderWireMalformedCarrier;
+    }
+    if (! faketcpheaderWirePortsMatch(config, side, carrier.source_port, carrier.destination_port))
     {
         return kFakeTcpHeaderWireCarrierPorts;
     }
-    /* A pending repair request means the outer checksums are not yet authoritative. */
-    if (! sbufGetRecalculateChecksum(buf) &&
-        (calcGenericChecksum(packet, outer.ip_header_length, 0) != 0 ||
-         calcGenericChecksum(packet + outer.transport_offset,
-                             outer.transport_length,
-                             faketcpheaderWirePseudoHeaderSum(packet, outer.transport_length)) != 0))
+    if (! faketcpheaderWireNativeShape(
+            packet + carrier.payload_offset, carrier.payload_length, config->payload_protocol))
     {
-        return kFakeTcpHeaderWireOuterChecksum;
+        return kFakeTcpHeaderWireNativeFraming;
     }
-    if (! faketcpheaderWireIsExactIpv4(packet + outer.payload_offset, outer.payload_length))
+    /* A request makes only the exposed checksums non-authoritative. */
+    if (! sbufGetRecalculateChecksum(buf) &&
+        (calcGenericChecksum(packet, carrier.ip_header_length, 0) != 0 ||
+         calcGenericChecksum(packet + carrier.transport_offset,
+                             carrier.transport_length,
+                             faketcpheaderWirePseudoHeaderSum(packet, carrier.transport_length)) != 0))
     {
-        return kFakeTcpHeaderWireInnerFraming;
+        return kFakeTcpHeaderWireCarrierChecksum;
     }
 
-    sbufShiftRight(buf, outer.payload_offset);
+    const uint16_t overhead = carrier.transport_header_length;
+    const uint16_t total    = (uint16_t) (length - overhead);
+    memmove(packet + overhead, packet, carrier.ip_header_length);
+    sbufShiftRight(buf, overhead);
+    packet            = sbufGetMutablePtr(buf);
+    struct ip_hdr *ip = (struct ip_hdr *) packet;
+    IPH_PROTO_SET(ip, config->payload_protocol);
+    IPH_LEN_SET(ip, lwip_htons(total));
+    const bool restored = updateIpv4TransportChecksumAddresses(
+        packet, total, config->payload_protocol, 0, 0, carrier.source_address, carrier.destination_address);
+    assert(restored);
+    discard    restored;
+    const bool checksummed = calcIpv4HeaderChecksum(packet, total);
+    assert(checksummed);
+    discard checksummed;
     sbufSetRecalculateChecksum(buf, false);
     return kFakeTcpHeaderWireOk;
 }
