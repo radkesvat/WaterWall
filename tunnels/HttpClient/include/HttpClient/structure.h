@@ -135,14 +135,6 @@ typedef struct httpclient_lstate_s
     struct httpclient_lstate_s *inventory_prev, *inventory_next;
     wtimer_t                   *close_drain_timer;
     uint64_t                    close_drain_deadline_ms;
-    bool                        startup_in_progress;
-    bool                        h2_sending;
-    bool                        close_driving;
-    bool                        h2_end_stream_emitted;
-    bool                        h2_stream_closed;
-    bool                        h2_source_paused;
-    bool                        next_paused;
-    bool                        application_read_paused;
 
     nghttp2_session *session;
 
@@ -161,26 +153,8 @@ typedef struct httpclient_lstate_s
     http_receive_t           receive;
     int64_t h1_body_remaining;
 
-    bool                      h1_headers_parsed;
-    bool                      h1_trailing_bytes_logged;
     httpclient_h1_body_mode_t h1_body_mode;
 
-    bool h2_headers_received;
-    bool response_complete;
-    bool prev_finished;
-    bool next_finished;
-
-    bool fin_sent;
-
-    bool websocket_active;
-    bool websocket_waiting_handshake;
-    bool websocket_close_sent;
-    bool websocket_close_received;
-    bool websocket_h2_waiting_connect;
-    bool websocket_h2_request_submitted;
-    bool websocket_h2_status_seen;
-    bool websocket_h2_protocol_seen;
-    bool websocket_h2_extensions_seen;
     int  websocket_h2_status_code;
     char websocket_key[32];
     char websocket_h2_protocol[128];
@@ -191,9 +165,34 @@ typedef struct httpclient_lstate_s
     line_t                 *split_upload_line;
     line_t                 *split_download_line;
     char                    split_id[48];
-    bool                    h1_write_in_progress;
-    bool                    h2_request_headers_sent;
-    bool                    pending_up_draining;
+
+    bool startup_in_progress : 1;
+    bool h2_sending : 1;
+    bool close_driving : 1;
+    bool h2_end_stream_emitted : 1;
+    bool h2_stream_closed : 1;
+    bool h2_source_paused : 1;
+    bool next_paused : 1;
+    bool application_read_paused : 1;
+    bool h1_headers_parsed : 1;
+    bool h1_trailing_bytes_logged : 1;
+    bool h2_headers_received : 1;
+    bool response_complete : 1;
+    bool prev_finished : 1;
+    bool next_finished : 1;
+    bool fin_sent : 1;
+    bool websocket_active : 1;
+    bool websocket_waiting_handshake : 1;
+    bool websocket_close_sent : 1;
+    bool websocket_close_received : 1;
+    bool websocket_h2_waiting_connect : 1;
+    bool websocket_h2_request_submitted : 1;
+    bool websocket_h2_status_seen : 1;
+    bool websocket_h2_protocol_seen : 1;
+    bool websocket_h2_extensions_seen : 1;
+    bool h1_write_in_progress : 1;
+    bool h2_request_headers_sent : 1;
+    bool pending_up_draining : 1;
 } httpclient_lstate_t;
 
 enum

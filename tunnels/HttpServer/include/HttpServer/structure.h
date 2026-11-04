@@ -85,36 +85,8 @@ typedef struct httpserver_lstate_s
     http_receive_t           receive;
     int64_t h1_body_remaining;
 
-    bool                      h1_headers_parsed;
-    bool                      h1_request_finished;
-    bool                      h1_trailing_bytes_logged;
-    bool                      h1_response_headers_sent;
     httpserver_h1_body_mode_t h1_body_mode;
 
-    bool pending_down_draining;
-    bool h2_response_headers_sent;
-    bool h2_request_finished;
-    bool h2_request_rejected;
-    bool h2_stream_closed;
-
-    bool fin_sent;
-    bool h2_end_stream_emitted;
-    bool h2_source_paused; // our DATA backlog paused next
-    bool prev_paused;      // prev paused next through us
-    bool prev_finished;
-    bool next_finished;
-    bool finish_dispatching; // synchronous final output owns cleanup until it returns
-
-    bool websocket_active;
-    bool websocket_close_sent;
-    bool websocket_close_received;
-    bool websocket_h2_method_seen;
-    bool websocket_h2_protocol_seen;
-    bool websocket_h2_path_seen;
-    bool websocket_h2_authority_seen;
-    bool websocket_h2_version_seen;
-    bool websocket_h2_subprotocol_seen;
-    bool websocket_h2_origin_seen;
     char websocket_h2_method[16];
     char websocket_h2_protocol[32];
     char websocket_h2_path[2048];
@@ -129,6 +101,33 @@ typedef struct httpserver_lstate_s
     line_t                 *split_download_line;
     buffer_queue_t          split_pending_up;
     hash_t                  split_hash;
+
+    bool h1_headers_parsed : 1;
+    bool h1_request_finished : 1;
+    bool h1_trailing_bytes_logged : 1;
+    bool h1_response_headers_sent : 1;
+    bool pending_down_draining : 1;
+    bool h2_response_headers_sent : 1;
+    bool h2_request_finished : 1;
+    bool h2_request_rejected : 1;
+    bool h2_stream_closed : 1;
+    bool fin_sent : 1;
+    bool h2_end_stream_emitted : 1;
+    bool h2_source_paused : 1; // our DATA backlog paused next
+    bool prev_paused : 1;      // prev paused next through us
+    bool prev_finished : 1;
+    bool next_finished : 1;
+    bool finish_dispatching : 1; // synchronous final output owns cleanup until it returns
+    bool websocket_active : 1;
+    bool websocket_close_sent : 1;
+    bool websocket_close_received : 1;
+    bool websocket_h2_method_seen : 1;
+    bool websocket_h2_protocol_seen : 1;
+    bool websocket_h2_path_seen : 1;
+    bool websocket_h2_authority_seen : 1;
+    bool websocket_h2_version_seen : 1;
+    bool websocket_h2_subprotocol_seen : 1;
+    bool websocket_h2_origin_seen : 1;
 } httpserver_lstate_t;
 
 typedef struct httpserver_tstate_s
