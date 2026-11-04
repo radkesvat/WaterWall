@@ -31,6 +31,8 @@ unsigned long long __real_getHRTimeUs(void);
 unsigned long long __wrap_getHRTimeUs(void);
 time_t             __real_time(time_t *value);
 time_t             __wrap_time(time_t *value);
+int                __real_gettimeofday(struct timeval *value, void *timezone);
+int                __wrap_gettimeofday(struct timeval *value, void *timezone);
 int                __real_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 int                __wrap_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 int                __real_usleep(useconds_t usec);
@@ -52,6 +54,17 @@ time_t __wrap_time(time_t *value)
         *value = clock_seconds;
     }
     return clock_seconds;
+}
+
+int __wrap_gettimeofday(struct timeval *value, void *timezone)
+{
+    if (! clock_frozen)
+    {
+        return __real_gettimeofday(value, timezone);
+    }
+    value->tv_sec  = clock_seconds;
+    value->tv_usec = 0;
+    return 0;
 }
 
 int __wrap_epoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout)
