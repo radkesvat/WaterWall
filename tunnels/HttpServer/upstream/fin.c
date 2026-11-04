@@ -23,12 +23,13 @@ void httpserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->next_finished)
     {
-        /*
-         * In single mode next_finished is set only by downStreamFinish or by
-         * httpserverTransportCloseDirections. Both paths own state destruction;
-         * this is the re-entrant upstream Finish they can trigger while flushing.
-         */
+        /* A nested Finish leaves cleanup to the active final-output call.
+         * Between callbacks, carrier loss instead cancels the retained drain. */
         ls->prev_finished = true;
+        if (! ls->finish_dispatching)
+        {
+            httpserverLinestateDestroy(ls);
+        }
         lineUnref(l);
         return;
     }

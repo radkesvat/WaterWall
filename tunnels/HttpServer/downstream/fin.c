@@ -24,9 +24,20 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->finish_dispatching)
+    {
+        return;
+    }
+
     lineRef(l);
 
-    ls->next_finished = true;
+    ls->next_finished      = true;
+    ls->finish_dispatching = true;
+
+    if (ls->runtime_proto == kHttpServerRuntimeHttp2)
+    {
+        httpserverStartCloseDrain(ls);
+    }
 
     if (! httpserverTransportFlushPendingDown(t, l, ls))
     {
@@ -115,6 +126,11 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 
     if (ls->runtime_proto == kHttpServerRuntimeHttp2 && ls->session != NULL && ! ls->h2_end_stream_emitted)
     {
+        ls->finish_dispatching = false;
+        if (! httpserverArmCloseDrain(ls))
+        {
+            failAndCloseD(t, l, ls);
+        }
         lineUnref(l);
         return;
     }

@@ -18,6 +18,15 @@ add_waterwall_integration_test(waterwall.http1_split_tcp_loopback http1_split_tc
 add_waterwall_integration_test(waterwall.http1_split_path_cookie_roundtrip http1_split_path_cookie_roundtrip)
 add_waterwall_integration_test(waterwall.http2_bidirectional_roundtrip http2_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http2_bidirectional_tcp_loopback http2_bidirectional_tcp_loopback)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET HttpServer AND TARGET TcpListener AND TARGET BlackHole)
+  add_waterwall_isolated_test(waterwall.httpserver_close_drain_config
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpserver_config_validation_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+  set_tests_properties(waterwall.httpserver_close_drain_config PROPERTIES TIMEOUT 120)
+  add_waterwall_test_labels(waterwall.httpserver_close_drain_config "integration" "http" "configuration")
+  add_waterwall_case_resource_lock(waterwall.httpserver_close_drain_config httpserver_close_drain_config)
+endif()
 add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_roundtrip http_upgrade_h2c_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http_upgrade_h2c_bidirectional_tcp_loopback http_upgrade_h2c_bidirectional_tcp_loopback)
 add_waterwall_expected_failure_integration_test(

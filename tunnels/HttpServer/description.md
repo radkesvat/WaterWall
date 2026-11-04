@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HttpServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -106,6 +106,16 @@ If omitted, the current implementation defaults to:
   - `"1.1+2"`
 
   Current default: `both`
+
+- `close-drain-timeout-ms` `(integer)`
+  Maximum time to finish an HTTP/2 response after the backend sends `Finish`.
+  Default: `30000` milliseconds. Allowed range: `1` to `86400000` inclusive.
+
+  The fixed deadline starts at the first backend `Finish`. Incoming traffic, additional
+  flow-control credit and partial response progress do not restart it. At expiry, any
+  remaining response is discarded and the carrier direction is finished. This applies
+  to direct and upgraded HTTP/2, including WebSocket over HTTP/2; it does not change
+  HTTP/1.1, split HTTP/1.1 or custom raw-upgrade closing behavior.
 
 - `upgrade` `(boolean)`
   Only meaningful when `http-version` is `both`.
@@ -372,18 +382,50 @@ Current session settings include:
 - `INITIAL_WINDOW_SIZE = 1 MiB`
 - `MAX_FRAME_SIZE = 32 KiB`
 
-Request DATA frames are forwarded upstream as plain payload.
-Request `END_STREAM` is recorded internally and does not become upstream `Finish`; the line stays open until the transport closes.
+Request DATA frames are forwarded upstream as plain payload while the next tunnel remains open.
+Request `END_STREAM` is recorded internally and does not become upstream `Finish`; ending the request body alone does not close the Waterwall line.
 
 Incoming HTTP/2 bytes are fed to nghttp2 in 16 KiB slices. This is intentionally smaller than 32 KiB so large Waterwall
 buffers cannot trigger old nghttp2 receive-side stalls observed with oversized `nghttp2_session_mem_recv2()` calls.
 
 Response payload from the next tunnel is turned into HTTP/2 DATA frames on the same stream.
-Flow control can hold those frames back, so more than 1 MiB of queued response data pauses the next tunnel until it
-falls below 256 KiB. After `Finish` from the next tunnel the line stays open until the queued data and `END_STREAM`
-have been written, and only then finishes toward the previous tunnel. The client's WINDOW_UPDATE frames may still be
-on their way then, so the line asks `TcpListener` to half-close its socket and drain it: closing a socket with unread
-input makes the kernel reset it and drop what it has not delivered yet.
+Flow control can hold those frames back. The current implementation requests Pause from the next tunnel above
+1 MiB of queued response data and Resume below 256 KiB. These hardcoded thresholds are advisory pressure signals,
+not a hard memory cap: they count payload bytes still waiting to enter DATA frames, not retained buffer capacity.
+The separate startup queue has a hard limit of 2 MiB of payload and 8 MiB of buffer-capacity charge.
+`TcpListener` separately limits its retained write payload and capacity charge to 16 MiB each; exceeding either
+closes the connection. Its `large-send-buffer` / `large-recv-buffer` settings affect kernel socket buffers, not these queues.
+
+After `Finish` from the next tunnel, `HttpServer` keeps its HTTP/2 state and borrowed carrier line available while
+accepted response bytes wait for flow-control credit. It still processes HTTP/2 control frames such as
+WINDOW_UPDATE, but discards later request-body data, including body events already decoded into its local queue.
+It sends no more callbacks toward the finished next tunnel. Once response DATA and `END_STREAM` have been handed
+to the previous tunnel, it releases HTTP state and finishes that direction. Handing bytes to the transport is not
+confirmation that the client received them.
+
+If the carrier closes first, the pending response is canceled and HTTP state and queued buffers are released.
+Peer stream cancellation also aborts the pending response; the node does not wait to finish a canceled stream.
+A close arriving inside a final-byte callback is settled by that active close operation; a close arriving later,
+while waiting for credit, cleans up immediately.
+
+`close-drain-timeout-ms` bounds this HTTP/2 wait, with a default of 30000 milliseconds and an integer range of
+1 through 86400000. Its fixed deadline starts at the first backend `Finish`; incoming traffic, WINDOW_UPDATE and
+partial response progress do not extend it. If response DATA and END_STREAM have not reached the previous tunnel
+by expiry, the node discards the remaining response, frees its HTTP state and finishes only the still-live carrier
+direction. It never sends another callback toward the finished backend. Completion, carrier closure and stream
+cancellation cancel the timer; process shutdown also aborts the wait instead of waiting for the deadline.
+The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
+response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
+This deadline bounds retained HTTP response work, not the lifetime of the physical TCP socket: bytes already handed
+to the transport follow that adapter's close/write-flush policy. Expiry does not request successful-response linger.
+
+On Linux, successful response completion requests `TcpListener`'s socket-only linger. The Waterwall line is destroyed immediately;
+the detached socket may spend up to 60 seconds flushing its accepted writes, then shuts down its write direction
+and reads/discards remaining peer input for at most 5 seconds of inactivity or 30 seconds total. These limits are
+hardcoded and the latter phase starts after write completion. Reading remaining input avoids a TCP reset caused by
+closing with unread input. Transport errors, peer closure or process shutdown can end this earlier. Other platforms
+use the ordinary adapter close path. The normal `TcpListener` settings `initial-idle-timeout-ms` (60000 by default)
+and `active-idle-timeout-ms` (600000 by default) are separate from these linger limits.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 
 Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.

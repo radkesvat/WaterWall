@@ -93,6 +93,7 @@ if(TARGET HttpServer)
   target_link_options(httpserver_reentrant_finish_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
     "-Wl,--wrap=bufferpoolGetLargeBufferSize"
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd" "-Wl,--wrap=wtimerReset"
   )
   target_link_libraries(httpserver_reentrant_finish_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests httpserver_reentrant_finish_test)
