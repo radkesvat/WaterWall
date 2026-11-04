@@ -1,0 +1,51 @@
+{
+  "name": "http2-upload-close-tls-probe",
+  "nodes": [
+    {
+      "name": "normal-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26800,
+        "nodelay": true
+      },
+      "next": "normal-http"
+    },
+    {
+      "name": "normal-http",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "method": "POST",
+        "http-version": "2",
+        "verbose": true
+      },
+      "next": "tls"
+    },
+    {
+      "name": "normal-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "tls",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "alpns": [
+          "h2"
+        ],
+        "verify": false
+      },
+      "next": "normal-carrier"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ struct h2_data_item_s
     uint32_t        offset;
     bool            end_stream;
     bool            complete;
+    size_t          charge;
     h2_data_item_t *next;
 };
 
@@ -20,6 +21,8 @@ static void h2DataItemDestroy(h2_data_queue_t *queue, h2_data_item_t *item)
         queue->pending_bytes -= sbufGetLength(item->payload) - item->offset;
         bufferpoolReuseBuffer(queue->pool, item->payload);
     }
+    assert(queue->retained_charge >= item->charge);
+    queue->retained_charge -= item->charge;
     memoryFree(item);
 }
 
@@ -36,6 +39,16 @@ void h2DataAppend(h2_data_queue_t *queue, sbuf_t *payload, bool end_stream)
 
     h2_data_item_t *item = memoryAllocate(sizeof(*item));
     *item                = (h2_data_item_t) {.payload = payload, .end_stream = end_stream};
+    if (payload != NULL)
+    {
+        buffer_budget_cost_t cost;
+        bool                 valid = bufferbudgetTryGetCost(payload, &cost);
+        assert(valid);
+        discard valid;
+        item->charge = cost.charge;
+        assert(queue->retained_charge <= SIZE_MAX - item->charge);
+        queue->retained_charge += item->charge;
+    }
     queue->pending_bytes += payload == NULL ? 0 : sbufGetLength(payload);
     if (queue->tail == NULL)
     {
@@ -136,6 +149,12 @@ size_t h2DataPendingBytes(const h2_data_queue_t *queue)
 {
     assert(queue != NULL);
     return queue->pending_bytes;
+}
+
+size_t h2DataRetainedCharge(const h2_data_queue_t *queue)
+{
+    assert(queue != NULL);
+    return queue->retained_charge;
 }
 
 void h2DataDestroyAfterSession(h2_data_queue_t *queue)

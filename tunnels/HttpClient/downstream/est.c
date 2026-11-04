@@ -11,6 +11,13 @@ void httpclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
         return;
     }
 
+    if (ls->line_role == kHttpClientLineCarrier)
+    {
+        assert(ls->application_line != NULL);
+        tunnelPrevDownStreamEst(t, ls->application_line);
+        return;
+    }
+
     if (ls->split_role == kHttpClientSplitRoleDownload && ls->split_main_line != NULL)
     {
         tunnelPrevDownStreamEst(t, ls->split_main_line);

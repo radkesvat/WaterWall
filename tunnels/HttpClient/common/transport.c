@@ -737,6 +737,8 @@ static bool httpclientAppendSplitPlacementHeaders(char *header_buf, size_t cap, 
 
 static line_t *httpclientDownstreamTargetLine(httpclient_lstate_t *ls, line_t *fallback)
 {
+    if (ls->line_role == kHttpClientLineCarrier)
+        return ls->application_line;
     if (ls->split_role == kHttpClientSplitRoleDownload && ls->split_main_line != NULL)
     {
         return ls->split_main_line;
@@ -746,16 +748,23 @@ static line_t *httpclientDownstreamTargetLine(httpclient_lstate_t *ls, line_t *f
 
 static bool httpclientForwardDownstreamPayload(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
 {
+    if (ls->prev_finished)
+    {
+        lineReuseBuffer(l, buf);
+        return true;
+    }
     line_t *target = httpclientDownstreamTargetLine(ls, l);
     if (! lineIsAlive(target))
     {
         lineReuseBuffer(l, buf);
         return false;
     }
-    if (! lineCallWithRefWithBuf(target, tunnelPrevDownStreamPayload, t, buf))
+    bool target_alive = lineCallWithRefWithBuf(target, tunnelPrevDownStreamPayload, t, buf);
+    if (! lineIsAlive(l) || ! httpclientLinestateIsActive(ls))
         return false;
-    return lineIsAlive(l) && httpclientLinestateIsActive(ls) && httpclientDownstreamTargetLine(ls, l) == target &&
-           ! ls->prev_finished;
+    /* The application can close while its independently owned carrier remains live. */
+    return (ls->line_role == kHttpClientLineCarrier && ls->prev_finished) ||
+           (target_alive && httpclientDownstreamTargetLine(ls, l) == target && ! ls->prev_finished);
 }
 
 bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upgrade_to_h2)
@@ -1312,7 +1321,7 @@ static bool parseHttp1ResponseHeaders(const char *headers, httpclient_h1_respons
     return true;
 }
 
-static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+static bool sendNghttp2OutboundFrames(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
     if (UNLIKELY(! httpclientCanSendUpstream(ls)))
     {
@@ -1333,6 +1342,8 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 
     while (true)
     {
+        if (! httpclientCloseDrainAllowed(ls))
+            return false;
         const uint8_t *data = NULL;
         nghttp2_ssize  len  = nghttp2_session_mem_send2(ls->session, &data);
 
@@ -1394,6 +1405,38 @@ static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     }
 
     return true;
+}
+
+bool httpclientRefreshHttp2SourcePressure(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    if (ls->line_role != kHttpClientLineCarrier || ls->prev_finished)
+        return true;
+    size_t pending = h2DataPendingBytes(&ls->h2_data);
+    bool   pause   = ! ls->h2_source_paused && pending > kHttpClientHttp2PauseDataBytes;
+    bool   resume  = ls->h2_source_paused && pending < kHttpClientHttp2ResumeDataBytes;
+    if (! pause && ! resume)
+        return true;
+    ls->h2_source_paused = pause;
+    if (ls->next_paused)
+        return true;
+    line_t *application = ls->application_line;
+    if (pause)
+        discard lineCallWithRef(application, tunnelPrevDownStreamPause, t);
+    else
+        discard lineCallWithRef(application, tunnelPrevDownStreamResume, t);
+    return lineIsAlive(l) && httpclientLinestateIsActive(ls);
+}
+
+static bool sendNghttp2Outbound(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
+{
+    if (ls->h2_sending)
+        return true;
+    ls->h2_sending = true;
+    bool ok        = sendNghttp2OutboundFrames(t, l, ls);
+    if (! lineIsAlive(l) || ! httpclientLinestateIsActive(ls))
+        return false;
+    ls->h2_sending = false;
+    return ok && httpclientRefreshHttp2SourcePressure(t, l, ls);
 }
 
 static sbuf_t *httpclientCollectHttp2Startup(line_t *l, httpclient_lstate_t *ls)
@@ -1526,6 +1569,9 @@ static int httpclientOnDataChunkRecvCallback(nghttp2_session *session, uint8_t f
         return 0;
     }
 
+    if (ls->prev_finished)
+        return 0;
+
     buffer_pool_t *pool      = lineGetBufferPool(ls->line);
     uint32_t       max_chunk = bufferpoolGetLargeBufferSize(pool);
     if (max_chunk == 0)
@@ -1623,7 +1669,7 @@ static int httpclientOnStreamClosedCallback(nghttp2_session *session, int32_t st
 
     if (stream_id == ls->h2_stream_id)
     {
-        ls->response_complete = true;
+        ls->h2_stream_closed = true;
     }
 
     return 0;
@@ -1643,6 +1689,9 @@ static int httpclientOnFrameSendCallback(nghttp2_session *session, const nghttp2
     {
         ls->h2_request_headers_sent = true;
     }
+    if ((frame->hd.type == NGHTTP2_DATA || frame->hd.type == NGHTTP2_HEADERS) &&
+        frame->hd.stream_id == ls->h2_stream_id && (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0)
+        ls->h2_end_stream_emitted = true;
     if (h2DataOnFrameSent(&ls->h2_data, frame, ls->h2_stream_id) &&
         httpclientSubmitNextHttp2Data(ls).status == H2_DATA_FAILED)
     {
@@ -2107,6 +2156,12 @@ static void httpclientTransportCloseDirections(tunnel_t *t, line_t *l, httpclien
         return;
     }
 
+    if (ls->line_role == kHttpClientLineCarrier)
+    {
+        httpclientCarrierClose(t, l, close_prev);
+        return;
+    }
+
     lineRef(l);
 
     bool send_next = close_next && ! ls->next_finished;
@@ -2178,6 +2233,18 @@ bool httpclientTransportSendHttp2DataFrame(tunnel_t *t, line_t *l, httpclient_ls
              boolToTrueFalse(end_stream));
     }
 
+    if (payload != NULL)
+    {
+        buffer_budget_cost_t cost;
+        if (! bufferbudgetTryGetCost(payload, &cost) ||
+            cost.bytes > kHttpClientHttp2MaxDataBytes - h2DataPendingBytes(&ls->h2_data) ||
+            cost.charge > kHttpClientHttp2MaxDataCharge - h2DataRetainedCharge(&ls->h2_data))
+        {
+            lineReuseBuffer(l, payload);
+            LOGW("HttpClient: HTTP/2 upload backlog limit exceeded");
+            return false;
+        }
+    }
     h2DataAppend(&ls->h2_data, payload, end_stream);
     return sendNghttp2Outbound(t, l, ls);
 }
@@ -2331,24 +2398,19 @@ static bool drainDownEvents(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     while (contextqueueLen(&ls->events_down) > 0)
     {
         context_t *ctx = contextqueuePop(&ls->events_down);
-
-        lineRef(l);
-        contextApplyOnPrevTunnelD(ctx, t);
+        sbuf_t    *payload = ctx->payload;
+        contextDropPayload(ctx);
         contextDestroy(ctx);
-
-        if (! lineIsAlive(l) || ! httpclientLinestateIsActive(ls))
-        {
-            lineUnref(l);
+        if (! httpclientForwardDownstreamPayload(t, l, ls, payload))
             return false;
-        }
-        lineUnref(l);
     }
-
     return true;
 }
 
 static bool httpclientTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
+    if (ls->h2_stream_closed && ! ls->h2_end_stream_emitted)
+        return false;
     if (! httpclientTransportMaybeSubmitWebSocketHttp2Request(t, l, ls))
     {
         return false;

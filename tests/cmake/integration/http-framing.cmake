@@ -19,6 +19,23 @@ add_waterwall_integration_test(waterwall.http1_split_path_cookie_roundtrip http1
 add_waterwall_integration_test(waterwall.http2_bidirectional_roundtrip http2_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http2_bidirectional_tcp_loopback http2_bidirectional_tcp_loopback)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET HttpClient AND TARGET HttpServer AND TARGET TcpListener AND TARGET TcpConnector)
+  add_waterwall_probe_integration_test(waterwall.http2_upload_close_probe http2_upload_close_probe 60)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET HttpClient AND TARGET TlsClient AND TARGET TcpListener AND TARGET TcpConnector)
+  add_waterwall_probe_integration_test(waterwall.http2_upload_close_tls_probe http2_upload_close_tls_probe 30)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET HttpClient AND TARGET TcpListener AND TARGET BlackHole)
+  add_waterwall_isolated_test(waterwall.httpclient_close_drain_config
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpclient_config_validation_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+  set_tests_properties(waterwall.httpclient_close_drain_config PROPERTIES TIMEOUT 120)
+  add_waterwall_test_labels(waterwall.httpclient_close_drain_config "integration" "http" "configuration")
+  add_waterwall_case_resource_lock(waterwall.httpclient_close_drain_config httpclient_close_drain_config)
+endif()
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
    TARGET HttpServer AND TARGET TcpListener AND TARGET BlackHole)
   add_waterwall_isolated_test(waterwall.httpserver_close_drain_config
     "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/httpserver_config_validation_test.py"

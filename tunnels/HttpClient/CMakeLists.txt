@@ -5,6 +5,8 @@ add_library(HttpClient STATIC
                     instance/api.c
                     instance/node.c
                     common/transport.c
+                    common/carrier.c
+                    common/close.c
                     common/split.c
                     common/line_state.c
                     common/helpers.c

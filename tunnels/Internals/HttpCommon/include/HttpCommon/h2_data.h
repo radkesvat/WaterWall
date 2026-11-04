@@ -14,6 +14,7 @@ typedef struct h2_data_queue_s
     h2_data_item_t *head, *tail, *active;
     buffer_pool_t  *pool;
     size_t          pending_bytes;
+    size_t          retained_charge;
     uint32_t        max_read;
 } h2_data_queue_t;
 
@@ -48,8 +49,11 @@ h2_data_result_t h2DataTrySubmit(h2_data_queue_t *queue, nghttp2_session *sessio
 bool h2DataOnFrameSent(h2_data_queue_t *queue, const nghttp2_frame *frame, int32_t stream_id);
 
 /* Payload bytes not yet copied into DATA frames; flow control can hold them
- * indefinitely, so callers bound this backlog by pausing their producer. */
+ * indefinitely. Pressure and hard admission limits belong to the caller. */
 size_t h2DataPendingBytes(const h2_data_queue_t *queue);
+/* Allocation charge remains until the provider releases its buffer, even when
+ * a prefix has already been serialized. */
+size_t h2DataRetainedCharge(const h2_data_queue_t *queue);
 
 /* PRECONDITION: the session is absent/deleted and no library callback can use
  * this queue. Releases active and pending payloads on the pool's owner worker.
