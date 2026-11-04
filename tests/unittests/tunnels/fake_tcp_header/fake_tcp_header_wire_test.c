@@ -3,14 +3,16 @@
  * Contract: insert/remove fake TCP and the protocol byte after the actual IHL; preserve native checksum residuals and
  * current IPs. Every refusal preserves bytes including headroom, cursor, length and checksum intent. Cases: known
  * answers; both protocols/orientations; IHL/options/alignment matrix; address composition; corruption, repair and
- * checksum-zero representations; native/carrier framing, fragments, limits and settings. Setup: in-memory sbufs with an
- * independent RFC 1071 serializer/checksum oracle. No production checksum or serialization helper constructs expected
- * bytes. The node fixture covers actual callbacks and IpOverrider. CTest: waterwall.fake_tcp_header_wire_unit (Debug
- * and Release).
+ * checksum-zero representations; native/carrier framing, fragments, limits and settings; per-port sequence progression,
+ * wrap, numeric/random-node/random-port seeds, disabled mode and four concurrent encoders reserving nonoverlapping byte
+ * intervals. Setup: in-memory sbufs with an independent RFC 1071 serializer/checksum oracle. No production checksum or
+ * serialization helper constructs expected bytes. The node fixture covers actual callbacks and IpOverrider. CTest:
+ * waterwall.fake_tcp_header_wire_unit (Debug and Release). Every refusal also preserves the outgoing sequence counters.
  */
 #include "FakeTcpHeaderCommon/faketcpheader_wire.h"
 
 #include "test_assert.h"
+#include "wthread.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 #define requireResult(actual, expected, message)                                                                       \
@@ -126,13 +128,15 @@ static void oracleAdjustAddresses(uint8_t *native, uint8_t protocol, const uint8
 
 static faketcpheader_wire_config_t baseConfig(void)
 {
-    return (faketcpheader_wire_config_t) {.sequence          = 0x01020304U,
-                                          .acknowledgment    = 0x0a0b0c0dU,
-                                          .window            = 29200,
-                                          .urgent_pointer    = 7,
-                                          .server_port       = 40000,
-                                          .client_port       = 40001,
-                                          .client_port_count = 16};
+    return (faketcpheader_wire_config_t) {.sequence_mode      = kFakeTcpHeaderSequenceNumeric,
+                                          .sequence           = 0x01020304U,
+                                          .acknowledgment     = 0x0a0b0c0dU,
+                                          .window             = 29200,
+                                          .urgent_pointer     = 7,
+                                          .server_port        = 40000,
+                                          .client_port        = 40001,
+                                          .client_port_count  = 16,
+                                          .increment_sequence = false};
 }
 
 static void setOptions(faketcpheader_wire_config_t *config, uint8_t length)
@@ -236,7 +240,8 @@ static sbuf_t *encodeOk(const faketcpheader_wire_config_t *config, faketcpheader
 {
     sbuf_t *buf = makeBuffer(packet, length, headroom);
     sbufSetRecalculateChecksum(buf, repair);
-    requireResult(faketcpheaderWireEncode(config, side, buf), kFakeTcpHeaderWireOk, "valid native packet refused");
+    requireResult(
+        faketcpheaderWireEncode(config, NULL, side, buf), kFakeTcpHeaderWireOk, "valid native packet refused");
     require(! sbufGetRecalculateChecksum(buf), "encode did not consume checksum intent");
     return buf;
 }
@@ -259,13 +264,20 @@ static void expectRefusal(const faketcpheader_wire_config_t *config, faketcphead
     require(length + headroom <= sizeof(before), "oversized refusal fixture");
     const uint8_t *cursor = bufferBytes(buf);
     memoryCopy(before, cursor - headroom, length + headroom);
-    requireResult(encode ? faketcpheaderWireEncode(config, side, buf) : faketcpheaderWireDecode(config, side, buf),
+    faketcpheader_wire_config_t advancing = *config;
+    advancing.increment_sequence          = true;
+    atomic_u32_t sequences[kFakeTcpHeaderWireMaxClientPortCount];
+    faketcpheaderWireInitSequences(&advancing, sequences);
+    requireResult(encode ? faketcpheaderWireEncode(&advancing, sequences, side, buf)
+                         : faketcpheaderWireDecode(config, side, buf),
                   expected,
                   message);
     require(bufferBytes(buf) == cursor && sbufGetLength(buf) == length && sbufGetLeftCapacity(buf) == headroom,
             "refusal changed cursor/length/headroom");
     require(sbufGetRecalculateChecksum(buf) == repair, "refusal consumed checksum intent");
     requireBytes(cursor - headroom, before, length + headroom, "refusal changed bytes/headroom");
+    for (uint16_t i = 0; i < config->client_port_count; ++i)
+        requireResult(atomicLoadU32Relaxed(&sequences[i]), config->sequence, "refusal advanced a sequence counter");
     sbufDestroy(buf);
 }
 static void expectRefusalAnyIntent(const faketcpheader_wire_config_t *config, faketcpheader_wire_side_t side,
@@ -664,6 +676,263 @@ static void testPortMapping(void)
         }
 }
 
+static void testSequenceProgression(void)
+{
+    const uint8_t protocols[] = {6, 17, 1, 253};
+    const uint8_t ihls[] = {20, 24, 60}, options[] = {0, 4, 40};
+    uint8_t       packet[256], expected[256];
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+    {
+        faketcpheader_wire_config_t config = baseConfig();
+        config.increment_sequence          = true;
+        config.client_port_count           = 1;
+        config.sequence                    = UINT32_MAX - 17U;
+        atomic_u32_t sequences[1];
+        faketcpheaderWireInitSequences(&config, sequences);
+        uint32_t next = config.sequence;
+        for (size_t p = 0; p < ARRAY_SIZE(protocols); ++p)
+            for (size_t h = 0; h < ARRAY_SIZE(ihls); ++h)
+                for (size_t o = 0; o < ARRAY_SIZE(options); ++o)
+                {
+                    setOptions(&config, options[o]);
+                    const uint16_t length = buildNative(packet, protocols[p], ihls[h], (uint16_t) (ihls[h] + 43U));
+                    if (protocols[p] == 17)
+                    {
+                        /* Bytes beyond the UDP length still consume outer TCP sequence space. */
+                        PUT_BE16(packet + ihls[h] + 4, 11);
+                        oracleSetChecksums(packet);
+                    }
+                    faketcpheader_wire_config_t oracle = config;
+                    oracle.sequence                    = next;
+                    const uint16_t encoded             = oracleCarrier(expected, packet, &oracle, kSides[s], 0);
+                    sbuf_t        *buf                 = makeBuffer(packet, length, faketcpheaderWireOverhead(&config));
+                    sbufSetRecalculateChecksum(buf, (p + h + o) % 2 != 0);
+                    requireResult(faketcpheaderWireEncode(&config, sequences, kSides[s], buf),
+                                  kFakeTcpHeaderWireOk,
+                                  "incrementing encoder refused valid packet");
+                    requireBytes(
+                        bufferBytes(buf), expected, encoded, "sequence/checksum differs from independent oracle");
+                    next += 44U;
+                    requireResult(
+                        atomicLoadU32Relaxed(sequences), next, "sequence counted IP or fake TCP header bytes");
+                    decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
+                    requireResult(atomicLoadU32Relaxed(sequences), next, "decode changed outgoing sequence");
+                    sbufDestroy(buf);
+                }
+
+        /* An empty opaque native body still contributes its one protocol byte. */
+        const uint16_t length = buildNative(packet, 253, 20, 20);
+        sbuf_t        *buf    = makeBuffer(packet, length, 61);
+        requireResult(faketcpheaderWireEncode(&config, sequences, kSides[s], buf),
+                      kFakeTcpHeaderWireOk,
+                      "empty opaque packet refused");
+        requireResult(GET_BE32(bufferBytes(buf) + 24), next, "empty body sequence");
+        requireResult(atomicLoadU32Relaxed(sequences), next + 1U, "protocol byte did not consume sequence space");
+        require(oracleIpValid(bufferBytes(buf)) && oracleTransportValid(bufferBytes(buf)), "sequence broke checksum");
+        sbufDestroy(buf);
+
+        config.increment_sequence = false;
+        faketcpheaderWireInitSequences(&config, NULL);
+        for (unsigned i = 0; i < 3; ++i)
+        {
+            buf = encodeOk(&config, kSides[s], packet, length, 61, false);
+            requireResult(GET_BE32(bufferBytes(buf) + 24), config.sequence, "disabled mode advanced sequence");
+            requireResult(GET_BE32(bufferBytes(buf) + 28), config.acknowledgment, "disabled mode changed ACK");
+            require(oracleTransportValid(bufferBytes(buf)), "fixed sequence broke checksum");
+            sbufDestroy(buf);
+        }
+    }
+}
+
+static void testSequencePortIsolation(void)
+{
+    uint8_t packet[80];
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+    {
+        faketcpheader_wire_config_t config = baseConfig();
+        config.increment_sequence          = true;
+        config.client_port_count           = 3;
+        atomic_u32_t sequences[3];
+        uint32_t     next[3] = {config.sequence, config.sequence, config.sequence};
+        unsigned     seen[3] = {0};
+        faketcpheaderWireInitSequences(&config, sequences);
+        for (unsigned flow = 0; flow < 64; ++flow)
+        {
+            buildNative(packet, 17, 20, sizeof(packet));
+            PUT_BE16(packet + 20, (uint16_t) (5000U + flow));
+            oracleSetChecksums(packet);
+            const uint16_t index = faketcpheaderWirePortIndex(&config, packet, sizeof(packet));
+            sbuf_t        *buf   = makeBuffer(packet, sizeof(packet), 61);
+            requireResult(faketcpheaderWireEncode(&config, sequences, kSides[s], buf),
+                          kFakeTcpHeaderWireOk,
+                          "port isolation fixture encode");
+            const uint8_t *tcp = bufferBytes(buf) + 20;
+            requireResult(GET_BE16(tcp + (s == 0 ? 0 : 2)), config.client_port + index, "selected client port changed");
+            requireResult(GET_BE32(tcp + 4), next[index], "colliding flows did not share their port counter");
+            requireResult(GET_BE32(tcp + 8), config.acknowledgment, "sequence progression changed ACK");
+            next[index] += 61U;
+            ++seen[index];
+            for (unsigned i = 0; i < ARRAY_SIZE(next); ++i)
+                requireResult(atomicLoadU32Relaxed(&sequences[i]), next[i], "another port's counter was changed");
+            require(oracleTransportValid(bufferBytes(buf)), "per-port sequence broke checksum");
+            sbufDestroy(buf);
+        }
+        for (unsigned i = 0; i < ARRAY_SIZE(seen); ++i)
+            require(seen[i] > 1, "fixture did not exercise independent ports and colliding flows");
+    }
+}
+
+static void testRandomSequenceModes(void)
+{
+    const faketcpheader_sequence_mode_t modes[] = {kFakeTcpHeaderSequenceRandomNode, kFakeTcpHeaderSequenceRandomPort};
+    uint8_t                             packet[80], expected[160];
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+        for (size_t m = 0; m < ARRAY_SIZE(modes); ++m)
+            for (unsigned increment = 0; increment < 2; ++increment)
+            {
+                faketcpheader_wire_config_t config = baseConfig();
+                config.sequence_mode               = modes[m];
+                config.increment_sequence          = increment != 0;
+                config.client_port_count           = 3;
+                atomic_u32_t  sequences[3];
+                atomic_u32_t *state = faketcpheaderWireNeedsSequences(&config) ? sequences : NULL;
+                faketcpheaderWireInitSequences(&config, state);
+                uint32_t next[3];
+                unsigned seen[3] = {0};
+                for (unsigned i = 0; i < ARRAY_SIZE(next); ++i)
+                {
+                    next[i] = state != NULL ? atomicLoadU32Relaxed(&state[i]) : config.sequence;
+                    if (config.sequence_mode == kFakeTcpHeaderSequenceRandomNode)
+                        requireResult(next[i], config.sequence, "random_node did not share one starting value");
+                }
+                /* Observe generated seeds, then check exact progression without assuming random values differ. */
+                for (unsigned flow = 0; flow < 64; ++flow)
+                {
+                    buildNative(packet, 17, 20, sizeof(packet));
+                    PUT_BE16(packet + 20, (uint16_t) (5000U + flow));
+                    oracleSetChecksums(packet);
+                    const uint16_t              index  = faketcpheaderWirePortIndex(&config, packet, sizeof(packet));
+                    faketcpheader_wire_config_t oracle = config;
+                    oracle.sequence                    = next[index];
+                    const uint16_t encoded             = oracleCarrier(expected, packet, &oracle, kSides[s], index);
+                    sbuf_t        *buf                 = makeBuffer(packet, sizeof(packet), 61);
+                    requireResult(faketcpheaderWireEncode(&config, state, kSides[s], buf),
+                                  kFakeTcpHeaderWireOk,
+                                  "random sequence fixture encode");
+                    requireBytes(bufferBytes(buf), expected, encoded, "random sequence or carrier checksum changed");
+                    if (increment != 0)
+                        next[index] += 61U;
+                    ++seen[index];
+                    decodeOk(&config, peerSide(kSides[s]), buf, packet, sizeof(packet));
+                    sbufDestroy(buf);
+                    if (state != NULL)
+                        for (unsigned i = 0; i < ARRAY_SIZE(next); ++i)
+                            requireResult(atomicLoadU32Relaxed(&state[i]),
+                                          next[i],
+                                          "random mode changed another port or a fixed seed");
+                }
+                for (unsigned i = 0; i < ARRAY_SIZE(seen); ++i)
+                    require(seen[i] > 1, "random mode fixture did not exercise all port slots repeatedly");
+
+                /* Refusals must neither draw replacement seeds nor consume byte intervals. */
+                sbuf_t *buf = makeBuffer(packet, 1, 61);
+                requireResult(faketcpheaderWireEncode(&config, state, kSides[s], buf),
+                              kFakeTcpHeaderWireMalformedNative,
+                              "random mode accepted malformed input");
+                if (state != NULL)
+                    for (unsigned i = 0; i < ARRAY_SIZE(next); ++i)
+                        requireResult(atomicLoadU32Relaxed(&state[i]), next[i], "refusal changed a random sequence");
+                else
+                    requireResult(config.sequence, next[0], "refusal changed the fixed node seed");
+                sbufDestroy(buf);
+            }
+}
+
+enum
+{
+    kSequenceThreads          = 4,
+    kSequencePacketsPerThread = 128,
+    kSequencePayloadLength    = 40,
+};
+
+typedef struct sequence_thread_s
+{
+    const faketcpheader_wire_config_t *config;
+    atomic_u32_t                      *sequences;
+    faketcpheader_wire_side_t          side;
+    wsem_t                            *ready;
+    wsem_t                            *start;
+    sbuf_t                            *packets[kSequencePacketsPerThread];
+} sequence_thread_t;
+
+static WTHREAD_ROUTINE(encodeConcurrentPackets)
+{
+    sequence_thread_t *task = userdata;
+    discard            semaphorePost(task->ready);
+    discard            semaphoreWait(task->start);
+    for (unsigned i = 0; i < kSequencePacketsPerThread; ++i)
+        requireResult(faketcpheaderWireEncode(task->config, task->sequences, task->side, task->packets[i]),
+                      kFakeTcpHeaderWireOk,
+                      "concurrent encoder refused valid packet");
+    return 0;
+}
+
+static void testConcurrentSequences(void)
+{
+    for (size_t s = 0; s < ARRAY_SIZE(kSides); ++s)
+    {
+        faketcpheader_wire_config_t config = baseConfig();
+        config.increment_sequence          = true;
+        config.client_port_count           = 1;
+        atomic_u32_t sequences[1];
+        faketcpheaderWireInitSequences(&config, sequences);
+        uint8_t packet[20 + kSequencePayloadLength - 1];
+        buildNative(packet, 17, 20, sizeof(packet));
+        wsem_t ready, start;
+        semaphoreInit(&ready, 0);
+        semaphoreInit(&start, 0);
+        sequence_thread_t tasks[kSequenceThreads];
+        wthread_t         threads[kSequenceThreads];
+        for (unsigned t = 0; t < kSequenceThreads; ++t)
+        {
+            tasks[t] = (sequence_thread_t) {
+                .config = &config, .sequences = sequences, .side = kSides[s], .ready = &ready, .start = &start};
+            for (unsigned p = 0; p < kSequencePacketsPerThread; ++p)
+                tasks[t].packets[p] = makeBuffer(packet, sizeof(packet), 61);
+            requireResult(threadCreate(&threads[t], encodeConcurrentPackets, &tasks[t]),
+                          kWThreadErrorNone,
+                          "failed to create sequence encoder thread");
+        }
+        for (unsigned t = 0; t < kSequenceThreads; ++t)
+            discard semaphoreWait(&ready);
+        for (unsigned t = 0; t < kSequenceThreads; ++t)
+            discard semaphorePost(&start);
+        for (unsigned t = 0; t < kSequenceThreads; ++t)
+            requireResult(threadJoin(threads[t]), 0, "failed to join sequence encoder thread");
+
+        bool seen[kSequenceThreads * kSequencePacketsPerThread] = {false};
+        for (unsigned t = 0; t < kSequenceThreads; ++t)
+            for (unsigned p = 0; p < kSequencePacketsPerThread; ++p)
+            {
+                sbuf_t        *buf     = tasks[t].packets[p];
+                const uint8_t *carrier = bufferBytes(buf);
+                const uint32_t offset  = GET_BE32(carrier + 24) - config.sequence;
+                require(offset % kSequencePayloadLength == 0, "concurrent sequence interval is misaligned");
+                const uint32_t slot = offset / kSequencePayloadLength;
+                require(slot < ARRAY_SIZE(seen) && ! seen[slot], "concurrent sequence intervals overlap");
+                seen[slot] = true;
+                requireResult(GET_BE32(carrier + 28), config.acknowledgment, "concurrent encoding changed ACK");
+                require(oracleIpValid(carrier) && oracleTransportValid(carrier), "concurrent sequence broke checksum");
+                sbufDestroy(buf);
+            }
+        requireResult(atomicLoadU32Relaxed(sequences),
+                      config.sequence + kSequenceThreads * kSequencePacketsPerThread * kSequencePayloadLength,
+                      "concurrent encoders lost sequence increments");
+        semaphoreDestroy(&ready);
+        semaphoreDestroy(&start);
+    }
+}
+
 static void testLimitsAndFraming(void)
 {
     uint8_t       packet[kTestPacketCapacity], carrier[kTestPacketCapacity], bad[kTestPacketCapacity];
@@ -947,7 +1216,7 @@ static void testAllProtocolBytes(void)
     const uint16_t length = buildNative(packet, 255, 20, 39);
     sbuf_t        *buf    = makeBuffer(packet, length, 25);
     require(sbufGetTailCapacity(buf) == 0, "no-tail-space fixture has spare tail space");
-    requireResult(faketcpheaderWireEncode(&config, kFakeTcpHeaderWireClient, buf),
+    requireResult(faketcpheaderWireEncode(&config, NULL, kFakeTcpHeaderWireClient, buf),
                   kFakeTcpHeaderWireOk,
                   "protocol tag needed spare tail space");
     require(sbufGetLeftCapacity(buf) == 0 && sbufGetTailCapacity(buf) == 0, "framing changed end of occupied storage");
@@ -1209,8 +1478,9 @@ static faketcpheader_wire_config_t requireSettingsLoaded(const char *text)
 static void requireDefaults(const faketcpheader_wire_config_t *config)
 {
     require(config->server_port == 40000 && config->client_port == 40001 && config->client_port_count == 16 &&
-                config->sequence == 0 && config->acknowledgment == 0 && config->window == 65535 &&
-                config->urgent_pointer == 0 && config->options_length == 0,
+                config->sequence_mode == kFakeTcpHeaderSequenceRandomPort && config->sequence == 0 &&
+                config->acknowledgment == 0 && config->window == 65535 && config->urgent_pointer == 0 &&
+                config->options_length == 0 && config->increment_sequence,
             "default settings changed");
 }
 
@@ -1221,13 +1491,46 @@ static void testSettings(void)
     requireDefaults(&config);
     config = requireSettingsLoaded("{}");
     requireDefaults(&config);
+    config = requireSettingsLoaded("{\"increment-sequence\":true}");
+    requireDefaults(&config);
+    config = requireSettingsLoaded("{\"increment-sequence\":false,\"sequence\":123}");
+    require(! config.increment_sequence && config.sequence_mode == kFakeTcpHeaderSequenceNumeric &&
+                config.sequence == 123,
+            "fixed sequence settings were not loaded");
+    config = requireSettingsLoaded("{\"increment-sequence\":false}");
+    require(! config.increment_sequence && config.sequence_mode == kFakeTcpHeaderSequenceRandomPort &&
+                faketcpheaderWireNeedsSequences(&config),
+            "fixed default random_port lost its per-port storage");
+    const struct
+    {
+        const char                   *name;
+        faketcpheader_sequence_mode_t mode;
+    } modes[] = {{"random_node", kFakeTcpHeaderSequenceRandomNode}, {"random_port", kFakeTcpHeaderSequenceRandomPort}};
+    for (size_t i = 0; i < ARRAY_SIZE(modes); ++i)
+        for (unsigned increment = 0; increment < 2; ++increment)
+        {
+            char json[128];
+            snprintf(json,
+                     sizeof(json),
+                     "{\"sequence\":\"%s\",\"increment-sequence\":%s}",
+                     modes[i].name,
+                     increment ? "true" : "false");
+            config = requireSettingsLoaded(json);
+            require(config.sequence_mode == modes[i].mode && config.increment_sequence == (increment != 0) &&
+                        config.sequence == 0,
+                    "random sequence settings were not parsed without generating a seed");
+            require(faketcpheaderWireNeedsSequences(&config) ==
+                        (increment != 0 || modes[i].mode == kFakeTcpHeaderSequenceRandomPort),
+                    "sequence mode needs wrong storage");
+        }
     requireSettingsRejected("{\"payload-protocol\":6}");
     requireSettingsRejected("{\"payload-protocol\":17}");
 
     config = requireSettingsLoaded("{\"server-port\":1,\"client-port\":2,\"sequence\":0,"
                                    "\"acknowledgment\":0,\"window\":0,\"urgent-pointer\":0,\"options\":\"\"}");
     require(config.server_port == 1 && config.client_port == 2 && config.client_port_count == 1 && config.window == 0 &&
-                config.options_length == 0,
+                config.options_length == 0 && config.sequence_mode == kFakeTcpHeaderSequenceNumeric &&
+                config.sequence == 0,
             "lower edges were not loaded");
 
     config = requireSettingsLoaded(
@@ -1236,8 +1539,9 @@ static void testSettings(void)
         "\"acknowledgment\":4294967295,\"window\":65535,\"urgent-pointer\":65535,"
         "\"options\":\"000102030405060708090a0b0c0d0e0f101112131415161718191A1B1C1D1E1F2021222324252627\"}");
     require(config.server_port == 65535 && config.client_port == 63488 && config.client_port_count == 1024 &&
-                config.sequence == UINT32_MAX && config.acknowledgment == UINT32_MAX && config.window == 65535 &&
-                config.urgent_pointer == 65535 && config.options_length == 40,
+                config.sequence_mode == kFakeTcpHeaderSequenceNumeric && config.sequence == UINT32_MAX &&
+                config.acknowledgment == UINT32_MAX && config.window == 65535 && config.urgent_pointer == 65535 &&
+                config.options_length == 40,
             "upper edges were not loaded");
     for (uint8_t i = 0; i < 40; ++i)
     {
@@ -1273,6 +1577,12 @@ static void testSettings(void)
             "four option bytes were not loaded");
 
     static const char *const rejected[] = {
+        "{\"increment-sequence\":null}",
+        "{\"increment-sequence\":0}",
+        "{\"increment-sequence\":1}",
+        "{\"increment-sequence\":\"true\"}",
+        "{\"increment-sequence\":[]}",
+        "{\"increment-sequence\":{}}",
         "{\"payload-protocol\":null}",
         "{\"payload-protocol\":6.5}",
         "{\"payload-protocol\":6.0}",
@@ -1344,6 +1654,23 @@ static void testSettings(void)
         "{\"client-port\":null,\"client-port-range\":[40001,40016]}",
         "{\"client-port\":40001,\"client-port-range\":null}",
         "{\"client-port\":null,\"client-port-range\":null}",
+        "{\"sequence\":\"random_fixed\"}",
+        "{\"sequence\":\"random_con\"}",
+        "{\"sequence\":\"random_always\"}",
+        "{\"sequence\":\"random_packet\"}",
+        "{\"sequence\":\"RANDOM_PORT\"}",
+        "{\"sequence\":\" random_port\"}",
+        "{\"sequence\":\"random_node \"}",
+        "{\"sequence\":\"random_node\\u0000extra\"}",
+        "{\"sequence\":\"random_port\\u0000extra\"}",
+        "{\"sequence\":\"123\"}",
+        "{\"sequence\":\"\"}",
+        "{\"sequence\":true}",
+        "{\"sequence\":false}",
+        "{\"sequence\":[]}",
+        "{\"sequence\":1.0}",
+        "{\"sequence\":1.5}",
+        "{\"sequence\":1e0}",
         "{\"sequence\":-1}",
         "{\"sequence\":4294967296}",
         "{\"acknowledgment\":-1}",
@@ -1402,6 +1729,11 @@ int main(void)
     testCaseSet("fake_tcp_header_wire_test");
     initWLibc();
     checkSumInit();
+    /* Settings are pure parsing: even random defaults must work before RNG startup. */
+    TEST_RUN_CASE(testSettings);
+    require(globalstateInitializeSecureRandom(), "OS random source unavailable");
+    require(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
     TEST_RUN_CASE(testResultNames);
     TEST_RUN_CASE(testKnownAnswers);
     TEST_RUN_CASE(testWireAndMovement);
@@ -1409,10 +1741,16 @@ int main(void)
     TEST_RUN_CASE(testCorruptionRepairAndZeros);
     TEST_RUN_CASE(testUdpPadding);
     TEST_RUN_CASE(testPortMapping);
+    TEST_RUN_CASE(testSequenceProgression);
+    TEST_RUN_CASE(testSequencePortIsolation);
+    TEST_RUN_CASE(testRandomSequenceModes);
+    TEST_RUN_CASE(testConcurrentSequences);
     TEST_RUN_CASE(testLimitsAndFraming);
     TEST_RUN_CASE(testAllProtocolBytes);
     TEST_RUN_CASE(testIcmpAndOpaqueRepair);
     TEST_RUN_CASE(testFragmentAdmission);
-    TEST_RUN_CASE(testSettings);
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     return 0;
 }

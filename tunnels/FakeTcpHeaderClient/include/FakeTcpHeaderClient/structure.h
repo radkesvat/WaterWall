@@ -13,6 +13,7 @@ typedef struct faketcpheaderclient_tstate_s
 {
     faketcpheader_wire_config_t wire;
     atomic_log_rate_limiter_t   drop_log_limiter;
+    atomic_u32_t                sequences[];
 } faketcpheaderclient_tstate_t;
 
 WW_EXPORT tunnel_t *faketcpheaderclientCreate(node_t *node);

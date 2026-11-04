@@ -11,19 +11,16 @@ typedef struct faketcpheader_settings_integer_s
 
 static const faketcpheader_settings_integer_t        kSettingsServerPort     = {"server-port", 1, UINT16_MAX};
 static const faketcpheader_settings_integer_t        kSettingsClientPort     = {"client-port", 1, UINT16_MAX};
-static const faketcpheader_settings_integer_t        kSettingsSequence       = {"sequence", 0, UINT32_MAX};
 static const faketcpheader_settings_integer_t        kSettingsAcknowledgment = {"acknowledgment", 0, UINT32_MAX};
 static const faketcpheader_settings_integer_t        kSettingsWindow         = {"window", 0, UINT16_MAX};
 static const faketcpheader_settings_integer_t        kSettingsUrgentPointer  = {"urgent-pointer", 0, UINT16_MAX};
-static const faketcpheader_settings_integer_t *const kSettingsIntegers[]     = {&kSettingsServerPort,
-                                                                                &kSettingsClientPort,
-                                                                                &kSettingsSequence,
-                                                                                &kSettingsAcknowledgment,
-                                                                                &kSettingsWindow,
-                                                                                &kSettingsUrgentPointer};
+static const faketcpheader_settings_integer_t *const kSettingsIntegers[]     = {
+    &kSettingsServerPort, &kSettingsClientPort, &kSettingsAcknowledgment, &kSettingsWindow, &kSettingsUrgentPointer};
 
-static const char *const kSettingsOptions         = "options";
-static const char *const kSettingsClientPortRange = "client-port-range";
+static const char *const kSettingsOptions           = "options";
+static const char *const kSettingsClientPortRange   = "client-port-range";
+static const char *const kSettingsIncrementSequence = "increment-sequence";
+static const char *const kSettingsSequence          = "sequence";
 
 static bool faketcpheaderSettingsKeyIsKnown(const char *key)
 {
@@ -38,7 +35,8 @@ static bool faketcpheaderSettingsKeyIsKnown(const char *key)
             return true;
         }
     }
-    return stringCompare(key, kSettingsOptions) == 0 || stringCompare(key, kSettingsClientPortRange) == 0;
+    return stringCompare(key, kSettingsOptions) == 0 || stringCompare(key, kSettingsClientPortRange) == 0 ||
+           stringCompare(key, kSettingsIncrementSequence) == 0 || stringCompare(key, kSettingsSequence) == 0;
 }
 
 static bool faketcpheaderSettingsKeysAreKnown(const cJSON *settings, const char *node_name)
@@ -142,6 +140,41 @@ static bool faketcpheaderSettingsLoadClientPorts(const cJSON *settings, const ch
     return true;
 }
 
+static bool faketcpheaderSettingsLoadSequence(const cJSON *settings, const char *node_name,
+                                              faketcpheader_wire_config_t *config)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, kSettingsSequence);
+    if (item == NULL)
+    {
+        return true;
+    }
+    int64_t value = 0;
+    if (jsonGetIntegerInRange(item, 0, UINT32_MAX, &value))
+    {
+        config->sequence_mode = kFakeTcpHeaderSequenceNumeric;
+        config->sequence      = (uint32_t) value;
+        return true;
+    }
+    const char *mode = cJSON_GetStringValue(item);
+    if (mode != NULL)
+    {
+        if (stringCompare(mode, "random_node") == 0)
+        {
+            config->sequence_mode = kFakeTcpHeaderSequenceRandomNode;
+            return true;
+        }
+        if (stringCompare(mode, "random_port") == 0)
+        {
+            config->sequence_mode = kFakeTcpHeaderSequenceRandomPort;
+            return true;
+        }
+    }
+    LOGF("JSON Error: %s->settings->%s : expected an integer from 0 to 4294967295, random_node or random_port",
+         node_name,
+         kSettingsSequence);
+    return false;
+}
+
 static bool faketcpheaderSettingsLoadOptions(const cJSON *settings, const char *node_name,
                                              faketcpheader_wire_config_t *config)
 {
@@ -172,7 +205,8 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
 {
     assert(node_name != NULL && out != NULL);
 
-    faketcpheader_wire_config_t config = {0};
+    faketcpheader_wire_config_t config = {.sequence_mode      = kFakeTcpHeaderSequenceRandomPort,
+                                          .increment_sequence = true};
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: %s->settings : expected an object", node_name);
@@ -182,11 +216,16 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
     {
         return false;
     }
+    if (jsonGetObjectBoolean(settings, kSettingsIncrementSequence, &config.increment_sequence) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: %s->settings->%s : expected true or false", node_name, kSettingsIncrementSequence);
+        return false;
+    }
 
     uint32_t server_port = 0, client_port = 0, client_port_count = 0, window = 0, urgent_pointer = 0;
     if (! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsServerPort, 40000, &server_port) ||
         ! faketcpheaderSettingsLoadClientPorts(settings, node_name, &client_port, &client_port_count) ||
-        ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsSequence, 0, &config.sequence) ||
+        ! faketcpheaderSettingsLoadSequence(settings, node_name, &config) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsAcknowledgment, 0, &config.acknowledgment) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsWindow, UINT16_MAX, &window) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsUrgentPointer, 0, &urgent_pointer) ||

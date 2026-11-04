@@ -83,11 +83,34 @@ static uint32_t faketcpheaderWirePseudoHeaderSum(const uint8_t *ipv4, uint16_t s
     return sum;
 }
 
-faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config,
+void faketcpheaderWireInitSequences(faketcpheader_wire_config_t *config, atomic_u32_t *sequences)
+{
+    assert(config->client_port_count >= 1 && config->client_port_count <= kFakeTcpHeaderWireMaxClientPortCount);
+    assert(config->sequence_mode >= kFakeTcpHeaderSequenceNumeric &&
+           config->sequence_mode <= kFakeTcpHeaderSequenceRandomPort);
+    if (config->sequence_mode == kFakeTcpHeaderSequenceRandomNode)
+    {
+        config->sequence = fastRand32();
+    }
+    if (! faketcpheaderWireNeedsSequences(config))
+    {
+        return;
+    }
+    assert(sequences != NULL);
+    for (uint16_t i = 0; i < config->client_port_count; ++i)
+    {
+        const uint32_t seed =
+            config->sequence_mode == kFakeTcpHeaderSequenceRandomPort ? fastRand32() : config->sequence;
+        atomicStoreU32Relaxed(&sequences[i], seed);
+    }
+}
+
+faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_config_t *config, atomic_u32_t *sequences,
                                                     faketcpheader_wire_side_t side, sbuf_t *buf)
 {
     assert(side == kFakeTcpHeaderWireClient || side == kFakeTcpHeaderWireServer);
     assert(! sbufIsSplice(buf));
+    assert(! faketcpheaderWireNeedsSequences(config) || sequences != NULL);
 
     const uint32_t     length             = sbufGetLength(buf);
     const uint16_t     overhead           = faketcpheaderWireOverhead(config);
@@ -143,7 +166,20 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
 
     PUT_BE16(tcp, side == kFakeTcpHeaderWireClient ? client : config->server_port);
     PUT_BE16(tcp + 2, side == kFakeTcpHeaderWireClient ? config->server_port : client);
-    PUT_BE32(tcp + 4, config->sequence);
+    /* All refusals precede this reservation. Only the fake TCP payload occupies
+     * sequence space: the protocol byte plus the original IP payload. */
+    uint32_t sequence = config->sequence;
+    if (config->increment_sequence)
+    {
+        sequence = atomicAddU32Explicit(&sequences[index],
+                                        (uint32_t) native.transport_length + kFakeTcpHeaderWireProtocolLength,
+                                        memory_order_relaxed);
+    }
+    else if (config->sequence_mode == kFakeTcpHeaderSequenceRandomPort)
+    {
+        sequence = atomicLoadU32Relaxed(&sequences[index]);
+    }
+    PUT_BE32(tcp + 4, sequence);
     PUT_BE32(tcp + 8, config->acknowledgment);
     tcp[12] = (uint8_t) ((fake_header_length / 4U) << 4U);
     tcp[13] = kFakeTcpHeaderWireTcpFlags;

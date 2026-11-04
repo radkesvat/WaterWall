@@ -3,6 +3,9 @@
 
 CTest: waterwall.fake_tcp_header_mixed_packet_roundtrip. Run only through the
 network namespace wrapper; the two unassigned native peers must route into TUN.
+Fake sequences use the random-port, incrementing defaults across interleaved
+protocols; captured byte ranges are checked per direction/client port
+independently of arrival order.
 """
 import contextlib
 import json
@@ -15,7 +18,7 @@ import sys
 import time
 
 sys.dont_write_bytecode = True
-from fake_tcp_header_raw_integration import (FAKE_OPTIONS, NATIVE_MTU, checksum,
+from fake_tcp_header_raw_integration import (FAKE_OPTIONS, NATIVE_MTU, check_sequence_ranges, checksum,
                                              flow_index, native_packet, receive_exact)
 from wwtest.linux_commands import command, iptables
 from wwtest.process import Process, install_termination_handler
@@ -43,7 +46,6 @@ def prepare(directory, role):
             "settings": {"server-port": SERVER_PORT,
                          "client-port-range": [CLIENT_PORT, CLIENT_PORT + PORT_COUNT - 1],
                          "options": FAKE_OPTIONS.hex(),
-                         "sequence": 12345 if client else 67890,
                          "acknowledgment": 67890 if client else 12345}}
     rewrite = {"name": "addresses", "type": "IpOverrider", "settings": {
         "up" if client else "down": addresses(*(CARRIER if client else CARRIER[::-1])),
@@ -140,6 +142,7 @@ def run(binary, directory):
         tcp_origins, tcp_segments = {}, {}
         expected = {protocol: (set(), set()) for protocol in (17, 1, 253)}
         streams = (bytearray(), bytearray())
+        sequence_ranges = {}
 
         def inspect(frame):
             packet = frame[14:]
@@ -175,6 +178,12 @@ def run(binary, directory):
             reconstructed = native_packet(*native_addresses, protocol, native)
             assert client_port == CLIENT_PORT + flow_index(reconstructed, PORT_COUNT), \
                 "carrier port does not match this encoder's native tuple"
+            acknowledgment = 67890 if forward else 12345
+            sequence, actual_acknowledgment = struct.unpack_from("!II", carrier, 4)
+            assert actual_acknowledgment == acknowledgment, "fake acknowledgment changed from its configured value"
+            ranges = sequence_ranges.setdefault((source, client_port), {})
+            entry = (1 + len(native), packet)
+            assert ranges.setdefault(sequence, entry) == entry, "different packets reused a fake sequence range"
             if protocol in (6, 17):
                 assert len(native) >= (20 if protocol == 6 else 8), "truncated native transport header"
                 length = len(native) if protocol == 6 else struct.unpack_from("!H", native, 4)[0]
@@ -285,6 +294,8 @@ def run(binary, directory):
         assert 2 in tcp_flags[CARRIER[0]] and 0x12 in tcp_flags[CARRIER[1]], "native TCP handshake was not carried"
         assert any(flags & 0x10 and not flags & 2 for flags in tcp_flags[CARRIER[0]]), "native handshake ACK was not carried"
         assert all(seen[key] for key in seen), "not every protocol byte reached both carrier directions"
+        for key, ranges in sequence_ranges.items():
+            check_sequence_ranges(ranges, key)
 
         for process in reversed(processes):
             process.terminate()

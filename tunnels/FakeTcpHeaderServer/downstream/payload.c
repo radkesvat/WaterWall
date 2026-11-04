@@ -8,7 +8,11 @@ void faketcpheaderserverDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     assert(tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
     faketcpheaderserver_tstate_t *state = tunnelGetState(t);
 
-    const faketcpheader_wire_result_t result = faketcpheaderWireEncode(&state->wire, kFakeTcpHeaderWireServer, buf);
+    const faketcpheader_wire_result_t result =
+        faketcpheaderWireEncode(&state->wire,
+                                faketcpheaderWireNeedsSequences(&state->wire) ? state->sequences : NULL,
+                                kFakeTcpHeaderWireServer,
+                                buf);
     if (result != kFakeTcpHeaderWireOk)
     {
         if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kFakeTcpHeaderServerDropLogIntervalMs))

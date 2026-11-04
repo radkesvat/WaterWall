@@ -46,7 +46,8 @@
       "settings": {
         "server-port": 40000,
         "client-port-range": [40001, 40016],
-        "sequence": 67890,
+        "sequence": "random_port",
+        "increment-sequence": true,
         "acknowledgment": 12345,
         "window": 65535
       }

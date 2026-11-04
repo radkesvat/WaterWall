@@ -4,7 +4,10 @@
 CTest: waterwall.fake_tcp_header_{raw,raw_tcp,tun,raw_multiqueue}_roundtrip.
 Run through the network namespace wrapper. --tcp tests native TCP through CTP;
 --tun uses deterministic native UDP tuples; --multi-queue requires one effective
-RawSocket receive queue per worker on both peers.
+RawSocket receive queue per worker on both peers. UDP uses the random-port
+sequence default, --multi-queue uses random-node starts, --tcp uses numeric
+starts, and --tun explicitly disables increments with numeric starts. Advancing
+byte ranges are checked per direction/client port without assuming arrival order.
 """
 import contextlib
 import errno
@@ -87,6 +90,26 @@ def deterministic_ports(source, destination, target_port, count):
     raise AssertionError("could not select deterministic native flow tuples")
 
 
+def check_sequence_ranges(ranges, key, expected_initial=None):
+    """Check captured byte progression, allowing reordering and uint32 wrap."""
+    assert len(ranges) > 1, f"fake sequence did not advance for {key}"
+    # The finite workload occupies fewer than 2^31 bytes. Relative signed
+    # offsets put earlier packets before the first observed packet, even when
+    # a random starting value wraps during the capture.
+    anchor = next(iter(ranges))
+    ordered = sorted((((sequence - anchor + (1 << 31)) & 0xFFFFFFFF) - (1 << 31), entry)
+                     for sequence, entry in ranges.items())
+    first_offset = expected_offset = ordered[0][0]
+    initial = (anchor + first_offset) & 0xFFFFFFFF
+    if expected_initial is not None:
+        assert initial == expected_initial, f"fake sequence did not start at its configured value for {key}"
+    for offset, (length, _) in ordered:
+        assert offset == expected_offset, f"fake sequence ranges overlap or leave a gap for {key}"
+        expected_offset += length  # Native IP payload plus its protocol byte, excluding fake options.
+    assert expected_offset - first_offset < 1 << 31, "fake sequence escaped the bounded probe workload"
+    return initial
+
+
 def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
     example_role = "client-tun" if tun and role == "client" else role
     node_directory = "FakeTcpHeaderClient" if role == "client" else "FakeTcpHeaderServer"
@@ -104,6 +127,17 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = FAKE_OPTIONS.hex()
+            settings["acknowledgment"] = 67890 if role == "client" else 12345
+            if tun or tcp:
+                settings["sequence"] = 12345 if role == "client" else 67890
+            elif multi_queue:
+                settings["sequence"] = "random_node"
+            else:
+                settings.pop("sequence", None)
+            if tun:
+                settings["increment-sequence"] = False
+            else:
+                settings.pop("increment-sequence", None)
             if "client-port" in settings:
                 first = last = settings["client-port"]
             else:
@@ -231,6 +265,7 @@ def run(binary, directory, tun, multi_queue, tcp):
         tcp_segments, tcp_origins = {}, {}
         tcp_flags = {"192.0.2.10": set(), "198.51.100.10": set()}
         observed_client_ports = set()
+        sequence_ranges = {}
         current_user = 0
 
         def inspect(frame):
@@ -302,7 +337,16 @@ def run(binary, directory, tun, multi_queue, tcp):
 
             # Independently serialize the configured fake header. Comparing its
             # exact placement and total length excludes an extra IPv4 header.
-            sequence, acknowledgment = (12345, 67890) if forward else (67890, 12345)
+            initial_sequence, acknowledgment = (12345, 67890) if forward else (67890, 12345)
+            sequence = struct.unpack_from("!I", carrier, 4)[0]
+            if tun:
+                assert sequence == initial_sequence, "disabled fake sequence increment changed its configured value"
+            else:
+                # Check modulo-relative order later: workers may deliver wire
+                # packets out of order, and loopback may capture a frame twice.
+                ranges = sequence_ranges.setdefault((source, client_side), {})
+                entry = (len(carrier) - fake_length, packet)
+                assert ranges.setdefault(sequence, entry) == entry, "different packets reused a fake sequence range"
             expected_fake = bytearray(struct.pack("!HHIIBBHHH", *ports, sequence, acknowledgment,
                                                  0x60, 0x18, 65535, 0, 0) + FAKE_OPTIONS)
             struct.pack_into("!H", expected_fake, 16, checksum(pseudo + expected_fake + bytes((protocol,)) + native))
@@ -418,6 +462,16 @@ def run(binary, directory, tun, multi_queue, tcp):
             assert 0x12 in tcp_flags["198.51.100.10"], "native SYN/ACK was not carried"
             assert any(flags & 0x10 and not flags & 0x02 for flags in tcp_flags["192.0.2.10"]), \
                 "native handshake ACK was not carried"
+        if not tun:
+            assert sequence_ranges, "no incrementing fake sequence ranges were inspected"
+            node_starts = {}
+            for key, ranges in sequence_ranges.items():
+                source = key[0]
+                expected_initial = (12345 if source == "192.0.2.10" else 67890) if tcp else None
+                initial = check_sequence_ranges(ranges, key, expected_initial)
+                if multi_queue and not tcp:
+                    assert node_starts.setdefault(source, initial) == initial, \
+                        "random_node did not use the same starting sequence for every client port"
 
         for process in reversed(processes):
             process.terminate()
@@ -440,7 +494,7 @@ def main():
             for log in directory.rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-12000:]}", file=sys.stderr)
             raise
-    print("Single-IP fake TCP layout/checksums, native flow ports, exact UDP/TCP/TUN request/reply, MTU, "
+    print("Single-IP fake TCP layout/checksums/sequences, native flow ports, exact UDP/TCP/TUN request/reply, MTU, "
           "capture exclusions and cleanup passed")
 
 

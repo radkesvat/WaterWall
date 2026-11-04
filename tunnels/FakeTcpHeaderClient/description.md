@@ -10,10 +10,11 @@ In this page, **native** means the original packet or its original IP payload.
 A **carrier** is the packet after the fake TCP header and protocol byte have been
 added. Encoding adds this framing; decoding removes it.
 
-The fake TCP layer does not establish a TCP connection, track sequence numbers,
-or retransmit lost packets. Each packet uses the configured fake TCP template
-independently. Original TCP traffic still has its own real TCP behavior, as
-explained below; original UDP traffic does not gain TCP reliability.
+The fake TCP layer does not establish a TCP connection, track a TCP session,
+or retransmit lost packets. By default, each client port starts from an
+independently chosen random sequence number, then advances by the fake TCP
+payload length using its own counter. Its acknowledgment stays fixed. Original TCP traffic still has its own real TCP
+behavior, as explained below; original UDP traffic does not gain TCP reliability.
 
 The node only transforms packets. It does not select IP addresses or remember
 the original ones. Chain configuration, including `IpOverrider`, supplies public
@@ -142,7 +143,8 @@ Client/server names do not reverse these directions.
   "settings": {
     "server-port": 40000,
     "client-port-range": [40001, 40016],
-    "sequence": 12345,
+    "sequence": "random_port",
+    "increment-sequence": true,
     "acknowledgment": 67890,
     "window": 65535,
     "urgent-pointer": 0,
@@ -160,8 +162,9 @@ no native-protocol setting is needed.
 | `server-port` | `40000` | Fake TCP server port. Integer `1..65535`. |
 | `client-port` | unset | Use exactly one fake TCP client port. Integer `1..65535`; mutually exclusive with `client-port-range`. |
 | `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
-| `sequence` | `0` | Sequence number of every outgoing fake header. Integer `0..4294967295`. |
-| `acknowledgment` | `0` | Acknowledgment number of every outgoing fake header. Integer `0..4294967295`. |
+| `increment-sequence` | `true` | Advance the outgoing sequence counter for the selected client port by the fake TCP payload length. Boolean only. Set `false` to use a fixed sequence. |
+| `sequence` | `"random_port"` | Starting value: an integer `0..4294967295`, `"random_node"` for one random start shared by all client ports, or `"random_port"` for an independent random start per port. See [Sequence Progression](#sequence-progression). |
+| `acknowledgment` | `0` | Fixed acknowledgment number of every outgoing fake header. Integer `0..4294967295`; never derived from received packets. |
 | `window` | `65535` | Fake TCP window. Integer `0..65535`. |
 | `urgent-pointer` | `0` | Fake TCP urgent pointer. Integer `0..65535`. |
 | `options` | `""` | Hexadecimal fake TCP options, `0..40` bytes in multiples of 4, emitted verbatim. Include any NOP/EOL padding. |
@@ -174,22 +177,99 @@ list of separate ports. Supplying both keys is invalid. With neither key, the
 client range is `40001..40016`. `server-port` must be outside the selected client
 ports, including when the default range is used.
 
-Unknown keys, including `payload-protocol` and `client-port-count`, wrong types,
-fractions and out-of-range template values fail creation with a diagnostic naming the key,
+Unknown keys, including `payload-protocol` and `client-port-count`, wrong types, fractions and
+out-of-range template values fail creation with a diagnostic naming the key,
 for example `FakeTcpHeaderClient->settings->server-port`. A non-object `settings`
 is invalid. Invalid hexadecimal options, odd hex length, lengths not divisible
 by four bytes, and lengths above 40 bytes are refused. There are no address,
 MTU, flag or alternative carrier-protocol settings here.
 
 Both peers must agree on `server-port` and the selected client port or range.
-Their sequence, acknowledgment, window, urgent pointer and options may differ.
-Receive reads the incoming data offset and protocol byte; it does not compare
-these template fields or flags with its own outgoing values.
+Their sequence mode, sequence, acknowledgment, window, urgent pointer and options
+may differ. Receive reads the incoming data offset and protocol byte; it does not
+compare these fields or flags with its own outgoing values.
 
 All port and TCP-template settings in this table describe the **fake header**.
 For example, native UDP traffic for port 5300 can use fake TCP destination port
 40000 on the network. The original UDP port remains in the original UDP header;
 setting `server-port` does not change the application's destination port.
+
+## Sequence Progression
+
+The recommended profile is also the default:
+
+```json
+{
+  "sequence": "random_port",
+  "increment-sequence": true
+}
+```
+
+`sequence` chooses a starting value; `increment-sequence` controls what happens
+on later packets. The accepted starting-value choices are:
+
+| `sequence` value | When the node is created | With `increment-sequence: false` |
+| --- | --- | --- |
+| An integer `0..4294967295` | Every selected client port starts from that number. | Every outgoing packet uses that number. |
+| `"random_node"` | Draw one random 32-bit number and use it as every port's starting value. | Every outgoing packet uses that one chosen number. |
+| `"random_port"` (default) | Draw an independent random 32-bit starting value for each selected client port. | Each port repeatedly uses its own chosen number. |
+
+Random starting values are chosen during node creation, before any packet is
+sent, including when incrementing is disabled. They are not chosen again on
+each packet or each new native connection. All 32-bit values, including zero,
+are valid, and separate random draws can happen to match; uniqueness is not
+guaranteed. Recreating the node draws fresh values in either random mode. A
+numeric setting starts from the configured number again.
+
+With `"increment-sequence": true`, each selected client port has its own
+outgoing counter. `"random_node"` gives the counters the same initial value,
+but they can diverge as traffic uses different ports. With `"random_port"`, each
+counter starts from its independently chosen value. Each accepted encoding
+uses the selected counter's current value in the fake TCP header, then advances
+it by:
+
+```text
+1 protocol byte + original IPv4 payload length
+```
+
+The original IPv4 payload includes the native TCP/UDP header and its data, or
+the complete ICMP/opaque body. Neither the IPv4 header nor the fake TCP header
+and options count toward the increment. For example, on one selected client
+port with `"sequence": 1000`:
+
+| Packet | Original UDP data | Fake TCP payload length | Sequence used | Next counter value |
+| --- | --- | --- | --- | --- |
+| First | 100 bytes | `1 + 8 + 100 = 109` | `1000` | `1109` |
+| Second | 50 bytes | `1 + 8 + 50 = 59` | `1109` | `1168` |
+
+Packets selecting another client port advance that port's separate counter.
+All workers of one node instance share these counters safely. Native flows and
+peers that select the same port share its counter; there is no per-connection
+sequence state. A new native flow does not reset it. Arithmetic wraps modulo
+`2^32`.
+
+Packets refused by this encoder do not advance a counter. Once encoding
+succeeds, later drops do not undo the increment. Worker scheduling and network
+reordering can change arrival order, so these counters do not guarantee a
+continuous TCP sequence as observed by a receiver. The fake TCP checksum is
+calculated using the sequence actually written into each packet.
+
+With `"increment-sequence": false`, the chosen starting values stay fixed as
+shown in the table. Only JSON booleans are accepted for this setting; strings,
+numbers and `null` are invalid. For `sequence`, only an integer in the stated
+range or the exact strings `"random_node"` and `"random_port"` are accepted.
+There is no mode that chooses a fresh random sequence for every packet.
+
+In every mode, `acknowledgment` remains fixed at its configured value. Sending a
+packet does not acknowledge the peer's traffic, and receiving one neither
+advances an outgoing counter nor updates an acknowledgment.
+
+The client uses this logic when encoding upstream; the server uses it when
+encoding downstream. They have independent counters and can use different
+modes or initial values. Decoding does not gate, reorder or drop packets based
+on sequence or acknowledgment values. This approximate byte progression adds
+no handshake, retransmission, flow control or delivery guarantee, and does not
+promise acceptance by TCP-aware networks.
 
 ## Wire Rules
 
@@ -429,7 +509,7 @@ seconds, shared by both directions, all reasons and all workers.
 
 ## Limits and Detectability
 
-- The fixed fake TCP template, lack of handshake and tagged native payload
+- The fake TCP framing, lack of handshake and tagged native payload
   are easy to fingerprint. Stateful firewalls, NAT and middleboxes may drop it.
 - NAT rewriting fake TCP ports breaks the configured mapping.
 - There is no authentication or encryption. Traffic remains visible and anyone
@@ -473,4 +553,5 @@ Build option: `INCLUDE_FAKE_TCP_HEADER_CLIENT` (default `TRUE`). Both nodes use
 module to build.
 
 The implementation is a pure packet tunnel created with `packettunnelCreate()`.
-It keeps no per-line connection state.
+It keeps no per-line connection state. Sequence counters belong to the node
+instance and are shared across its workers.
