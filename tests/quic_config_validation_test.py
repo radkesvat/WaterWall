@@ -127,10 +127,12 @@ def run(binary, roles=("client", "server")):
                  "protocol", variable_settings=True)
         run_case(binary, role, "custom-stream", {**base, "protocol": "waterwall-test",
             "carrier-mode": "stream", "handshake-timeout-ms": 1000, "idle-timeout-ms": 2000,
+            "close-drain-timeout-ms": 1,
             "max-packet-size": 1200, "max-buffered-bytes": 65536,
             "receive-window-bytes": 16384, "max-buffered-buffers": 8, "verbose": True})
         run_case(binary, role, "maximum-geometry", {**base, "protocol": "x" * 255,
             "handshake-timeout-ms": 86400000, "idle-timeout-ms": 86400000,
+            "close-drain-timeout-ms": 86400000,
             "max-packet-size": 1452, "max-buffered-bytes": 67108864,
             "receive-window-bytes": 16777216, "max-buffered-buffers": 65536})
         run_case(binary, role, "receive-window-maximum", {**base, "max-buffered-bytes": 67108864,
@@ -140,6 +142,7 @@ def run(binary, roles=("client", "server")):
             "carrier-mode": [None, True, 2, "", "auto", "tcp", "STREAM"],
             "handshake-timeout-ms": [False, "1000", 0, -1, 1.5, 86400001],
             "idle-timeout-ms": [True, [], 0, -1, 1.5, 86400001],
+            "close-drain-timeout-ms": [None, True, "30000", [], {}, 0, -1, 1.5, 86400001],
             "max-packet-size": [False, "1350", 1199, 1453, 65508, 1200.5],
             "max-buffered-bytes": [None, True, "2097152", 0, 67108865, 65536.5],
             "max-buffered-buffers": [False, "1024", 0, 65537, 8.5],
@@ -176,6 +179,7 @@ def run(binary, roles=("client", "server")):
                          {**base, key: "__QUIC_INVALID_UTF8__"}, key,
                          variable_key=key if variable else None, invalid_utf8=True)
         setting_fields = {**string_fields, "handshake-timeout-ms": 1000, "idle-timeout-ms": 2000,
+                          "close-drain-timeout-ms": 30000,
                           "max-packet-size": 1200, "max-buffered-bytes": 2097152,
                           "max-buffered-buffers": 8, "receive-window-bytes": 16384, "verbose": True,
                           "verify": False}

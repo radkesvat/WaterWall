@@ -107,6 +107,21 @@ extern "C" void tcpoverudpFecEncoderDestroy(tcpoverudp_fec_encoder_t **encoder_p
     *encoder_ptr = nullptr;
 }
 
+extern "C" void tcpoverudpFecEncoderDiscardPending(tcpoverudp_fec_encoder_t *encoder)
+{
+    if (encoder == nullptr || encoder->pkt_idx == 0)
+    {
+        return;
+    }
+    byte dummy[fecHeaderSizePlus2] = {};
+    for (size_t i = encoder->pkt_idx; i < encoder->data_shards; ++i)
+    {
+        encoder->fec.MarkData(dummy, 0);
+    }
+    tcpoverudpFecEncoderSkipParity(encoder, encoder->data_shards);
+    tcpoverudpFecEncoderResetBlock(encoder);
+}
+
 extern "C" bool tcpoverudpFecEncodePacket(tcpoverudp_fec_encoder_t *encoder, const uint8_t *packet, size_t packet_len,
                                           tcpoverudp_fec_emit_fn emit, void *ctx)
 {

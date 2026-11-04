@@ -478,7 +478,9 @@ boundary nor the MUX Data frame boundary is part of the child contract. A frame
 may produce several nonempty child Payload callbacks as its body arrives. For
 example, a frame declaring 64 KiB can deliver its first available 4 KiB without
 waiting for the other 60 KiB. Later frames on the same parent still follow the
-current frame's remaining bytes.
+current frame's remaining bytes. A child's first Data frame is the exception: it
+is delivered whole, because `VlessServer` and `TrojanServer` take a credential
+split across their first Payload callbacks for a probe.
 
 The parent receive accumulator caches the eight-byte header. It tracks the
 remaining Data body length, extracts available chunks with independent ownership,

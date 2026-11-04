@@ -21,11 +21,12 @@ static bool tcpoverudpclientParseSettings(tcpoverudpclient_tstate_t *ts, node_t 
         .kcp_send_buffer_limit     = kTcpOverUdpClientKcpSendBufferLimitDefault,
         .ping_interval_ms          = kTcpOverUdpClientPingintervalMsDefault,
         .no_recv_timeout_ms        = kTcpOverUdpClientNoRecvTimeOutDefault,
+        .close_drain_timeout_ms    = kTouDefaultCloseMs,
     };
 
     if (! cJSON_IsObject(settings))
     {
-        goto validate_mtu;
+        goto validate_send_mtu;
     }
 
     getBoolFromJsonObjectOrDefault(&ts->fec_enabled, settings, "fec", false);
@@ -120,19 +121,29 @@ static bool tcpoverudpclientParseSettings(tcpoverudpclient_tstate_t *ts, node_t 
         ts->fec_parity_shards = (uint8_t) parity_shards;
     }
 
-validate_mtu:;
-    int64_t       mtu     = CORE_DEFAULT_MTU;
-    const int64_t minimum = kTcpOverUdpClientKcpMinimumMtu + kTcpOverUdpClientIpv4HeaderSize +
-                            kTcpOverUdpClientUdpHeaderSize + (int64_t) tcpoverudpclientGetOuterFecOverhead(ts);
-    const json_value_status_t status = jsonGetObjectIntegerInRange(settings, "mtu", minimum, UINT16_MAX, &mtu);
-    if (status == kJsonValueInvalid || mtu < minimum || mtu > UINT16_MAX)
+validate_send_mtu:;
+    int64_t close_ms = kTouDefaultCloseMs;
+    if (jsonGetObjectIntegerInRange(settings, "close-drain-timeout-ms", 1, INT_MAX, &close_ms) == kJsonValueInvalid)
     {
-        LOGF("JSON Error: TcpOverUdpClient->settings->mtu must be an integer between %lld and 65535%s",
-             (long long) minimum,
-             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node mtu" : "");
+        LOGF("JSON Error: TcpOverUdpClient->settings->close-drain-timeout-ms must be an integer in 1..2147483647");
         return false;
     }
-    ts->mtu = (uint16_t) mtu;
+    ts->close_drain_timeout_ms = (uint32_t) close_ms;
+    int64_t       send_mtu     = CORE_DEFAULT_MTU;
+    const int64_t minimum      = kTcpOverUdpClientKcpMinimumMtu + kTcpOverUdpClientIpv4HeaderSize +
+                            kTcpOverUdpClientUdpHeaderSize + kTouEnvelopeSize +
+                            (int64_t) tcpoverudpclientGetOuterFecOverhead(ts);
+    const json_value_status_t status =
+        jsonGetObjectIntegerInRange(settings, "send-mtu", minimum, UINT16_MAX, &send_mtu);
+    if (status == kJsonValueInvalid || send_mtu < minimum || send_mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: TcpOverUdpClient->settings->send-mtu must be an integer between %lld and 65535%s",
+             (long long) minimum,
+             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node send-mtu"
+                                         : "");
+        return false;
+    }
+    ts->send_mtu = (uint16_t) send_mtu;
 
     return true;
 }
@@ -148,6 +159,8 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
     t->fnInitU    = &tcpoverudpclientTunnelUpStreamInit;
     t->fnFinU     = &tcpoverudpclientTunnelUpStreamFinish;
     t->fnPayloadU = &tcpoverudpclientTunnelUpStreamPayload;
+    t->fnPauseU   = &tcpoverudpclientTunnelUpStreamPause;
+    t->fnResumeU  = &tcpoverudpclientTunnelUpStreamResume;
     t->fnEstD     = &tcpoverudpclientTunnelDownStreamEst;
     t->fnFinD     = &tcpoverudpclientTunnelDownStreamFinish;
     t->fnPayloadD = &tcpoverudpclientTunnelDownStreamPayload;
@@ -164,6 +177,11 @@ tunnel_t *tcpoverudpclientTunnelCreate(node_t *node)
         return NULL;
     }
     atomic_init(&ts->stopping, false);
+    ts->workers_count  = getWorkersCount();
+    ts->workers        = memoryAllocateZero(sizeof(*ts->workers) * ts->workers_count);
+    t->onWorkerQuiesce = tcpoverudpclientTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = tcpoverudpclientTunnelOnWorkerStop;
+    t->onDestroy       = tcpoverudpclientTunnelDestroy;
 
     ikcp_allocator(&memoryAllocate, &memoryFree);
 

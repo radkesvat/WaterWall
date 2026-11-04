@@ -20,7 +20,7 @@ static void quicTimer(wtimer_t *timer)
     {
         return;
     }
-    assert(getLoopWorkerWID(weventGetLoop(timer)) == lineGetWID(context->line));
+    assert(getLoopWorkerWID(weventGetLoop(timer)) == context->wid);
     if (! quicEnter(context))
     {
         /* A nested loop cannot recursively enter the protocol driver. */
@@ -40,6 +40,10 @@ void quicArm(quic_context_t *context, bool more_work)
     }
     uint64_t now      = ww_quic_now_us();
     uint64_t deadline = ww_quic_engine_deadline(context->engine);
+    if (context->final_flush && context->final_deadline_us < deadline)
+    {
+        deadline = context->final_deadline_us;
+    }
     if (deadline == UINT64_MAX && ! more_work)
     {
         quicCancelTimer(context);
@@ -56,7 +60,7 @@ void quicArm(quic_context_t *context, bool more_work)
     {
         ++wait;
     }
-    wloop_t *loop = getWorkerLoop(lineGetWID(context->line));
+    wloop_t *loop = getWorkerLoop(context->wid);
     wloopUpdateTime(loop);
     if (context->timer != NULL)
     {

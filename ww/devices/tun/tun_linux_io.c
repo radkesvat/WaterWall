@@ -275,10 +275,6 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
         }
         return true;
     }
-    if (write_errno == EMSGSIZE)
-    {
-        LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice 'device-mtu'");
-    }
     LOGE("TunDevice: Exit write routine due to an unrecoverable write error on device %s, errno %d (%s)",
          tdev->name,
          write_errno,
@@ -289,13 +285,14 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
 /* Consumes exactly this packet, including validation refusal and device failure. */
 static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *buf, int fd)
 {
-    if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
+    /* This injects received IP into the OS; its transmit MTU is not a receive limit. */
+    if (UNLIKELY(sbufGetLength(buf) > UINT16_MAX))
     {
         if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
+            LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
                  sbufGetLength(buf),
-                 tunDeviceMtu(tdev));
+                 (unsigned) UINT16_MAX);
         }
         bufferpoolReuseBuffer(pool, buf);
         return true;

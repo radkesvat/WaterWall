@@ -925,6 +925,10 @@ if(INCLUDE_UDP_OVER_TCP_SERVER)
 endif()
 
 #tcp over udp client
+if(INCLUDE_TCP_OVER_UDP_CLIENT OR INCLUDE_TCP_OVER_UDP_SERVER)
+  add_subdirectory(tunnels/Internals/TcpOverUdpCommon)
+endif()
+
 if(INCLUDE_TCP_OVER_UDP_CLIENT)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TCP_OVER_UDP_CLIENT=1)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpClient)

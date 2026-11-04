@@ -11,3 +11,9 @@ void quicserverTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_
     discard context;
     quicQuiesceWorker(t, wid);
 }
+
+void quicserverTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard context;
+    quicStopWorker(t, wid);
+}

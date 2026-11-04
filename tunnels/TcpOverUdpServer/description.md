@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpOverUdpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpOverUdpServer.mdx, and all files must keep the same documentation version.
 -->
 
@@ -42,7 +42,8 @@ It should usually sit opposite `TcpOverUdpClient`.
     "fec-parity-shards": 3,
     "kcp-send-window": 8192,
     "kcp-recv-window": 8192,
-    "no-recv-timeout-ms": 30000
+    "no-recv-timeout-ms": 30000,
+    "close-drain-timeout-ms": 30000
   },
   "next": "service-stream-node"
 }
@@ -67,9 +68,13 @@ There are no required tunnel-specific settings.
 
 ## Optional `settings` Fields
 
+- `send-mtu` `(integer)`
+  IPv4-based outgoing packet budget in bytes: `118..65535` without FEC, or `126..65535` with FEC. Receiving uses independent protocol limits.
+  Default: core `misc.mtu` (normally `1500`)
+
 - `fec` `(boolean)`
   Enables Reed-Solomon forward error correction around the KCP datagrams.
-  If omitted or `false`, the tunnel keeps the old KCP-only behavior.
+  If omitted or `false`, KCP datagrams use the session envelope without FEC.
 
 - `fec-data-shards` `(number)`
   Number of source shards per FEC block when `fec` is enabled.
@@ -123,15 +128,41 @@ There are no required tunnel-specific settings.
   Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
+- `close-drain-timeout-ms` `(integer)`
+  Maximum send/drain interval and ACK-retention interval, negotiated as the minimum of both peers. Range: `1..2147483647`. Increasing the effective interval requires both peers to allow it.
+  Default: `30000`
+
 ## Detailed Behavior
 
 ### KCP transport model
 
-When a line is initialized, `TcpOverUdpServer` creates a KCP session, starts the KCP timer loop, and queues an initial ping frame.
+Incoming Init initializes the borrowed UDP carrier only. A HELLO, CHALLENGE,
+CONFIRM, READY exchange with independent 128-bit nonces establishes each session.
+The service branch receives Init exactly once after a matching CONFIRM. Each
+session owns a distinct service line while its KCP/FEC state survives separately
+from that line.
 
-Incoming packet payloads from the previous node are fed into KCP. Completed KCP payloads are then read out and interpreted using a 1-byte internal frame flag.
+Every datagram has a 40-byte explicitly serialized session envelope: magic
+`WWKC`, kind, zero reserved byte, two-byte network-order body length, 16-byte
+client nonce and 16-byte server nonce. Kinds are HELLO `1`, CHALLENGE `2`, CONFIRM
+`3`, READY `4`, KCP `5`, and FEC `6`. Handshake bodies contain the four-byte
+network-order close interval, data/parity shard counts and two zero reserved
+bytes. Both nonces are validated before KCP or FEC input; unknown sessions cannot
+open a service. These nonces identify sessions; they add no encryption or authentication.
 
-Replies from the next node are chunked, wrapped, and sent back through KCP toward the previous side.
+The client retries its current handshake request every 250 ms until its original
+`no-recv-timeout-ms` deadline. A carrier admits one pending challenge with a fixed
+expiry and at most 64 established sessions, including draining and ACK-retention
+sessions. At capacity, new admission is refused without truncating existing retention;
+client retries remain bounded by their original deadline. Reusing a UDP endpoint creates fresh
+session/service identities while old sessions can continue acknowledging retries.
+This per-carrier cap is not a process-wide KCP/FEC heap budget.
+
+Incoming KCP records carry a one-byte internal frame flag. Replies are chunked,
+framed and sent through KCP toward the previous side. Actual transport Est maps
+promptly between associated lines; protocol readiness remains separate. KCP/FEC
+callbacks stage output before neighboring tunnels run, and nested input is
+serialized with finite byte/allocation-charge admission.
 
 ### Internal frame flags
 
@@ -164,30 +195,36 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `ping-interval-ms = 10000`
 - `no-recv-timeout-ms = 30000`
 
-### Instance MTU
+### Sending MTU
 
-Optional integer `mtu` inherits core `misc.mtu` at construction (the core fallback
-is 1500). The supported range is **78..65535 without FEC**, or **86..65535 with
-FEC**. It is an IPv4-based packet budget in bytes. Invalid explicit or inherited
+Optional integer `send-mtu` inherits core `misc.mtu` at construction (the core fallback
+is 1500). The supported range is **118..65535 without FEC**, or **126..65535 with
+FEC**. It is an IPv4-based outgoing packet budget in bytes. Invalid explicit or inherited
 values reject construction; an explicit supported override can replace an
 unsupported core default. Null, wrong types, fractions, zero, negatives and
-out-of-range numbers are errors. Each instance keeps its validated MTU unchanged.
+out-of-range numbers are errors. Each instance keeps its validated sending MTU unchanged.
 
 With `F = 0` without FEC or `F = 8` with FEC:
 
 ```text
-KCP MTU = min(mtu - 20 - 8 - F, 64000)
+KCP MTU = min(send-mtu - 20 - 8 - 40 - F, 64000)
 application chunk = KCP MTU - 24 - 1
 ```
 
-The 20-byte IPv4 and 8-byte UDP allowances are fixed. The 64,000-byte decimal cap
+The 20-byte IPv4, 8-byte UDP and 40-byte session-envelope allowances are fixed. The 64,000-byte decimal cap
 covers the complete KCP packet, including its 24-byte header. The one-byte frame
 flag occupies KCP payload space; `required_padding_left = 1` provides room for it.
 The effective KCP MTU governs data and aggregated acknowledgement/control output.
 FEC adds at most 8 bytes to that output, including parity packets.
 
-At `mtu: 1500`, KCP MTU/application chunk are **1472/1447** without FEC and
-**1464/1439** with FEC. Budgets of 64028 without FEC or 64036 with FEC reach the
+Receiving uses independent protocol limits: at most 64000 bytes for a KCP packet,
+or 64008 bytes for an FEC shard, excluding the 40-byte session envelope. Peers
+may use different `send-mtu` values. An incoming packet is not rejected merely
+because it exceeds the receiver's own sending budget; framing, session identity,
+and FEC validation still apply. There is no MTU negotiation.
+
+At `send-mtu: 1500`, KCP MTU/application chunk are **1432/1407** without FEC and
+**1424/1399** with FEC. Budgets of 64068 without FEC or 64076 with FEC reach the
 cap; larger valid settings, including 65535, retain KCP MTU 64000 and application
 chunk 63975. The configured budget itself is not capped to 64000.
 
@@ -208,7 +245,7 @@ On receive, it:
 
 On send, it wraps outbound KCP datagrams in the same FEC format and emits parity shards after each configured data block.
 
-When `fec` is disabled, the behavior remains the original KCP-only transport path.
+When `fec` is disabled, each session envelope carries one KCP packet directly.
 
 ### Data flow direction
 
@@ -221,14 +258,32 @@ Outgoing stream payload is split into KCP-friendly chunks, tagged as data frames
 
 ### Close and timeout behavior
 
-If a close frame is received from the remote peer, `TcpOverUdpServer` destroys line state and finishes both directions.
+Service Finish detaches and destroys the owned service line immediately while
+its independent session keeps accepted output. From that first closing event,
+the session has one fixed negotiated interval D to acknowledge earlier data,
+then enqueue CLOSE once and wait for KCP acknowledgment of CLOSE itself. A flush
+alone never confirms close. Timeout settles sending as unconfirmed.
 
-If the service-facing side finishes while KCP still holds unacknowledged data, `TcpOverUdpServer` keeps the line until the peer has acknowledged all of it. It then sends the close frame, destroys line state and finishes the previous side, as it does at once when nothing is pending. A close frame from the peer ends the wait at once, and a peer that sends nothing for `no-recv-timeout-ms` ends it too. Data queued before the close, such as the end of a response, is therefore not discarded.
+Peer CLOSE retires the service after preceding inbound bytes, once, and fixes
+any local queued-output drain budget before publishing its KCP ACK. The receive
+state remains available for duplicate CLOSE acknowledgments after application
+EOF. A peer-only responder remains for D after first CLOSE receipt. When our
+CLOSE is acknowledged at A, receive state remains until A + D; a later peer CLOSE
+does not extend it. An expired local sender preserves any earlier peer-ACK
+obligation while suppressing further application/CLOSE PUSH output.
 
-Idle handling is the same basic model as the client side:
+With the default, sending gets at most 30 seconds and ACK-capable state can
+remain for up to 60 seconds from the first closing event. This bounds transport
+receipt, not remote application consumption or persistence. No TCP half-close
+semantics are added. Transport Finish, fatal protocol failure and shutdown abort
+immediately; shutdown never waits for graceful-close deadlines.
 
-- after `ping-interval-ms` of no receive activity, a ping is sent if needed
-- after `no-recv-timeout-ms` of no receive activity, the line is closed
+Normal sessions ping after `ping-interval-ms` of silence and expire after
+`no-recv-timeout-ms`. Closing sessions use their fixed close deadlines instead
+of letting the normal idle check truncate promised ACK retention. Invalid or
+unrelated packets refresh no session deadline. Once no session or pending
+challenge needs a carrier, local state is cleared and the UDP owner receives
+Finish. Closing one session preserves a carrier still needed by another.
 
 ### Backpressure behavior
 
@@ -253,7 +308,8 @@ bypass itself after setup.
 - `TcpOverUdpServer` is intended to be paired with `TcpOverUdpClient`.
 - FEC must be enabled on both peers with matching shard settings.
 - The previous node should preserve packet boundaries.
-- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+- `DownStreamInit` is disabled; service lines are created through the upstream handshake.
+- Worker shutdown cancels timers and drains every owned service/session immediately.
 
 ## Node Metadata
 

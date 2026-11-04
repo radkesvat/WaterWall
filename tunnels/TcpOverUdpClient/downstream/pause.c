@@ -1,15 +1,8 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void tcpoverudpclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
-
     tcpoverudpclient_lstate_t *ls = lineGetState(l, t);
-    if (UNLIKELY(! ls->can_downstream))
-    {
-        return;
-    }
-
-    tunnelPrevDownStreamPause(t, l);
+    assert(ls->role == kTcpOverUdpClientTransport && ls->session != NULL);
+    tcpoverudpclientSignalApplication(ls->session, tunnelPrevDownStreamPause);
 }

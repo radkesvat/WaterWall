@@ -298,6 +298,9 @@ When a packet is captured:
   admits the packet. An invalid checksum without pending-offload metadata never causes repair or rejection
 - Windows retains WinDivert checksum/direction provenance handling: explicitly pending offload is materialized when
   possible, while untrusted corrupt checksums and fragmented transport offload are rejected
+- Windows capture also retains the 1,500-byte limit. A larger packet reported by WinDivert as
+  `ERROR_INSUFFICIENT_BUFFER` is discarded with a rate-limited warning; reading continues and the device stays up.
+  Truncated bytes are never forwarded. Other terminal receive errors still fail the device.
 - fragmented packets are never given a transport checksum calculated over one fragment. Linux passes their bytes
   unchanged to the existing fragment-affinity validation, which may reject them
 - only IPv4 packets are currently forwarded by this path

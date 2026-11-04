@@ -31,6 +31,7 @@ static bool quicCheckSettingsStrings(const cJSON *settings)
                                         "verbose",
                                         "handshake-timeout-ms",
                                         "idle-timeout-ms",
+                                        "close-drain-timeout-ms",
                                         "max-packet-size",
                                         "max-buffered-bytes",
                                         "max-buffered-buffers",
@@ -107,17 +108,18 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
         LOGF("JSON Error: QUIC settings must be an object");
         return false;
     }
-    *settings                   = (quic_node_settings_t) {.engine = {.verify               = true,
-                                                                     .protocol             = "h3",
-                                                                     .handshake_timeout_ms = 10000,
-                                                                     .idle_timeout_ms      = 60000,
-                                                                     .max_packet_size      = 1350,
-                                                                     .max_buffered_bytes   = 2097152,
-                                                                     .max_buffered_buffers = 1024,
-                                                                     .receive_window_bytes = 1048576,
-                                                                     .allocate             = memoryAllocate,
-                                                                     .deallocate           = memoryFree,
-                                                                     .fatal                = quicFatalAllocation}};
+    *settings                   = (quic_node_settings_t) {.engine = {.verify                 = true,
+                                                                     .protocol               = "h3",
+                                                                     .handshake_timeout_ms   = 10000,
+                                                                     .idle_timeout_ms        = 60000,
+                                                                     .close_drain_timeout_ms = 30000,
+                                                                     .max_packet_size        = 1350,
+                                                                     .max_buffered_bytes     = 2097152,
+                                                                     .max_buffered_buffers   = 1024,
+                                                                     .receive_window_bytes   = 1048576,
+                                                                     .allocate               = memoryAllocate,
+                                                                     .deallocate             = memoryFree,
+                                                                     .fatal                  = quicFatalAllocation}};
     ww_quic_settings_t *engine  = &settings->engine;
     const char         *carrier = "datagram";
     if (! quicReadString(json, "protocol", &engine->protocol, false) ||
@@ -125,6 +127,7 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
         ! quicReadBoolean(json, "verbose", &settings->verbose) ||
         ! quicReadInteger(json, "handshake-timeout-ms", 1, WW_QUIC_MAX_TIMEOUT_MS, &engine->handshake_timeout_ms) ||
         ! quicReadInteger(json, "idle-timeout-ms", 1, WW_QUIC_MAX_TIMEOUT_MS, &engine->idle_timeout_ms) ||
+        ! quicReadInteger(json, "close-drain-timeout-ms", 1, WW_QUIC_MAX_TIMEOUT_MS, &engine->close_drain_timeout_ms) ||
         ! quicReadInteger(json, "max-packet-size", 1200, 1452, &engine->max_packet_size) ||
         ! quicReadInteger(json, "max-buffered-bytes", 65536, WW_QUIC_MAX_BUFFERED_BYTES, &engine->max_buffered_bytes) ||
         ! quicReadInteger(
@@ -165,14 +168,15 @@ bool quicConfigureTunnel(tunnel_t *t, const quic_node_settings_t *settings, cons
         return false;
     }
     quic_tstate_t *state = tunnelGetState(t);
-    *state               = (quic_tstate_t) {.config         = config,
-                                            .workers        = memoryCalloc(getWorkersCount(), sizeof(quic_context_t *)),
-                                            .output         = output,
-                                            .max_bytes      = engine->max_buffered_bytes,
-                                            .max_buffers    = engine->max_buffered_buffers,
-                                            .client         = engine->is_client,
-                                            .stream_carrier = settings->stream_carrier,
-                                            .verbose        = settings->verbose};
+    *state               = (quic_tstate_t) {.config                 = config,
+                                            .workers                = memoryCalloc(getWorkersCount(), sizeof(quic_context_t *)),
+                                            .output                 = output,
+                                            .max_bytes              = engine->max_buffered_bytes,
+                                            .max_buffers            = engine->max_buffered_buffers,
+                                            .close_drain_timeout_ms = engine->close_drain_timeout_ms,
+                                            .client                 = engine->is_client,
+                                            .stream_carrier         = settings->stream_carrier,
+                                            .verbose                = settings->verbose};
     atomic_init(&state->stopping, false);
     return true;
 }

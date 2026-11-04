@@ -9,7 +9,10 @@ void quicclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    /* The shared driver holds the borrowed line across reentrant Init delivery. */
-    tunnelNextUpStreamInit(t, l);
+    /* The new next-side line has independent ownership from the caller. */
+    line_t *next = quicNextLine(context);
+    lineRef(next);
+    tunnelNextUpStreamInit(t, next);
+    lineUnref(next);
     quicCompleteLineInit(context);
 }

@@ -446,12 +446,13 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
             continue;
         }
 
-        if (UNLIKELY(tunDeviceMtu(tdev) < sbufGetLength(buf)))
+        /* Injection is OS receive; the interface MTU governs OS transmit. */
+        if (UNLIKELY(sbufGetLength(buf) > UINT16_MAX))
         {
             if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunPacketWarningIntervalMs))
-                LOGW("TunDevice: discarded a packet -> size %d exceeds device MTU %u",
+                LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
                      sbufGetLength(buf),
-                     tunDeviceMtu(tdev));
+                     (unsigned) UINT16_MAX);
             bufferpoolReuseBuffer(worker->buffer_pool, buf);
             continue;
         }
@@ -502,12 +503,6 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
                          write_errno,
                          strerror(write_errno));
                 continue;
-            }
-
-            if (write_errno == EMSGSIZE)
-            {
-                LOGF("TunDevice: This is related to the MTU size, please set a correct value for TunDevice "
-                     "'device-mtu'");
             }
 
             LOGE("TunDevice: unrecoverable write error on device %s, errno %d (%s)",

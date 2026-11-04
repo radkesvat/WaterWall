@@ -95,7 +95,9 @@ bool tundeviceDnsNeedsCleanup(const tun_device_t *tdev);
 #endif
 /* Event-worker-only, enqueue-only output. Success transfers the packet to this
  * worker's deferred FIFO; refusal leaves ownership with the caller. Native
- * writes and buffer recycling run later on the same worker. */
+ * writes and buffer recycling run later on the same worker. Writes inject IP
+ * into the OS receive path and are bounded by supported packet sizes, not the
+ * interface's transmit MTU. A native size refusal drops only that packet. */
 bool tundeviceWrite(tun_device_t *tdev, sbuf_t *buf);
 /* Owner-worker lifecycle hook: detach receive readiness before loop quiescence. */
 void tundeviceWorkerQuiesce(tun_device_t *tdev, uint8_t wid);

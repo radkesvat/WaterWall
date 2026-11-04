@@ -172,11 +172,13 @@ static void distributePacketPayload(capture_device_t *cdev, sbuf_t *buf)
 }
 static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
 {
-    capture_device_t *cdev = userdata;
-    sbuf_t           *buf;
-    UINT              read_packet_len = 0;
-    WINDIVERT_ADDRESS address         = {0};
-    HANDLE            handle          = cdev->handle;
+    capture_device_t         *cdev = userdata;
+    sbuf_t                   *buf;
+    UINT                      read_packet_len = 0;
+    WINDIVERT_ADDRESS         address         = {0};
+    HANDLE                    handle          = cdev->handle;
+    atomic_log_rate_limiter_t truncated_read_log;
+    atomicLogRateLimiterInitialize(&truncated_read_log);
 
     assert(handle != NULL && handle != INVALID_HANDLE_VALUE);
 
@@ -201,6 +203,19 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
             if (! captureLifecycleIsActive(captureLifecycleLoad(&cdev->lifecycle)))
             {
                 break;
+            }
+
+            if (recv_error == ERROR_INSUFFICIENT_BUFFER)
+            {
+                /* WinDivert consumed this packet and copied only its prefix.
+                 * Truncated bytes must never be published or retried. */
+                if (atomicLogRateLimiterShouldLog(&truncated_read_log, 1000))
+                {
+                    LOGW("CaptureDevice: discarded a truncated packet exceeding capture limit %u on %s",
+                         (unsigned) kMaxAllowedPacketLength,
+                         cdev->name);
+                }
+                continue;
             }
 
             LOGE("CaptureDevice: terminal packet read failure on device %s: error %lu", cdev->name, recv_error);

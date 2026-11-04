@@ -30,6 +30,8 @@ add_waterwall_privileged_probe_integration_test(
   waterwall.device_fragment_normalized_roundtrip device_fragment_normalized_roundtrip 25)
 add_waterwall_privileged_probe_integration_test(
   waterwall.device_fragment_raw_forward device_fragment_raw_forward 20)
+add_waterwall_privileged_probe_integration_test(
+  waterwall.tundevice_write_mtu tundevice_write_mtu 20)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   if(WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)

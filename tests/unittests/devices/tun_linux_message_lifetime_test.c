@@ -850,6 +850,10 @@ ssize_t __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
     if (fd == tun_handle_fd)
     {
         require(iovcnt == 2 && iov[0].iov_len == 10, "GSO writer did not use one virtio-framed writev");
+        if (expected_raw_write != NULL)
+            require(iov[1].iov_len == expected_raw_write_length &&
+                        memoryEqual(iov[1].iov_base, expected_raw_write, expected_raw_write_length),
+                    "virtio writer changed the complete IP packet");
         const uint8_t *header = iov[0].iov_base;
         if (expect_trusted_write)
         {
@@ -2434,8 +2438,8 @@ static void testPermanentWriteErrorFailsTheDevice(int io_errno, const char *labe
 }
 
 /*
- * EINVAL condemns one packet, not the device: the kernel rejects a malformed
- * frame that way, and those frames arrive from remote peers. Making it fatal
+ * EINVAL and EMSGSIZE condemn one packet, not the device: malformed and
+ * oversized frames can arrive from remote peers. Making them fatal
  * would hand any peer a one-packet process kill, so the writer must drop it and
  * keep going. EAGAIN is likewise recoverable. Only the trailing EIO ends the
  * routine, and the in-flight check proves the device was still up before it.
@@ -2451,16 +2455,18 @@ static void testRecoverableWriteErrorsKeepTheDeviceUp(void)
     const injected_io_result_t writes[] = {
         {.result = -1, .error = EAGAIN},
         {.result = -1, .error = EINVAL},
+        {.result = -1, .error = EMSGSIZE},
+        {.result = 64},
         {.result = -1, .error = EIO},
     };
     armDeviceWrites(writes, ARRAY_SIZE(writes));
     in_flight_device     = tdev;
-    in_flight_check_call = 3;
+    in_flight_check_call = 4;
     queuePacketsForWriter(tdev, ARRAY_SIZE(writes) + 1);
 
     runWriterMessages();
 
-    require(observed_write_calls == 3, "a recoverable write error ended the write routine");
+    require(observed_write_calls == ARRAY_SIZE(writes), "a recoverable write error ended the write routine");
     require(in_flight_checks_run == 1, "the in-flight recoverable-error check never ran");
     require(tunLinuxLifecycleState(tdev) == kTunLifecycleFailed,
             "the permanent write error after the recoverable ones did not publish FAILED");
@@ -2477,10 +2483,6 @@ static void testPermanentIoErrorsReachTheShutdownWrapper(void)
     testPermanentReadErrorFailsTheDevice(EBADF, "EBADF");
     testTransientReadErrorKeepsTheDeviceUp();
 
-    // EMSGSIZE only reaches write() when the configured MTU exceeds the real
-    // device MTU, because oversized packets are dropped before the syscall. That
-    // is an operator misconfiguration that never recovers, so it is terminal.
-    testPermanentWriteErrorFailsTheDevice(EMSGSIZE, "EMSGSIZE");
     testPermanentWriteErrorFailsTheDevice(EIO, "EIO");
     testPermanentWriteErrorFailsTheDevice(EBADF, "EBADF");
     testRecoverableWriteErrorsKeepTheDeviceUp();
@@ -3790,13 +3792,73 @@ static void testGsoWorkerPoolPaddingGrowth(test_env_t *env)
     resetCapturedMessages();
 }
 
+static void testWriterPacketSizeIndependentOfDeviceMtu(void)
+{
+    const uint32_t lengths[] = {1200, 1500, UINT16_MAX, UINT16_MAX + 1U};
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        resetReaderFixture(0);
+        resetShutdownRequests();
+        resetIoInjection();
+        resetGsoSetup();
+        tun_device_t *tdev = mode == 0
+                                 ? createRawDevice("ww-write-mtu", false, 1200, NULL, NULL, kDeviceFragmentPreserve)
+                                 : tundeviceCreate("ww-write-mtu",
+                                                   mode == 2,
+                                                   true,
+                                                   1200,
+                                                   NULL,
+                                                   NULL,
+                                                   kDeviceFragmentPreserve,
+                                                   kDeviceOpaqueFlowSpread);
+        require(tdev != NULL && bringUpDevice(tdev), "writer MTU fixture startup");
+        require(tdev->mtu == 1200 && tdev->checksum_offload_enabled == (mode != 0),
+                "writer MTU fixture did not select the intended native framing");
+        for (unsigned i = 0; i < ARRAY_SIZE(lengths); ++i)
+        {
+            resetIoInjection();
+            const uint32_t length = lengths[i];
+            sbuf_t        *buf    = bufferpoolGetBestFit(getWorkerBufferPool(0), length, 0);
+            uint8_t       *packet = sbufGetMutablePtr(buf);
+            memorySet(packet, 0x5a, length);
+            memoryZero(packet, 20);
+            packet[0] = 0x45;
+            packet[8] = 64;
+            packet[9] = 253;
+            PUT_BE16(packet + 2, (uint16_t) length);
+            PUT_BE32(packet + 12, UINT32_C(0x0A000001));
+            PUT_BE32(packet + 16, UINT32_C(0x0A000002));
+            PUT_BE16(packet + 10, (uint16_t) ~gsoChecksumWords(packet, 20, 0));
+            sbufSetLength(buf, length);
+            expected_recycled_buffer          = buf;
+            expected_recycle_count            = 0;
+            expected_raw_write                = packet;
+            expected_raw_write_length         = length;
+            const injected_io_result_t result = {.result = length + (mode != 0 ? 10U : 0U)};
+            armDeviceWrites(&result, 1);
+            require(queueWriterPacket(tdev, buf), "writer refused packet admission before native validation");
+            runWriterMessages();
+            const unsigned expected_calls = length <= UINT16_MAX ? 1 : 0;
+            require(observed_write_calls == (mode == 0 ? expected_calls : 0) &&
+                        observed_writev_calls == (mode != 0 ? expected_calls : 0),
+                    "writer confused the device MTU with the independent IP packet limit");
+            require(expected_recycle_count == 1 && tundeviceIsUp(tdev) && shutdown_request_calls == 0,
+                    "packet size admission leaked a buffer or failed the device");
+            expected_recycled_buffer = NULL;
+        }
+        resetIoInjection();
+        require(bringDownDevice(tdev), "writer MTU fixture cleanup");
+        destroyDevice(tdev);
+    }
+}
+
 static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
 {
     resetShutdownRequests();
     resetIoInjection();
     resetTunLogCapture();
     tun_device_t  *tdev      = createRunningOffloadReaderDevice(observeReadCallback, gso_requested);
-    const uint16_t lengths[] = {1500, 64, 64, 64};
+    const uint16_t lengths[] = {1500, 64, 64, 64, 64, 64};
     for (unsigned int i = 0; i < ARRAY_SIZE(lengths); ++i)
     {
         sbuf_t *buf = bufferpoolGetSmallBuffer(getWorkerBufferPool(0));
@@ -3808,13 +3870,18 @@ static void testGsoWriterFramingAndPacketOutcomes(bool gso_requested)
                                            {.result = 1510},
                                            {.result = 73},
                                            {.result = -1, .error = EAGAIN},
+                                           {.result = -1, .error = EMSGSIZE},
+                                           {.result = 74},
                                            {.result = -1, .error = EIO}};
     armDeviceWrites(writes, ARRAY_SIZE(writes));
+    in_flight_device     = tdev;
+    in_flight_check_call = 6;
 
     runWriterMessages();
 
-    require(observed_writev_calls == 5 && observed_write_calls == 0 && largest_writev_packet == 1500,
+    require(observed_writev_calls == ARRAY_SIZE(writes) && observed_write_calls == 0 && largest_writev_packet == 1500,
             "GSO writer did not frame, retry, and bound writes as packet operations");
+    require(in_flight_checks_run == 1, "virtio packet size failure prevented the next successful write");
     /* The shared limiter was already exercised by the checksum-only run. */
     if (! gso_requested)
         require(countTunLogSubstring("short device write") == 1,
@@ -4852,6 +4919,7 @@ int main(void)
     testPendingWriterMessagesAfterStop();
     testOpaqueReaderDistribution();
     testMultiQueuePreferencePreservesProcessingWorkers(&env);
+    testWriterPacketSizeIndependentOfDeviceMtu();
     internaloggerDestroy();
     envTeardown(&env);
     puts("Linux TUN message lifetime tests passed");

@@ -124,8 +124,8 @@ if(TARGET ww)
     # tunnels share the FEC sources and carry byte-identical copies of ikcp.h, so one pair of directories serves
     # both fixtures.
     list(APPEND tunnels_abort_runtime_includes
-      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/kcp
-      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/fec
     )
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT=1)
     list(APPEND tunnels_abort_runtime_cases tcpoverudpclient_impossible_kcp_mtu_rejection)
@@ -137,8 +137,8 @@ if(TARGET ww)
     )
     list(APPEND tunnels_abort_runtime_libraries TcpOverUdpServer)
     list(APPEND tunnels_abort_runtime_includes
-      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/kcp
-      ${CMAKE_SOURCE_DIR}/tunnels/TcpOverUdpClient/fec
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/fec
     )
     list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER=1)
     list(APPEND tunnels_abort_runtime_cases tcpoverudpserver_impossible_kcp_mtu_rejection)

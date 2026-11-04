@@ -1,36 +1,22 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void tcpoverudpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
     tcpoverudpserver_lstate_t *ls = lineGetState(l, t);
-
-    assert(ls->k_handle != NULL);
-
-    lineRef(l);
-
-    tcpoverudpserver_tstate_t *state = tunnelGetState(t);
-    if (UNLIKELY(atomicLoadRelaxed(&state->stopping)))
+    assert(ls->kind == kTcpOverUdpServerService && ls->session != NULL);
+    tcpoverudpserver_session_t *session = ls->session;
+    tou_session_t              *engine  = session->engine;
+    touSessionRetain(engine);
+    /* We created this exact normal service line. It must be logically dead before this handler returns. */
+    tcpoverudpserverRetireService(session, false);
+    tcpoverudpserver_tstate_t *ts = tunnelGetState(t);
+    if (! session->carrier->active || atomicLoadRelaxed(&ts->stopping))
     {
-        tcpoverudpserverLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        lineUnref(l);
-        return;
+        touSessionAbort(engine, kTouAborted);
     }
-
-    ls->can_upstream = false;
-
-    if (ikcp_waitsnd(ls->k_handle) > 0)
+    else
     {
-        // Destroying the KCP state now would discard queued data that one flush cannot send, such as the
-        // end of a large response; the KCP timer closes once the peer has acknowledged all of it.
-        ls->closing = true;
-        lineUnref(l);
-        return;
+        touSessionAppFinish(engine);
     }
-
-    tcpoverudpserverSendCloseAndFinish(ls);
-
-    lineUnref(l);
+    touSessionRelease(engine);
 }

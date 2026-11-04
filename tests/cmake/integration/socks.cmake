@@ -71,6 +71,12 @@ add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_tcp_loopbac
 add_waterwall_integration_test(waterwall.socks5_dest_context_domain_resolve_udp_loopback socks5_dest_context_domain_resolve_udp_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_udp_loopback socks5_noauth_dest_protocol_udp_loopback)
 add_waterwall_integration_test(waterwall.socks5_noauth_dest_protocol_fallback_tcp_loopback socks5_noauth_dest_protocol_fallback_tcp_loopback)
+add_waterwall_isolated_test(waterwall.dns_slow_answer
+  "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/dns_slow_answer_test.py"
+  "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+set_tests_properties(waterwall.dns_slow_answer PROPERTIES TIMEOUT 60)
+add_waterwall_test_labels(waterwall.dns_slow_answer "integration" "tunnels" "socks" "dns")
+add_waterwall_case_resource_lock(waterwall.dns_slow_answer dns_slow_answer)
 # The protocol peer is socket-connected, so ordinary server/TLS nodes cannot
 # mask TrojanClient capability. strace checks actual positive splice transfers.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)

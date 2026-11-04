@@ -105,6 +105,13 @@ static bool childRetainsData(muxserver_lstate_t *child_ls)
     return child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0;
 }
 
+/* The protocol above judges a client's first bytes as one payload, and a carrier read boundary
+ * inside them would look like a segmented handshake, so the first DATA frame arrives whole. */
+static bool childWaitsForWholeFrame(muxserver_lstate_t *child_ls)
+{
+    return ! child_ls->first_data_delivered || childRetainsData(child_ls);
+}
+
 static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,
                                  muxserver_tstate_t *ts, muxserver_lstate_t *parent_ls, muxserver_lstate_t *child_ls)
 {
@@ -235,7 +242,7 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
         const bool finished = count == state->read_remaining;
         const bool deliver  = frame.flags == kMuxFlagData && ! state->discard_frame && count != 0;
         // A retaining child takes the rest of this frame as one queue entry once it has arrived.
-        if (deliver && ! finished && childRetainsData(child_ls))
+        if (deliver && ! finished && childWaitsForWholeFrame(child_ls))
         {
             // Kept bytes still count as child activity.
             if (child_ls->child_slot_reserved)
@@ -249,6 +256,7 @@ static void processParentPayload(tunnel_t *t, line_t *parent_l, sbuf_t *buf)
         state->reading_frame = ! finished;
         if (deliver)
         {
+            child_ls->first_data_delivered = true;
             sbuf_t *body = splicestreamMoveFrameChunk(
                 stream, bufferpoolGetSpliceBuffer(lineGetBufferPool(parent_l)), count, finished);
             if (! processFrameForChild(t, parent_l, &frame, body, ts, parent_ls, child_ls))
