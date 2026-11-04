@@ -1,7 +1,8 @@
 /*
  * Covers: FakeTcpHeaderClient and FakeTcpHeaderServer node metadata and constructors.
  * Contract: both nodes are Layer-3 packet transforms with 61 bytes of left padding, per-packet native
- * protocol tags and no line state. Constructors retain the other defaults and report invalid settings by node/key.
+ * protocol tags and no line state. Client ports accept one integer or an inclusive range; omitted ports retain the
+ * default range. Constructors report invalid settings by node/key.
  * All four actual payload callbacks forward the exact sbuf once or recycle it once, preserving the packet line.
  * Cases: testMetadata, testDefaults, testConfigured, testRejections, testPayloadCallbacks (both nodes);
  * testIpOverriderComposition (when IpOverrider is available).
@@ -139,12 +140,12 @@ static void testDefaults(const node_case_t *c)
 static void testConfigured(const node_case_t *c)
 {
     tunnel_t *t = createWithSettings(c,
-                                     "{\"server-port\":443,\"client-port\":50000,\"client-port-count\":1024,"
+                                     "{\"server-port\":443,\"client-port-range\":[64512,65535],"
                                      "\"sequence\":4294967295,\"acknowledgment\":7,\"window\":0,"
                                      "\"urgent-pointer\":65535,\"options\":\"0101080a\"}");
     require(t != NULL, "constructor refused a valid configuration");
     const faketcpheader_wire_config_t *wire = c->wire(t);
-    require(wire->server_port == 443 && wire->client_port == 50000 && wire->client_port_count == 1024,
+    require(wire->server_port == 443 && wire->client_port == 64512 && wire->client_port_count == 1024,
             "configured carrier ports were not loaded");
     require(wire->sequence == UINT32_MAX && wire->acknowledgment == 7 && wire->window == 0 &&
                 wire->urgent_pointer == UINT16_MAX,
@@ -153,6 +154,29 @@ static void testConfigured(const node_case_t *c)
                 wire->options[3] == 0x0a,
             "configured TCP options were not loaded");
     destroyTunnel(t);
+
+    const struct
+    {
+        const char *json;
+        uint16_t    first;
+        uint16_t    count;
+    } ports[] = {{"{\"client-port\":40001}", 40001, 1},
+                 {"{\"client-port\":1}", 1, 1},
+                 {"{\"client-port\":65535}", 65535, 1},
+                 {"{\"client-port-range\":[40001,40016]}", 40001, 16},
+                 {"{\"client-port-range\":[1,1]}", 1, 1},
+                 {"{\"client-port-range\":[65535,65535]}", 65535, 1},
+                 {"{\"server-port\":40002,\"client-port\":40001}", 40001, 1}};
+    for (size_t i = 0; i < ARRAY_SIZE(ports); ++i)
+    {
+        t = createWithSettings(c, ports[i].json);
+        require(t != NULL, "constructor refused a valid client port selection");
+        require(log_capture_len == 0, "constructor logged while accepting client ports");
+        wire = c->wire(t);
+        require(wire->client_port == ports[i].first && wire->client_port_count == ports[i].count,
+                "constructor loaded the wrong client port selection");
+        destroyTunnel(t);
+    }
 }
 
 static void requireRejected(const node_case_t *c, const char *json, const char *key)
@@ -190,8 +214,15 @@ static void testRejections(const node_case_t *c)
     for (size_t i = 0; i < ARRAY_SIZE(bad_protocol); ++i)
         requireRejected(c, bad_protocol[i], "payload-protocol");
 
-    static const char *const removed[] = {
-        "role", "protocol-number", "flags", "mtu", "local-ipv4", "peer-ipv4", "local-port", "peer-port"};
+    static const char *const removed[] = {"role",
+                                          "protocol-number",
+                                          "flags",
+                                          "mtu",
+                                          "local-ipv4",
+                                          "peer-ipv4",
+                                          "local-port",
+                                          "peer-port",
+                                          "client-port-count"};
     for (size_t i = 0; i < ARRAY_SIZE(removed); ++i)
     {
         char json[96];
@@ -199,10 +230,51 @@ static void testRejections(const node_case_t *c)
         requireRejected(c, json, removed[i]);
     }
 
-    requireRejected(c, "{\"client-port-count\":1025}", "client-port-count");
+    const char *const bad_client_ports[] = {"{\"client-port\":0}",
+                                            "{\"client-port\":65536}",
+                                            "{\"client-port\":40001.5}",
+                                            "{\"client-port\":40001.0}",
+                                            "{\"client-port\":40001e0}",
+                                            "{\"client-port\":null}",
+                                            "{\"client-port\":\"40001\"}",
+                                            "{\"client-port\":true}",
+                                            "{\"client-port\":[40001,40016]}"};
+    for (size_t i = 0; i < ARRAY_SIZE(bad_client_ports); ++i)
+        requireRejected(c, bad_client_ports[i], "client-port");
+
+    const char *const bad_client_ranges[] = {
+        "{\"client-port-range\":null}",
+        "{\"client-port-range\":40001}",
+        "{\"client-port-range\":\"40001-40016\"}",
+        "{\"client-port-range\":[]}",
+        "{\"client-port-range\":[40001]}",
+        "{\"client-port-range\":[40001,40002,40003]}",
+        "{\"client-port-range\":[null,40016]}",
+        "{\"client-port-range\":[40001,true]}",
+        "{\"client-port-range\":[40001.5,40016]}",
+        "{\"client-port-range\":[40001,40016.0]}",
+        "{\"client-port-range\":[40001e0,40016]}",
+        "{\"client-port-range\":[0,16]}",
+        "{\"client-port-range\":[65530,65536]}",
+        "{\"client-port-range\":[40016,40001]}",
+        "{\"client-port-range\":[64511,65535]}",
+        "{\"client-port\":40001,\"client-port-range\":[40001,40016]}",
+        "{\"client-port\":null,\"client-port-range\":[40001,40016]}",
+        "{\"client-port\":40001,\"client-port-range\":null}",
+        "{\"client-port\":null,\"client-port-range\":null}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(bad_client_ranges); ++i)
+        requireRejected(c, bad_client_ranges[i], "client-port-range");
+
+    requireRejected(c, "{\"client-port-count\":16}", "client-port-count");
+    requireRejected(c, "{\"client-port-count\":null}", "client-port-count");
     requireRejected(c, "{\"server-port\":0}", "server-port");
     requireRejected(c, "{\"window\":65536}", "window");
     requireRejected(c, "{\"server-port\":40001}", "server-port");
+    requireRejected(c, "{\"server-port\":40001,\"client-port\":40001}", "server-port");
+    requireRejected(c, "{\"server-port\":40001,\"client-port-range\":[40001,40016]}", "server-port");
+    requireRejected(c, "{\"server-port\":40008,\"client-port-range\":[40001,40016]}", "server-port");
+    requireRejected(c, "{\"server-port\":40016,\"client-port-range\":[40001,40016]}", "server-port");
     requireRejected(c, "{\"options\":\"010101\"}", "options");
 
     char expected[128];

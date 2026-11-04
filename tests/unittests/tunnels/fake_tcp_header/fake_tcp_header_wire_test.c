@@ -1224,14 +1224,14 @@ static void testSettings(void)
     requireSettingsRejected("{\"payload-protocol\":6}");
     requireSettingsRejected("{\"payload-protocol\":17}");
 
-    config = requireSettingsLoaded("{\"server-port\":1,\"client-port\":2,\"client-port-count\":1,\"sequence\":0,"
+    config = requireSettingsLoaded("{\"server-port\":1,\"client-port\":2,\"sequence\":0,"
                                    "\"acknowledgment\":0,\"window\":0,\"urgent-pointer\":0,\"options\":\"\"}");
     require(config.server_port == 1 && config.client_port == 2 && config.client_port_count == 1 && config.window == 0 &&
                 config.options_length == 0,
             "lower edges were not loaded");
 
     config = requireSettingsLoaded(
-        "{\"server-port\":65535,\"client-port\":63488,\"client-port-count\":1024,\"sequence\":"
+        "{\"server-port\":65535,\"client-port-range\":[63488,64511],\"sequence\":"
         "4294967295,"
         "\"acknowledgment\":4294967295,\"window\":65535,\"urgent-pointer\":65535,"
         "\"options\":\"000102030405060708090a0b0c0d0e0f101112131415161718191A1B1C1D1E1F2021222324252627\"}");
@@ -1244,16 +1244,30 @@ static void testSettings(void)
         require(config.options[i] == i, "options were not decoded verbatim");
     }
 
-    config = requireSettingsLoaded("{\"client-port\":1,\"client-port-count\":1,\"server-port\":65535}");
-    require(config.client_port == 1, "client-port 1 was not loaded");
-    config = requireSettingsLoaded("{\"client-port\":65535,\"client-port-count\":1}");
+    config = requireSettingsLoaded("{\"client-port\":40001}");
+    require(config.client_port == 40001 && config.client_port_count == 1,
+            "explicit client-port did not replace the default range with one port");
+    config = requireSettingsLoaded("{\"client-port\":1,\"server-port\":65535}");
+    require(config.client_port == 1 && config.client_port_count == 1, "client-port 1 was not loaded");
+    config = requireSettingsLoaded("{\"client-port\":65535}");
     require(config.client_port == 65535 && config.client_port_count == 1, "client-port 65535 was not loaded");
-    config = requireSettingsLoaded("{\"client-port\":65530,\"client-port-count\":6}");
-    require(config.client_port_count == 6, "range ending at 65535 was not loaded");
-    config = requireSettingsLoaded("{\"server-port\":40017,\"client-port\":40001,\"client-port-count\":16}");
+    config = requireSettingsLoaded("{\"client-port-range\":[1,1]}");
+    require(config.client_port == 1 && config.client_port_count == 1, "singleton client range was not loaded");
+    config = requireSettingsLoaded("{\"client-port-range\":[65535,65535]}");
+    require(config.client_port == 65535 && config.client_port_count == 1, "maximum singleton range was not loaded");
+    config = requireSettingsLoaded("{\"client-port-range\":[65530,65535]}");
+    require(config.client_port == 65530 && config.client_port_count == 6,
+            "inclusive range ending at 65535 was not loaded");
+    config = requireSettingsLoaded("{\"client-port-range\":[64512,65535]}");
+    require(config.client_port == 64512 && config.client_port_count == 1024,
+            "maximum range ending at 65535 was not loaded");
+    config = requireSettingsLoaded("{\"server-port\":40017,\"client-port-range\":[40001,40016]}");
     require(config.server_port == 40017, "server-port just above the client range was rejected");
-    config = requireSettingsLoaded("{\"server-port\":40000,\"client-port\":40001,\"client-port-count\":16}");
+    config = requireSettingsLoaded("{\"server-port\":40000,\"client-port-range\":[40001,40016]}");
     require(config.server_port == 40000, "server-port just below the client range was rejected");
+    config = requireSettingsLoaded("{\"server-port\":40002,\"client-port\":40001}");
+    require(config.server_port == 40002 && config.client_port_count == 1,
+            "scalar client-port incorrectly retained the default range");
     config = requireSettingsLoaded("{\"options\":\"020405B4\"}");
     require(config.options_length == 4 && config.options[0] == 0x02 && config.options[3] == 0xB4,
             "four option bytes were not loaded");
@@ -1290,9 +1304,46 @@ static void testSettings(void)
         "{\"server-port\":0}",
         "{\"server-port\":65536}",
         "{\"client-port\":0}",
+        "{\"client-port\":-1}",
         "{\"client-port\":65536}",
         "{\"client-port-count\":0}",
+        "{\"client-port-count\":1}",
+        "{\"client-port-count\":16}",
         "{\"client-port-count\":1025}",
+        "{\"client-port-range\":null}",
+        "{\"client-port-range\":40001}",
+        "{\"client-port-range\":\"40001-40016\"}",
+        "{\"client-port-range\":true}",
+        "{\"client-port-range\":{}}",
+        "{\"client-port-range\":[]}",
+        "{\"client-port-range\":[40001]}",
+        "{\"client-port-range\":[40001,40002,40003]}",
+        "{\"client-port-range\":[null,40016]}",
+        "{\"client-port-range\":[40001,null]}",
+        "{\"client-port-range\":[true,40016]}",
+        "{\"client-port-range\":[40001,false]}",
+        "{\"client-port-range\":[\"40001\",40016]}",
+        "{\"client-port-range\":[40001,\"40016\"]}",
+        "{\"client-port-range\":[{},40016]}",
+        "{\"client-port-range\":[40001,[]]}",
+        "{\"client-port-range\":[40001.5,40016]}",
+        "{\"client-port-range\":[40001,40016.5]}",
+        "{\"client-port-range\":[40001.0,40016]}",
+        "{\"client-port-range\":[40001,40016.0]}",
+        "{\"client-port-range\":[40001e0,40016]}",
+        "{\"client-port-range\":[40001,40016e0]}",
+        "{\"client-port-range\":[0,16]}",
+        "{\"client-port-range\":[-1,16]}",
+        "{\"client-port-range\":[65530,65536]}",
+        "{\"client-port-range\":[65536,65536]}",
+        "{\"client-port-range\":[40016,40001]}",
+        "{\"client-port-range\":[64511,65535]}",
+        "{\"client-port-range\":[1,65535]}",
+        "{\"client-port\":40001,\"client-port-range\":[40001,40016]}",
+        "{\"client-port-range\":[40001,40016],\"client-port\":40001}",
+        "{\"client-port\":null,\"client-port-range\":[40001,40016]}",
+        "{\"client-port\":40001,\"client-port-range\":null}",
+        "{\"client-port\":null,\"client-port-range\":null}",
         "{\"sequence\":-1}",
         "{\"sequence\":4294967296}",
         "{\"acknowledgment\":-1}",
@@ -1303,6 +1354,11 @@ static void testSettings(void)
         "{\"urgent-pointer\":65536}",
         "{\"server-port\":1.5}",
         "{\"client-port\":40001.0}",
+        "{\"client-port\":40001.5}",
+        "{\"client-port\":40001e0}",
+        "{\"client-port\":\"40001\"}",
+        "{\"client-port\":[40001]}",
+        "{\"client-port\":[40001,40016]}",
         "{\"window\":1e3}",
         "{\"server-port\":\"40000\"}",
         "{\"client-port\":true}",
@@ -1329,10 +1385,11 @@ static void testSettings(void)
         "{\"server-port\":40001}",
         "{\"server-port\":40008}",
         "{\"server-port\":40016}",
-        "{\"server-port\":5,\"client-port\":5,\"client-port-count\":1}",
-        "{\"client-port\":65530,\"client-port-count\":7}",
-        "{\"client-port\":65535,\"client-port-count\":2}",
-        "{\"client-port\":64513,\"client-port-count\":1024}",
+        "{\"server-port\":5,\"client-port\":5}",
+        "{\"server-port\":40001,\"client-port-range\":[40001,40016]}",
+        "{\"server-port\":40008,\"client-port-range\":[40001,40016]}",
+        "{\"server-port\":40016,\"client-port-range\":[40001,40016]}",
+        "{\"server-port\":65535,\"client-port-range\":[64512,65535]}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(rejected); ++i)
     {

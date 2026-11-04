@@ -40,8 +40,9 @@ def prepare(directory, role):
         "device-name": TUN_NAMES[0 if client else 1], "device-ip": native[0] + "/24",
         "device-mtu": NATIVE_MTU, "gso": False, "multi-queue": False, "route-table": "off"}}
     fake = {"name": "fake", "type": "FakeTcpHeaderClient" if client else "FakeTcpHeaderServer",
-            "settings": {"server-port": SERVER_PORT, "client-port": CLIENT_PORT,
-                         "client-port-count": PORT_COUNT, "options": FAKE_OPTIONS.hex(),
+            "settings": {"server-port": SERVER_PORT,
+                         "client-port-range": [CLIENT_PORT, CLIENT_PORT + PORT_COUNT - 1],
+                         "options": FAKE_OPTIONS.hex(),
                          "sequence": 12345 if client else 67890,
                          "acknowledgment": 67890 if client else 12345}}
     rewrite = {"name": "addresses", "type": "IpOverrider", "settings": {

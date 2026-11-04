@@ -9,23 +9,21 @@ typedef struct faketcpheader_settings_integer_s
     uint32_t    maximum;
 } faketcpheader_settings_integer_t;
 
-static const faketcpheader_settings_integer_t kSettingsServerPort      = {"server-port", 1, UINT16_MAX};
-static const faketcpheader_settings_integer_t kSettingsClientPort      = {"client-port", 1, UINT16_MAX};
-static const faketcpheader_settings_integer_t kSettingsClientPortCount = {
-    "client-port-count", 1, kFakeTcpHeaderWireMaxClientPortCount};
+static const faketcpheader_settings_integer_t        kSettingsServerPort     = {"server-port", 1, UINT16_MAX};
+static const faketcpheader_settings_integer_t        kSettingsClientPort     = {"client-port", 1, UINT16_MAX};
 static const faketcpheader_settings_integer_t        kSettingsSequence       = {"sequence", 0, UINT32_MAX};
 static const faketcpheader_settings_integer_t        kSettingsAcknowledgment = {"acknowledgment", 0, UINT32_MAX};
 static const faketcpheader_settings_integer_t        kSettingsWindow         = {"window", 0, UINT16_MAX};
 static const faketcpheader_settings_integer_t        kSettingsUrgentPointer  = {"urgent-pointer", 0, UINT16_MAX};
 static const faketcpheader_settings_integer_t *const kSettingsIntegers[]     = {&kSettingsServerPort,
                                                                                 &kSettingsClientPort,
-                                                                                &kSettingsClientPortCount,
                                                                                 &kSettingsSequence,
                                                                                 &kSettingsAcknowledgment,
                                                                                 &kSettingsWindow,
                                                                                 &kSettingsUrgentPointer};
 
-static const char *const kSettingsOptions = "options";
+static const char *const kSettingsOptions         = "options";
+static const char *const kSettingsClientPortRange = "client-port-range";
 
 static bool faketcpheaderSettingsKeyIsKnown(const char *key)
 {
@@ -40,7 +38,7 @@ static bool faketcpheaderSettingsKeyIsKnown(const char *key)
             return true;
         }
     }
-    return stringCompare(key, kSettingsOptions) == 0;
+    return stringCompare(key, kSettingsOptions) == 0 || stringCompare(key, kSettingsClientPortRange) == 0;
 }
 
 static bool faketcpheaderSettingsKeysAreKnown(const cJSON *settings, const char *node_name)
@@ -83,6 +81,64 @@ static bool faketcpheaderSettingsLoadInteger(const cJSON *settings, const char *
         return false;
     }
     *value_out = status == kJsonValuePresent ? (uint32_t) value : fallback;
+    return true;
+}
+
+static bool faketcpheaderSettingsLoadClientPorts(const cJSON *settings, const char *node_name, uint32_t *first_out,
+                                                 uint32_t *count_out)
+{
+    const cJSON *port  = cJSON_GetObjectItemCaseSensitive(settings, kSettingsClientPort.key);
+    const cJSON *range = cJSON_GetObjectItemCaseSensitive(settings, kSettingsClientPortRange);
+    if (port != NULL && range != NULL)
+    {
+        LOGF("JSON Error: %s->settings->%s : use either client-port or client-port-range, not both",
+             node_name,
+             kSettingsClientPortRange);
+        return false;
+    }
+    if (range == NULL)
+    {
+        if (! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsClientPort, 40001, first_out))
+        {
+            return false;
+        }
+        *count_out = port != NULL ? 1 : 16;
+        return true;
+    }
+    if (! cJSON_IsArray(range) || cJSON_GetArraySize(range) != 2)
+    {
+        LOGF("JSON Error: %s->settings->%s : expected [first, last] with exactly two integer ports",
+             node_name,
+             kSettingsClientPortRange);
+        return false;
+    }
+    int64_t first = 0, last = 0;
+    if (! jsonGetIntegerInRange(cJSON_GetArrayItem(range, 0), 1, UINT16_MAX, &first) ||
+        ! jsonGetIntegerInRange(cJSON_GetArrayItem(range, 1), 1, UINT16_MAX, &last))
+    {
+        LOGF("JSON Error: %s->settings->%s : expected integer endpoints from 1 to 65535",
+             node_name,
+             kSettingsClientPortRange);
+        return false;
+    }
+    if (first > last)
+    {
+        LOGF("JSON Error: %s->settings->%s : first port must be lower than or equal to last port",
+             node_name,
+             kSettingsClientPortRange);
+        return false;
+    }
+    const uint32_t count = (uint32_t) (last - first + 1);
+    if (count > kFakeTcpHeaderWireMaxClientPortCount)
+    {
+        LOGF("JSON Error: %s->settings->%s : expected at most %u ports",
+             node_name,
+             kSettingsClientPortRange,
+             (unsigned int) kFakeTcpHeaderWireMaxClientPortCount);
+        return false;
+    }
+    *first_out = (uint32_t) first;
+    *count_out = count;
     return true;
 }
 
@@ -129,8 +185,7 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
 
     uint32_t server_port = 0, client_port = 0, client_port_count = 0, window = 0, urgent_pointer = 0;
     if (! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsServerPort, 40000, &server_port) ||
-        ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsClientPort, 40001, &client_port) ||
-        ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsClientPortCount, 16, &client_port_count) ||
+        ! faketcpheaderSettingsLoadClientPorts(settings, node_name, &client_port, &client_port_count) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsSequence, 0, &config.sequence) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsAcknowledgment, 0, &config.acknowledgment) ||
         ! faketcpheaderSettingsLoadInteger(settings, node_name, &kSettingsWindow, UINT16_MAX, &window) ||
@@ -140,14 +195,6 @@ bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,
         return false;
     }
 
-    if (client_port + client_port_count - 1U > UINT16_MAX)
-    {
-        LOGF("JSON Error: %s->settings->%s : expected client-port + client-port-count - 1 <= 65535 (client-port %u)",
-             node_name,
-             kSettingsClientPortCount.key,
-             (unsigned int) client_port);
-        return false;
-    }
     if (server_port >= client_port && server_port < client_port + client_port_count)
     {
         LOGF("JSON Error: %s->settings->%s : expected a port outside the client range %u to %u",

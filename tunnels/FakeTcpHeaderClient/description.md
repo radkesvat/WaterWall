@@ -21,7 +21,7 @@ addresses and restores the addresses expected by the receiving stack.
 
 | Event | Action |
 | --- | --- |
-| upstream native IPv4 packet | Insert fake TCP from `client-port + i` to `server-port` and the protocol byte, then forward upstream. |
+| upstream native IPv4 packet | Insert fake TCP from `first client port + i` to `server-port` and the protocol byte, then forward upstream. |
 | downstream carrier | Validate and remove fake TCP and the protocol byte, then forward the native packet downstream. |
 | refused packet | Recycle it on its worker and emit a rate-limited diagnostic. |
 
@@ -141,8 +141,7 @@ Client/server names do not reverse these directions.
   "type": "FakeTcpHeaderClient",
   "settings": {
     "server-port": 40000,
-    "client-port": 40001,
-    "client-port-count": 16,
+    "client-port-range": [40001, 40016],
     "sequence": 12345,
     "acknowledgment": 67890,
     "window": 65535,
@@ -159,22 +158,30 @@ no native-protocol setting is needed.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `server-port` | `40000` | Fake TCP server port. Integer `1..65535`. |
-| `client-port` | `40001` | First fake TCP client port. Integer `1..65535`. |
-| `client-port-count` | `16` | Client port count, integer `1..1024`. The range must end at or below `65535`, and `server-port` must be outside it. |
+| `client-port` | unset | Use exactly one fake TCP client port. Integer `1..65535`; mutually exclusive with `client-port-range`. |
+| `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
 | `sequence` | `0` | Sequence number of every outgoing fake header. Integer `0..4294967295`. |
 | `acknowledgment` | `0` | Acknowledgment number of every outgoing fake header. Integer `0..4294967295`. |
 | `window` | `65535` | Fake TCP window. Integer `0..65535`. |
 | `urgent-pointer` | `0` | Fake TCP urgent pointer. Integer `0..65535`. |
 | `options` | `""` | Hexadecimal fake TCP options, `0..40` bytes in multiples of 4, emitted verbatim. Include any NOP/EOL padding. |
 
-Unknown keys, including `payload-protocol`, wrong types, fractions and
-out-of-range template values fail creation with a diagnostic naming the key,
+`"client-port": 40001` uses only port 40001. `"client-port-range": [40001, 40016]`
+uses all 16 ports from 40001 through 40016, including both endpoints. A range
+such as `[40001, 40001]` also selects exactly one port. `client-port` accepts an
+integer, not an array; `client-port-range` accepts exactly two integers, not a
+list of separate ports. Supplying both keys is invalid. With neither key, the
+client range is `40001..40016`. `server-port` must be outside the selected client
+ports, including when the default range is used.
+
+Unknown keys, including `payload-protocol` and `client-port-count`, wrong types,
+fractions and out-of-range template values fail creation with a diagnostic naming the key,
 for example `FakeTcpHeaderClient->settings->server-port`. A non-object `settings`
 is invalid. Invalid hexadecimal options, odd hex length, lengths not divisible
 by four bytes, and lengths above 40 bytes are refused. There are no address,
 MTU, flag or alternative carrier-protocol settings here.
 
-Both peers must agree on `server-port`, `client-port` and `client-port-count`.
+Both peers must agree on `server-port` and the selected client port or range.
 Their sequence, acknowledgment, window, urgent pointer and options may differ.
 Receive reads the incoming data offset and protocol byte; it does not compare
 these template fields or flags with its own outgoing values.
@@ -262,13 +269,19 @@ transform that understands this representation.
 
 ## Per-Flow Carrier Ports
 
-Each native packet selects a client carrier port before insertion:
+Each native packet selects a client carrier port before insertion. The first
+client port and number of client ports come from the selected scalar or inclusive
+range. For `[40001, 40016]`, these are 40001 and 16; a scalar selects one port.
+The number of available ports is not a connection limit: different native flows
+can select the same port, and no real TCP listeners or connections are opened.
+
+Selection uses:
 
 ```text
-i = deviceFlowWorkerHash(native packet) % client-port-count
+i = deviceFlowWorkerHash(native packet) % number of client ports
 
-client -> server: source client-port + i, destination server-port
-server -> client: source server-port,     destination client-port + i
+client -> server: source first client port + i, destination server-port
+server -> client: source server-port,           destination first client port + i
 ```
 
 The fallback index is zero when hashing is unavailable. The existing helper

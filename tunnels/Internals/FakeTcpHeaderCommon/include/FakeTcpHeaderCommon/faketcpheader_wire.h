@@ -85,7 +85,7 @@ static inline uint16_t faketcpheaderWireMaxNativeLength(const faketcpheader_wire
 /* Short static description of a result, for drop diagnostics. */
 WW_EXPORT const char *faketcpheaderWireResultName(faketcpheader_wire_result_t result);
 
-/* deviceFlowWorkerHash() of the native packet modulo client-port-count, or 0
+/* deviceFlowWorkerHash() of the native packet modulo the selected client port count, or 0
  * when unhashable. Reversed native tuples select the same client port; address
  * rewrites can change that tuple and each encoder must see a stable flow. */
 WW_EXPORT uint16_t faketcpheaderWirePortIndex(const faketcpheader_wire_config_t *config, const uint8_t *native,
@@ -104,7 +104,9 @@ WW_EXPORT faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheade
 WW_EXPORT faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_config_t *config,
                                                               faketcpheader_wire_side_t side, sbuf_t *buf);
 
-/* Strict settings loader: omitted settings and {} select ordinary defaults.
+/* Strict settings loader: client-port selects one port; client-port-range selects
+ * inclusive endpoints. These settings are mutually exclusive. Omitting both
+ * selects 40001..40016; omitted settings and {} select ordinary defaults.
  * Unknown settings are refused. Failures name the node/settings key and leave
  * *out unchanged. */
 WW_EXPORT bool faketcpheaderWireLoadSettings(const cJSON *settings, const char *node_name,

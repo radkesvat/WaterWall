@@ -19,7 +19,7 @@ the addresses expected by the receiving TUN or connection stack.
 | Event | Action |
 | --- | --- |
 | upstream carrier | Validate and remove fake TCP and the protocol byte, restore the tagged native protocol and forward upstream. |
-| downstream native IPv4 packet | Insert fake TCP from `server-port` to `client-port + i` and the protocol byte, then forward downstream. |
+| downstream native IPv4 packet | Insert fake TCP from `server-port` to `first client port + i` and the protocol byte, then forward downstream. |
 | refused packet | Recycle it on its worker and emit a rate-limited diagnostic. |
 
 ## Per-Packet Protocol Byte
@@ -135,8 +135,7 @@ server as well as the client.
   "type": "FakeTcpHeaderServer",
   "settings": {
     "server-port": 40000,
-    "client-port": 40001,
-    "client-port-count": 16,
+    "client-port-range": [40001, 40016],
     "sequence": 67890,
     "acknowledgment": 12345,
     "window": 65535
@@ -151,19 +150,27 @@ needed; each received packet supplies its own protocol byte.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `server-port` | `40000` | Fake TCP server port, integer `1..65535`. |
-| `client-port` | `40001` | First fake TCP client port, integer `1..65535`. |
-| `client-port-count` | `16` | Integer `1..1024`; client range must end at or below `65535` and exclude `server-port`. |
+| `client-port` | unset | Use exactly one fake TCP client port. Integer `1..65535`; mutually exclusive with `client-port-range`. |
+| `client-port-range` | `[40001, 40016]` when neither client setting is supplied | Inclusive `[first, last]` range of integer ports `1..65535`, in ascending order, containing `1..1024` ports. |
 | `sequence` | `0` | Outgoing fake TCP sequence, integer `0..4294967295`. |
 | `acknowledgment` | `0` | Outgoing fake TCP acknowledgment, integer `0..4294967295`. |
 | `window` | `65535` | Fake TCP window, integer `0..65535`. |
 | `urgent-pointer` | `0` | Fake TCP urgent pointer, integer `0..65535`. |
 | `options` | `""` | Verbatim hexadecimal fake TCP options: `0..40` bytes, in four-byte groups. |
 
-Unknown keys, including `payload-protocol`, invalid template types/ranges,
-malformed hex options and non-object settings fail creation with a diagnostic
+`"client-port": 40001` uses only port 40001. `"client-port-range": [40001, 40016]`
+uses all 16 ports from 40001 through 40016, including both endpoints. A range
+such as `[40001, 40001]` also selects exactly one port. `client-port` accepts an
+integer, not an array; `client-port-range` accepts exactly two integers, not a
+list of separate ports. Supplying both keys is invalid. With neither key, the
+client range is `40001..40016`. `server-port` must be outside the selected client
+ports, including when the default range is used.
+
+Unknown keys, including `payload-protocol` and `client-port-count`, invalid
+template types/ranges, malformed hex options and non-object settings fail creation with a diagnostic
 naming the key, for example `FakeTcpHeaderServer->settings->server-port`.
-The peers must match all three port settings. Other template values may differ:
-decode reads the received fake TCP data offset and protocol byte and does not
+The peers must match `server-port` and the selected client port or range. Other
+template values may differ: decode reads the received fake TCP data offset and protocol byte and does not
 compare the template, options or flags with its local outgoing values.
 
 All ports and TCP-template fields in this table belong to the **fake header**.
@@ -226,8 +233,9 @@ IPv4 checksum. Success clears the request, while refusal preserves bytes,
 headroom, cursor, length and intent until recycling.
 
 Incoming fake TCP must have destination `server-port` and source in the client
-range. Reply fake TCP uses source `server-port` and destination `client-port + i`,
-where `i` is the native flow hash modulo `client-port-count`. The existing helper
+range. Reply fake TCP uses source `server-port` and destination
+`first client port + i`, where `i` is the native flow hash modulo the number of client ports. A scalar
+`client-port` selects one port, so its index is always zero. The existing helper
 recognizes TCP/UDP/SCTP ports when present and otherwise uses its existing
 fallback; per-session ICMP or opaque distribution is not promised. Request/reply
 indices match when the native tuples at the two encoders are reverses. Arbitrary

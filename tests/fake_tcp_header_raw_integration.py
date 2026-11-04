@@ -104,8 +104,11 @@ def prepare(directory, role, listener_port, target_port, tun, multi_queue, tcp):
                              "multi-queue": multi_queue})
         elif node["type"] in ("FakeTcpHeaderClient", "FakeTcpHeaderServer"):
             settings["options"] = FAKE_OPTIONS.hex()
-            carrier_ports = tuple(settings.get(key, default) for key, default in
-                                  (("server-port", 40000), ("client-port", 40001), ("client-port-count", 16)))
+            if "client-port" in settings:
+                first = last = settings["client-port"]
+            else:
+                first, last = settings.get("client-port-range", [40001, 40016])
+            carrier_ports = settings.get("server-port", 40000), first, last - first + 1
         elif node["type"] in ("ConnectionToPackets", "PacketsToConnection"):
             settings["mtu"] = NATIVE_MTU
         elif node["type"] == "TunDevice":
