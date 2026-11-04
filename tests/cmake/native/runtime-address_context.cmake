@@ -641,7 +641,8 @@
       ${WATERWALL_UNIT_SOURCE_ROOT}/net/event/wloop_timer_fairness_test.c)
     target_link_libraries(wloop_timer_fairness_test PRIVATE ww)
     target_link_options(wloop_timer_fairness_test PRIVATE
-      "-Wl,--wrap=epoll_wait" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time" "-Wl,--wrap=usleep")
+      "-Wl,--wrap=epoll_wait" "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=time"
+      "-Wl,--wrap=gettimeofday" "-Wl,--wrap=usleep")
     add_dependencies(waterwall_unit_tests wloop_timer_fairness_test)
     add_waterwall_unit_test(waterwall.wloop_timer_fairness_unit wloop_timer_fairness_test
       "unit;event;timer;worker;fairness;shutdown")

@@ -83,6 +83,11 @@ waterwall_add_native_executable(wloop_clock_test SUPPORT EXCLUDE_FROM_ALL SOURCE
   target_link_libraries(wloop_clock_test PRIVATE ww_test_support)
 target_link_libraries(wloop_clock_test PRIVATE ww)
 set_target_properties(wloop_clock_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_compile_definitions(wloop_clock_test PRIVATE WATERWALL_CLOCK_TEST_WRAPPERS=1)
+  target_link_options(wloop_clock_test PRIVATE
+    "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=gettimeofday" "-Wl,--wrap=time")
+endif()
 _waterwall_register_portable_contract(waterwall.wloop_clock_unit wloop_clock_test "unit;event;portable")
 
 if(WIN32)

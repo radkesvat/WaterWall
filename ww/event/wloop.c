@@ -179,8 +179,8 @@ static void wloopRefreshCachedTime(wloop_t *loop)
 {
     uint64_t elapsed_us = loop->cur_hrtime - loop->start_hrtime;
 
-    loop->cur_time    = (loop->start_ms / 1000) + (elapsed_us / 1000000);
     loop->cur_time_ms = loop->start_ms + (elapsed_us / 1000);
+    loop->cur_time    = loop->cur_time_ms / 1000;
     loop->cur_time_us = (loop->start_ms * 1000) + elapsed_us;
 }
 
@@ -1469,11 +1469,12 @@ void wloopUpdateTime(wloop_t *loop)
     loop->cur_hrtime    = getHRTimeUs();
     uint64_t elapsed_us = loop->cur_hrtime - loop->start_hrtime;
     uint64_t elapsed_ms = elapsed_us / 1000;
+    uint64_t now_ms     = loop->start_ms + elapsed_ms;
     uint64_t system_ms  = getTimeOfDayMS();
-    int64_t  drift_ms   = (int64_t) (system_ms - (loop->start_ms + elapsed_ms));
-    // Whole seconds of the two clocks differ for part of every second without any change of system time, and
-    // re-reading them then moved this clock back by a millisecond now and then.
-    if (drift_ms >= 1000 || drift_ms <= -1000)
+    uint64_t drift_ms   = system_ms >= now_ms ? system_ms - now_ms : now_ms - system_ms;
+    /* Compare complete timestamps: rounding the origin and elapsed time
+     * separately can mistake an ordinary second boundary for a clock change. */
+    if (drift_ms >= 1000)
     {
         // systemtime changed, we adjust start_ms
         loop->start_ms = system_ms - elapsed_ms;
