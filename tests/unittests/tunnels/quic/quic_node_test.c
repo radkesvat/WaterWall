@@ -715,6 +715,69 @@ static void testCooperativeResourcePressure(void)
     }
 }
 
+static void carrierSignal(est_fixture_t *f, bool client, bool pause)
+{
+    if (client)
+    {
+        (pause ? tunnelDownStreamPause : tunnelDownStreamResume)(f->node, owned_line);
+    }
+    else
+    {
+        (pause ? tunnelUpStreamPause : tunnelUpStreamResume)(f->node, f->line);
+    }
+}
+
+static void fillApplicationBacklog(est_fixture_t *f, bool client)
+{
+    /* Pause comes at three quarters of the 8 entries; the seventh still fits. */
+    for (unsigned count = 0; count < 7; ++count)
+    {
+        sbuf_t *buffer = estBytes(f->line, "x", 1);
+        if (client)
+        {
+            tunnelUpStreamPayload(f->node, f->line, buffer);
+        }
+        else
+        {
+            tunnelDownStreamPayload(f->node, owned_line, buffer);
+        }
+    }
+    twfRequire(lineIsAlive(f->line), "cooperative QUIC producer hit hard refusal before resource Pause");
+}
+
+/* The application stays held while either the backlog or the carrier holds it. */
+static void testCarrierFlowUnderPressure(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+        {
+            continue;
+        }
+        est_fixture_t f;
+        setupQuic(&f, client != 0, false);
+        tunnelUpStreamInit(f.node, f.line);
+        fillApplicationBacklog(&f, client != 0);
+        twfRequire(f.pause_count == 1 && resume_count == 0, "QUIC did not pause for its own backlog");
+        carrierSignal(&f, client != 0, true);
+        carrierSignal(&f, client != 0, false);
+        twfRequire(f.pause_count == 1 && resume_count == 0, "carrier Resume released an application under pressure");
+        abortCarrier(&f);
+        destroyQuic(&f);
+
+        setupQuic(&f, client != 0, false);
+        tunnelUpStreamInit(f.node, f.line);
+        carrierSignal(&f, client != 0, true);
+        twfRequire(f.pause_count == 1, "carrier Pause did not reach the application");
+        fillApplicationBacklog(&f, client != 0);
+        twfRequire(f.pause_count == 1, "backlog pressure paused an application the carrier already holds");
+        carrierSignal(&f, client != 0, false);
+        twfRequire(resume_count == 0, "carrier Resume released an application under pressure");
+        abortCarrier(&f);
+        destroyQuic(&f);
+    }
+}
+
 /* A real opposite-role engine supplies ACKs/FINs through the production node's
  * carrier callback. The wire FIFO preserves ownership until the next peer step,
  * while explicit callbacks below still exercise synchronous Finish reentry. */
@@ -1146,6 +1209,7 @@ int main(void)
     TEST_RUN_CASE(testQuiescenceBeforeOwnerDrain);
     TEST_RUN_CASE(testCarrierResourceEntries);
     TEST_RUN_CASE(testCooperativeResourcePressure);
+    TEST_RUN_CASE(testCarrierFlowUnderPressure);
     TEST_RUN_CASE(testReliableFinalReply);
     TEST_RUN_CASE(testPeerFinish);
     TEST_RUN_CASE(testNestedFinalReply);
