@@ -62,6 +62,7 @@ void quicFinishApplication(tunnel_t *t, line_t *l);
 void quicFinishCarrier(tunnel_t *t, line_t *l);
 void quicRelayUp(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
 void quicRelayDown(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
+void quicSetCarrierPaused(tunnel_t *t, line_t *l, bool paused);
 
 void quicCloseAdmission(tunnel_t *t);
 void quicQuiesceWorker(tunnel_t *t, wid_t wid);
