@@ -573,9 +573,9 @@ static void closeProgress(tou_session_t *s, uint64_t now)
     }
     if (s->local_finish && ! s->close_enqueued)
     {
-        const char close  = (char) kTouFrameClose;
-        s->close_enqueued = true;
-        sendRecord(s, &close, 1);
+        const uint8_t close = kTouFrameClose;
+        s->close_enqueued   = true;
+        sendRecord(s, (const char *) &close, 1);
         s->dirty = true;
         s->flush = true;
     }
@@ -831,8 +831,8 @@ void touSessionTick(tou_session_t *s, uint64_t now)
     {
         if (! s->closing && s->ready && now >= touDeadline(s->last_recv, s->config.ping_interval_ms) && ! s->ping_sent)
         {
-            const char ping = (char) kTouFramePing;
-            sendRecord(s, &ping, 1);
+            const uint8_t ping = kTouFramePing;
+            sendRecord(s, (const char *) &ping, 1);
             s->ping_sent = true;
         }
         s->dirty = ! s->send_settled;
