@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseFinishDuringFirstFinalChunkStopsRemainingOutput,
  * caseSplitFinishAbsorbsCompanionBackpressure, caseSplitFailureClosesSiblingDuringFinish,
- * caseSplitFinishClosesSiblingDuringFinalPayload
+ * caseSplitFinishClosesSiblingDuringFinalPayload, caseSplitUploadFinishKeepsTheResponse
  * Checks: Assertion labels include: HttpClient sent payload after the next direction finished; split upload
  * transport received Finish twice; split download transport received Finish twice; unexpected line
  * reached the split transport finish observer
@@ -372,11 +372,61 @@ static void caseSplitFinishClosesSiblingDuringFinalPayload(void)
     splitFixtureTeardown(&fixture);
 }
 
+static sbuf_t *splitBytes(httpclient_split_fixture_t *fixture, const char *text)
+{
+    const uint32_t length = (uint32_t) stringLength(text);
+    sbuf_t        *buf    = bufferpoolGetBestFit(fixture->env.pool, length, 0);
+    sbufSetLength(buf, length);
+    memoryCopy(sbufGetMutablePtr(buf), text, length);
+    return buf;
+}
+
+/* The server closes both transports when its response ends, and the upload's Finish, with nothing queued
+ * behind it, can arrive first. The end of the response is still in flight on the download. */
+static void caseSplitUploadFinishKeepsTheResponse(void)
+{
+    twfSetCase("HttpClient split upload Finish keeps the response arriving on the download");
+
+    httpclient_split_fixture_t fixture;
+    splitFixtureSetup(&fixture);
+    const uint32_t               initial_main_refc = twfLineRefCount(fixture.main_line);
+    httpclient_split_observer_t *observer          = tunnelGetState(fixture.next);
+
+    httpclientTunnelDownStreamFinish(fixture.http, fixture.upload_line);
+    twfRequire(! lineIsAlive(fixture.upload_line), "split upload Finish left its transport alive");
+    twfRequire(lineIsAlive(fixture.download_line), "split upload Finish closed the download before the response ended");
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "split upload Finish closed main before the response ended");
+    twfRequireEqualU32(observer->upload_finish, 0, "split upload Finish was reflected toward its sender");
+
+    httpclientTunnelUpStreamPayload(fixture.http, fixture.main_line, splitBytes(&fixture, "late"));
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "an upload after the upload transport ended closed main");
+
+    httpclientTunnelDownStreamPayload(
+        fixture.http,
+        fixture.download_line,
+        splitBytes(&fixture, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"));
+    twfRequireEqualU32(
+        fixture.trace.prev_payload_bytes, 5, "the response body did not reach main after the upload ended");
+
+    httpclientTunnelDownStreamFinish(fixture.http, fixture.download_line);
+    twfRequireEqualU32(fixture.trace.prev_finish, 1, "the download Finish did not close main exactly once");
+    twfRequireEqualU32(observer->download_finish, 0, "the download Finish was reflected toward its sender");
+    twfRequire(lineIsAlive(fixture.main_line), "split teardown destroyed the borrowed main line");
+    twfRequireLineStateZeroed(fixture.main_line, fixture.http, "split teardown retained main state");
+    twfRequireLineStateZeroed(fixture.upload_line, fixture.http, "split teardown retained upload state");
+    twfRequireLineStateZeroed(fixture.download_line, fixture.http, "split teardown retained download state");
+    twfRequireEqualU32(twfLineRefCount(fixture.main_line), initial_main_refc, "split teardown leaked a main reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.upload_line), 1, "split teardown leaked an upload reference");
+    twfRequireEqualU32(twfLineRefCount(fixture.download_line), 1, "split teardown leaked a download reference");
+    splitFixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseFinishDuringFirstFinalChunkStopsRemainingOutput();
     caseSplitFinishAbsorbsCompanionBackpressure();
     TEST_RUN_CASE(caseSplitFinishClosesSiblingDuringFinalPayload);
     TEST_RUN_CASE(caseSplitFailureClosesSiblingDuringFinish);
+    TEST_RUN_CASE(caseSplitUploadFinishKeepsTheResponse);
     return 0;
 }
