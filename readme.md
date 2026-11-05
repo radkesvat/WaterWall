@@ -31,7 +31,7 @@ A TCP forward needs two nodes:
 TcpListener -> TcpConnector
 ```
 
-A Tcp-Mux tunnel between 2 servers is be as simple as that:
+A Tcp-Mux tunnel between 2 servers is as simple as that:
 
 ```text
 server 1:
@@ -41,7 +41,6 @@ TcpListener -> MuxClient -> TcpConnector [to server 2]
 server 2:
 
 TcpListener -> MuxServer -> TcpConnector [to your local service]
-
 ```
 
 *(Waterwall’s mux is highly customizable and very capable! It's one of the few mux implementations that can use Linux `splice` or maintain a fixed, non-increasing number of long-lived connections, depending on your needs.)*
