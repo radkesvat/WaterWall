@@ -3,7 +3,8 @@
  * define this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseSynchronousSiblingCloseSurvivesReentrantMainFinish
+ * Cases: caseSynchronousSiblingCloseSurvivesReentrantMainFinish, runRuntimeCase,
+ * caseUploadFinishKeepsResponse
  * Checks: Assertion labels include: HalfDuplexClient finished an unexpected sibling; re-entrant main Finish
  * left HalfDuplexClient state alive; synchronous sibling close did not propagate exactly once; outer
  * frame re-finished the re-entrantly closed main line
@@ -114,17 +115,30 @@ static void caseSynchronousSiblingCloseSurvivesReentrantMainFinish(void)
     twfWorkerEnvTeardown(&fixture.env);
 }
 
+typedef enum upload_finish_stage_e
+{
+    kUploadFinishAfterStartup,
+    kUploadFinishDuringDownloadInit,
+    kUploadFinishDuringDownloadIntro,
+    kUploadFinishDuringUploadIntro
+} upload_finish_stage_t;
+
 typedef struct runtime_fixture_s
 {
-    twf_worker_env_t env;
-    tunnel_chain_t  *chain;
-    tunnel_t        *client, *prev, *next;
-    line_t          *main, *upload, *download;
-    unsigned         mode, init_count, est_count, pause_count, resume_count, read_pauses, read_resumes;
-    unsigned         upload_callbacks, download_callbacks, finishes;
-    uint8_t          upload_bytes[2 * 1024 * 1024 + 64], pair_id[kHLFDPairIdSize];
-    size_t           upload_length;
-    bool             injected;
+    twf_worker_env_t      env;
+    tunnel_chain_t       *chain;
+    tunnel_t             *client, *prev, *next;
+    line_t               *main, *upload, *download;
+    unsigned              mode, init_count, est_count, pause_count, resume_count, read_pauses, read_resumes;
+    unsigned              upload_callbacks, download_callbacks, finishes;
+    unsigned              owner_finishes, upload_finishes, download_finishes;
+    uint8_t               upload_bytes[2 * 1024 * 1024 + 64], pair_id[kHLFDPairIdSize];
+    size_t                upload_length;
+    uint8_t               response[32];
+    size_t                response_length;
+    bool                  injected;
+    bool                  keep_main_alive, finish_on_resume, retirement_case;
+    upload_finish_stage_t upload_finish_stage;
 } runtime_fixture_t;
 static runtime_fixture_t r;
 
@@ -137,13 +151,19 @@ static void runtimeOwnerFinish(tunnel_t *t, line_t *l)
 {
     discard t;
     twfRequire(l == r.main, "owned child Finish escaped to app owner");
-    lineDestroy(l);
+    ++r.owner_finishes;
+    if (! r.keep_main_alive)
+        lineDestroy(l);
 }
 static void runtimeChildFinish(tunnel_t *t, line_t *l)
 {
     discard t;
     twfRequire(l == r.upload || l == r.download, "Finish reached wrong child");
     ++r.finishes;
+    if (l == r.upload)
+        ++r.upload_finishes;
+    else
+        ++r.download_finishes;
     if (r.mode == 14 && l == r.upload && lineIsAlive(r.download))
         halfduplexclientTunnelDownStreamFinish(r.client, r.download);
 }
@@ -164,6 +184,11 @@ static void runtimeResume(tunnel_t *t, line_t *l)
     discard t;
     twfRequire(l == r.main, "Resume escaped child mapping");
     ++r.resume_count;
+    if (r.finish_on_resume)
+    {
+        halfduplexclientTunnelUpStreamFinish(r.client, l);
+        lineDestroy(l);
+    }
 }
 static void runtimeReadPause(tunnel_t *t, line_t *l)
 {
@@ -234,6 +259,8 @@ static void runtimeInitialize(tunnel_t *t, line_t *l)
     }
     if (r.mode != 7)
         halfduplexclientTunnelDownStreamEst(r.client, l);
+    if (r.retirement_case && r.upload_finish_stage == kUploadFinishDuringDownloadInit && r.init_count == 2)
+        halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
     if ((r.mode == 3 && r.init_count == 1) || (r.mode == 4 && r.init_count == 2))
         halfduplexclientTunnelDownStreamFinish(r.client, l);
 }
@@ -261,6 +288,20 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
         r.upload_length += length;
     }
     lineReuseBuffer(l, buf);
+    if (r.retirement_case)
+    {
+        if (r.upload_finish_stage == kUploadFinishDuringDownloadIntro && l == r.download)
+            halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
+        if (r.upload_finish_stage == kUploadFinishDuringUploadIntro && l == r.upload)
+        {
+            halfduplexclientTunnelDownStreamPause(r.client, r.upload);
+            halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("queued", 6));
+            twfRequire(bufferqueueGetBufCount(
+                           &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 1,
+                       "intro reentry did not retain the pending upload");
+            halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
+        }
+    }
     if (l == r.download)
     {
         if (r.mode == 1)
@@ -278,11 +319,20 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 }
 
-static void runRuntimeCase(unsigned mode)
+static void runtimeResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    twfSetCase("HalfDuplex exact pair Init/Est publication, FIFO and terminal ownership");
-    memoryZero(&r, sizeof(r));
-    r.mode = mode;
+    discard t;
+    twfRequire(l == r.main, "download response escaped the main line");
+    buf                   = halfduplexTestMaterialize(r.env.pool, buf);
+    const uint32_t length = sbufGetLength(buf);
+    twfRequire(r.response_length + length <= sizeof(r.response), "download response capture overflow");
+    memoryCopy(r.response + r.response_length, sbufGetRawPtr(buf), length);
+    r.response_length += length;
+    lineReuseBuffer(l, buf);
+}
+
+static void runtimeSetup(void)
+{
     twfWorkerEnvSetup(&r.env, 4096, 64);
     r.client = halfduplexclientTunnelCreate(NULL);
     r.prev   = tunnelCreate(NULL, 0, 0);
@@ -290,6 +340,7 @@ static void runRuntimeCase(unsigned mode)
     tunnelBind(r.prev, r.client);
     tunnelBind(r.client, r.next);
     r.prev->fnFinD               = runtimeOwnerFinish;
+    r.prev->fnPayloadD           = runtimeResponse;
     r.prev->fnEstD               = runtimeEstablished;
     r.prev->fnPauseD             = runtimePause;
     r.prev->fnResumeD            = runtimeResume;
@@ -305,6 +356,33 @@ static void runRuntimeCase(unsigned mode)
     r.main          = lineCreate(tunnelchainGetLinePools(r.chain), 0);
     lineRef(r.main);
     halfduplexclientTunnelUpStreamInit(r.client, r.main);
+}
+
+static void runtimeTeardown(void)
+{
+    twfRequireLineStateZeroed(r.main, r.client, "main state survived close");
+    lineUnref(r.main);
+    twfRequireLineStateZeroed(r.upload, r.client, "upload state survived close");
+    lineUnref(r.upload);
+    if (r.download != NULL)
+    {
+        twfRequireLineStateZeroed(r.download, r.client, "download state survived close");
+        lineUnref(r.download);
+    }
+    twfRequireNoLeakedBuffers();
+    tunnelchainDestroy(r.chain);
+    tunnelDestroy(r.next);
+    tunnelDestroy(r.prev);
+    tunnelDestroy(r.client);
+    twfWorkerEnvTeardown(&r.env);
+}
+
+static void runRuntimeCase(unsigned mode)
+{
+    twfSetCase("HalfDuplex exact pair Init/Est publication, FIFO and terminal ownership");
+    memoryZero(&r, sizeof(r));
+    r.mode = mode;
+    runtimeSetup();
     if (mode == 15)
     {
         // No headroom forces the checked framing path. Its synthetic length
@@ -378,21 +456,126 @@ static void runRuntimeCase(unsigned mode)
         halfduplexclientTunnelUpStreamFinish(r.client, r.main);
         lineDestroy(r.main);
     }
-    twfRequireLineStateZeroed(r.main, r.client, "main state survived close");
-    lineUnref(r.main);
-    twfRequireLineStateZeroed(r.upload, r.client, "upload state survived close");
-    lineUnref(r.upload);
-    if (r.download != NULL)
+    runtimeTeardown();
+}
+
+static void caseUploadFinishKeepsResponse(upload_finish_stage_t stage, bool hold_download, bool finish_on_resume,
+                                          bool keep_main_alive)
+{
+    twfSetCase(stage == kUploadFinishDuringDownloadInit    ? "HalfDuplex upload Finish during download Init"
+               : stage == kUploadFinishDuringDownloadIntro ? "HalfDuplex upload Finish before upload intro"
+               : stage == kUploadFinishDuringUploadIntro   ? "HalfDuplex upload Finish during upload intro"
+               : finish_on_resume                          ? "HalfDuplex upload retirement Resume closes application"
+               : hold_download                             ? "HalfDuplex upload retirement preserves download Pause"
+               : keep_main_alive                           ? "HalfDuplex response tail with borrowed main retained"
+                                                           : "HalfDuplex upload-first Finish preserves response tail");
+    memoryZero(&r, sizeof(r));
+    r.mode                = 16; // Establish both children without injecting application input.
+    r.retirement_case     = true;
+    r.upload_finish_stage = stage;
+    r.finish_on_resume    = finish_on_resume;
+    r.keep_main_alive     = keep_main_alive;
+    runtimeSetup();
+
+    static const uint8_t prefix[]   = {'p', 0, 'r', 'e'};
+    static const uint8_t tail[]     = {'t', 'a', 0, 'i', 'l'};
+    static const uint8_t expected[] = {'p', 0, 'r', 'e', 't', 'a', 0, 'i', 'l'};
+    if (stage != kUploadFinishDuringDownloadInit)
+        halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("A", 1));
+
+    if (stage == kUploadFinishDuringDownloadInit || stage == kUploadFinishDuringDownloadIntro)
     {
-        twfRequireLineStateZeroed(r.download, r.client, "download state survived close");
-        lineUnref(r.download);
+        twfRequire(! lineIsAlive(r.main) && ! lineIsAlive(r.upload) && ! lineIsAlive(r.download),
+                   "upload loss before publication left an incomplete pair alive");
+        twfRequireEqualU32(r.init_count, 2, "startup upload loss skipped adjacent download Init");
+        twfRequireEqualU32(r.upload_callbacks, 0, "startup sent an intro after upload Finish");
+        twfRequireEqualU32(r.download_callbacks,
+                           stage == kUploadFinishDuringDownloadIntro ? 1 : 0,
+                           "startup upload loss emitted unexpected download output");
+        if (stage == kUploadFinishDuringDownloadInit)
+            twfRequireEqualU32(r.est_count, 0, "startup upload loss emitted application Est");
+        twfRequireEqualU32(r.owner_finishes, 1, "startup upload loss did not finish main exactly once");
+        twfRequireEqualU32(r.download_finishes, 1, "startup upload loss did not close download exactly once");
     }
-    twfRequireNoLeakedBuffers();
-    tunnelchainDestroy(r.chain);
-    tunnelDestroy(r.next);
-    tunnelDestroy(r.prev);
-    tunnelDestroy(r.client);
-    twfWorkerEnvTeardown(&r.env);
+    else
+    {
+        if (stage == kUploadFinishAfterStartup)
+        {
+            halfduplexclientTunnelDownStreamPayload(r.client, r.download, runtimePayload(prefix, sizeof(prefix)));
+            halfduplexclientTunnelDownStreamPause(r.client, r.upload);
+            if (hold_download)
+                halfduplexclientTunnelDownStreamPause(r.client, r.download);
+            halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
+        }
+        twfRequire(! lineIsAlive(r.upload), "upload Finish retained its owned transport");
+        if (! finish_on_resume)
+            twfRequire(lineIsAlive(r.main) && lineIsAlive(r.download),
+                       "upload Finish closed download before the response tail arrived");
+        twfRequireEqualU32(r.pause_count, 1, "upload pressure was not mapped to main exactly once");
+        twfRequireEqualU32(
+            r.resume_count, hold_download ? 0 : 1, "upload retirement did not reconcile aggregate producer pressure");
+        if (finish_on_resume)
+        {
+            twfRequire(! lineIsAlive(r.main) && ! lineIsAlive(r.download),
+                       "application Finish during retirement Resume retained the pair");
+            twfRequireEqualU32(r.owner_finishes, 0, "retirement reflected Finish toward the closing application");
+            twfRequireEqualU32(r.download_finishes, 1, "reentrant application Finish did not close download once");
+        }
+        else
+        {
+            twfRequireEqualU32(r.owner_finishes, 0, "upload Finish prematurely finished the application");
+            twfRequireEqualU32(r.download_finishes, 0, "upload Finish prematurely closed download");
+            halfduplexclient_lstate_t *ls = lineGetState(r.main, r.client);
+            twfRequire(ls->upload_line == NULL, "retired upload remained attached to main");
+            twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 0,
+                       "upload retirement retained queued application input");
+            const unsigned upload_callbacks = r.upload_callbacks;
+            halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("late", 4));
+            twfRequireEqualU32(r.upload_callbacks, upload_callbacks, "late application payload reached retired upload");
+            twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 0,
+                       "late application payload was queued after upload retirement");
+            halfduplexclientTunnelUpStreamPause(r.client, r.main);
+            halfduplexclientTunnelUpStreamResume(r.client, r.main);
+            twfRequireEqualU32(r.read_pauses, 1, "application Pause lost the surviving download mapping");
+            twfRequireEqualU32(r.read_resumes, 1, "application Resume lost the surviving download mapping");
+            if (hold_download)
+            {
+                halfduplexclientTunnelDownStreamResume(r.client, r.download);
+                twfRequireEqualU32(r.resume_count, 1, "download Resume stranded main after upload retirement");
+            }
+            if (stage == kUploadFinishDuringUploadIntro)
+                halfduplexclientTunnelDownStreamPayload(r.client, r.download, runtimePayload(prefix, sizeof(prefix)));
+            halfduplexclientTunnelDownStreamPayload(r.client, r.download, runtimePayload(tail, sizeof(tail)));
+            twfRequire(r.response_length == sizeof(expected) && memoryEqual(r.response, expected, sizeof(expected)),
+                       "upload-first Finish truncated or changed the exact response bytes");
+            halfduplexclientTunnelDownStreamFinish(r.client, r.download);
+            twfRequireEqualU32(r.owner_finishes, 1, "download Finish did not finish main exactly once");
+            twfRequireEqualU32(r.download_finishes, 0, "download Finish was reflected toward its sender");
+            twfRequire(lineIsAlive(r.main) == keep_main_alive, "download Finish violated borrowed main ownership");
+            if (keep_main_alive)
+            {
+                twfRequireLineStateZeroed(r.main, r.client, "download Finish retained borrowed main state");
+                lineDestroy(r.main);
+            }
+        }
+    }
+    twfRequireEqualU32(r.upload_finishes, 0, "upload Finish was reflected toward its sender");
+    twfRequireEqualU32(twfLineRefCount(r.main), 1, "upload retirement leaked a main reference");
+    twfRequireEqualU32(twfLineRefCount(r.upload), 1, "upload retirement leaked an upload reference");
+    twfRequireEqualU32(twfLineRefCount(r.download), 1, "upload retirement leaked a download reference");
+    runtimeTeardown();
+}
+
+static void runUploadFinishCases(void)
+{
+    caseUploadFinishKeepsResponse(kUploadFinishAfterStartup, false, false, false);
+    caseUploadFinishKeepsResponse(kUploadFinishAfterStartup, false, false, true);
+    caseUploadFinishKeepsResponse(kUploadFinishAfterStartup, true, false, false);
+    caseUploadFinishKeepsResponse(kUploadFinishAfterStartup, false, true, false);
+    caseUploadFinishKeepsResponse(kUploadFinishDuringDownloadInit, false, false, false);
+    caseUploadFinishKeepsResponse(kUploadFinishDuringDownloadIntro, false, false, false);
+    caseUploadFinishKeepsResponse(kUploadFinishDuringUploadIntro, false, false, false);
+    caseUploadFinishKeepsResponse(kUploadFinishDuringUploadIntro, false, true, false);
 }
 
 int main(void)
@@ -402,10 +585,12 @@ int main(void)
     frandInit();
     for (unsigned mode = 0; mode < 16; ++mode)
         runRuntimeCase(mode);
+    runUploadFinishCases();
 #if WW_HAVE_SPLICE
     splice_inputs = true;
     for (unsigned mode = 0; mode < 16; ++mode)
         runRuntimeCase(mode);
+    runUploadFinishCases();
 #endif
     caseSynchronousSiblingCloseSurvivesReentrantMainFinish();
     frandThreadCleanup();

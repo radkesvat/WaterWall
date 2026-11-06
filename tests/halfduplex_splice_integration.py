@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""HalfDuplex TCP ordering and splice evidence in a private loopback namespace. Two workers and
-client/server nodes stage first/ready before a 1 MiB reverse echo; checks exact bytes, EOF,
-bulk-only pipe-to-socket traces for both endpoints and termination 143. Requires strace and
-namespace support. Failed runs retain logs. CTest: waterwall.halfduplex_tcp_splice_{true,false}.
-CTest: waterwall.halfduplex_tcp_splice_false, waterwall.halfduplex_tcp_splice_true."""
+"""HalfDuplex TCP ordering and response completion in a private loopback namespace.
+Two workers stage first/ready before a 1 MiB reverse echo. Default mode checks bulk-only
+pipe-to-socket traces and client-first closure; it requires strace. The server-close mode
+closes the backend immediately after its response and requires every byte followed by EOF,
+without first closing the client. Both modes require namespace support and termination 143.
+Failed runs retain logs. CTest: waterwall.halfduplex_tcp_splice_{true,false} and
+waterwall.halfduplex_tcp_response_close_{true,false}. Native units force cross-connection
+Finish ordering; this integration checks the complete backend-close path over real TCP.
+"""
 import concurrent.futures
 import json
 from pathlib import Path
@@ -25,9 +29,9 @@ from wwtest.run_directory import RunDirectory
 from wwtest.process import Process
 
 
-def run(binary, enabled):
-    tracer = shutil.which("strace")
-    if tracer is None:
+def run(binary, enabled, server_closes=False):
+    tracer = None if server_closes else shutil.which("strace")
+    if not server_closes and tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
     with RunDirectory("waterwall-halfduplex-") as root:
         nodes = [
@@ -52,8 +56,10 @@ def run(binary, enabled):
         }))
         with socket.socket() as backend:
             configure_listener(backend, ('127.0.0.1', 27983), timeout=15)
-            with Process([tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
-                          str(root / "splice.log"), binary], cwd=root,
+            command = ([binary] if server_closes else
+                       [tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o",
+                        str(root / "splice.log"), binary])
+            with Process(command, cwd=root,
                          log_path=root / "stdout.log") as process:
                 deadline = time.monotonic() + 10
                 while True:
@@ -74,7 +80,8 @@ def run(binary, enabled):
                         conn.sendall(b"ready")
                         assert exact(conn, len(data)) == data
                         conn.sendall(data[::-1])
-                        assert conn.recv(1) == b""
+                        if not server_closes:
+                            assert conn.recv(1) == b""
 
                 # Close the client before joining the peer if a check fails;
                 # the existing socket deadlines bound any unfinished exchange.
@@ -83,13 +90,19 @@ def run(binary, enabled):
                     task = executor.submit(peer)
                     client.sendall(b"first")
                     assert exact(client, 5) == b"ready"
-                    boundary = len((root / "splice.log").read_text())
+                    if not server_closes:
+                        boundary = len((root / "splice.log").read_text())
                     client.sendall(data)
                     assert exact(client, len(data)) == data[::-1]
-                    client.shutdown(socket.SHUT_RDWR)
+                    if server_closes:
+                        assert client.recv(1) == b"", "server response did not end with EOF"
+                    else:
+                        client.shutdown(socket.SHUT_RDWR)
                     task.result(timeout=20)
                 process.send_signal(signal.SIGTERM)
                 assert process.wait(timeout=10) == 128 + signal.SIGTERM
+                if server_closes:
+                    return
                 calls = list(successful_calls((root / "splice.log").read_text()[boundary:]))
                 outputs = [c for c in calls if c.startswith("splice(") and "<pipe:" in c.split(", NULL, ")[0]
                            and "<TCP:" in c.split(", NULL, ")[1]]
@@ -106,6 +119,10 @@ def interrupted(signum, _frame):
 
 
 if __name__ == "__main__":
+    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] != "server-close"):
+        raise SystemExit("usage: halfduplex_splice_integration.py BINARY true|false [server-close]")
     signal.signal(signal.SIGTERM, interrupted)
-    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true")
-    print("HalfDuplex staged TCP splice roundtrip passed")
+    server_closes = len(sys.argv) == 4
+    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true", server_closes)
+    print("HalfDuplex TCP response-close passed" if server_closes else
+          "HalfDuplex staged TCP splice roundtrip passed")
