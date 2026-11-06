@@ -313,6 +313,14 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
         lineUnref(l);
         return;
     }
+    /* Download Init can finish its upload sibling while main and download survive. */
+    if (! lineIsAlive(upload_line))
+    {
+        lineUnref(upload_line);
+        httpclientSplitFailMain(t, l);
+        lineUnref(l);
+        return;
+    }
     lineUnref(upload_line);
 
     if (! lineIsAlive(l))
@@ -507,7 +515,7 @@ void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l)
         if (main_line != NULL && lineIsAlive(main_line))
         {
             lineRef(main_line);
-            httpclient_lstate_t *main_ls = lineGetState(main_line, t);
+            httpclient_lstate_t *main_ls       = lineGetState(main_line, t);
             line_t              *download_line = main_ls->split_download_line;
             /* The two connections' Finishes race. The upload's has nothing behind it, while the end of
              * the response is still in flight on the download, whose own Finish closes the trio. */
