@@ -254,11 +254,26 @@ A peer-only responder remains until first CLOSE receipt plus D. A locally acknow
 
 ### Backpressure behavior
 
-Pause and Resume are repeatable advisory signals and are forwarded transparently. Ready data, retransmissions, acknowledgements and due pings do not wait for Resume.
+The client combines its local KCP backlog pressure with carrier pressure before
+notifying the previous application stream. The application remains paused while
+either reason is active. Carrier Pause/Resume notifications, including repeats,
+are relayed only when the local KCP hold is absent. Local pressure transitions
+notify the application only while the carrier is not paused; neither reason can
+release the other's hold. Application-side Pause/Resume still maps to the carrier.
 
-After admitting the complete input and settling KCP packet output, the node compares its send queue with `kcp-send-buffer-limit`. Crossing above that threshold requests Pause toward the previous side; falling below it releases that local hold with Resume. When the setting is `0`, the threshold is derived from the current KCP windows. ACK-only input can release the hold without another outgoing packet. Notifications are sent synchronously after KCP processing, preserving input order and safe reentrant Finish handling.
+After admitting the complete input and settling KCP packet output, the node
+compares queued and unacknowledged KCP segments with `kcp-send-buffer-limit`.
+Crossing above the threshold sets the local hold; falling below it clears that
+hold, and equality preserves its state. When the setting is `0`, the threshold
+is derived from the current KCP windows. ACK-only input can clear the local hold
+without another outgoing packet. State is recorded before synchronous
+notification, and no notification targets a finished application.
 
-This setting is a soft segment-count threshold, not a hard memory or admission limit. KCP windows and the receive timeout remain in force. The node cannot bypass itself: every payload still needs KCP/FEC processing, and its reliability and timeout state remain necessary.
+The setting remains a soft segment-count threshold, not a hard memory or
+admission limit. Ready KCP data, acknowledgements, retransmissions and due pings
+continue while the application is paused. KCP windows, timers and the receive
+timeout remain in force. Every payload still needs KCP/FEC processing, so the
+node cannot bypass itself.
 
 ## Notes And Caveats
 

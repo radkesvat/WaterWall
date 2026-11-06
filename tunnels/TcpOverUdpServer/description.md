@@ -287,21 +287,29 @@ Finish. Closing one session preserves a carrier still needed by another.
 
 ### Backpressure behavior
 
-Pause and Resume are repeatable advisory notifications. Received signals pass
-through, except toward the already-finished stream side during close-frame
-flushing. KCP data, acknowledgements, retransmissions and due pings do not wait
-for Resume; KCP windows and timers still control protocol progress.
+The server combines each session's local KCP backlog pressure with the shared
+carrier's pressure before notifying that session's next-side service stream.
+The service remains paused while either reason is active. During ordinary
+operation, carrier Pause/Resume notifications, including repeats, are relayed to
+a service only when its local KCP hold is absent. Local pressure transitions
+notify that service only while the carrier is not paused; neither reason can
+release the other's hold.
+After a new service's Init, any pending carrier Pause is delivered even if Init
+also created KCP pressure, so that service receives its initial hold.
+Service-side Pause/Resume still maps to the carrier.
 
-After an admitted stream payload is encoded and KCP output settles, a send queue
-above `kcp-send-buffer-limit` triggers one Pause toward the next side. When the
-queue falls below that threshold, the node releases its own pressure with Resume,
-including when an incoming ACK drains it without producing another packet. When
-the setting is `0`, the threshold comes from the current KCP windows. This is an
-advisory threshold in KCP segments, not a hard admission limit.
+After an admitted stream payload is encoded and KCP output settles, queued and
+unacknowledged KCP segments above `kcp-send-buffer-limit` set that session's local
+hold. Falling below the threshold clears the hold, and equality preserves its
+state. ACK-only input can clear the local hold without producing another packet.
+When the setting is `0`, the threshold comes from the current KCP windows. State
+is recorded before notification, and no notification targets a finished service.
 
-The node remains active for the entire line: every payload needs KCP and optional
-FEC processing, and the session retains its timers and close protocol. It cannot
-bypass itself after setup.
+The setting remains a soft segment-count threshold, not a hard memory or
+admission limit. Ready KCP data, acknowledgements, retransmissions and due pings
+continue while a service is paused. KCP windows, timers and the receive timeout
+remain in force. Every payload still needs KCP and optional FEC processing, so
+the node cannot bypass itself after setup.
 
 ## Notes And Caveats
 

@@ -932,6 +932,10 @@ bool touSessionIsReady(const tou_session_t *s)
 {
     return s->ready && ! s->dead;
 }
+bool touSessionIsPressured(const tou_session_t *s)
+{
+    return s->pressure;
+}
 const tou_settings_t *touSessionSettings(const tou_session_t *s)
 {
     return &s->settings;

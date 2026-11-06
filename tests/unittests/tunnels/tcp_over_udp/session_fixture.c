@@ -33,7 +33,7 @@ typedef struct endpoint_s
     uint8_t        nonce[kTouNonceSize];
     unsigned       app_finishes, service_finishes, establishments, pauses[2], resumes[2];
     size_t         received[2], sent[2];
-    bool           app_closed;
+    bool           app_closed, paused[2];
 } endpoint_t;
 typedef struct packet_s
 {
@@ -72,7 +72,8 @@ typedef struct fixture_s
     bool            abort_on_ready, ready_aborted, close_seen[2], close_ack_before_other;
     unsigned        saved_ack_direction;
     unsigned        wire_pauses[2], wire_resumes[2], emitted[2];
-    bool            resume_during_init, require_dead_carrier;
+    bool            resume_during_init, require_dead_carrier, close_on_resume, resume_during_pause;
+    bool            pause_during_init;
     bool     nested_transport_from_app_finish, require_dead_app, nested_transport_finished, transport_admission_checked;
     unsigned expired_pushes, expired_acks;
     sbuf_t  *saved_close, *saved_hello, *saved_confirm, *saved_data, *saved_ack, *saved_parity;
@@ -309,13 +310,18 @@ static void appPause(tunnel_t *t, line_t *line)
     discard     t;
     endpoint_t *ep = byApp(line);
     ++ep->pauses[0];
+    ep->paused[0] = true;
     if (active->close_on_pressure)
         closeApp(ep);
 }
 static void appResume(tunnel_t *t, line_t *line)
 {
-    discard t;
-    ++byApp(line)->resumes[0];
+    discard     t;
+    endpoint_t *ep = byApp(line);
+    ++ep->resumes[0];
+    ep->paused[0] = false;
+    if (active->close_on_resume)
+        closeApp(ep);
 }
 enum
 {
@@ -330,6 +336,12 @@ static void servicePause(tunnel_t *t, line_t *line)
     require(t == active->service && lineIsAlive(line), "Pause reached a retired or foreign service");
     endpoint_t *ep = byService(line);
     ++ep->pauses[1];
+    ep->paused[1] = true;
+    if (active->resume_during_pause)
+    {
+        active->resume_during_pause = false;
+        tunnelNextUpStreamResume(active->wire, active->carrier);
+    }
     if (active->service_pressure_action == kServicePressureFinishOnPause)
     {
         ++active->service_pressure_closes;
@@ -348,6 +360,7 @@ static void serviceResume(tunnel_t *t, line_t *line)
     require(t == active->service && lineIsAlive(line), "Resume reached a retired or foreign service");
     endpoint_t *ep = byService(line);
     ++ep->resumes[1];
+    ep->paused[1] = false;
     if (active->service_pressure_action == kServicePressureFinishOnResume)
     {
         require(ikcp_waitsnd(touSessionKcp(ep->server_session)) < 2,
@@ -416,6 +429,8 @@ static void serviceInit(tunnel_t *t, line_t *line)
     tunnelPrevDownStreamEst(t, line);
     if (active->early_service_output)
         sendBytes(ep, 1, 130001);
+    if (active->pause_during_init)
+        tunnelNextUpStreamPause(active->wire, active->carrier);
     if (active->early_service_finish)
         closeService(ep);
 }
@@ -1312,6 +1327,143 @@ static void casePressure(bool server, bool close_on_pause)
     teardown();
 }
 
+static void carrierPressure(endpoint_t *ep, bool server, bool paused)
+{
+    if (server)
+    {
+        if (paused)
+            tunnelNextUpStreamPause(active->wire, active->carrier);
+        else
+            tunnelNextUpStreamResume(active->wire, active->carrier);
+    }
+    else if (paused)
+        tunnelPrevDownStreamPause(active->wire, ep->transport);
+    else
+        tunnelPrevDownStreamResume(active->wire, ep->transport);
+}
+
+static void caseCombinedPressure(bool server)
+{
+    for (unsigned carrier_first = 0; carrier_first < 2; ++carrier_first)
+        for (unsigned carrier_clears_first = 0; carrier_clears_first < 2; ++carrier_clears_first)
+        {
+            char name[128];
+            snprintf(name,
+                     sizeof(name),
+                     "%s combined pressure: %s acquires first, %s clears first",
+                     server ? "server" : "client",
+                     carrier_first ? "carrier" : "KCP",
+                     carrier_clears_first ? "carrier" : "KCP");
+            testCaseSet(name);
+            fixture_t fixture;
+            setup(&fixture, false, 1000, 1000, 1500);
+            endpoint_t *ep = openApp();
+            established(ep);
+            const unsigned direction = server ? 1 : 0;
+            tou_session_t *session   = server ? ep->server_session : ep->client_session;
+            fixture.drop_kind        = kTouKcp;
+            fixture.drop_direction   = direction;
+            fixture.drop_remaining   = 1;
+            if (carrier_first)
+                carrierPressure(ep, server, true);
+            sendBytes(ep, direction, 70001);
+            require(ikcp_waitsnd(touSessionKcp(session)) > 2, "combined-pressure input did not fill KCP backlog");
+            if (! carrier_first)
+                carrierPressure(ep, server, true);
+            require(ep->pauses[direction] == 1 && ep->resumes[direction] == 0 && ep->paused[direction],
+                    "overlapping holds did not preserve one application Pause");
+            if (carrier_clears_first)
+            {
+                carrierPressure(ep, server, false);
+                require(ep->resumes[direction] == 0 && ep->paused[direction],
+                        "carrier Resume released the application while KCP backlog remained high");
+            }
+            pump(500);
+            require(fixture.dropped == 1 && ep->received[direction] == 70001 &&
+                        ikcp_waitsnd(touSessionKcp(session)) < 2,
+                    "combined pressure stopped retransmission, payload delivery or ACK progress");
+            if (! carrier_clears_first)
+            {
+                require(ep->resumes[direction] == 0 && ep->paused[direction],
+                        "ACK-only progress released the application while the carrier remained paused");
+                carrierPressure(ep, server, false);
+            }
+            require(ep->resumes[direction] == 1 && ! ep->paused[direction],
+                    "clearing both pressure holds did not resume the application once");
+            require(lineIsAlive(ep->app) && lineIsAlive(ep->service), "combined pressure closed a live session");
+            teardown();
+        }
+}
+
+static void caseCombinedPressureResumeFinish(bool server)
+{
+    testCaseSet(server ? "combined server Resume synchronously finishes service"
+                       : "combined client Resume synchronously finishes application");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    endpoint_t *ep = openApp();
+    established(ep);
+    const unsigned direction = server ? 1 : 0;
+    sendBytes(ep, direction, 70001);
+    carrierPressure(ep, server, true);
+    pump(500);
+    require(ep->received[direction] == 70001 && ep->resumes[direction] == 0,
+            "combined Resume/Finish fixture lost data or released the carrier hold early");
+    if (server)
+        fixture.service_pressure_action = kServicePressureFinishOnResume;
+    else
+        fixture.close_on_resume = true;
+    carrierPressure(ep, server, false);
+    line_t *line = server ? ep->service : ep->app;
+    require(ep->resumes[direction] == 1 && ! lineIsAlive(line),
+            "combined Resume did not safely finish its application line");
+    requireStateZero(line, server ? fixture.server : fixture.client);
+    pump(100);
+    require(server ? ep->service_finishes == 0 && ep->app_finishes == 1
+                   : ep->app_finishes == 0 && ep->service_finishes == 1,
+            "combined Resume/Finish reflected Finish or failed to close the peer");
+    teardown();
+}
+
+static void caseSharedCarrierPressure(void)
+{
+    testCaseSet("shared server carrier preserves each session's independent KCP hold");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    endpoint_t *busy = openApp();
+    established(busy);
+    endpoint_t *idle = openApp();
+    established(idle);
+    sendBytes(busy, 1, 70001);
+    carrierPressure(busy, true, true);
+    require(busy->pauses[1] == 1 && idle->pauses[1] == 1, "shared carrier failed to hold both service readers");
+    carrierPressure(busy, true, false);
+    require(busy->resumes[1] == 0 && idle->resumes[1] == 1,
+            "shared carrier Resume ignored a session's KCP hold or retained an idle sibling");
+    pump(500);
+    require(busy->received[1] == 70001 && busy->resumes[1] == 1 && idle->resumes[1] == 1,
+            "per-session ACK progress failed to resume the busy reader independently");
+    teardown();
+}
+
+static void caseSharedCarrierPressureReentry(void)
+{
+    testCaseSet("nested carrier Resume does not leave a sibling with stale Pause");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    endpoint_t *first = openApp();
+    established(first);
+    endpoint_t *second = openApp();
+    established(second);
+    fixture.resume_during_pause = true;
+    carrierPressure(first, true, true);
+    require(! fixture.resume_during_pause && first->pauses[1] + second->pauses[1] == 1,
+            "carrier did not exercise nested Resume or delivered stale outer Pause afterward");
+    require(first->resumes[1] > 0 && second->resumes[1] > 0 && ! first->paused[1] && ! second->paused[1],
+            "nested carrier Resume left an unpressured service reader paused");
+    teardown();
+}
+
 static void caseServerPressureReentry(bool fec, unsigned action)
 {
     testCaseSet(action == kServicePressureFinishOnPause    ? "server Pause synchronously closes owned service"
@@ -1568,8 +1720,8 @@ static void caseAdvisorySignals(void)
     unsigned emitted = fixture.emitted[0] + fixture.emitted[1];
     sendBytes(ep, 0, 10001);
     pump(150);
-    require(ep->received[0] == 10001 && fixture.emitted[0] + fixture.emitted[1] > emitted && ep->resumes[0] == 1,
-            "advisory Pause gated due KCP output or ACK-only local Resume");
+    require(ep->received[0] == 10001 && fixture.emitted[0] + fixture.emitted[1] > emitted && ep->resumes[0] == 0,
+            "carrier Pause gated due KCP output or ACK-only progress prematurely resumed the application");
     for (unsigned i = 0; i < 2; ++i)
     {
         tunnelNextUpStreamResume(fixture.source, ep->app);
@@ -1577,7 +1729,7 @@ static void caseAdvisorySignals(void)
         tunnelNextUpStreamResume(fixture.wire, fixture.carrier);
         tunnelPrevDownStreamResume(fixture.service, ep->service);
     }
-    require(ep->resumes[0] == 3 && ep->resumes[1] == 2 && fixture.wire_resumes[0] == 2 && fixture.wire_resumes[1] == 2,
+    require(ep->resumes[0] == 2 && ep->resumes[1] == 2 && fixture.wire_resumes[0] == 2 && fixture.wire_resumes[1] == 2,
             "repeated Resume was suppressed or mapped to wrong line");
     teardown();
 }
@@ -1595,6 +1747,35 @@ static void caseDeferredPressure(bool fec)
         established(ep);
         require(ep->pauses[1] == (nested_resume ? 0U : 1U) && ep->resumes[1] == (nested_resume ? 1U : 0U),
                 "deferred Pause was lost/duplicated or replayed after nested Resume");
+        teardown();
+    }
+}
+
+static void caseDeferredCombinedPressure(bool fec)
+{
+    for (unsigned repeat_pause = 0; repeat_pause < 2; ++repeat_pause)
+    {
+        testCaseSet(repeat_pause ? "Init output and repeated carrier Pause preserve deferred application hold"
+                                 : "Init output receives deferred carrier Pause despite local KCP pressure");
+        fixture_t fixture;
+        setup(&fixture, fec, 1000, 1000, 1500);
+        fixture.early_service_output = true;
+        fixture.pause_during_init    = repeat_pause != 0;
+        endpoint_t *ep               = openApp();
+        carrierPressure(ep, true, true);
+        established(ep);
+        require(ikcp_waitsnd(touSessionKcp(ep->server_session)) > 2,
+                "service Init output did not establish local KCP pressure");
+        require(ep->pauses[1] == 1 && ep->resumes[1] == 0 && ep->paused[1],
+                "Init output suppressed the initial application Pause for an already-paused carrier");
+        pump(500);
+        require(ep->received[1] == 130001 && ikcp_waitsnd(touSessionKcp(ep->server_session)) < 2,
+                "deferred combined pressure stopped Init payload or ACK progress");
+        require(ep->resumes[1] == 0 && ep->paused[1],
+                "ACK progress released the deferred application hold while the carrier remained paused");
+        carrierPressure(ep, true, false);
+        require(ep->resumes[1] == 1 && ! ep->paused[1],
+                "clearing both deferred pressure holds did not resume the service reader");
         teardown();
     }
 }
@@ -1675,6 +1856,7 @@ int tcpOverUdpSessionCases(const char *selection)
             for (unsigned kind = kTouHello; kind <= kTouReady; ++kind)
                 caseHandshakeLoss(fec != 0, kind, kind % 2 == 0);
             caseDeferredPressure(fec != 0);
+            caseDeferredCombinedPressure(fec != 0);
             caseLargeFlight(fec != 0, false);
             caseLargeFlight(fec != 0, true);
             caseZeroWindowReopen(fec != 0);
@@ -1693,6 +1875,8 @@ int tcpOverUdpSessionCases(const char *selection)
         caseClientTerminalReentry();
         caseCarrierStopReentry();
         caseAdvisorySignals();
+        caseSharedCarrierPressure();
+        caseSharedCarrierPressureReentry();
         caseCapacity();
         tcpOverUdpExtraCases();
         tcpOverUdpClientSettingsGeometryCases();
@@ -1705,6 +1889,8 @@ int tcpOverUdpSessionCases(const char *selection)
         for (unsigned failure = 0; failure < 3; ++failure)
             caseFailure(failure, server);
         casePressure(server, false);
+        caseCombinedPressure(server);
+        caseCombinedPressureResumeFinish(server);
         if (! server)
             casePressure(server, true);
         else

@@ -158,7 +158,7 @@ static void sessionPressure(void *user, bool paused)
 {
     tcpoverudpserver_session_t *session = user;
     line_t                     *service = session->service;
-    if (service == NULL || ! session->init_entered || ! session->carrier->active)
+    if (service == NULL || ! session->init_entered || ! session->carrier->active || session->carrier->transport_paused)
     {
         return;
     }
@@ -519,7 +519,11 @@ void tcpoverudpserverRelayToServices(tcpoverudpserver_carrier_t *carrier, Tunnel
                 line_t *service = session->service;
                 if (pressure)
                 {
+                    if (touSessionIsPressured(session->engine))
+                        break;
                     session->carrier_pause_delivered = carrier->transport_paused;
+                    /* A preceding callback may have changed the shared carrier hold. */
+                    callback = carrier->transport_paused ? tunnelNextUpStreamPause : tunnelNextUpStreamResume;
                 }
                 lineRef(service);
                 callback(carrier->tunnel, service);

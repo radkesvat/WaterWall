@@ -60,6 +60,7 @@ struct tcpoverudpclient_session_s
     wid_t                       wid;
     bool                        next_init_entered;
     bool                        transport_finished;
+    bool                        carrier_paused;
 };
 
 enum
@@ -134,5 +135,6 @@ void tcpoverudpclientLinestateDestroy(tcpoverudpclient_lstate_t *ls);
 bool tcpoverudpclientSessionCreate(tunnel_t *t, line_t *application);
 void tcpoverudpclientDetachApplication(tcpoverudpclient_session_t *session, bool notify);
 void tcpoverudpclientSignalApplication(tcpoverudpclient_session_t *session, LineTaskFnNoBuf signal);
+void tcpoverudpclientSetCarrierPaused(tcpoverudpclient_session_t *session, bool paused);
 void tcpoverudpclientTunnelUpStreamPause(tunnel_t *t, line_t *l);
 void tcpoverudpclientTunnelUpStreamResume(tunnel_t *t, line_t *l);

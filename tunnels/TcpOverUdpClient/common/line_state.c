@@ -30,6 +30,15 @@ void tcpoverudpclientSignalApplication(tcpoverudpclient_session_t *session, Line
     lineUnref(application);
 }
 
+void tcpoverudpclientSetCarrierPaused(tcpoverudpclient_session_t *session, bool paused)
+{
+    session->carrier_paused = paused;
+    if (session->application != NULL && ! touSessionIsPressured(session->driver))
+    {
+        tcpoverudpclientSignalApplication(session, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume);
+    }
+}
+
 static void clientEmit(void *user, sbuf_t *packet)
 {
     tcpoverudpclient_session_t *session   = user;
@@ -61,7 +70,11 @@ static void clientPeerClose(void *user)
 
 static void clientPressure(void *user, bool paused)
 {
-    tcpoverudpclientSignalApplication(user, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume);
+    tcpoverudpclient_session_t *session = user;
+    if (! session->carrier_paused)
+    {
+        tcpoverudpclientSignalApplication(session, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume);
+    }
 }
 
 static void clientTerminal(void *user, tou_result_t result)

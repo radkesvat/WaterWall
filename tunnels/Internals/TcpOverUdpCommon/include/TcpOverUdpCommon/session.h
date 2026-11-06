@@ -126,6 +126,8 @@ void                  touSessionTick(tou_session_t *session, uint64_t now);
 void                  touSessionQuiesce(tou_session_t *session);
 bool                  touSessionIsAlive(const tou_session_t *session);
 bool                  touSessionIsReady(const tou_session_t *session);
+/* Local KCP producer hold; published before the pressure callback. */
+bool                  touSessionIsPressured(const tou_session_t *session);
 const tou_settings_t *touSessionSettings(const tou_session_t *session);
 const uint8_t        *touSessionClientNonce(const tou_session_t *session);
 const uint8_t        *touSessionServerNonce(const tou_session_t *session);
