@@ -54,11 +54,12 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
         }
         // Both intros exist before callbacks. Nested input queues behind the
         // older upload intro until this admitted first input has been submitted.
-        ls->first_packet_sent = true;
         ls->intro_dispatching = true;
         tunnelNextUpStreamPayload(t, download, intro);
         if (halfduplexclientPairAlive(t, main, upload, download))
         {
+            // Both intros have reached their transports once this callback starts.
+            ls->first_packet_sent = true;
             tunnelNextUpStreamPayload(t, upload, framed);
             if (halfduplexclientPairAlive(t, main, upload, download))
                 ls->intro_dispatching = false;
@@ -76,7 +77,7 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
 void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
 {
     halfduplexclient_lstate_t *ls = lineGetState(main, t);
-    if (UNLIKELY(ls->main_line == NULL))
+    if (UNLIKELY(ls->main_line == NULL || (ls->first_packet_sent && ls->upload_line == NULL)))
     {
         lineReuseBuffer(main, buf);
         return;
