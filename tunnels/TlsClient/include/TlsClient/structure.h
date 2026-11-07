@@ -70,8 +70,9 @@ typedef struct tlsclient_lstate_s
     bool shaping_metadata_error;
     bool verbose;
     bool transport_est_sent;
-    /* Locally originated protocol/order and shaping pressure share one source notification. */
+    /* Protocol/order, shaping and received wire pressure share one source notification. */
     bool plaintext_producer_paused;
+    bool next_paused;
     bool source_paused;
     bool plaintext_write_in_progress;
     /* Plaintext awaiting TLS readiness or older reentrant output. The active

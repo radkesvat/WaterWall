@@ -169,8 +169,10 @@ through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supp
 - `UpStreamPayload` is buffered until the SOCKS5 command succeeds.
 - a successful TCP proxy reply releases the bounded application FIFO in order without waiting for Resume;
   Est has already been forwarded
-- TCP Pause/Resume notifications pass through immediately, including duplicates and notifications during negotiation
-- after successful TCP negotiation, all retained input/output has drained and the local source hold is released,
+- TCP source pressure combines the pending/draining application FIFO with the latest next-side Pause/Resume;
+  Resume reaches the source only after both holds clear, while duplicate transport notifications pass through
+  when no local hold remains
+- after successful TCP negotiation, all retained input/output has drained and both source-pressure holds are released,
   the client destroys its line state and permanently bypasses itself; later callbacks pass directly between neighbors
 - on handshake failure it destroys local state first, then closes both directions
 - in UDP mode, upstream payload is wrapped in a SOCKS5 UDP request header and sent through the UDP relay line
@@ -225,9 +227,9 @@ Source-backed metadata:
 | `required_padding_left` | `262` bytes |
 
 Transport `Est` does not mean SOCKS negotiation has succeeded. Application payload can be accepted after Init;
-the real protocol backlog is bounded at 2 MiB and 1,024 buffers. TCP greeting and ready application/reply output
+the real protocol backlog is bounded at 2 MiB logical bytes and 8 MiB queue charge. TCP greeting and ready application/reply output
 do not wait for Resume. The first retained application input pauses its source; the source resumes when the
-older FIFO drains. This local protocol hold is independent of transparently relayed transport pressure.
+older FIFO drains and next-side transport pressure has cleared. Neither hold can release the other.
 TCP receive Pause also reaches the next adapter during negotiation; its issuer must arrange Resume or close.
 For UDP, control and relay write pressure combine; one Resume cannot clear the other's outstanding Pause.
 UDP application backlog release and the owned control greeting continue to honor that boundary pressure,
@@ -236,7 +238,7 @@ UDP application, control and relay lines remain active for framing, association 
 The 4,096-byte bound applies only to incomplete reply metadata; a completed reply
 may arrive with a larger application body. Nested reply processing is serialized,
 with response bytes kept in FIFO order. Necessary retained response input shares
-a 2 MiB / 1,024-buffer downstream budget and drains after older reply input, including through Pause; ready TCP
+a 2 MiB logical-byte / 8 MiB queue-charge downstream budget and drains after older reply input, including through Pause; ready TCP
 forwarding stays synchronous. Empty proxy TCP input is ignored, and unused TCP tails on
 an established UDP control line are discarded. Ordering queues allocate backing
 storage on first use; UDP application and relay lines do not allocate handshake

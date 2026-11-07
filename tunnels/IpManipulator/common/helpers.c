@@ -942,7 +942,7 @@ static void ipmanipulatorDestroyPrestartPackets(ipmanipulator_tls_prestart_slot_
 
 static sbuf_t *ipmanipulatorCreateStandalonePacketBuffer(const sbuf_t *template_buf, uint32_t packet_len)
 {
-    sbuf_t *buf = sbufCreateWithPadding(packet_len, sbufGetLeftPadding(template_buf));
+    sbuf_t *buf = sbufCreateWithPadding(packet_len, sbufGetInitialHeadroom(template_buf));
     sbufSetLength(buf, packet_len);
     return buf;
 }
@@ -2354,7 +2354,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (appended && complete)
         {
-            LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+            LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%zu",
                  ipmanipulatorTlsCaptureKindName(kind),
                  (unsigned int) slot->captured_packets_count,
                  sbufGetLength(slot->assembled_packet));
@@ -2732,7 +2732,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
     if (complete)
     {
-        LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+        LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%zu",
              ipmanipulatorTlsCaptureKindName(kind),
              (unsigned int) slot->captured_packets_count,
              sbufGetLength(slot->assembled_packet));
@@ -2793,7 +2793,7 @@ void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t)
 
 sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
 {
-    sbuf_t *clone = bufferpoolGetBestFit(lineGetBufferPool(l), new_len, sbufGetLeftPadding(buf));
+    sbuf_t *clone = bufferpoolGetBestFit(lineGetBufferPool(l), new_len, sbufGetInitialHeadroom(buf));
 
     sbufSetLength(clone, new_len);
     return clone;

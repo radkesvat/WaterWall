@@ -44,7 +44,7 @@ bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
             }
             /* Keep the header and complete first reply in one ordinary buffer.
              * Reuse its advertised headroom when no materialization is needed. */
-            if (! sbufIsSplice(out) && sbufGetLeftCapacity(out) >= kVlessServerResponseLen)
+            if (! sbufIsSplice(out) && sbufGetHeadroom(out) >= kVlessServerResponseLen)
             {
                 sbufShiftLeft(out, kVlessServerResponseLen);
             }

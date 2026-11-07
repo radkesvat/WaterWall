@@ -64,8 +64,8 @@ foreach(fixture_target IN ITEMS
   streamtopackets_ownership_test
   tcpconnector_pause_close_test
   tcplistener_pause_close_test
-  tcpoverudpclient_line_failure_test
-  tcpoverudpserver_line_failure_test
+  kcpclient_line_failure_test
+  kcpserver_line_failure_test
   tcpudpconnector_selection_failure_test
   testerclient_orderly_shutdown_test
   testerserver_orderly_shutdown_test

@@ -26,7 +26,7 @@ required. `--config` is the logical configuration name; omitting it requires a
 globally unique node name. The client connects over TCP. APIServer must be reached
 through an authenticated encrypted transport with peer identity verification for remote use; it does not encrypt
 the API token. HTTP and raw UDP are not implemented by this client. An existing
-TcpOverUdp bridge can expose a local TCP entry point.
+KCP bridge can expose a local TCP entry point.
 
 ## Commands
 

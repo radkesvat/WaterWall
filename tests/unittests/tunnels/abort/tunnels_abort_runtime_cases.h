@@ -35,8 +35,8 @@ enum
  * collide.
  */
 int tunnelsAbortUdpStatelessSocketDestroyCase(void);
-int tunnelsAbortTcpOverUdpClientMtuCase(void);
-int tunnelsAbortTcpOverUdpServerMtuCase(void);
+int tunnelsAbortKcpClientMtuCase(void);
+int tunnelsAbortKcpServerMtuCase(void);
 int tunnelsAbortRouterGeoipUnopenedDatabaseCase(void);
 
 int tunnelsAbortTlsServerDrainingInitCase(void);

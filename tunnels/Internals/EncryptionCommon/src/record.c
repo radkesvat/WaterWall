@@ -36,15 +36,14 @@ wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, const uint8_t key[32]
     assert(buffer != NULL && *buffer != NULL && ! sbufIsSplice(*buffer));
     uint32_t plaintext_length = sbufGetLength(*buffer);
     assert(plaintext_length <= kEncryptionHardMaxFramePayload);
-    assert(sbufGetLeftCapacity(*buffer) >= kEncryptionFramePrefixSize);
+    assert(sbufGetHeadroom(*buffer) >= kEncryptionFramePrefixSize);
     uint32_t ciphertext_length = plaintext_length + kEncryptionTagSize;
     uint32_t body_length       = kEncryptionNonceSize + ciphertext_length;
 
     if (sbufGetMaximumWriteableSize(*buffer) < ciphertext_length)
         *buffer = sbufReserveSpace(*buffer, ciphertext_length);
 
-    sbufShiftLeft(*buffer, kEncryptionFramePrefixSize);
-    uint8_t *frame = sbufGetMutablePtr(*buffer);
+    uint8_t *frame = sbufShiftLeft(*buffer, kEncryptionFramePrefixSize);
     frame[0]       = kEncryptionTlsApplicationData;
     frame[1]       = kEncryptionTlsVersionMajor;
     frame[2]       = kEncryptionTlsVersionMinor;

@@ -79,7 +79,7 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     size_t addr_len = socksAddressEncodedLength(&address);
 
     size_t header_len = addr_len + 2U + kTrojanServerCrlfLen;
-    if (UNLIKELY(sbufGetLeftCapacity(buf) < header_len))
+    if (UNLIKELY(sbufGetHeadroom(buf) < header_len))
     {
         buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kTrojanServerUdpHeaderMaxLen);
     }

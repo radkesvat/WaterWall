@@ -142,7 +142,7 @@ static sbuf_t   *bytes(const void *data, uint32_t len, bool pipe, uint16_t paddi
         const uint16_t source_padding = padding == 320 ? bufferpoolGetSpliceBufferPadding(f.env.pool) : padding;
         b                             = twfTrackAcquired(testSpliceSourceBuffer(source_padding, len));
         twfRequire(write(sbufSpliceMetadata(b).pipefd[1], data, len) == (ssize_t) len, "source exceeds pipe fixture");
-        b->capacity = b->l_pad + len;
+        b->capacity = b->initial_headroom + len;
     }
     else
 #endif
@@ -283,7 +283,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *b)
     uint32_t n    = sbufGetLength(b);
     f.last        = b;
     f.last_splice = sbufIsSplice(b);
-    f.headroom    = sbufGetLeftCapacity(b);
+    f.headroom    = sbufGetHeadroom(b);
     f.parser_reads += reads;
     reads            = 0;
     uint8_t *capture = up ? f.up : f.down;
@@ -1048,8 +1048,8 @@ static void testFirstPayload(void)
             }
             unsigned length = representation == 2 ? 7 : 4;
             bool     ordinary         = ! sbufIsSplice(body);
-            uint32_t expected_padding = ordinary ? sbufGetLeftCapacity(body) - 68 - (udp ? 11 : 0)
-                                                 : bufferpoolGetLargeBufferPadding(f.env.pool);
+            uint32_t expected_padding =
+                ordinary ? sbufGetHeadroom(body) - 68 - (udp ? 11 : 0) : bufferpoolGetLargeBufferPadding(f.env.pool);
             tunnelUpStreamPayload(f.t, f.application, body);
             twfRequire(f.requests == 1 && f.deliveries_up == 0 && ! f.last_splice && f.headroom == expected_padding &&
                            (! ordinary || f.last == body),
@@ -1091,7 +1091,7 @@ static void testFirstPayloadReuse(void)
                 begin(udp, targets[form], 128, 0, false);
                 uint32_t padding = space == 0 ? headers - 1 : headers + (space == 2 ? 19 : 0);
                 sbuf_t  *body    = bytes("payload", 7, false, 512);
-                sbufShiftLeft(body, sbufGetLeftCapacity(body) - padding);
+                sbufShiftLeft(body, sbufGetHeadroom(body) - padding);
                 sbufSetLength(body, 7);
                 sbufWrite(body, "payload", 7);
                 tunnelUpStreamPayload(f.t, f.application, body);

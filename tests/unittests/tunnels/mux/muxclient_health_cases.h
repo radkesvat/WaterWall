@@ -359,7 +359,7 @@ static void caseSpliceBatchHealth(void)
     twfRequire(write(fd, bytes, kMuxMaxDataFrameLength) == (ssize_t) kMuxMaxDataFrameLength,
                "could not populate the splice batch");
     memoryFree(bytes);
-    buf->capacity = buf->l_pad + kMuxMaxDataFrameLength;
+    buf->capacity = buf->initial_headroom + kMuxMaxDataFrameLength;
     sbufSetLength(buf, kMuxMaxDataFrameLength);
     sbufShiftLeft(buf, 1);
     sbufGetMutablePtr(buf)[0] = 1;

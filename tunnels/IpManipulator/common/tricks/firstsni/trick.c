@@ -862,7 +862,7 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         captured_slot.assembled_packet = NULL;
         ipmanipulatorRecycleCapturedTlsPackets(t, &captured_slot);
 
-        LOGD("IpManipulator: first-sni handling assembled fragmented ClientHello packet len=%u",
+        LOGD("IpManipulator: first-sni handling assembled fragmented ClientHello packet len=%zu",
              sbufGetLength(captured_packet));
 
         if (! firstsnitrickHandleClientHello(t, l, captured_packet, now_ms))

@@ -231,7 +231,7 @@ static void checkSplice(sbuf_t *buffer, uint16_t padding)
     require(buffer != NULL && sbufIsSplice(buffer), "splice checkout failed");
     require(sbufGetTotalCapacityNoPadding(buffer) == SPLICE_BUFFER_STORAGE_SIZE,
             "splice checkout changed physical wrapper capacity");
-    require(buffer->l_pad == padding && buffer->curpos == padding && buffer->len == 0,
+    require(buffer->initial_headroom == padding && sbufGetHeadroom(buffer) == padding && buffer->len == 0,
             "splice checkout did not restore geometry");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
     require(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0 && metadata.pipe_capacity >= kPipeCapacity &&
@@ -246,10 +246,18 @@ static void putBody(sbuf_t *buffer)
 {
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
     require(write(metadata.pipefd[1], "BODY", 4) == 4, "failed to populate private body");
-    buffer->capacity = buffer->l_pad + 4;
+    buffer->capacity = buffer->initial_headroom + 4;
     sbufSetLength(buffer, 4);
-    sbufShiftLeft(buffer, 4);
-    sbufWrite(buffer, "HEAD", 4);
+    uint8_t *prefix = sbufShiftLeft(buffer, 4);
+    require(prefix == buffer->data && prefix == buffer->head + buffer->initial_headroom - 4 &&
+                sbufGetLength(buffer) == 8 && sbufGetResidentPrefixLength(buffer) == 4 &&
+                sbufGetHeadroom(buffer) == 60 && sbufGetInitialHeadroom(buffer) == 64,
+            "splice prepend returned the wrong prefix or changed initial headroom");
+    memoryCopy(prefix, "HEAD", 4);
+    const splice_buffer_metadata_t after = sbufSpliceMetadata(buffer);
+    require(after.pipefd[0] == metadata.pipefd[0] && after.pipefd[1] == metadata.pipefd[1] &&
+                after.pipe_capacity == metadata.pipe_capacity,
+            "splice prepend overwrote private metadata");
 }
 
 static void *releaseFromForeignThread(void *buffer)
@@ -520,7 +528,7 @@ static void testImmutablePadding(void)
                 discard sbufSplicePoolGet(96);
             else
             {
-                buf->l_pad = 96;
+                buf->initial_headroom = 96;
                 if (test == 2)
                     bufferpoolReuseBuffer(fixture.first, buf);
                 else
@@ -663,8 +671,31 @@ static void testDiscard(void)
     sbuf_t *buffer = sbufSplicePoolGet(64);
     require(buffer != NULL, "discard fixture acquisition failed");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
-    discard_probe_fd                        = metadata.pipefd[0];
-    const int faults[]                      = {0, EINTR, EINVAL, ENOSYS, EOPNOTSUPP, EPERM, ENOMEM};
+    putBody(buffer);
+    uint8_t *cursor = sbufShiftRight(buffer, 2);
+    require(cursor == buffer->data && cursor == buffer->head + 62 && memoryEqual(cursor, "AD", 2) &&
+                sbufGetLength(buffer) == 6 && sbufGetResidentPrefixLength(buffer) == 2 &&
+                sbufGetHeadroom(buffer) == 62 && sbufGetInitialHeadroom(buffer) == 64,
+            "partial splice-prefix consumption returned the wrong resident cursor or geometry");
+    cursor = sbufShiftRight(buffer, 2);
+    require(cursor == buffer->data && cursor == buffer->head + 64 && sbufGetLength(buffer) == 4 &&
+                sbufGetResidentPrefixLength(buffer) == 0 && sbufGetHeadroom(buffer) == 64 &&
+                sbufGetInitialHeadroom(buffer) == 64,
+            "complete splice-prefix consumption did not stop at the metadata boundary");
+    const splice_buffer_metadata_t after_prefix = sbufSpliceMetadata(buffer);
+    require(after_prefix.pipefd[0] == metadata.pipefd[0] && after_prefix.pipefd[1] == metadata.pipefd[1] &&
+                after_prefix.pipe_capacity == metadata.pipe_capacity,
+            "splice-prefix consumption changed private metadata");
+    uint8_t body[4];
+    require(read(metadata.pipefd[0], body, sizeof(body)) == sizeof(body) && memoryEqual(body, "BODY", sizeof(body)),
+            "splice-prefix shifts changed private pipe-body contents");
+    sbufSpliceConsumeBody(buffer, sizeof(body));
+    require(buffer->data == cursor && sbufGetLength(buffer) == 0 && buffer->capacity == 64 &&
+                sbufGetInitialHeadroom(buffer) == 64,
+            "pipe-body consumption moved the resident cursor or changed initial headroom");
+    sbufSpliceDiscard(buffer);
+    discard_probe_fd   = metadata.pipefd[0];
+    const int faults[] = {0, EINTR, EINVAL, ENOSYS, EOPNOTSUPP, EPERM, ENOMEM};
     for (size_t i = 0; i < ARRAY_SIZE(faults); ++i)
     {
         putBody(buffer);
@@ -675,7 +706,7 @@ static void testDiscard(void)
         require(discard_splice_calls >= 2 && discard_splice_error == 0,
                 "discard skipped its splice path or injected failure");
         require((discard_read_calls > 0) == (i > 1), "discard used the wrong fallback path");
-        require(sbufSpliceIsReusable(buffer) && buffer->curpos == buffer->l_pad &&
+        require(sbufSpliceIsReusable(buffer) && sbufGetHeadroom(buffer) == buffer->initial_headroom &&
                     sbufSpliceMetadata(buffer).pipefd[0] == metadata.pipefd[0] && sbufSplicePoolCount() == 1,
                 "discard left stale data or retired a healthy pipe");
     }
@@ -689,9 +720,9 @@ static void testDiscard(void)
                 sbufSpliceMetadata(buffer).pipefd[0] == metadata.pipefd[0],
             "prefix-only discard retired a healthy empty pipe");
     /* Materialization consumes all bytes without moving the source prefix cursor. */
-    buffer->curpos = buffer->l_pad - 4;
+    buffer->data = buffer->head + (buffer->initial_headroom - 4);
     sbufSpliceDiscard(buffer);
-    require(buffer->curpos == buffer->l_pad && sbufSpliceIsReusable(buffer),
+    require(sbufGetHeadroom(buffer) == buffer->initial_headroom && sbufSpliceIsReusable(buffer),
             "empty consumed prefix retained a shifted cursor");
     sbufDestroy(buffer);
     destroyInventory();

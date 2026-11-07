@@ -407,7 +407,7 @@ static void nio_read(wio_t *io)
         }
 
         // Only bytes already held in this private pipe become visible to the callback.
-        buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + (uint32_t) moved;
+        buf->capacity = (uint32_t) sbufGetInitialHeadroom(buf) + (uint32_t) moved;
         sbufSetLength(buf, (uint32_t) moved);
         if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {

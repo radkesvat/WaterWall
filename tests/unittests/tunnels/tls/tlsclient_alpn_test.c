@@ -1058,7 +1058,7 @@ static void testGeneratedLargeClientHelloIsComplete(void)
             "failed to generate a large ClientHello");
     require(hello != NULL && sbufGetLength(hello) > kTestLargeBufferSize,
             "large ClientHello did not exceed the worker buffer");
-    require(sbufGetLeftPadding(hello) == kTestBufferLeftPadding,
+    require(sbufGetInitialHeadroom(hello) == kTestBufferLeftPadding,
             "generated ClientHello did not preserve worker-buffer padding");
     require(tlsFlightIsComplete(hello), "generated ClientHello contains a truncated TLS record");
 

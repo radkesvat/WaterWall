@@ -53,7 +53,8 @@ typedef struct realityclient_lstate_s
     bool                        prev_finished;
     bool                        next_finished;
     bool                        terminal_closing;
-    bool                        plaintext_producer_paused;
+    bool                        plaintext_producer_paused; // Local plaintext FIFO/protocol hold.
+    bool                        next_paused;               // Independent received pressure toward prev.
     bool                        upstream_send_in_progress;
     /* Early plaintext and reentrant input wait behind this owned active head.
      * Authenticated completion drains it without waiting for advisory Resume. */

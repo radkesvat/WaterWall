@@ -811,7 +811,7 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         return httpserverCanSendDownstream(ls);
     }
 
-    if (sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len)
+    if (sbufGetHeadroom(payload) >= (uint32_t) prefix_len)
     {
         sbufShiftLeft(payload, (uint32_t) prefix_len);
         sbufWrite(payload, chunk_prefix, (uint32_t) prefix_len);
@@ -1764,7 +1764,7 @@ bool httpserverTransportSendWebSocketData(tunnel_t *t, line_t *l, httpserver_lst
     uint8_t  header[kWebSocketHeaderMaxBytes];
     size_t   header_len = httpserverBuildWebSocketHeader(header, opcode, payload_len);
 
-    if (sbufGetLeftCapacity(payload) >= header_len)
+    if (sbufGetHeadroom(payload) >= header_len)
     {
         sbufShiftLeft(payload, (uint32_t) header_len);
         sbufWrite(payload, header, (uint32_t) header_len);

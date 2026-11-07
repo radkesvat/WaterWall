@@ -250,7 +250,7 @@ static uint16_t oracleCarrier(uint8_t *out, const uint8_t *packet, const faketcp
 static sbuf_t *makeBuffer(const uint8_t *bytes, uint32_t length, uint32_t headroom)
 {
     sbuf_t *buf = sbufCreateWithPadding(headroom + length, 0);
-    require(sbufGetLeftCapacity(buf) == 0, "fixture starts with unexpected headroom");
+    require(sbufGetHeadroom(buf) == 0, "fixture starts with unexpected headroom");
     sbufSetLength(buf, headroom + length);
     memset(sbufGetMutablePtr(buf), 0xa5, headroom + length);
     sbufShiftRight(buf, headroom);
@@ -303,7 +303,7 @@ static void expectRefusal(const faketcpheader_wire_config_t *config, faketcphead
                          : faketcpheaderWireDecode(config, side, buf),
                   expected,
                   message);
-    require(bufferBytes(buf) == cursor && sbufGetLength(buf) == length && sbufGetLeftCapacity(buf) == headroom,
+    require(bufferBytes(buf) == cursor && sbufGetLength(buf) == length && sbufGetHeadroom(buf) == headroom,
             "refusal changed cursor/length/headroom");
     require(sbufGetRecalculateChecksum(buf) == repair, "refusal consumed checksum intent");
     requireBytes(cursor - headroom, before, length + headroom, "refusal changed bytes/headroom");
@@ -845,7 +845,7 @@ static void testEncryptionAccounting(void)
                     /* The private helper will expand the accepted 1460-byte carrier to 1500. */
                     uint16_t length = buildNative(packet, protocols[p], ihls[h], limit);
                     sbuf_t  *buf    = encodeOk(&config, kSides[s], packet, length, overhead, false);
-                    require(sbufGetLength(buf) == 1460 && sbufGetLeftCapacity(buf) == 0,
+                    require(sbufGetLength(buf) == 1460 && sbufGetHeadroom(buf) == 0,
                             "encryption size reservation consumed helper padding or added bytes itself");
                     require(oracleIpValid(bufferBytes(buf)) && oracleTransportValid(bufferBytes(buf)),
                             "encrypted configuration changed visible checksum behavior");
@@ -1176,7 +1176,7 @@ static void testAcknowledgmentModes(void)
                                           result,
                                           "ACK mode accepted invalid native packet");
                             require(bufferBytes(buf) == before_cursor && sbufGetLength(buf) == length &&
-                                        sbufGetLeftCapacity(buf) == headroom && sbufGetRecalculateChecksum(buf),
+                                        sbufGetHeadroom(buf) == headroom && sbufGetRecalculateChecksum(buf),
                                     "ACK refusal changed buffer geometry or checksum intent");
                             requireBytes(before_cursor - headroom,
                                          before,
@@ -1475,8 +1475,7 @@ static void testLimitsAndFraming(void)
                         "native MTU/overhead arithmetic");
                 uint16_t length = buildNative(packet, kProtocols[p], 60, (uint16_t) (1500 - overhead));
                 sbuf_t  *buf    = encodeOk(&config, kSides[s], packet, length, overhead, false);
-                require(sbufGetLength(buf) == 1500 && sbufGetLeftCapacity(buf) == 0,
-                        "exact carrier size/headroom limit");
+                require(sbufGetLength(buf) == 1500 && sbufGetHeadroom(buf) == 0, "exact carrier size/headroom limit");
                 decodeOk(&config, peerSide(kSides[s]), buf, packet, length);
                 sbufDestroy(buf);
                 length = buildNative(packet, kProtocols[p], 20, (uint16_t) (1501 - overhead));
@@ -1745,7 +1744,7 @@ static void testAllProtocolBytes(void)
     requireResult(faketcpheaderWireEncode(&config, NULL, kFakeTcpHeaderWireClient, buf),
                   kFakeTcpHeaderWireOk,
                   "protocol tag needed spare tail space");
-    require(sbufGetLeftCapacity(buf) == 0 && sbufGetTailCapacity(buf) == 0, "framing changed end of occupied storage");
+    require(sbufGetHeadroom(buf) == 0 && sbufGetTailCapacity(buf) == 0, "framing changed end of occupied storage");
     decodeOk(&config, kFakeTcpHeaderWireServer, buf, packet, length);
     sbufDestroy(buf);
 

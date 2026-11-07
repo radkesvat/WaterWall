@@ -238,7 +238,7 @@ static sbuf_t *makeInputBytes(speedtestserver_fixture_t *fixture, const uint8_t 
         twfRequire(buf != NULL && length <= kSpeedServerTestBufferSize, "invalid SpeedTestServer pipe fixture");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes, length) == (ssize_t) length,
                    "failed to populate SpeedTestServer pipe fragment");
-        buf->capacity = buf->l_pad + length;
+        buf->capacity = buf->initial_headroom + length;
         sbufSetLength(buf, length);
         return buf;
 #else

@@ -902,7 +902,7 @@ static void testFinalizedPaddingAndReassembly(void)
             device->reader_session->frag_affinity, sbufGetRawPtr(buffer), sbufGetLength(buffer), buffer, &fragment) ==
             kDeviceFragAffinityComplete,
         "padding-test fragments did not produce a complete datagram");
-    require(sbufGetLength(fragment.completed) == 36 && sbufGetLeftCapacity(fragment.completed) >= 256,
+    require(sbufGetLength(fragment.completed) == 36 && sbufGetHeadroom(fragment.completed) >= 256,
             "shared reassembly lost finalized chain padding");
     const uint8_t *packet = sbufGetRawPtr(fragment.completed);
     require(GET_BE16(packet + 20) == 12345 && GET_BE16(packet + 24) == 16 && packet[28] == 0x5a && packet[35] == 0x5a,

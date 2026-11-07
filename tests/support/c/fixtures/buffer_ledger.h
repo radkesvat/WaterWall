@@ -34,8 +34,8 @@ void __wrap_sbufDestroy(sbuf_t *b);
 sbuf_t *__real_bufferpoolGetLargeBuffer(buffer_pool_t *pool);
 sbuf_t *__real_bufferpoolGetSmallBuffer(buffer_pool_t *pool);
 sbuf_t *__real_bufferpoolGetMediumBuffer(buffer_pool_t *pool);
-sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t size, uint16_t padding);
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t size, uint16_t padding);
+sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, size_t size, uint16_t padding);
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t size, uint16_t padding);
 sbuf_t *__real_bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 sbuf_t *__wrap_bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 sbuf_t *__real_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
@@ -113,7 +113,7 @@ sbuf_t *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint1
     return twfTrackAcquired(__real_bufferpoolTryGetBestFit(pool, size, padding));
 }
 
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t size, uint16_t padding)
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t size, uint16_t padding)
 {
     return twfTrackAcquired(__real_bufferpoolGetBestFit(pool, size, padding));
 }

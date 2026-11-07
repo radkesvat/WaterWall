@@ -2,8 +2,8 @@
 """Call one explicitly registered WaterWall operation over a reliable TCP stream.
 
 Tokens come from --token-env NAME or --token-file PATH. The client performs no
-automatic retries. For TcpOverUdp, connect to a local TcpListener feeding the
-production TcpOverUdpClient; this program does not implement its UDP protocol.
+automatic retries. For KCP, connect to a local TcpListener feeding the
+production KcpClient; this program does not implement its UDP protocol.
 For uncertain create-user outcomes, retain the original ID and inputs and read
 that ID before deciding; existence alone does not identify its creator.
 For update-user or change-user-password, read get-user first and supply its

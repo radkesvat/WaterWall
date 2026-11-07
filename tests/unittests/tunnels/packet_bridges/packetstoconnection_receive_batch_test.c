@@ -252,14 +252,14 @@ static void onInit(tunnel_t *t, line_t *l)
 static void onPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard        t;
-    const uint32_t length = sbufGetLength(buf);
+    const size_t   length = sbufGetLength(buf);
     if (fixture->expected_buffer != NULL)
     {
         twfRequire(buf == fixture->expected_buffer,
                    "eligible receive copied instead of transferring the original sbuf");
         fixture->expected_buffer = NULL;
     }
-    twfRequire(sbufGetLeftPadding(buf) >= fixture->prepend && sbufGetLeftCapacity(buf) >= fixture->prepend,
+    twfRequire(sbufGetInitialHeadroom(buf) >= fixture->prepend && sbufGetHeadroom(buf) >= fixture->prepend,
                "receive lost the onward padding reservation or available headroom");
     sbufShiftLeft(buf, fixture->prepend);
     memset(sbufGetMutablePtr(buf), 0xa5, fixture->prepend);
@@ -620,8 +620,8 @@ static void caseReuseFallback(unsigned variant)
     twfRequire(wwLwipEngineEnter(f.engine, &previous), "fallback fixture engine entry failed");
     struct pbuf *p                 = makeCustomInput(source, 100, 0, 0);
     source                         = ((my_custom_pbuf_t *) p)->sbuf;
-    const uint32_t original_cursor = source->curpos;
-    const uint32_t original_length = sbufGetLength(source);
+    const size_t   original_cursor = sbufGetHeadroom(source);
+    const size_t   original_length = sbufGetLength(source);
     uint8_t        separate[100];
     if (variant == 4)
     {
@@ -638,8 +638,8 @@ static void caseReuseFallback(unsigned variant)
     twfRequire(sbufGetTotalCapacityNoPadding(ls->rx_delivery) <= TCP_WND, "fallback retained oversized storage");
     if (variant == 2)
     {
-        twfRequire(p->ref == 1 && ((my_custom_pbuf_t *) p)->sbuf == source && source->curpos == original_cursor &&
-                       sbufGetLength(source) == original_length,
+        twfRequire(p->ref == 1 && ((my_custom_pbuf_t *) p)->sbuf == source &&
+                       sbufGetHeadroom(source) == original_cursor && sbufGetLength(source) == original_length,
                    "receive stole shared storage or changed its geometry");
         pbuf_free(p);
     }
@@ -658,15 +658,15 @@ static void caseReuseRefusal(void)
     twfRequire(wwLwipEngineEnter(f.engine, &previous), "adoption refusal fixture engine entry failed");
     struct pbuf   *p       = makeCustomInput(NULL, 3000, 7, 11);
     sbuf_t        *source  = ((my_custom_pbuf_t *) p)->sbuf;
-    const uint32_t cursor  = source->curpos;
-    const uint32_t length  = sbufGetLength(source);
+    const size_t   cursor  = sbufGetHeadroom(source);
+    const size_t   length  = sbufGetLength(source);
     void          *payload = p->payload;
     ptc_lstate_t  *ls      = lineGetState(f.line, f.ptc);
     reject_task            = true;
     twfRequire(lwipThreadPtcTcpRecvCallback(ls, ls->tcp_pcb, p, ERR_OK) == ERR_MEM,
                "adoption ignored scheduling refusal");
     twfRequire(p->ref == 1 && p->payload == payload && p->len == 3000 && p->tot_len == 3000 &&
-                   ((my_custom_pbuf_t *) p)->sbuf == source && source->curpos == cursor &&
+                   ((my_custom_pbuf_t *) p)->sbuf == source && sbufGetHeadroom(source) == cursor &&
                    sbufGetLength(source) == length,
                "refused adoption changed lwIP's pbuf or backing storage");
     twfRequire(ls->rx_delivery == NULL && ls->rx_uncredited == 0 && task_count == 0 && g_twf_buffers.live_count == 1,

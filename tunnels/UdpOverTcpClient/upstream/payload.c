@@ -22,7 +22,7 @@ void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    assert(sbufGetLeftCapacity(buf) >= kHeaderSize);
+    assert(sbufGetHeadroom(buf) >= kHeaderSize);
     sbufShiftLeft(buf, kHeaderSize);
     sbufWriteUnAlignedUI16(buf, htons((uint16_t) length));
     tunnelNextUpStreamPayload(t, l, buf);

@@ -42,7 +42,7 @@ static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
     if (sbufIsSplice(buf))
         return buf;
     const uint32_t    length  = sbufGetLength(buf);
-    const uint16_t    padding = sbufGetLeftPadding(buf);
+    const uint16_t    padding = sbufGetInitialHeadroom(buf);
     buffer_pool_fit_t fit;
     if (! bufferpoolQueryBestFit(pool, length, padding, &fit) || ! fit.pooled ||
         fit.allocation_charge >= sbufGetAllocationCharge(buf))

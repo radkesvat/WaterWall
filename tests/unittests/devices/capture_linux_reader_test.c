@@ -438,7 +438,7 @@ static void deliverPacket(void *device, sbuf_t *buffer, wid_t wid)
 {
     discard device;
     require(currentThreadOwnsWorker(wid), "delivery changed packet owner");
-    require(sbufGetLeftCapacity(buffer) >= fixture.required_padding, "capture lost reserved chain padding");
+    require(sbufGetHeadroom(buffer) >= fixture.required_padding, "capture lost reserved chain padding");
     const uint32_t id = GET_BE16((const uint8_t *) sbufGetRawPtr(buffer) + 4);
     require(id > 0 && id < kPacketIds && fixture.verdicts[id] == NF_DROP, "packet published before successful DROP");
     require(sbufGetLength(buffer) == fixture.packet_lengths[id], "delivery changed packet geometry");

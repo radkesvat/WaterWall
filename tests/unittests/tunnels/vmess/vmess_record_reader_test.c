@@ -97,7 +97,7 @@ static void checkOutput(vmess_record_result_t result)
                 memoryEqual(sbufGetRawPtr(result.payload), message, sizeof(message) - 1),
             "plaintext bytes differ");
     uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-    require(sbufGetLeftCapacity(result.payload) >= padding && sbufGetLeftPadding(result.payload) >= padding,
+    require(sbufGetHeadroom(result.payload) >= padding && sbufGetInitialHeadroom(result.payload) >= padding,
             "plaintext lost full onward padding");
     sbufShiftLeft(result.payload, padding);
     memset(sbufGetMutablePtr(result.payload), 0x5a, padding);

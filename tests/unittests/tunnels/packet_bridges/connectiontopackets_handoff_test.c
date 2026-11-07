@@ -76,7 +76,7 @@ static int retainInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *n
     return ERR_OK;
 }
 
-static sbuf_t *createOutputBuffer(uint32_t length, uint16_t padding)
+static sbuf_t *createOutputBuffer(size_t length, uint16_t padding)
 {
     return twfTrackAcquired(sbufCreateWithPadding(length, padding));
 }
@@ -116,7 +116,7 @@ static void packetOutput(tunnel_t *t, line_t *line, sbuf_t *buf)
     discard t;
     twfRequire(sbufGetLength(buf) == expected_output_length, "packet output changed length");
     twfRequire(buf == expected_output_buffer, "queued packet storage was replaced at delivery");
-    twfRequire(sbufGetLeftPadding(buf) >= 64 && sbufGetLeftCapacity(buf) >= 64,
+    twfRequire(sbufGetInitialHeadroom(buf) >= 64 && sbufGetHeadroom(buf) >= 64,
                "queued packet lost the onward chain's padding");
     twfRequire(memcmp(sbufGetRawPtr(buf), expected_output_bytes, expected_output_length) == 0,
                "queued packet did not preserve its detached bytes");

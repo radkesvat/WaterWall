@@ -120,7 +120,7 @@ static sbuf_t *input(const char *data, uint32_t length)
         require(buf != NULL, "source pipe allocation");
         if (body)
             require(write(sbufSpliceMetadata(buf).pipefd[1], data + prefix, body) == body, "source pipe contents");
-        buf->capacity = buf->l_pad + body;
+        buf->capacity = buf->initial_headroom + body;
         buf->len      = body;
         if (prefix)
         {
@@ -227,7 +227,7 @@ static void capture(tunnel_t *t, line_t *l, sbuf_t *buf)
     require(writes < ARRAY_SIZE(lengths), "capture count");
     uint32_t length = sbufGetLength(buf);
     require(length < sizeof(output) - output_size, "capture bytes");
-    require(sbufGetLeftCapacity(buf) >= 64, "onward padding lost");
+    require(sbufGetHeadroom(buf) >= 64, "onward padding lost");
     lengths[writes]   = length;
     times[writes]     = now_us;
     spliced[writes++] = sbufIsSplice(buf);
@@ -571,19 +571,41 @@ static void pauseAndReentry(void)
 static void limitsAndCleanup(void)
 {
     const char *settings = "{\"mode\":\"counter\",\"count\":1,\"cuts\":[[2,60000,100]]}";
-    openLine(settings);
-    sendText("abcd");
-    for (unsigned i = 1; i < kStreamFragmenterHighJobs; ++i)
-        sendText("");
-    require(source_paused && pauses == 1 && state()->job_count == kStreamFragmenterHighJobs,
-            "job high watermark includes the active remainder");
-    consumerPause();
-    require(pauses == 2, "local pressure swallowed advisory Pause");
-    on_resume = inject;
-    advance(UINT64_C(60000000));
-    require(! source_paused && resumes == 1 && ! strcmp(output, "abcdNEW"), "local pressure hysteresis/reentrant FIFO");
-    requireBypassed();
-    closeLine();
+    for (unsigned consumer_first = 0; consumer_first < 2; ++consumer_first)
+    {
+        openLine(settings);
+        sendText("abcd");
+        for (unsigned i = 1; i < kStreamFragmenterHighJobs; ++i)
+            sendText("");
+        require(source_paused && pauses == 1 && state()->job_count == kStreamFragmenterHighJobs,
+                "job high watermark includes the active remainder");
+        consumerPause();
+        consumerPause();
+        require(pauses == 1, "overlapping consumer pressure duplicated the local hold");
+        if (consumer_first)
+        {
+            tunnelDownStreamResume(fragmenter, line);
+            tunnelDownStreamResume(fragmenter, line);
+            require(source_paused && ! resumes, "consumer Resume released the local backlog hold");
+            on_resume = inject;
+        }
+        advance(UINT64_C(60000000));
+        requireBypassed();
+        if (consumer_first)
+            require(! source_paused && resumes == 1 && ! strcmp(output, "abcdNEW"),
+                    "timer failed to release local pressure or Resume reentry reordered FIFO");
+        else
+        {
+            require(source_paused && ! resumes && ! strcmp(output, "abcd"),
+                    "local timer release cleared consumer pressure or stopped due output");
+            on_resume = inject;
+            tunnelDownStreamResume(fragmenter, line);
+            tunnelDownStreamResume(fragmenter, line);
+            require(! source_paused && resumes == 2 && ! strcmp(output, "abcdNEW"),
+                    "retirement lost consumer pressure release or repeated Resume");
+        }
+        closeLine();
+    }
 
     openLine(settings);
     sendText("abcd");

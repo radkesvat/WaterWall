@@ -1409,9 +1409,9 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
 
     fixture.context.enqueue_on_source_pause = true;
     tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 32768, 'A'));
-    requireTlsClient(fixture.context.source_pause_count == 2 && fixture.context.source_resume_count == 1 &&
+    requireTlsClient(fixture.context.source_pause_count == 2 && fixture.context.source_resume_count == 0 &&
                          bufferqueueGetBufLen(&ls->bq) == 32769 && ls->plaintext_producer_paused && ls->source_paused,
-                     "TLS early FIFO pressure was lost while relaying nested Pause and Resume");
+                     "TLS wire Resume released early FIFO pressure");
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
@@ -1450,7 +1450,11 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     }
     else if (mode == 2)
     {
-        requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 2 &&
+        requireTlsClient(lineIsAlive(fixture.line) && ls->source_paused && ls->next_paused &&
+                             ! ls->plaintext_producer_paused && fixture.context.source_resume_count == 0,
+                         "TLS FIFO release cleared received pressure");
+        tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        requireTlsClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
                              strcmp(fixture.context.events, "U") == 0,
                          "TLS source Resume close continued touching retired state");
     }
@@ -1458,9 +1462,9 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     {
         requireTlsClient(ls->handshake_completed && ls->pending_plaintext == NULL &&
                              bufferqueueGetBufCount(&ls->bq) == 0 && ! ls->plaintext_producer_paused &&
-                             ! ls->source_paused && fixture.context.source_resume_count == 2 &&
-                             fixture.context.source_pause_count == (mode == 3 ? 7U : 6U),
-                         "TLS FIFO did not finish through nested advisory Pause and release its own pressure");
+                             ls->source_paused && ls->next_paused && fixture.context.source_resume_count == 0 &&
+                             fixture.context.source_pause_count == 6,
+                         "TLS FIFO did not drain while preserving received pressure");
         requireTlsClient(completeServerHandshake(server), "ordinary TLS server failed to complete handshake");
         uint8_t plaintext[32770];
         size_t  received = 0;
@@ -1478,8 +1482,12 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
                          "TLS pending FIFO lost or reordered older and nested plaintext");
         uint32_t sends_before = fixture.context.upstream_payload_count;
         tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
+        requireTlsClient(fixture.context.source_resume_count == 1 && ls->source_paused == (mode == 3) &&
+                             ls->next_paused == (mode == 3),
+                         "TLS source Resume overwrote a reentrant wire Pause");
         tlsclientTunnelDownStreamResume(fixture.tls, fixture.line);
-        requireTlsClient(fixture.context.source_resume_count == 4 &&
+        requireTlsClient(fixture.context.source_resume_count == 2 && ! ls->source_paused && ! ls->next_paused &&
+                             fixture.context.source_pause_count == (mode == 3 ? 7U : 6U) &&
                              fixture.context.upstream_payload_count == sends_before,
                          "TLS repeated Resume was filtered or resent drained plaintext");
         tlsclientTunnelUpStreamFinish(fixture.tls, fixture.line);

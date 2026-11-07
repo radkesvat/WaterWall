@@ -343,7 +343,7 @@ static bool tlsserverTryRetireShaping(tunnel_t *t, line_t *l, tlsserver_lstate_t
         LOGD("TlsServer: configured TLS 1.3 record shaping scope drained; output shaper retired");
     }
 
-    if (release_producer_pause)
+    if (release_producer_pause && ! ls->prev_paused)
     {
         if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
         {
@@ -407,7 +407,7 @@ static bool tlsserverUpdateShapingBackpressure(tunnel_t *t, line_t *l, tlsserver
     if (ls->shaping_producer_paused && queued <= kTlsRecordShapingQueueLowWatermark)
     {
         ls->shaping_producer_paused = false;
-        if (! ls->upstream_finished && ! ls->downstream_finishing)
+        if (! ls->upstream_finished && ! ls->downstream_finishing && ! ls->prev_paused)
         {
             if (! lineCallWithRef(l, tunnelNextUpStreamResume, t))
             {

@@ -112,7 +112,8 @@ typedef struct streamfragmenter_lstate_s
     streamfragmenter_timer_kind_t timer_kind;
     bool                          exhausted : 1;
     bool                          draining : 1;
-    bool                          source_paused : 1;
+    bool                          source_paused : 1; // Local retained-job hold.
+    bool                          next_paused : 1;   // Independent received pressure toward prev.
     bool                          waiting_for_est : 1;
     bool                          est_received : 1;
 } streamfragmenter_lstate_t;
@@ -142,3 +143,5 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void streamfragmenterTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void streamfragmenterTunnelDownStreamEst(tunnel_t *t, line_t *l);
+void streamfragmenterTunnelDownStreamPause(tunnel_t *t, line_t *l);
+void streamfragmenterTunnelDownStreamResume(tunnel_t *t, line_t *l);

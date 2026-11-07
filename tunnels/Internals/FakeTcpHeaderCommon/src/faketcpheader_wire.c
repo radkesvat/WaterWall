@@ -189,7 +189,7 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
     {
         return kFakeTcpHeaderWireOversizedNative;
     }
-    if (sbufGetLeftCapacity(buf) < overhead)
+    if (sbufGetHeadroom(buf) < overhead)
     {
         return kFakeTcpHeaderWireMissingHeadroom;
     }
@@ -209,8 +209,7 @@ faketcpheader_wire_result_t faketcpheaderWireEncode(const faketcpheader_wire_con
         discard normalized;
     }
 
-    sbufShiftLeft(buf, overhead);
-    packet = sbufGetMutablePtr(buf);
+    packet = sbufShiftLeft(buf, overhead);
     memmove(packet, packet + overhead, native.ip_header_length);
     struct ip_hdr *ip  = (struct ip_hdr *) packet;
     uint8_t       *tcp = packet + native.ip_header_length;
@@ -324,8 +323,7 @@ faketcpheader_wire_result_t faketcpheaderWireDecode(const faketcpheader_wire_con
     const uint16_t overhead = (uint16_t) (carrier.transport_header_length + kFakeTcpHeaderWireProtocolLength);
     const uint16_t total    = (uint16_t) (length - overhead);
     memmove(packet + overhead, packet, carrier.ip_header_length);
-    sbufShiftRight(buf, overhead);
-    packet            = sbufGetMutablePtr(buf);
+    packet            = sbufShiftRight(buf, overhead);
     struct ip_hdr *ip = (struct ip_hdr *) packet;
     IPH_PROTO_SET(ip, protocol);
     IPH_LEN_SET(ip, lwip_htons(total));

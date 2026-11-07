@@ -35,7 +35,7 @@ static void testBufferStreamAccessors(void)
 
     sbuf_t *read = bufferstreamReadExact(&stream, 5);
     requirePatternRange(read, 0, 5, 0x20, "split exact read changed bytes");
-    require(sbufGetLeftCapacity(read) == 48, "lazy initialization lost the exact-read padding budget");
+    require(sbufGetHeadroom(read) == 48, "lazy initialization lost the exact-read padding budget");
     bufferpoolReuseBuffer(fixture.pool, read);
     require(bufferstreamGetHeadLength(&stream) == 7 && bufferstreamGetEntryCount(&stream) == 2 &&
                 bufferstreamGetCharge(&stream) == small_charge + large_charge,
@@ -89,13 +89,13 @@ static void testBufferStreamSettleRetained(void)
             "empty retention settlement kept empty allocations below the limits");
 
     sbuf_t        *original        = makePooledBuffer(fixture.pool, false, 20, 7, 0x30);
-    const uint32_t original_cursor = original->curpos;
+    const size_t   original_cursor = sbufGetHeadroom(original);
     const size_t   original_charge = sbufGetAllocationCharge(original);
     bufferstreamPush(&stream, original);
     require(bufferstreamSettleRetained(&stream, original_charge), "exact retention limits were refused");
     require(bufferstreamSettleRetained(&stream, 0), "best-fit charge floor was refused");
     require(*bs_doublequeue_t_front(&stream.q) == original &&
-                (*bs_doublequeue_t_front(&stream.q))->curpos == original_cursor &&
+                sbufGetHeadroom(*bs_doublequeue_t_front(&stream.q)) == original_cursor &&
                 bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetCharge(&stream) == original_charge,
             "settlement copied input already within its effective limits");
     sbuf_t *read = bufferstreamFullRead(&stream);
@@ -124,7 +124,7 @@ static void testBufferStreamSettleRetained(void)
             "charge pressure did not combine tiny fragments");
     read = bufferstreamFullRead(&stream);
     requirePatternRange(read, 0, ARRAY_SIZE(fragments), 0x50, "charge-pressure settlement changed FIFO bytes");
-    require(sbufGetLeftCapacity(read) == 64, "charge-pressure settlement spent left padding");
+    require(sbufGetHeadroom(read) == 64, "charge-pressure settlement spent left padding");
     bufferpoolReuseBuffer(fixture.pool, read);
     bufferstreamDestroy(&stream);
     poolFixtureDestroy(&fixture);
@@ -150,7 +150,7 @@ static void testBufferStreamSettleChargeAndPadding(void)
                 bufferstreamGetCharge(&stream) < original_charge,
             "charge pressure did not release oversized and empty allocations");
     sbuf_t *compacted = *bs_doublequeue_t_front(&stream.q);
-    require(sbufGetLeftCapacity(compacted) == 128 && sbufGetTotalCapacityNoPadding(compacted) == kTestLargeBufferSize,
+    require(sbufGetHeadroom(compacted) == 128 && sbufGetTotalCapacityNoPadding(compacted) == kTestLargeBufferSize,
             "settlement selected storage without full large-tier padding");
     requirePatternRange(compacted, 0, 20, 0x2c, "charge-pressure settlement changed the retained suffix");
     require(bufferstreamSettleRetained(&stream, 0) && *bs_doublequeue_t_front(&stream.q) == compacted,
@@ -158,7 +158,7 @@ static void testBufferStreamSettleChargeAndPadding(void)
 
     sbuf_t *read = bufferstreamReadExact(&stream, 7);
     requirePatternRange(read, 0, 7, 0x2c, "settlement changed a later exact read");
-    require(sbufGetLeftCapacity(read) == 48, "settlement changed the exact-read padding budget");
+    require(sbufGetHeadroom(read) == 48, "settlement changed the exact-read padding budget");
     bufferpoolReuseBuffer(fixture.pool, read);
     read = bufferstreamFullRead(&stream);
     requirePatternRange(read, 0, 13, 0x33, "settlement changed the suffix after an exact read");

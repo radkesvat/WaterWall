@@ -20,7 +20,7 @@ bool hpcUpload(tunnel_t *t, line_t *l, sbuf_t *b)
             char prefix[kHpcRequiredPaddingLeft + 1];
             int  count = stringNPrintf(prefix, sizeof(prefix), "%x\r\n", (unsigned) n);
             assert(count > 0 && count <= kHpcRequiredPaddingLeft);
-            if (sbufGetLeftCapacity(b) < (unsigned) count)
+            if (sbufGetHeadroom(b) < (unsigned) count)
             {
                 lineReuseBuffer(l, b);
                 hpcClose(t, l);

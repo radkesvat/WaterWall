@@ -15,5 +15,7 @@ tunnel_t *streamfragmenterTunnelCreate(node_t *node)
     t->fnFinU     = streamfragmenterTunnelUpStreamFinish;
     t->fnFinD     = streamfragmenterTunnelDownStreamFinish;
     t->fnEstD     = streamfragmenterTunnelDownStreamEst;
+    t->fnPauseD   = streamfragmenterTunnelDownStreamPause;
+    t->fnResumeD  = streamfragmenterTunnelDownStreamResume;
     return t;
 }

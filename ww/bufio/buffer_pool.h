@@ -91,7 +91,7 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool);
 typedef struct buffer_pool_fit_s
 {
     size_t   allocation_charge; // Same userspace-storage charge as sbufGetAllocationCharge().
-    uint32_t payload_capacity;  // Excludes left padding; includes allocation alignment rounding.
+    size_t   payload_capacity;  // Excludes left padding; includes allocation alignment rounding.
     uint16_t left_padding;      // Actual aligned padding.
     bool     pooled;            // Selects a configured tier rather than dedicated storage.
 } buffer_pool_fit_t;
@@ -115,7 +115,7 @@ bool bufferpoolQueryBestFit(const buffer_pool_t *pool, uint64_t minimum_payload,
  * @param minimum_left_padding Minimum left padding in bytes.
  * @return A reset owned buffer satisfying both requirements.
  */
-sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding);
+sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_payload, uint16_t minimum_left_padding);
 
 /** Checked best-fit allocation for wide computed lengths. Returns NULL for
  * unrepresentable geometry; otherwise uses the same pooled tiers as GetBestFit. */

@@ -672,7 +672,7 @@ static void outputSink(tunnel_t *t, line_t *line, sbuf_t *buffer)
     twfRequire(sbufGetLength(buffer) == sizeof(output_bytes) &&
                    memoryEqual(sbufGetRawPtr(buffer), output_bytes, sizeof(output_bytes)),
                "pbuf bytes changed");
-    twfRequire(sbufGetLeftCapacity(buffer) >= 96, "packet output lost chain padding");
+    twfRequire(sbufGetHeadroom(buffer) >= 96, "packet output lost chain padding");
     ++output_deliveries;
     lineReuseBuffer(line, buffer);
 }

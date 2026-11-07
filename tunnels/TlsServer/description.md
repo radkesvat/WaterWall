@@ -273,8 +273,10 @@ capture, overhead, connection-success, and classifier measurements justify publi
 Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
 subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
 Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 8
-MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
-are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
+MiB per line, with local producer pressure set at 6 MiB and cleared at 3 MiB. The producer remains paused while
+local pressure or the latest received Pause is active. A received Resume cannot release local pressure, and clearing
+local pressure cannot release a received Pause. Repeated received notifications still pass through when no local hold
+blocks them. Due ciphertext drains keep their existing timing and FIFO order without
 waiting for Resume; Pause does not cancel the release timer. After peer `close_notify` finishes the cleartext side, `TlsServer` sends no Payload, Pause, or Resume
 toward it; application bytes received later or already decrypted by an outer callback are discarded. On either peer
 `close_notify` or cleartext-side finish, already accepted server ciphertext and an unpadded `close_notify` drain before downstream
@@ -283,7 +285,7 @@ failure drains immediately in order.
 
 After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
 TLS record can overtake delayed ciphertext. While that ordering barrier is active, the node retains its local shaping
-hold even below the normal low watermark; relayed Resume remains advisory. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+hold even below the normal low watermark; received Resume does not release it. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
 queue are released; later TLS output is forwarded directly without record parsing or shaping metadata, including during
 advisory Pause. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active shaping window. TLS record
 encryption and decryption remain active, so shaping retirement does not permanently bypass the tunnel.
@@ -348,7 +350,8 @@ keep the remaining intentional delay alive: accepted queued bytes are synchronou
 `Finish`, including during advisory Pause. A close while fallback Init is still running discards the batch.
 Fallback routing remains active because it selects a branch outside the ordinary `next` path. Before selecting a branch,
 the latest receiver Pause is retained only for replay after that branch's Init; Resume cancels it. Once initialized,
-the selected branch receives every Pause and Resume, and these notifications do not gate output.
+the fallback branch receives every Pause and Resume. The protected branch combines received pressure with local
+record-shaping pressure; these notifications do not gate ready output.
 Delay and jitter are only mitigations; they do not prove
 timing indistinguishability. Measure the deployment path and choose values that match the service being impersonated.
 

@@ -14,6 +14,7 @@ void     hpcReleaseResponseStorage(hpc_lstate_t *ls);
 void     hpcDestroyState(tunnel_t *t, line_t *l);
 void     hpcClose(tunnel_t *t, line_t *l);
 bool     hpcPressure(tunnel_t *t, line_t *l);
+void     hpcSetNextPaused(tunnel_t *t, line_t *l, bool paused);
 bool     hpcSendHeader(tunnel_t *t, line_t *l);
 bool     hpcDrainUpload(tunnel_t *t, line_t *l);
 bool     hpcDrainResponse(tunnel_t *t, line_t *l);

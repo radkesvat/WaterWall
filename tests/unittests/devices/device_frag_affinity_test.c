@@ -23,7 +23,7 @@ static void        checkedFragmentPoolReuse(buffer_pool_t *pool, sbuf_t *buf)
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments recycled into a reader pool");
     bufferpoolReuseBuffer(pool, buf);
 }
-static sbuf_t *checkedFragmentPoolGet(buffer_pool_t *pool, uint32_t size, uint16_t padding)
+static sbuf_t *checkedFragmentPoolGet(buffer_pool_t *pool, size_t size, uint16_t padding)
 {
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments allocated from a reader pool");
     return bufferpoolGetBestFit(pool, size, padding);
@@ -135,7 +135,7 @@ static void testCompletion(void)
                     "premature/missing completion");
         }
         sbuf_t *whole = result.completed;
-        require(whole && sbufGetLength(whole) == 212 && sbufGetLeftCapacity(whole) >= 64, "length/padding lost");
+        require(whole && sbufGetLength(whole) == 212 && sbufGetHeadroom(whole) >= 64, "length/padding lost");
         const uint8_t *bytes = sbufGetRawPtr(whole);
         require(GET_BE16(bytes + 2) == 212 && GET_BE16(bytes + 6) == 0 && bytes[8] == 60,
                 "header not from fragment zero");
@@ -450,7 +450,7 @@ static WTHREAD_ROUTINE(offerSharedFragments)
                 "concurrent readers lost a non-overlapping fragment");
         if (action == kDeviceFragAffinityComplete)
         {
-            require(sbufGetLength(result.completed) == 148 && sbufGetLeftCapacity(result.completed) >= 96,
+            require(sbufGetLength(result.completed) == 148 && sbufGetHeadroom(result.completed) >= 96,
                     "shared reassembly lost its complete length or configured padding");
             const uint8_t *bytes = sbufGetRawPtr(result.completed);
             for (unsigned byte = 0; byte < 128; ++byte)

@@ -195,10 +195,10 @@ void                           __real_masterpoolDestroy(master_pool_t *pool);
 void                           __wrap_masterpoolDestroy(master_pool_t *pool);
 void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__real_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left);
 void                           __real_sbufDestroy(sbuf_t *buf);
 void                           __wrap_sbufDestroy(sbuf_t *buf);
 bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
@@ -1084,7 +1084,7 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
     }
 }
 
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left)
 {
     sbuf_t *buf = __real_bufferpoolGetBestFit(pool, minimum_capacity, pad_left);
     if (inside_reader_callback && gso_scratch_buffer == NULL && minimum_capacity == 65536)
@@ -1094,7 +1094,7 @@ sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capaci
     return buf;
 }
 
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left)
 {
     if (record_startup_packet_allocations && minimum_capacity >= kTunOffloadPacketStorageCapacity)
         ++startup_packet_allocations;
@@ -2072,7 +2072,7 @@ static void testOffloadScratchGeometryWithoutStartupAllocation(test_env_t *env)
                     "stored scratch geometry or prepaid charge changed");
             require(bringUpDevice(tdev) && gso_scratch_buffer != NULL, "real reader did not allocate its own scratch");
             require(sbufGetTotalCapacityNoPadding(gso_scratch_buffer) == tdev->offload_scratch_capacity &&
-                        sbufGetLeftPadding(gso_scratch_buffer) == tdev->offload_scratch_padding &&
+                        sbufGetInitialHeadroom(gso_scratch_buffer) == tdev->offload_scratch_padding &&
                         sbufGetAllocationCharge(gso_scratch_buffer) == tdev->offload_scratch_charge,
                     "real reader scratch disagrees with the validated capacity, padding or charge");
             require(bringDownDevice(tdev) && gso_scratch_destroy_count == 1,
@@ -3726,7 +3726,7 @@ static size_t padding_growth_output_allowance;
 
 static void observeGsoAfterPaddingGrowth(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
 {
-    require(sbufGetLeftCapacity(buf) >= 64, "later pool padding change removed original chain headroom");
+    require(sbufGetHeadroom(buf) >= 64, "later pool padding change removed original chain headroom");
     require(sbufGetAllocationCharge(buf) <= padding_growth_output_allowance,
             "later pool padding change exceeded prepaid output allocation allowance");
     buffer_pool_fit_t grown_fit;

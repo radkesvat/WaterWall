@@ -252,7 +252,7 @@ sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
     }
     else
     {
-        clone = sbufCreateWithPadding(new_len, sbufGetLeftPadding(buf));
+        clone = sbufCreateWithPadding(new_len, sbufGetInitialHeadroom(buf));
     }
 
     sbufSetLength(clone, new_len);

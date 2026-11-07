@@ -69,7 +69,7 @@ bool encryptionPacketDeriveKeys(const uint8_t base_key[32], uint8_t upload_key[3
 encryption_packet_result_t encryptionEncodePacket(const uint8_t key[32], sbuf_t **buf)
 {
     assert(buf != NULL && *buf != NULL && ! sbufIsSplice(*buf));
-    assert(sbufGetLeftCapacity(*buf) >= kEncryptionPacketNonceSize);
+    assert(sbufGetHeadroom(*buf) >= kEncryptionPacketNonceSize);
     ipv4_packet_view_t               view   = {0};
     const encryption_packet_result_t parsed = packetView(*buf, &view);
     if (parsed != kEncryptionPacketOk)

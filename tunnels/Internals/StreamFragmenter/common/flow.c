@@ -15,6 +15,8 @@ bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l)
     if (paused == ls->source_paused)
         return true;
     ls->source_paused = paused;
+    if (ls->next_paused)
+        return true;
     if (! lineCallWithRef(l, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume, t))
         return false;
     return ((streamfragmenter_lstate_t *) lineGetState(l, t))->tunnel == t;

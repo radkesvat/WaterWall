@@ -65,7 +65,7 @@ typedef struct socks5client_lstate_s
     bool                     input_draining : 1;
     bool                     transport_est_forwarded : 1;
     bool                     greeting_due : 1;
-    bool                     next_paused : 1; // UDP association pressure only.
+    bool                     next_paused : 1; // Next-side consumer pressure; combined on the application line.
     bool                     prev_paused : 1; // UDP relay startup replay only.
     bool                     source_pause_sent : 1;
     bool                     draining_up : 1;

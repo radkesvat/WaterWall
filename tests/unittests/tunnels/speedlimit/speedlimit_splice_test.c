@@ -76,7 +76,7 @@ static sbuf_t *pipeBytes(const void *data, uint32_t length, uint32_t prefix)
     uint32_t body = length - prefix;
     twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,
                "populate private pipe input");
-    buf->capacity = buf->l_pad + body;
+    buf->capacity = buf->initial_headroom + body;
     sbufSetLength(buf, body);
     sbufShiftLeft(buf, prefix);
     memoryCopy(sbufGetMutablePtr(buf), data, prefix);
@@ -166,7 +166,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
         twfRequire(sbufIsSplice(buf), "feasible split materialized the pipe body");
     if (expect_ordinary)
         twfRequire(! sbufIsSplice(buf), "pipe creation failure did not use ordinary fallback");
-    twfRequire(sbufGetLeftCapacity(buf) >= 128, "split lost onward padding");
+    twfRequire(sbufGetHeadroom(buf) >= 128, "split lost onward padding");
     uint32_t length = sbufGetLength(buf);
     twfRequire(length <= sizeof(received) - received_length, "capture overflow");
     bool saved = measuring;

@@ -449,7 +449,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
         if (! entry->assembly || need > sbufGetMaximumWriteableSize(entry->assembly))
         {
             buffer_pool_fit_t fit = {0};
-            uint32_t          capacity;
+            size_t            capacity;
             const bool        fits = table->shared ? sbufTryComputeCapacity(need, padding, &capacity) &&
                                                   sbufTryComputeQueueCharge(capacity, &fit.allocation_charge)
                                                    : bufferpoolQueryBestFit(table->release_pool, need, padding, &fit);
@@ -460,7 +460,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
             sbuf_t *grown = table->shared ? sbufCreateWithPadding(need, padding)
                                           : bufferpoolGetBestFit(table->release_pool, need, padding);
             if (UNLIKELY(sbufGetAllocationCharge(grown) != fit.allocation_charge ||
-                         sbufGetMaximumWriteableSize(grown) < need || sbufGetLeftCapacity(grown) < padding))
+                         sbufGetMaximumWriteableSize(grown) < need || sbufGetHeadroom(grown) < padding))
             {
                 LOGF("Device fragment assembly: best-fit allocation geometry changed");
                 abortProgramNow(1);

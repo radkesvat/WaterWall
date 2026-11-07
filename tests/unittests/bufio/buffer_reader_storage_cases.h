@@ -129,14 +129,14 @@ static void testBufferReaderPaddingAndQueuedSuffix(buffer_pool_t *pool)
     readerTestPush(&reader, streamTestBytes(pool, "ab", 2));
     sbuf_t        *middle        = readerTestPush(&reader, streamTestBytes(pool, "cdef", 4));
     sbuf_t        *tail          = readerTestPush(&reader, streamTestBytes(pool, "NEXT", 4));
-    const uint32_t tail_cursor   = tail->curpos;
-    const uint32_t tail_capacity = tail->capacity;
+    const size_t   tail_cursor   = sbufGetHeadroom(tail);
+    const size_t   tail_capacity = tail->capacity;
     const size_t   tail_charge   = sbufGetQueueCharge(tail);
     sbuf_t        *body          = bufferreaderTakeBody(&reader, 4);
     require(bufferreaderHeadLength(&reader) == 2 && bufferreaderEntryCount(&reader) == 2 &&
                 bufferreaderLength(&reader) == 6,
             "extraction lost its partially consumed input");
-    require(tail->curpos == tail_cursor && tail->capacity == tail_capacity && sbufGetLength(tail) == 4 &&
+    require(sbufGetHeadroom(tail) == tail_cursor && tail->capacity == tail_capacity && sbufGetLength(tail) == 4 &&
                 memoryEqual(sbufGetRawPtr(tail), "NEXT", 4),
             "extraction mutated a still-queued suffix");
     streamCheckBytes(pool, body, "abcd", 4);

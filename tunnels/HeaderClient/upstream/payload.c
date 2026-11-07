@@ -161,7 +161,7 @@ void headerclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    assert(sbufGetLeftCapacity(buf) >= header_len);
+    assert(sbufGetHeadroom(buf) >= header_len);
     sbufShiftLeft(buf, header_len);
     sbufWrite(buf, header, header_len);
     if (t->lstate_size != 0)

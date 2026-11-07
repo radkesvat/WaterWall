@@ -28,7 +28,7 @@ static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
     assert(self != NULL && buf != NULL);
     assert(! sbufIsSplice(buf));
 
-    const uint32_t buf_len = sbufGetLength(buf);
+    const size_t buf_len = sbufGetLength(buf);
     bufferstreamCheckSbufByteCount(buf_len, "push");
 
     if (UNLIKELY(self->size > (size_t) UINT32_MAX - buf_len))
@@ -37,7 +37,7 @@ static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    return buf_len;
+    return (uint32_t) buf_len;
 }
 
 static void bufferstreamEnqueueValidated(buffer_stream_t *self, sbuf_t *buf, uint32_t buf_len)
@@ -68,7 +68,7 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
         }
     }
 
-    assert(sbufGetLeftCapacity(slice) >= use_left_padding);
+    assert(sbufGetHeadroom(slice) >= use_left_padding);
     if (use_left_padding > 0)
     {
         sbufShiftLeft(slice, use_left_padding);
@@ -169,8 +169,8 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 
         if (tail != buf)
         {
-            const uint32_t tail_len   = sbufGetLength(tail);
-            const uint32_t tail_spare = sbufGetTailCapacity(tail);
+            const size_t tail_len   = sbufGetLength(tail);
+            const size_t tail_spare = sbufGetTailCapacity(tail);
 
             if (incoming_len <= tail_spare)
             {
@@ -223,10 +223,10 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
 {
     assert(self != NULL && destination != NULL);
     assert(! sbufIsSplice(destination));
-    assert(destination->curpos <= destination->capacity);
+    assert(sbufGetHeadroom(destination) <= destination->capacity);
 
-    const uint32_t length   = sbufGetLength(destination);
-    const uint32_t writable = sbufGetMaximumWriteableSize(destination);
+    const size_t length   = sbufGetLength(destination);
+    const size_t writable = sbufGetMaximumWriteableSize(destination);
     if (UNLIKELY(bytes > self->size))
     {
         LOGF("BufferStream: exact move exceeds available source bytes");
@@ -248,8 +248,8 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
         assert(! bs_doublequeue_t_is_empty(&self->q));
         sbuf_t *source = *bs_doublequeue_t_front(&self->q);
         assert(source != destination && ! sbufIsSplice(source));
-        const uint32_t available = sbufGetLength(source);
-        const uint32_t count     = (uint32_t) min(remaining, (size_t) available);
+        const size_t available = sbufGetLength(source);
+        const size_t count     = min(remaining, available);
         if (count != 0)
         {
             memoryCopyLarge(target, sbufGetRawPtr(source), count);
@@ -264,7 +264,7 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
         else
             sbufShiftRight(source, count);
     }
-    sbufSetLength(destination, length + (uint32_t) bytes);
+    sbufSetLength(destination, length + bytes);
 }
 
 sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)

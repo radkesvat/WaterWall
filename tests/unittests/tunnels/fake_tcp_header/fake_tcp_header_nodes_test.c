@@ -794,7 +794,7 @@ static void makeNative(uint8_t *packet, uint8_t protocol)
 static sbuf_t *pooledPacket(line_t *line, const uint8_t *packet, uint32_t length)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
-    require(sbufGetLeftCapacity(buf) >= 61, "fixture did not advertise framing headroom");
+    require(sbufGetHeadroom(buf) >= 61, "fixture did not advertise framing headroom");
     sbufSetLength(buf, length);
     memoryCopy(sbufGetMutablePtr(buf), packet, length);
     return buf;

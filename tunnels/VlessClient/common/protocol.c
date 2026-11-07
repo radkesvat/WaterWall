@@ -69,7 +69,7 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
     uint64_t       total          = (uint64_t) header_len + udp_header_len + body_len;
     buffer_pool_t *pool           = lineGetBufferPool(l);
     uint16_t       padding        = bufferpoolGetLargeBufferPadding(pool);
-    bool reuse_body = body != NULL && ! sbufIsSplice(body) && sbufGetLeftCapacity(body) >= header_len + udp_header_len;
+    bool    reuse_body = body != NULL && ! sbufIsSplice(body) && sbufGetHeadroom(body) >= header_len + udp_header_len;
     sbuf_t *buf     = reuse_body ? body : bufferpoolTryGetBestFit(pool, total, padding);
     if (UNLIKELY(buf == NULL))
     {

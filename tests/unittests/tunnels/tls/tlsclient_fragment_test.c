@@ -213,7 +213,7 @@ static void nextPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard        t;
     const uint32_t n = sbufGetLength(buf);
     twfRequire(l == line && writes < ARRAY_SIZE(lengths) && n <= sizeof(wire) - wire_size, "wire capture bound");
-    twfRequire(sbufGetLeftCapacity(buf) >= 64 && ! sbufIsSplice(buf), "TLS fragment padding/representation");
+    twfRequire(sbufGetHeadroom(buf) >= 64 && ! sbufIsSplice(buf), "TLS fragment padding/representation");
     lengths[writes++] = n;
     memoryCopy(wire + wire_size, sbufGetRawPtr(buf), n);
     wire_size += n;

@@ -186,7 +186,7 @@ bool pingwireEchoRequestPreflight(const sbuf_t *buf)
 {
     return buf != NULL && pingwireIsExactIpv4Packet(sbufGetRawPtr(buf), sbufGetLength(buf)) &&
            sbufGetLength(buf) <= kPingWireMaxInnerPacketLength &&
-           sbufGetLeftCapacity(buf) >= kPingWireEncapsulationOverhead;
+           sbufGetHeadroom(buf) >= kPingWireEncapsulationOverhead;
 }
 
 bool pingwireBuildEchoRequest(sbuf_t *buf, const ping_wire_config_t *config, uint16_t sequence)

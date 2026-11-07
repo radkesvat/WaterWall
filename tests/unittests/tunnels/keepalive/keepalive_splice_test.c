@@ -116,7 +116,7 @@ static sbuf_t *pipeBytes(const void *data, uint32_t length, uint32_t prefix)
     uint32_t body = length - prefix;
     twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes + prefix, body) == (ssize_t) body,
                "populate exclusive pipe");
-    buf->capacity = buf->l_pad + body;
+    buf->capacity = buf->initial_headroom + body;
     sbufSetLength(buf, body);
     sbufShiftLeft(buf, prefix);
     memoryCopy(sbufGetMutablePtr(buf), bytes, prefix);

@@ -112,7 +112,7 @@ static void caseOutputReservation(SSL_CTX *ctx, buffer_pool_t *pool)
     memorySet(out, 0x73, 512);
     tlsbufferbioFinishWrite(bio, 512);
     sbuf_t *owned = tlsbufferbioTake(bio);
-    twfRequire(sbufGetRawPtr(owned) == out && sbufGetLength(owned) == 512 && sbufGetLeftCapacity(owned) >= 64,
+    twfRequire(sbufGetRawPtr(owned) == out && sbufGetLength(owned) == 512 && sbufGetHeadroom(owned) >= 64,
                "commit transfers the encryption destination with onward padding");
 
     out = tlsbufferbioReserveWrite(bio, 123, 8, 5);
@@ -159,7 +159,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
 
     sbuf_t        *first  = input(pool, "abc", 3);
     sbuf_t        *second = input(pool, "defgh", 5);
-    const uint32_t cursor = first->curpos;
+    const size_t   cursor = sbufGetHeadroom(first);
     twfRequire(tlsbufferbioFeed(bio, first) && tlsbufferbioFeed(bio, second), "admit fragmented input");
     twfRequire(BIO_ctrl_pending(bio) == 8 && ! BIO_should_retry(bio), "input clears retry and counts bytes");
     twfRequire(tlsbufferbioPeek(bio, bytes, 6) == 6 && memoryCompare(bytes, "abcdef", 6) == 0 &&
@@ -168,7 +168,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
     twfRequire(BIO_read(bio, bytes, 1) == 1 && bytes[0] == 'a', "partial read");
 
     sbuf_t *taken = tlsbufferbioTake(bio);
-    twfRequire(taken == first && taken->curpos == cursor + 1 && sbufGetLength(taken) == 2 &&
+    twfRequire(taken == first && sbufGetHeadroom(taken) == cursor + 1 && sbufGetLength(taken) == 2 &&
                    memoryCompare(sbufGetRawPtr(taken), "bc", 2) == 0,
                "input is retained without a staging copy or compaction");
     bufferpoolReuseBuffer(pool, taken);
@@ -182,7 +182,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
     taken = tlsbufferbioTake(bio);
     twfRequire(taken != NULL && sbufGetLength(taken) == 7 && memoryCompare(sbufGetRawPtr(taken), "cdefghi", 7) == 0,
                "owned output contains ordered unread data");
-    twfRequire(sbufGetLeftPadding(taken) >= 64 && sbufGetLeftCapacity(taken) >= 64, "output preserves padding");
+    twfRequire(sbufGetInitialHeadroom(taken) >= 64 && sbufGetHeadroom(taken) >= 64, "output preserves padding");
     twfRequire(BIO_write(bio, "replacement", 11) == 11, "next output write");
     BIO_free(bio);
     twfRequire(memoryCompare(sbufGetRawPtr(taken), "cdefghi", 7) == 0,

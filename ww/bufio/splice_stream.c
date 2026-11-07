@@ -62,7 +62,7 @@ static void streamFillHeader(splice_stream_t *s)
 
 bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
 {
-    const uint32_t length = sbufGetLength(input);
+    const size_t length = sbufGetLength(input);
     if (length == 0)
     {
         bufferpoolReuseBuffer(s->pool, input);
@@ -104,7 +104,7 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
 
 bool splicestreamCanAdmit(const splice_stream_t *s, const sbuf_t *input, size_t max_bytes, size_t max_charge)
 {
-    const uint32_t length = sbufGetLength(input);
+    const size_t length = sbufGetLength(input);
     if (s->total > max_bytes || length > max_bytes - s->total || s->charge > max_charge)
         return false;
     size_t charge = 0;
@@ -215,7 +215,7 @@ sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *s, sbuf_t *dest, uint32_t by
     sbuf_t        *head       = streamHead(s);
     const uint32_t head_bytes = head == NULL ? 0 : min(bytes, sbufGetLength(head));
     bool           has_pipe   = head != NULL && head_bytes > sbufGetResidentPrefixLength(head);
-    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding &&
+    if (bytes != 0 && head != NULL && sbufGetLength(head) == bytes && sbufGetHeadroom(head) >= padding &&
         (! sbufIsSplice(head) || (has_pipe && dest != NULL && sbufIsSplice(dest))))
     {
         if (dest != NULL)
@@ -236,7 +236,7 @@ sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *s, sbuf_t *dest, uint32_t by
     if (dest != NULL && sbufIsSplice(dest))
     {
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(dest);
-        if (! has_pipe || bytes == 0 || sbufGetLeftCapacity(dest) < padding || metadata.pipefd[1] < 0)
+        if (! has_pipe || bytes == 0 || sbufGetHeadroom(dest) < padding || metadata.pipefd[1] < 0)
         {
             bufferpoolReuseBuffer(s->pool, dest);
             dest = NULL;

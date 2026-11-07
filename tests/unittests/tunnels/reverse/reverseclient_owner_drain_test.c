@@ -374,7 +374,7 @@ static sbuf_t *privatePayload(void)
     sbuf_t *buf = bufferpoolGetSpliceBuffer(getWorkerBufferPool(0));
     require(buf != NULL, "failed to get ReverseClient splice input");
     require(write(sbufSpliceMetadata(buf).pipefd[1], "body", 4) == 4, "populate ReverseClient private pipe");
-    buf->capacity = buf->l_pad + 4;
+    buf->capacity = buf->initial_headroom + 4;
     sbufSetLength(buf, 4);
     sbufShiftLeft(buf, 3);
     sbufWrite(buf, "pre", 3);
@@ -444,7 +444,7 @@ static void testPipeActivationPadding(void)
         sbuf_t  *buf   = bufferpoolGetSpliceBuffer(getWorkerBufferPool(0));
         require(buf != NULL, "allocate pipe-backed activation");
         require(write(sbufSpliceMetadata(buf).pipefd[1], bytes + offset, count) == count, "populate pipe activation");
-        buf->capacity = buf->l_pad + count;
+        buf->capacity = buf->initial_headroom + count;
         sbufSetLength(buf, count);
         if (offset != 0)
             fixture.expected_payload = buf;

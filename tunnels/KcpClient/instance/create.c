@@ -1,0 +1,187 @@
+#include "structure.h"
+
+#include "loggers/network_logger.h"
+
+static bool kcpclientParseSettings(kcpclient_tstate_t *ts, node_t *node)
+{
+    const cJSON *settings = node->node_settings_json;
+
+    *ts = (kcpclient_tstate_t) {
+        .fec_enabled               = false,
+        .fec_data_shards           = kKcpClientFecDefaultDataShards,
+        .fec_parity_shards         = kKcpClientFecDefaultParityShards,
+        .kcp_nodelay               = kKcpClientKcpNodelayDefault != 0,
+        .kcp_no_congestion_control = kKcpClientKcpNoCongestionControlDefault != 0,
+        .kcp_interval_ms           = kKcpClientKcpIntervalDefault,
+        .kcp_resend                = kKcpClientKcpResendDefault,
+        .kcp_send_window           = kKcpClientKcpSendWindowDefault,
+        .kcp_recv_window           = kKcpClientKcpRecvWindowDefault,
+        .kcp_initial_cwnd          = kKcpClientKcpInitialCwndDefault,
+        .kcp_rx_minrto_ms          = kKcpClientKcpRxMinRtoDefault,
+        .kcp_send_buffer_limit     = kKcpClientKcpSendBufferLimitDefault,
+        .ping_interval_ms          = kKcpClientPingintervalMsDefault,
+        .no_recv_timeout_ms        = kKcpClientNoRecvTimeOutDefault,
+        .close_drain_timeout_ms    = kTouDefaultCloseMs,
+    };
+
+    if (! cJSON_IsObject(settings))
+    {
+        goto validate_send_mtu;
+    }
+
+    getBoolFromJsonObjectOrDefault(&ts->fec_enabled, settings, "fec", false);
+    getBoolFromJsonObjectOrDefault(&ts->kcp_nodelay, settings, "kcp-nodelay", ts->kcp_nodelay);
+    getBoolFromJsonObjectOrDefault(
+        &ts->kcp_no_congestion_control, settings, "kcp-no-congestion-control", ts->kcp_no_congestion_control);
+
+    int  data_shards        = ts->fec_data_shards;
+    int  parity_shards      = ts->fec_parity_shards;
+    int  ping_interval_ms   = (int) ts->ping_interval_ms;
+    int  no_recv_timeout_ms = (int) ts->no_recv_timeout_ms;
+    bool has_initial_cwnd   = getIntFromJsonObject(&ts->kcp_initial_cwnd, settings, "kcp-initial-cwnd");
+
+    getIntFromJsonObjectOrDefault(&data_shards, settings, "fec-data-shards", data_shards);
+    getIntFromJsonObjectOrDefault(&parity_shards, settings, "fec-parity-shards", parity_shards);
+    getIntFromJsonObjectOrDefault(&ts->kcp_interval_ms, settings, "kcp-interval-ms", ts->kcp_interval_ms);
+    getIntFromJsonObjectOrDefault(&ts->kcp_resend, settings, "kcp-resend", ts->kcp_resend);
+    getIntFromJsonObjectOrDefault(&ts->kcp_send_window, settings, "kcp-send-window", ts->kcp_send_window);
+    getIntFromJsonObjectOrDefault(&ts->kcp_recv_window, settings, "kcp-recv-window", ts->kcp_recv_window);
+    getIntFromJsonObjectOrDefault(&ts->kcp_rx_minrto_ms, settings, "kcp-rx-minrto-ms", ts->kcp_rx_minrto_ms);
+    getIntFromJsonObjectOrDefault(
+        &ts->kcp_send_buffer_limit, settings, "kcp-send-buffer-limit", ts->kcp_send_buffer_limit);
+    getIntFromJsonObjectOrDefault(&ping_interval_ms, settings, "ping-interval-ms", ping_interval_ms);
+    getIntFromJsonObjectOrDefault(&no_recv_timeout_ms, settings, "no-recv-timeout-ms", no_recv_timeout_ms);
+
+    if (! has_initial_cwnd)
+    {
+        ts->kcp_initial_cwnd = max(1, ts->kcp_send_window / 2);
+    }
+
+    if (ts->kcp_interval_ms < 10 || ts->kcp_interval_ms > 5000)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-interval-ms (int field) : expected 10..5000");
+        return false;
+    }
+
+    if (ts->kcp_resend < 0)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-resend (int field) : expected a value >= 0");
+        return false;
+    }
+
+    if (ts->kcp_send_window < 1 || ts->kcp_recv_window < 1)
+    {
+        LOGF("JSON Error: KcpClient->settings KCP windows must be positive");
+        return false;
+    }
+
+    if (ts->kcp_initial_cwnd < 1 || ts->kcp_initial_cwnd > ts->kcp_send_window)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-initial-cwnd (int field) : expected 1..kcp-send-window");
+        return false;
+    }
+
+    if (ts->kcp_rx_minrto_ms < 1)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-rx-minrto-ms (int field) : expected a value >= 1");
+        return false;
+    }
+
+    if (ts->kcp_send_buffer_limit < 0)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-send-buffer-limit (int field) : expected a value >= 0");
+        return false;
+    }
+
+    if (ping_interval_ms < 1)
+    {
+        LOGF("JSON Error: KcpClient->settings->ping-interval-ms (int field) : expected a value >= 1");
+        return false;
+    }
+
+    if (no_recv_timeout_ms <= ping_interval_ms)
+    {
+        LOGF("JSON Error: KcpClient->settings->no-recv-timeout-ms must be greater than ping-interval-ms");
+        return false;
+    }
+
+    ts->ping_interval_ms   = (uint32_t) ping_interval_ms;
+    ts->no_recv_timeout_ms = (uint32_t) no_recv_timeout_ms;
+
+    if (ts->fec_enabled && (data_shards <= 0 || parity_shards <= 0 || data_shards > 255 - parity_shards))
+    {
+        LOGF("JSON Error: KcpClient->settings FEC requires 1..255 total shards with positive data/parity values");
+        return false;
+    }
+
+    if (ts->fec_enabled)
+    {
+        ts->fec_data_shards   = (uint8_t) data_shards;
+        ts->fec_parity_shards = (uint8_t) parity_shards;
+    }
+
+validate_send_mtu:;
+    int64_t close_ms = kTouDefaultCloseMs;
+    if (jsonGetObjectIntegerInRange(settings, "close-drain-timeout-ms", 1, INT_MAX, &close_ms) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: KcpClient->settings->close-drain-timeout-ms must be an integer in 1..2147483647");
+        return false;
+    }
+    ts->close_drain_timeout_ms = (uint32_t) close_ms;
+    int64_t       send_mtu     = CORE_DEFAULT_MTU;
+    const int64_t minimum      = kKcpClientKcpMinimumMtu + kKcpClientIpv4HeaderSize + kKcpClientUdpHeaderSize +
+                            kTouEnvelopeSize + (int64_t) kcpclientGetOuterFecOverhead(ts);
+    const json_value_status_t status =
+        jsonGetObjectIntegerInRange(settings, "send-mtu", minimum, UINT16_MAX, &send_mtu);
+    if (status == kJsonValueInvalid || send_mtu < minimum || send_mtu > UINT16_MAX)
+    {
+        LOGF("JSON Error: KcpClient->settings->send-mtu must be an integer between %lld and 65535%s",
+             (long long) minimum,
+             status == kJsonValueMissing ? "; inherited core misc.mtu is unsupported; set an explicit node send-mtu"
+                                         : "");
+        return false;
+    }
+    ts->send_mtu = (uint16_t) send_mtu;
+
+    return true;
+}
+
+tunnel_t *kcpclientTunnelCreate(node_t *node)
+{
+    tunnel_t *t = tunnelCreate(node, sizeof(kcpclient_tstate_t), sizeof(kcpclient_lstate_t));
+    if (! t)
+    {
+        return NULL;
+    }
+
+    t->fnInitU    = &kcpclientTunnelUpStreamInit;
+    t->fnFinU     = &kcpclientTunnelUpStreamFinish;
+    t->fnPayloadU = &kcpclientTunnelUpStreamPayload;
+    t->fnPauseU   = &kcpclientTunnelUpStreamPause;
+    t->fnResumeU  = &kcpclientTunnelUpStreamResume;
+    t->fnEstD     = &kcpclientTunnelDownStreamEst;
+    t->fnFinD     = &kcpclientTunnelDownStreamFinish;
+    t->fnPayloadD = &kcpclientTunnelDownStreamPayload;
+    t->fnPauseD   = &kcpclientTunnelDownStreamPause;
+    t->fnResumeD  = &kcpclientTunnelDownStreamResume;
+
+    t->onQuiesceRequest = &kcpclientTunnelOnQuiesceRequest;
+
+    kcpclient_tstate_t *ts = tunnelGetState(t);
+
+    if (! kcpclientParseSettings(ts, node))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+    atomic_init(&ts->stopping, false);
+    ts->workers_count  = getWorkersCount();
+    ts->workers        = memoryAllocateZero(sizeof(*ts->workers) * ts->workers_count);
+    t->onWorkerQuiesce = kcpclientTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = kcpclientTunnelOnWorkerStop;
+    t->onDestroy       = kcpclientTunnelDestroy;
+
+    ikcp_allocator(&memoryAllocate, &memoryFree);
+
+    return t;
+}

@@ -45,7 +45,7 @@ static sbuf_t *bytes(const void *data, size_t len)
 static sbuf_t *spliceBytes(const void *data, uint32_t length, uint32_t prefix)
 {
     sbuf_t *b = bufferpoolGetSpliceBuffer(env.pool);
-    twfRequire(b != NULL && prefix <= length && prefix <= sbufGetLeftCapacity(b), "splice buffer geometry");
+    twfRequire(b != NULL && prefix <= length && prefix <= sbufGetHeadroom(b), "splice buffer geometry");
     const uint8_t *raw  = data;
     uint32_t       body = length - prefix;
     uint32_t       sent = 0;
@@ -57,7 +57,7 @@ static sbuf_t *spliceBytes(const void *data, uint32_t length, uint32_t prefix)
         twfRequire(n > 0, "populate private payload pipe");
         sent += (uint32_t) n;
     }
-    b->capacity = b->l_pad + body;
+    b->capacity = b->initial_headroom + body;
     sbufSetLength(b, body);
     if (prefix)
     {
@@ -566,7 +566,7 @@ static void udpWireVectors(void)
             sbuf_t *b = bytes("X", 1);
             if (fallback)
             {
-                sbufShiftLeft(b, sbufGetLeftCapacity(b));
+                sbufShiftLeft(b, sbufGetHeadroom(b));
                 sbufSetLength(b, 1);
                 *(uint8_t *) sbufGetMutablePtr(b) = 'X';
             }
@@ -775,7 +775,7 @@ static void spliceUdp(void)
         payload[length - 1] = 'X';
         sbuf_t *b           = spliceBytes(payload, length, prefix);
         if (no_headroom)
-            twfRequire(sbufGetLeftCapacity(b) == 0, "UDP fixture retained headroom");
+            twfRequire(sbufGetHeadroom(b) == 0, "UDP fixture retained headroom");
         twfRequire(socks5clientWrapUdpPayload(
                        application, &b, &((socks5client_lstate_t *) lineGetState(application, client))->target_addr),
                    "UDP splice wrapping failed");

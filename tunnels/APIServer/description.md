@@ -17,11 +17,11 @@ own their request and result schemas: see
 ```text
 TcpListener -> APIServer
 TcpListener -> HttpServer -> APIServer
-UdpListener -> TcpOverUdpServer -> APIServer
+UdpListener -> KcpServer -> APIServer
 ```
 
 Direct `UdpListener -> APIServer` is unsupported: API frames require an ordered
-reliable stream. The UDP composition requires a matching `TcpOverUdpClient` on
+reliable stream. The UDP composition requires a matching `KcpClient` on
 the caller side. See the [transport examples](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/transports.mdx)
 for complete compositions and HTTP body handling.
 

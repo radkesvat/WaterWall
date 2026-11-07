@@ -1369,7 +1369,7 @@ static sbuf_t *pqSpliceBytes(pq_fixture_t *f, const uint8_t *bytes, uint32_t len
         twfRequire(n > 0, "private pipe could not hold the complete fixture payload");
         offset += (uint32_t) n;
     }
-    buf->capacity = buf->l_pad + length;
+    buf->capacity = buf->initial_headroom + length;
     sbufSetLength(buf, length);
     return buf;
 }
@@ -1381,7 +1381,7 @@ static sbuf_t *pqIndependentSpliceByte(pq_fixture_t *f, uint8_t byte, uint32_t m
         twfTrackAcquired(testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f->env.pool), minimum_capacity));
     twfRequire(write(sbufSpliceMetadata(input).pipefd[1], &byte, 1) == 1,
                "retained source fixture could not hold its payload");
-    input->capacity = input->l_pad + 1;
+    input->capacity = input->initial_headroom + 1;
     sbufSetLength(input, 1);
     return input;
 }
@@ -1614,7 +1614,7 @@ static sbuf_t *pqCarrierRead(pq_fixture_t *f, const uint8_t *bytes, uint32_t len
         twfRequire(n > 0, "private pipe could not hold the carrier read");
         offset += (uint32_t) n;
     }
-    buf->capacity = buf->l_pad + length;
+    buf->capacity = buf->initial_headroom + length;
     sbufSetLength(buf, length);
     return buf;
 }

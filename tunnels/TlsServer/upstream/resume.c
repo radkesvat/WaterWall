@@ -9,6 +9,7 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     {
         return;
     }
+    ls->prev_paused = false;
 
     if (ls->fallback_mode)
     {
@@ -24,5 +25,9 @@ void tlsserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     }
 
     ls->pending_branch_pause = false;
+    if (ls->shaping_producer_paused)
+    {
+        return;
+    }
     tunnelNextUpStreamResume(t, l);
 }

@@ -77,16 +77,17 @@ typedef void (*TunnelFlowRoutineEst)(tunnel_t *, line_t *line);
 typedef void (*TunnelFlowRoutineFin)(tunnel_t *, line_t *line);
 /*
  * Pause/Resume are repeatable advisory notifications, not counted holds or a
- * core Payload gate. Ordinary middle tunnels use the forwarding defaults and
- * may deliver due scheduled output without waiting for Resume. Adapters and
- * exact-line heads/tails control their producers; SpeedLimit and bandwidth-enabled
- * UserController combine their local hold with consumer pressure. Every receiver
- * retains its hard limits.
+ * core Payload gate. Tunnels that never originate Pause use forwarding defaults.
+ * Every Pause originator combines its local hold with the latest received pressure
+ * for the same line and producer direction; neither reason's Resume may release
+ * the other. No whole-connection state or issuer counting is required. Ordinary
+ * middle output may progress without waiting for Resume. Adapters, exact-line
+ * heads/tails and limiters retain their producer/drain gates and hard limits.
  *
  * A middle tunnel originating Pause must arrange its own Resume or close even
- * if no further input arrives. An advisory Resume may override another node's
- * Pause; it does not prove all consumers writable or all queues empty. FIFO,
- * protocol ordering, line lifetime and Finish rules still apply to every send.
+ * if no further input arrives. Publish received and local pressure before callbacks;
+ * send Resume only when both have cleared. In-flight payload may still arrive.
+ * FIFO, protocol ordering, line lifetime and Finish rules apply to every send.
  * Dispatch preserves registered handlers and never infers line roles from a
  * tunnel's chain position. Transparent forwarding does not retire line state.
  */

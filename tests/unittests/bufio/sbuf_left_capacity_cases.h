@@ -32,14 +32,14 @@ static void testOrdinaryLeftCapacity(void)
             bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
             sbuf_t *result = sbufEnsureLeftCapacity(fixture.pool, source, needs[i]);
             bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
-            require(! sbufIsSplice(result) && sbufGetLeftCapacity(result) >= needs[i],
+            require(! sbufIsSplice(result) && sbufGetHeadroom(result) >= needs[i],
                     "ordinary left-capacity repair lost headroom or changed representation");
             if (needs[i] <= 32)
-                require(result == source && result->curpos == 32 && memoryEqual(before, after, sizeof(before)),
+                require(result == source && sbufGetHeadroom(result) == 32 && memoryEqual(before, after, sizeof(before)),
                         "sufficient ordinary headroom changed the buffer or pool caches");
             else
             {
-                require(result != source && sbufGetLeftCapacity(result) >= max(64U, needs[i]),
+                require(result != source && sbufGetHeadroom(result) >= max(64U, needs[i]),
                         "ordinary replacement lost full onward padding");
                 sbuf_t *recycled = bufferpoolGetSmallBuffer(fixture.pool);
                 sbuf_t *second   = bufferpoolGetSmallBuffer(fixture.pool);
@@ -65,12 +65,21 @@ static void testSpliceLeftCapacity(void)
                 sbuf_t                        *source          = testSpliceSourceBuffer(32, body);
                 const splice_buffer_metadata_t source_metadata = sbufSpliceMetadata(source);
                 writeSpliceTestBody(source_metadata.pipefd[1], wire + prefix, body);
-                source->capacity = source->l_pad + body;
+                source->capacity = source->initial_headroom + body;
                 sbufSetLength(source, body);
-                sbufShiftLeft(source, prefix);
-                memoryCopy(sbufGetMutablePtr(source), wire, prefix);
-                const uint16_t need   = mode == 0 ? 0 : mode == 1 ? (uint16_t) source->curpos : 33;
-                const uint32_t cursor = source->curpos;
+                uint8_t *prefix_start = sbufShiftLeft(source, prefix);
+                require(prefix_start == source->data && prefix_start == source->head + 32 - prefix &&
+                            sbufGetLength(source) == prefix + body && sbufGetHeadroom(source) == 32 - prefix &&
+                            sbufGetInitialHeadroom(source) == 32,
+                        "splice prepend returned the wrong resident cursor or changed initial headroom");
+                memoryCopy(prefix_start, wire, prefix);
+                const splice_buffer_metadata_t after_prefix = sbufSpliceMetadata(source);
+                require(after_prefix.pipefd[0] == source_metadata.pipefd[0] &&
+                            after_prefix.pipefd[1] == source_metadata.pipefd[1] &&
+                            after_prefix.pipe_capacity == source_metadata.pipe_capacity,
+                        "splice prepend changed private metadata");
+                const uint16_t need   = mode == 0 ? 0 : mode == 1 ? (uint16_t) sbufGetHeadroom(source) : 33;
+                const size_t   cursor = sbufGetHeadroom(source);
                 uint32_t       before[4], after[4];
                 bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
                 streamProbe     = true;
@@ -78,15 +87,15 @@ static void testSpliceLeftCapacity(void)
                 sbuf_t *result                      = sbufEnsureLeftCapacity(fixture.pool, source, need);
                 streamProbe                         = false;
                 bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
-                require(sbufIsSplice(result) && sbufGetLeftCapacity(result) >= need && streamReadBytes == 0,
+                require(sbufIsSplice(result) && sbufGetHeadroom(result) >= need && streamReadBytes == 0,
                         "splice headroom repair materialized available pipe storage or lost padding");
                 if (mode != 2)
-                    require(result == source && result->curpos == cursor && streamSpliceBytes == 0 &&
+                    require(result == source && sbufGetHeadroom(result) == cursor && streamSpliceBytes == 0 &&
                                 memoryEqual(before, after, sizeof(before)),
                             "sufficient splice headroom changed the buffer, pipe or pool caches");
                 else
                 {
-                    require(result != source && sbufGetLeftCapacity(result) >= 64 && streamSpliceBytes == body,
+                    require(result != source && sbufGetHeadroom(result) >= 64 && streamSpliceBytes == body,
                             "splice replacement lost onward padding or private-body bytes");
                     require(fcntl(source_metadata.pipefd[0], F_GETFD) < 0 && errno == EBADF &&
                                 fcntl(source_metadata.pipefd[1], F_GETFD) < 0 && errno == EBADF,
@@ -114,7 +123,7 @@ static void testLeftCapacityTransferFallback(void)
         streamTransferFault                 = 0;
         const bool fallback                 = faults[i] != 1;
         require(sbufIsSplice(result) == ! fallback && streamReadBytes == (fallback ? 13U : 0U) &&
-                    sbufGetLeftCapacity(result) >= 64,
+                    sbufGetHeadroom(result) >= 64,
                 "left-capacity transfer refusal lost complete fallback or onward headroom");
         require(streamSpliceBytes == (faults[i] == 5 ? 1U
                                       : fallback     ? 0U
@@ -147,7 +156,7 @@ static void testLeftCapacityDestinationRefusal(void)
                     "left-capacity fixture did not exhaust destination pipes");
         }
         sbuf_t *result = sbufEnsureLeftCapacity(fixture.pool, source, 58);
-        require(! sbufIsSplice(result) && sbufGetLeftCapacity(result) >= bufferpoolGetLargeBufferPadding(fixture.pool),
+        require(! sbufIsSplice(result) && sbufGetHeadroom(result) >= bufferpoolGetLargeBufferPadding(fixture.pool),
                 "unavailable or underpadded splice destination did not select full ordinary storage");
         sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);
         require(recycled == source && sbufGetLength(recycled) == 0 && sbufSpliceIsReusable(recycled),

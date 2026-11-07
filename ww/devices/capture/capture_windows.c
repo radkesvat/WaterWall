@@ -254,7 +254,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         if (UNLIKELY(sbufGetLength(buf) > kMaxAllowedPacketLength))
         {
             // we are capturing packets and this can happen, so we just log it
-            LOGW("CaptureDevice: ReadThread: discarded a packet -> size %d exceeds kMaxAllowedPacketLength %d",
+            LOGW("CaptureDevice: ReadThread: discarded a packet -> size %zu exceeds kMaxAllowedPacketLength %d",
                  sbufGetLength(buf),
                  kMaxAllowedPacketLength);
 

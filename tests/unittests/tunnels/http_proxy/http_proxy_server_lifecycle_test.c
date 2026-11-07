@@ -297,7 +297,7 @@ static sbuf_t *makeInput(line_t *l, const char *bytes, unsigned mode)
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(b);
         if (n != prefix)
             require(write(metadata.pipefd[1], bytes + prefix, n - prefix) == (ssize_t) (n - prefix), "fill real pipe");
-        b->capacity = b->l_pad + (uint32_t) (n - prefix);
+        b->capacity = b->initial_headroom + (uint32_t) (n - prefix);
         sbufSetLength(b, (uint32_t) (n - prefix));
         sbufShiftLeft(b, (uint32_t) prefix);
         memoryCopy(sbufGetMutablePtr(b), bytes, prefix);
@@ -328,7 +328,7 @@ static void childPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     require(! in_fallback_init, "Payload entered unfinished fallback Init");
     require(l == child, "request did not use owned child");
     require(t == (fallback_opens ? fallback : next), "wrong Payload branch");
-    require(sbufGetLeftCapacity(b) >= 64, "rewritten buffer lost chain padding");
+    require(sbufGetHeadroom(b) >= 64, "rewritten buffer lost chain padding");
     size_t n = sbufGetLength(b);
     require(n < sizeof(sent) - sent_len, "test request capacity");
     requireOrdinarySlots();
@@ -1038,7 +1038,7 @@ static void requireRetainedBounds(hps_session_t *session)
     const uint64_t p       = ((hps_tstate_t *) tunnelGetState(proxy))->max_pending;
     const uint64_t d       = UINT64_C(2) * 1024 * 1024;
     uint64_t       working = 0, charge = 0, total = 0;
-    uint32_t       remainder_capacity;
+    size_t         remainder_capacity;
     require(sbufTryComputeCapacity(max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * d),
                                    max(bufferpoolGetSmallBufferPadding(pool), bufferpoolGetLargeBufferPadding(pool)),
                                    &remainder_capacity),

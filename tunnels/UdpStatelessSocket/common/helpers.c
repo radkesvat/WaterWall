@@ -304,7 +304,7 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
 
-        LOGD("UdpStatelessSocket: received %u bytes from [%s] <= [%s]",
+        LOGD("UdpStatelessSocket: received %zu bytes from [%s] <= [%s]",
              sbufGetLength(buf),
              SOCKADDR_STR(&local_addr, localaddrstr),
              SOCKADDR_STR(&peer_addr, peeraddrstr));
@@ -728,7 +728,7 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (state->verbose)
     {
         char peeraddrstr[SOCKADDR_STRLEN] = {0};
-        LOGD("UdpStatelessSocket: %u bytes Packet to => [%s]", sbufGetLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
+        LOGD("UdpStatelessSocket: %zu bytes Packet to => [%s]", sbufGetLength(buf), SOCKADDR_STR(&addr, peeraddrstr));
     }
 
     udpstatelesssocketDispatchToPeer(t, buf, &addr);

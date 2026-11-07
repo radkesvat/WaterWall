@@ -40,7 +40,7 @@ The maintained guides and walkthroughs live in **WaterWall-Docs**:
 - [Client walkthrough](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/client.mdx): server configuration and a first request.
 - [Administration CLI](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/administration-cli.mdx): account commands, explicit edit tokens, pagination and password input.
 - [Managing authentication users](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/authentication-users.mdx): reads, creation, account edits, and password changes.
-- [API transports](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/transports.mdx): TCP, HTTP body tunnels, and TcpOverUdp.
+- [API transports](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/03-examples/api/transports.mdx): TCP, HTTP body tunnels, and KCP.
 
 This directory holds the executable example; the docs repository links to this
 copy. Its regression tests remain in [`tests/api_client_test.py`](../../../tests/api_client_test.py):

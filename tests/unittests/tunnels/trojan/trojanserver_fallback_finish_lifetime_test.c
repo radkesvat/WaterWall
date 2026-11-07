@@ -502,7 +502,7 @@ static void caseMixedSpliceFinalBatch(void)
         const uint8_t  prefix[] = "private-pipe-prefix";
         const uint32_t count    = sizeof(prefix) - 1;
         twfRequire(write(sbufSpliceMetadata(pipe).pipefd[1], prefix, count) == count, "small pipe write failed");
-        pipe->capacity = pipe->l_pad + count;
+        pipe->capacity = pipe->initial_headroom + count;
         sbufSetLength(pipe, count);
         twfRequire(trojanserverSendFallbackPayload(fixture.node, fixture.line, ls, pipe), "pipe fallback rejected");
         const uint32_t large_size = kTestLargeBufferSize + 17;

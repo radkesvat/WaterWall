@@ -139,7 +139,7 @@ static sbuf_t *bytes(const void *data, uint32_t n, bool pipe, uint16_t padding)
         const uint16_t source_padding = padding == 320 ? bufferpoolGetSpliceBufferPadding(f.env.pool) : padding;
         b                             = twfTrackAcquired(testSpliceSourceBuffer(source_padding, n));
         twfRequire(write(sbufSpliceMetadata(b).pipefd[1], data, n) == (ssize_t) n, "source pipe fixture too large");
-        b->capacity = b->l_pad + n;
+        b->capacity = b->initial_headroom + n;
     }
     else
 #endif
@@ -322,7 +322,7 @@ static void capture(tunnel_t *t, line_t *l, sbuf_t *b)
     reads         = 0;
     f.last        = b;
     f.last_splice = sbufIsSplice(b);
-    f.headroom    = (uint16_t) sbufGetLeftCapacity(b);
+    f.headroom    = (uint16_t) sbufGetHeadroom(b);
     twfRequire(*length + n <= sizeof(f.up), "capture overflow");
     sbufReadRangeToMemory(b, out + *length, n);
     reads = 0;
@@ -716,7 +716,7 @@ static void testOrdinaryResponsePadding(void)
             tunnelUpStreamPayload(f.t, f.line, bytes(wire, n, false, 320));
             sbuf_t *first = bytes("reply", 5, false, 320);
             /* Leave exact headroom, including values smaller than buffer alignment. */
-            sbufShiftLeft(first, sbufGetLeftCapacity(first) - padding);
+            sbufShiftLeft(first, sbufGetHeadroom(first) - padding);
             sbufSetLength(first, 5);
             sbufWrite(first, "reply", 5);
             tunnelDownStreamPayload(f.t, udp ? f.remotes[0] : f.line, first);

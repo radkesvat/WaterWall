@@ -3,7 +3,7 @@
  * this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: configuration, startup, connectParserRetirement, framing, reentry, directBuffers,
+ * Cases: configuration, startup, combinedPressure, connectParserRetirement, framing, reentry, directBuffers,
  * ordinaryReadPreferences, limitsAndTimers; remaining scenario calls are explicit in main
  * Checks: Assertion labels include: CONNECT retained borrowed parsed header pointers; CONNECT retained a
  * field pointer; CONNECT parsing retirement canceled the idle/drain timer; real pipe write
@@ -37,6 +37,7 @@ static uintptr_t       last_up, last_down, second_up;
 static bool            in_init, init_est, init_pause, init_resume, init_finish, source_in_est, rewrite_target;
 static unsigned        on_write, write_action, on_receive, receive_action, close_signal;
 static bool            source_paused, late_init, quiesce_in_init;
+static bool            resume_from_pause, pause_from_resume;
 
 static bool check_connect_retirement;
 static void requireParsingRetired(void)
@@ -69,7 +70,7 @@ static sbuf_t *input(const void *bytes, size_t length)
             ssize_t n = write(sbufSpliceMetadata(b).pipefd[1], (const char *) bytes + prefix, body);
             require(n == (ssize_t) body, "real pipe write");
         }
-        b->capacity = b->l_pad + (uint32_t) body;
+        b->capacity = b->initial_headroom + (uint32_t) body;
         b->len      = (uint32_t) body;
         if (prefix)
         {
@@ -137,6 +138,11 @@ static void previousPause(tunnel_t *t, line_t *l)
     discard l;
     ++pauses[0];
     source_paused = true;
+    if (resume_from_pause)
+    {
+        resume_from_pause = false;
+        tunnelDownStreamResume(proxy, line);
+    }
     if (inject_pause_input)
     {
         inject_pause_input = false;
@@ -155,6 +161,11 @@ static void previousResume(tunnel_t *t, line_t *l)
     discard l;
     ++resumes[0];
     source_paused = false;
+    if (pause_from_resume)
+    {
+        pause_from_resume = false;
+        tunnelDownStreamPause(proxy, line);
+    }
     if (inject_resume_input)
     {
         inject_resume_input = false;
@@ -485,6 +496,53 @@ static void startup(void)
     write_action = 1;
     openLine(chunk_settings);
     require(writes == 3 && strstr(sent, "\r\n\r\n3\r\nnew\r\n"), "nested header upload order");
+    closeLine();
+}
+static void combinedPressure(void)
+{
+    for (unsigned external_first = 0; external_first < 2; ++external_first)
+    {
+        openLine(connect_settings);
+        hpc_lstate_t *ls = lineGetState(line, proxy);
+        sendText(false, "old");
+        require(source_paused && ls->source_paused && ! ls->accepted && writes == 1,
+                "CONNECT did not hold the source while waiting for acceptance");
+        for (unsigned repeat = 0; repeat < 2; ++repeat)
+            tunnelDownStreamPause(proxy, line);
+        if (external_first)
+            for (unsigned repeat = 0; repeat < 2; ++repeat)
+                tunnelDownStreamResume(proxy, line);
+        sendText(false, "new");
+        require(pauses[0] == 1 && resumes[0] == 0 && source_paused && writes == 1,
+                "external notifications released CONNECT's local hold or repeated its Pause");
+        sendText(true, "HTTP/1.1 200 OK\r\n\r\nreply");
+        require(ls->accepted && ! bufferqueueGetBufCount(&ls->pending[0]) && strstr(sent, "\r\n\r\noldnew") &&
+                    ! stringCompare(received, "reply"),
+                "combined pressure gated admitted CONNECT backlog or changed FIFO");
+        if (! external_first)
+        {
+            require(source_paused && ls->source_paused && pauses[0] == 1 && resumes[0] == 0,
+                    "protocol completion released the external hold");
+            tunnelDownStreamResume(proxy, line);
+        }
+        require(! source_paused && ! ls->source_paused && ! ls->next_paused && resumes[0] == 1,
+                "last hold did not release the source without new application input");
+        closeLine();
+    }
+
+    resume_from_pause = true;
+    openLine(connect_settings);
+    hpc_lstate_t *ls = lineGetState(line, proxy);
+    require(! resume_from_pause && source_paused && pauses[0] == 1 && resumes[0] == 0,
+            "Resume reentry from local Pause released the startup hold");
+    sendText(false, "old");
+    pause_from_resume = inject_resume_input = true;
+    sendText(true, "HTTP/1.1 200 OK\r\n\r\nreply");
+    require(! pause_from_resume && ! inject_resume_input && source_paused && ls->source_paused && ls->next_paused &&
+                pauses[0] == 2 && resumes[0] == 1 && strstr(sent, "\r\n\r\noldresume"),
+            "Resume reentry lost the new external hold or reordered admitted input");
+    tunnelDownStreamResume(proxy, line);
+    require(! source_paused && ! ls->source_paused && resumes[0] == 2, "new reentrant external hold did not release");
     closeLine();
 }
 static void connectParserRetirement(void)
@@ -1001,6 +1059,7 @@ int main(void)
     dnsTests();
 #endif
     startup();
+    combinedPressure();
     connectParserRetirement();
     framing();
     reentry();
@@ -1012,6 +1071,7 @@ int main(void)
     for (representation = 1; representation <= 2; ++representation)
     {
         startup();
+        combinedPressure();
         connectParserRetirement();
         framing();
         reentry();
