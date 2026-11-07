@@ -115,33 +115,33 @@ if(TARGET ww)
     list(APPEND tunnels_abort_runtime_cases udpstatelesssocket_active_worker_idle_table_destroy)
   endif()
 
-  if(TARGET TcpOverUdpClient)
+  if(TARGET KcpClient)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_tcpoverudpclient_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_kcpclient_case.c"
     )
-    list(APPEND tunnels_abort_runtime_libraries TcpOverUdpClient)
-    # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its structure.h. Both TcpOverUdp
+    list(APPEND tunnels_abort_runtime_libraries KcpClient)
+    # ikcp.h and ww_fec.h are private to the tunnel target but reachable from its structure.h. Both Kcp
     # tunnels share the FEC sources and carry byte-identical copies of ikcp.h, so one pair of directories serves
     # both fixtures.
     list(APPEND tunnels_abort_runtime_includes
-      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/kcp
-      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/fec
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/KcpCommon/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/KcpCommon/fec
     )
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT=1)
-    list(APPEND tunnels_abort_runtime_cases tcpoverudpclient_impossible_kcp_mtu_rejection)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_KCPCLIENT=1)
+    list(APPEND tunnels_abort_runtime_cases kcpclient_impossible_kcp_mtu_rejection)
   endif()
 
-  if(TARGET TcpOverUdpServer)
+  if(TARGET KcpServer)
     list(APPEND tunnels_abort_runtime_sources
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_tcpoverudpserver_case.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/abort/tunnels_abort_kcpserver_case.c"
     )
-    list(APPEND tunnels_abort_runtime_libraries TcpOverUdpServer)
+    list(APPEND tunnels_abort_runtime_libraries KcpServer)
     list(APPEND tunnels_abort_runtime_includes
-      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/kcp
-      ${CMAKE_SOURCE_DIR}/tunnels/Internals/TcpOverUdpCommon/fec
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/KcpCommon/kcp
+      ${CMAKE_SOURCE_DIR}/tunnels/Internals/KcpCommon/fec
     )
-    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER=1)
-    list(APPEND tunnels_abort_runtime_cases tcpoverudpserver_impossible_kcp_mtu_rejection)
+    list(APPEND tunnels_abort_runtime_definitions WATERWALL_ABORT_TEST_HAS_KCPSERVER=1)
+    list(APPEND tunnels_abort_runtime_cases kcpserver_impossible_kcp_mtu_rejection)
   endif()
 
   if(TARGET Router)

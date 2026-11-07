@@ -1,5 +1,5 @@
 /*
- * Covers: one API response above 65 KiB through actual TcpOverUdpClient/Server.
+ * Covers: one API response above 65 KiB through actual KcpClient/Server.
  * Setup: one real event worker, both production reliable-stream nodes and
  * APIServer. A bounded test-only datagram wire drops each direction's first
  * packet and reverses pairs; a private registered operation returns binary data.
@@ -11,8 +11,8 @@
  * CTest: waterwall.apiserver_reliable_stream_unit
  */
 #include "APIServer/structure.h"
-#include "TcpOverUdpClient/interface.h"
-#include "TcpOverUdpServer/interface.h"
+#include "KcpClient/interface.h"
+#include "KcpServer/interface.h"
 #include "test_assert.h"
 #include "wwapi.h"
 
@@ -218,9 +218,9 @@ int main(void)
     atomicStoreExplicit(&getWorkerLoop(0)->status, WLOOP_STATUS_RUNNING, memory_order_release);
     require(nodeApiRegister(&target, &operation, 1), "Private operation registration failed");
     node_t nodes[5]             = {{.type = stringDuplicate("PrivateSource"), .flags = kNodeFlagChainHead},
-                                   nodeTcpOverUdpClientGet(),
+                                   nodeKcpClientGet(),
                                    {.type = stringDuplicate("PrivateWire")},
-                                   nodeTcpOverUdpServerGet(),
+                                   nodeKcpServerGet(),
                                    nodeAPIServerGet()};
     char   gateway_name[]       = "api-fixture";
     nodes[4].name               = gateway_name;

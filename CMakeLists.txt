@@ -239,8 +239,8 @@ option(INCLUDE_UDP_CONNECTOR            "link UdpConnector staticly to the core"
 option(INCLUDE_UDP_STATELESS_SOCKET     "link UdpStatelessSocket staticly to the core"                              TRUE)
 option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the core"                                TRUE)
 option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"                                TRUE)
-option(INCLUDE_TCP_OVER_UDP_CLIENT      "link TcpOverUdpClient staticly to the core"                                TRUE)
-option(INCLUDE_TCP_OVER_UDP_SERVER      "link TcpOverUdpServer staticly to the core"                                TRUE)
+option(INCLUDE_KCP_CLIENT               "link KcpClient staticly to the core"                                       TRUE)
+option(INCLUDE_KCP_SERVER               "link KcpServer staticly to the core"                                       TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"                                          TRUE)
 option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"                                     TRUE)
 option(INCLUDE_ROUTER                   "link Router staticly to the core"                                          TRUE)
@@ -947,26 +947,26 @@ if(INCLUDE_UDP_OVER_TCP_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} UdpOverTcpServer)
 endif()
 
-#tcp over udp client
-if(INCLUDE_TCP_OVER_UDP_CLIENT OR INCLUDE_TCP_OVER_UDP_SERVER)
-  add_subdirectory(tunnels/Internals/TcpOverUdpCommon)
+#kcp client
+if(INCLUDE_KCP_CLIENT OR INCLUDE_KCP_SERVER)
+  add_subdirectory(tunnels/Internals/KcpCommon)
 endif()
 
-if(INCLUDE_TCP_OVER_UDP_CLIENT)
-  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TCP_OVER_UDP_CLIENT=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpClient)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpClient)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/TcpOverUdpClient)
-  target_link_libraries(${WATERWALL_APPLICATION_TARGET} TcpOverUdpClient)
+if(INCLUDE_KCP_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_KCP_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpClient)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpClient)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/KcpClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} KcpClient)
 endif()
 
-#tcp over udp server
-if(INCLUDE_TCP_OVER_UDP_SERVER)
-  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_TCP_OVER_UDP_SERVER=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpServer)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpOverUdpServer)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/TcpOverUdpServer)
-  target_link_libraries(${WATERWALL_APPLICATION_TARGET} TcpOverUdpServer)
+#kcp server
+if(INCLUDE_KCP_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_KCP_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpServer)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpServer)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/KcpServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} KcpServer)
 endif()
 
 #bridge

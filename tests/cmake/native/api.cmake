@@ -24,14 +24,14 @@ if(TARGET APIServer)
     add_waterwall_unit_test(waterwall.apiserver_session_unit apiserver_session_test
       "unit;api;lifetime")
   endif()
-  if(TARGET TcpOverUdpClient AND TARGET TcpOverUdpServer AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  if(TARGET KcpClient AND TARGET KcpServer AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     waterwall_add_native_executable(apiserver_reliable_stream_test SUPPORT SOURCES
       ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/api/reliable_stream_test.c)
-    target_link_libraries(apiserver_reliable_stream_test PRIVATE APIServer TcpOverUdpClient TcpOverUdpServer ww)
+    target_link_libraries(apiserver_reliable_stream_test PRIVATE APIServer KcpClient KcpServer ww)
     target_link_options(apiserver_reliable_stream_test PRIVATE "-Wl,--wrap=nodemanagerResolveApiTarget")
     add_dependencies(waterwall_unit_tests apiserver_reliable_stream_test)
     add_waterwall_unit_test(waterwall.apiserver_reliable_stream_unit apiserver_reliable_stream_test
-      "unit;api;tcpoverudp;lifetime")
+      "unit;api;kcp;lifetime")
   endif()
 endif()
 

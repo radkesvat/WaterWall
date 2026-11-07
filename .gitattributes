@@ -8,10 +8,8 @@
 *.s linguist-vendored
 tests/** linguist-vendored
 tunnels/Router/geosite_ww_style_generator/domain-list-community/** linguist-vendored
-tunnels/TcpOverUdpClient/fec/** linguist-vendored
-tunnels/TcpOverUdpClient/kcp/** linguist-vendored
-tunnels/TcpOverUdpServer/fec/** linguist-vendored
-tunnels/TcpOverUdpServer/kcp/** linguist-vendored
+tunnels/Internals/KcpCommon/fec/** linguist-vendored
+tunnels/Internals/KcpCommon/kcp/** linguist-vendored
 tunnels/TlsClient/boringssl/** linguist-vendored
 ww/lwip/** linguist-vendored
 ww/utils/freeres_wrap.cc linguist-vendored

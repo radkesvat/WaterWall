@@ -692,7 +692,7 @@ static void caseTerminalDownstreamFinishClosesOwnedLine(void)
 // Category A: a completed worker is finished before the final-worker sweep
 // ---------------------------------------------------------------------------
 //
-// TcpOverUdp waits for every worker to verify its response before it closes the
+// Kcp waits for every worker to verify its response before it closes the
 // completed streams. A peer Finish can close an earlier worker in that gap. Its
 // slot must be detached and counted before the final worker queues the sweep.
 
@@ -703,7 +703,7 @@ static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
         kWorkerCount = 2
     };
 
-    twfSetCase("testerclient successful downstream Finish closes before TcpOverUdp sweep");
+    twfSetCase("testerclient successful downstream Finish closes before Kcp sweep");
     tosResetProcessApi(true);
 
     tos_worker_env_t env;
@@ -715,8 +715,8 @@ static void caseSuccessfulDownstreamFinishClosesBeforeSweep(void)
     tunnel_t *next = twfCreateNextTunnel(&trace);
     tunnelBind(tester, next);
 
-    node_t tcp_over_udp_node = {.type = (char *) "TcpOverUdpClient"};
-    next->node               = &tcp_over_udp_node;
+    node_t kcp_node = {.type = (char *) "KcpClient"};
+    next->node      = &kcp_node;
 
     tunnel_chain_t *chain = memoryAllocateZero(sizeof(tunnel_chain_t) + kWorkerCount * sizeof(generic_pool_t *));
     twfRequire(chain != NULL, "failed to allocate the multi-worker test chain");

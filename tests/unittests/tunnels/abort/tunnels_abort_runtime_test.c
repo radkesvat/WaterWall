@@ -254,11 +254,11 @@ static const abort_case_t kAbortCases[] = {
 #if defined(WATERWALL_ABORT_TEST_HAS_UDPSTATELESSSOCKET)
     {"udpstatelesssocket_active_worker_idle_table_destroy", tunnelsAbortUdpStatelessSocketDestroyCase},
 #endif
-#if defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPCLIENT)
-    {"tcpoverudpclient_impossible_kcp_mtu_rejection", tunnelsAbortTcpOverUdpClientMtuCase},
+#if defined(WATERWALL_ABORT_TEST_HAS_KCPCLIENT)
+    {"kcpclient_impossible_kcp_mtu_rejection", tunnelsAbortKcpClientMtuCase},
 #endif
-#if defined(WATERWALL_ABORT_TEST_HAS_TCPOVERUDPSERVER)
-    {"tcpoverudpserver_impossible_kcp_mtu_rejection", tunnelsAbortTcpOverUdpServerMtuCase},
+#if defined(WATERWALL_ABORT_TEST_HAS_KCPSERVER)
+    {"kcpserver_impossible_kcp_mtu_rejection", tunnelsAbortKcpServerMtuCase},
 #endif
 #if defined(WATERWALL_ABORT_TEST_HAS_ROUTER)
     {"router_geoip_rule_without_open_database", tunnelsAbortRouterGeoipUnopenedDatabaseCase},

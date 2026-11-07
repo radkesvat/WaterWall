@@ -491,28 +491,28 @@ if(TARGET Router)
   )
 endif()
 
-if(TARGET TcpOverUdpClient AND TARGET TcpOverUdpServer)
-  foreach(tcpoverudp_test IN ITEMS tcpoverudpclient_line_failure_test tcpoverudpserver_line_failure_test tcp_over_udp_session_test)
-    waterwall_add_native_executable(${tcpoverudp_test} SUPPORT SOURCES
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/${tcpoverudp_test}.c"
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/session_fixture.c"
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/settings_geometry_client.c"
-      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp_over_udp/settings_geometry_server.c")
-    target_link_libraries(${tcpoverudp_test} PRIVATE TcpOverUdpClient TcpOverUdpServer TcpOverUdpCommon ww)
-    target_link_options(${tcpoverudp_test} PRIVATE
+if(TARGET KcpClient AND TARGET KcpServer)
+  foreach(kcp_test IN ITEMS kcpclient_line_failure_test kcpserver_line_failure_test kcp_session_test)
+    waterwall_add_native_executable(${kcp_test} SUPPORT SOURCES
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/${kcp_test}.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/session_fixture.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_client.c"
+      "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_server.c")
+    target_link_libraries(${kcp_test} PRIVATE KcpClient KcpServer KcpCommon ww)
+    target_link_options(${kcp_test} PRIVATE
       "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd"
       "-Wl,--wrap=touSessionCreate" "-Wl,--wrap=ikcp_create" "-Wl,--wrap=ikcp_release"
-      "-Wl,--wrap=tcpoverudpFecEncoderCreate" "-Wl,--wrap=tcpoverudpFecDecoderCreate"
-      "-Wl,--wrap=tcpoverudpFecDecodePacket"
-      "-Wl,--wrap=tcpoverudpFecEncoderDestroy" "-Wl,--wrap=tcpoverudpFecDecoderDestroy")
-    add_dependencies(waterwall_unit_tests ${tcpoverudp_test})
-    if(tcpoverudp_test STREQUAL "tcp_over_udp_session_test")
-      set(tcpoverudp_registration waterwall.tcp_over_udp_session_unit)
+      "-Wl,--wrap=kcpFecEncoderCreate" "-Wl,--wrap=kcpFecDecoderCreate"
+      "-Wl,--wrap=kcpFecDecodePacket"
+      "-Wl,--wrap=kcpFecEncoderDestroy" "-Wl,--wrap=kcpFecDecoderDestroy")
+    add_dependencies(waterwall_unit_tests ${kcp_test})
+    if(kcp_test STREQUAL "kcp_session_test")
+      set(kcp_registration waterwall.kcp_session_unit)
     else()
-      set(tcpoverudp_registration waterwall.${tcpoverudp_test}_unit)
+      set(kcp_registration waterwall.${kcp_test}_unit)
     endif()
-    add_waterwall_unit_test(${tcpoverudp_registration} ${tcpoverudp_test}
-      "unit;tunnels;tcpoverudp;failure;line;session;close" 120)
+    add_waterwall_unit_test(${kcp_registration} ${kcp_test}
+      "unit;tunnels;kcp;failure;line;session;close" 120)
   endforeach()
 endif()
 

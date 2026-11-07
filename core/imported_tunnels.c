@@ -224,12 +224,12 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "UdpOverTcpServer/interface.h"
 #endif
 
-#ifdef INCLUDE_TCP_OVER_UDP_CLIENT
-#include "TcpOverUdpClient/interface.h"
+#ifdef INCLUDE_KCP_CLIENT
+#include "KcpClient/interface.h"
 #endif
 
-#ifdef INCLUDE_TCP_OVER_UDP_SERVER
-#include "TcpOverUdpServer/interface.h"
+#ifdef INCLUDE_KCP_SERVER
+#include "KcpServer/interface.h"
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
@@ -605,12 +605,12 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
     USING(UdpOverTcpServer);
 #endif
 
-#ifdef INCLUDE_TCP_OVER_UDP_CLIENT
-    USING(TcpOverUdpClient);
+#ifdef INCLUDE_KCP_CLIENT
+    USING(KcpClient);
 #endif
 
-#ifdef INCLUDE_TCP_OVER_UDP_SERVER
-    USING(TcpOverUdpServer);
+#ifdef INCLUDE_KCP_SERVER
+    USING(KcpServer);
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
