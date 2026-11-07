@@ -1,9 +1,9 @@
 /*
  * Covers: timestamp parsing and TCP send progress at small MSS/window boundaries.
- * Setup: a private timestamps-enabled raw engine, real IPv4/TCP handshakes and a recording netif.
+ * Setup: the bounded raw test engine with production timestamp options, real TCP handshakes and a recording netif.
  * Checks: exact high-bit timestamp echoes; bounded, nonempty segments with ordered payload bytes;
  * tiny advertised MSS/window values with and without timestamp negotiation; complete ACK cleanup.
- * Limits: this enables timestamps only in the private fixture, not the production configuration.
+ * Limits: this checks protocol boundaries, not application throughput or remote sender recovery.
  * CTest: waterwall.lwip_timestamp_boundaries_unit (Debug, Release and ASan/UBSan).
  */
 #include "fixtures/lwip/lwip_engine_test_runtime.h"

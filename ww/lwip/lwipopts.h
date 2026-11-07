@@ -335,6 +335,10 @@ a lot of data that needs to be copied, this should be set high. */
 /* TCP Maximum segment size. */
 #define TCP_MSS              1460        // 1024
 
+    /* Negotiate timestamps per connection so peers can distinguish ACKs for original sends from
+       retransmissions. This helps avoid slow iOS loss recovery on packet tunnels. */
+#define LWIP_TCP_TIMESTAMPS   1
+
     /* Per-connection send capacity; payload storage still comes from the bounded
        process-wide pools in lwippools.h and can apply backpressure earlier. */
 #define TCP_SND_BUF          (2 * 1024 * 1024)
