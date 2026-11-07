@@ -27,9 +27,7 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
     };
 
     bufferbudgetInit(&ls->write_budget, (buffer_budget_cost_t) {kUdpMaxPauseQueueSize, kUdpMaxPauseQueueSize});
-    const bool attached = bufferqueueTryAttachBudget(&ls->pause_queue, &ls->write_budget);
-    assert(attached);
-    discard                attached;
+    bufferqueueAttachBudget(&ls->pause_queue, &ls->write_budget);
     udpconnector_tstate_t *ts = tunnelGetState(t);
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
@@ -47,10 +45,7 @@ bool udpconnectorLinestateInitialize(udpconnector_lstate_t *ls, tunnel_t *t, lin
         for (uint32_t i = 0; i < count; ++i)
         {
             ls->packet_destinations[i].pending_queue = bufferqueueCreate(kUdpPauseQueueCapacity);
-            const bool destination_attached =
-                bufferqueueTryAttachBudget(&ls->packet_destinations[i].pending_queue, &ls->write_budget);
-            assert(destination_attached);
-            discard destination_attached;
+            bufferqueueAttachBudget(&ls->packet_destinations[i].pending_queue, &ls->write_budget);
         }
     }
 

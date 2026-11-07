@@ -15,9 +15,7 @@ void vlessserverLinestateInitialize(vlessserver_lstate_t *ls, tunnel_t *t, line_
     buffer_budget_cost_t limits = {kVlessServerMaxPendingBytes, 8U * 1024U * 1024U};
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->response_budget, limits);
-    bool attached = bufferqueueTryAttachBudget(&ls->pending_down, &ls->response_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending_down, &ls->response_budget);
 }
 
 void vlessserverLinestateDestroy(vlessserver_lstate_t *ls)

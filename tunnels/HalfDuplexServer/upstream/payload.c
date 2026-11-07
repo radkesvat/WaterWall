@@ -170,9 +170,7 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
         &ls->startup_budget,
         (buffer_budget_cost_t) {.bytes = kHalfDuplexServerStartupBytes, .charge = kHalfDuplexServerStartupCharge});
     bufferqueueInitEmpty(&ls->startup_pending);
-    bool attached = bufferqueueTryAttachBudget(&ls->startup_pending, &ls->startup_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->startup_pending, &ls->startup_budget);
     ls->startup_active       = true;
     ls->startup_initializing = true;
     tunnelNextUpStreamInit(t, main);

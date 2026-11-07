@@ -203,6 +203,11 @@ size_t bufferqueueGetCharge(const buffer_queue_t *self);
 /** Requires an unbound queue and a live budget. Atomically admits all existing
  * entries; refusal leaves both objects unchanged. Empty attachment cannot fail. */
 bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget);
+/** Requires the same preconditions as bufferqueueTryAttachBudget(), with admission
+ * already established by the caller. Empty queues always satisfy admission.
+ * Returns with the budget attached; refusal logs a fatal error and terminates in
+ * every build. Use the try form when budget exhaustion is an expected outcome. */
+void bufferqueueAttachBudget(buffer_queue_t *self, buffer_budget_t *budget);
 /** Requires a bound queue and live, stable budgets on the owning worker.
  * Transfers only the queue's current bytes and charge to destination;
  * previously popped reservations remain with their original budget.

@@ -1,14 +1,16 @@
 /*
- * Covers: Fatal BufferStream and ContextQueue allocation failure, queue geometry, and empty ContextQueue pops.
+ * Covers: Fatal queue allocation/budget attachment failure, queue geometry, and empty ContextQueue pops.
  * Setup: Real queues and buffer pools; the allocator backend rejects the next deque growth in forked children.
  * Checks: Insertion failure reaches abortProgramNow(1) without changing entry counts or stream bytes;
  * empty pops return NULL without changing the FIFO, including after wraparound and complete draining.
+ * Required budget attachment refuses byte/charge limits without changing queue ownership or budget usage.
  * Limits: Allocation failure is injected below the shared fatal allocation gate.
  * CTest: waterwall.bufio_queue_failure_unit
  */
 #include "buffer_queue.h"
 #include "buffer_stream.h"
 #include "context_queue.h"
+#include "loggers/internal_logger.h"
 
 #include "test_assert.h"
 
@@ -21,6 +23,7 @@ enum
 {
     kExpectedAbort               = 73,
     kReturnedFromFailedInsertion = 74,
+    kReturnedFromFailedAttachment = 75,
     kPayloadSize                 = 8192
 };
 
@@ -28,8 +31,12 @@ static bool             fail_next_reallocation;
 static unsigned         rejected_reallocations;
 static buffer_stream_t *stream_probe;
 static context_queue_t *context_probe;
+static buffer_queue_t  *queue_probe;
+static buffer_budget_t *budget_probe;
+static const sbuf_t    *expected_front;
 static size_t           expected_entries;
 static size_t           expected_bytes;
+static size_t           expected_charge;
 
 #if ALLOCATOR_BYPASS == 1
 #define realReallocate      __real_realloc
@@ -66,6 +73,18 @@ void *wrapReallocate(void *ptr, size_t size)
 
 _Noreturn void __wrap_abortProgramNow(int exit_code)
 {
+    if (queue_probe != NULL)
+    {
+        require(exit_code == 1 && rejected_reallocations == 0 && ! fail_next_reallocation,
+                "required budget attachment did not reach its fatal refusal");
+        require(queue_probe->budget == NULL && bufferqueueFront(queue_probe) == expected_front &&
+                    bufferqueueGetEntryCount(queue_probe) == expected_entries &&
+                    bufferqueueGetLength(queue_probe) == expected_bytes &&
+                    bufferqueueGetCharge(queue_probe) == expected_charge && budget_probe->used.bytes == 0 &&
+                    budget_probe->used.charge == 0,
+                "failed budget attachment changed ownership or accounting");
+        _Exit(kExpectedAbort);
+    }
     require(exit_code == 1 && rejected_reallocations == 1 && ! fail_next_reallocation,
             "insertion did not abort for the injected growth failure");
     if (stream_probe != NULL)
@@ -183,6 +202,46 @@ static bool testQueueGeometryRejection(void)
     return TEST_CHECK(rejected && accepted, "queue geometry refusal changed storage or rejected valid capacity");
 }
 
+static bool testRequiredBudgetAttachmentFailure(void)
+{
+    testCaseSet("buffer queue required budget attachment failure");
+    bool passed = true;
+    for (unsigned dimension = 0; dimension < 2; ++dimension)
+    {
+        const pid_t child = fork();
+        require(child >= 0, "failed to fork required budget attachment child");
+        if (child == 0)
+        {
+            require(createInternalLogger(NULL, true) != NULL, "failed to create fatal-path logger");
+            buffer_queue_t queue = bufferqueueCreate(1);
+            sbuf_t        *input = sbufCreate(1);
+            sbufSetLength(input, 1);
+            input                       = bufferqueuePushBack(&queue, input);
+            expected_front              = input;
+            expected_entries            = 1;
+            expected_bytes              = 1;
+            expected_charge             = sbufGetQueueCharge(input);
+            buffer_budget_cost_t limits = {expected_bytes, expected_charge};
+            if (dimension == 0)
+                --limits.bytes;
+            else
+                --limits.charge;
+            buffer_budget_t budget;
+            bufferbudgetInit(&budget, limits);
+            queue_probe  = &queue;
+            budget_probe = &budget;
+            bufferqueueAttachBudget(&queue, &budget);
+            _Exit(kReturnedFromFailedAttachment);
+        }
+        int status;
+        require(waitpid(child, &status, 0) == child, "failed to wait for required budget attachment child");
+        passed = TEST_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == kExpectedAbort,
+                            "required budget attachment returned after byte or charge refusal") &&
+                 passed;
+    }
+    return passed;
+}
+
 int main(void)
 {
     testCaseSet("bufio queue failure fixture");
@@ -200,6 +259,7 @@ int main(void)
     passed      = testContextInsertionFailure() && passed;
     passed      = testEmptyContextPop() && passed;
     passed      = testQueueGeometryRejection() && passed;
+    passed      = testRequiredBudgetAttachmentFailure() && passed;
 
     bufferpoolDestroy(pool);
     for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)

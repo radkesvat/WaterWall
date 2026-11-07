@@ -9,10 +9,8 @@ void vmessclientLinestateInitialize(vmessclient_lstate_t *ls, line_t *l)
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->downstream_budget, limits);
     vmessRecordReaderInit(&ls->record_reader, lineGetBufferPool(l), &ls->downstream_budget);
-    bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&
-                    bufferqueueTryAttachBudget(&ls->pending_down, &ls->downstream_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending_up, &ls->upstream_budget);
+    bufferqueueAttachBudget(&ls->pending_down, &ls->downstream_budget);
 }
 
 void vmessclientLinestateDestroy(vmessclient_lstate_t *ls)

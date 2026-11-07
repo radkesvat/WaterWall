@@ -5,6 +5,7 @@
 
 #include "buffer_queue.h"
 #include "buffer_pool.h"
+#include "loggers/internal_logger.h"
 #include "stc/common.h"
 #include "tunnel.h"
 
@@ -119,6 +120,15 @@ bool bufferqueueTryAttachBudget(buffer_queue_t *self, buffer_budget_t *budget)
         return false;
     self->budget = budget;
     return true;
+}
+
+void bufferqueueAttachBudget(buffer_queue_t *self, buffer_budget_t *budget)
+{
+    if (UNLIKELY(! bufferqueueTryAttachBudget(self, budget)))
+    {
+        LOGF("BufferQueue: required budget attachment failed");
+        abortProgramNow(1);
+    }
 }
 
 bool bufferqueueTryRebindBudget(buffer_queue_t *self, buffer_budget_t *destination)

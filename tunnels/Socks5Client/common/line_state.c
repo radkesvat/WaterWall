@@ -18,9 +18,7 @@ void socks5clientLinestateInitialize(socks5client_lstate_t *ls, tunnel_t *t, lin
     bufferqueueInitEmpty(&ls->pending_down);
     bufferbudgetInit(&ls->pending_budget,
                      (buffer_budget_cost_t) {kSocks5ClientMaxPendingUpBytes, kSocks5ClientMaxPendingCharge});
-    const bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->pending_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending_up, &ls->pending_budget);
 }
 
 void socks5clientLinestateDestroy(socks5client_lstate_t *ls)

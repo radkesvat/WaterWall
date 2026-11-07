@@ -2419,9 +2419,17 @@ static void testSharedBudget(void)
     sbufWrite(input, "ab", 2);
     const size_t    charge = sbufGetQueueCharge(input);
     buffer_budget_t budget;
+    bufferbudgetInit(&budget, (buffer_budget_cost_t) {0, 0});
+    bufferqueueAttachBudget(&a, &budget);
+    require(a.budget == &budget && budget.used.bytes == 0 && budget.used.charge == 0,
+            "empty required attachment rejected or charged a zero budget");
+    bufferqueueDestroy(&a);
     bufferbudgetInit(&budget, (buffer_budget_cost_t) {2, charge});
-    require(bufferqueueTryAttachBudget(&a, &budget) && bufferqueueTryAttachBudget(&b, &budget), "empty attach");
+    bufferqueueAttachBudget(&a, &budget);
     require(bufferqueueTryPushBack(&a, &input), "exact admission");
+    bufferqueueAttachBudget(&b, &budget);
+    require(a.budget == &budget && b.budget == &budget && budget.used.bytes == 2 && budget.used.charge == charge,
+            "empty required attachment changed a full budget");
     sbuf_t *extra    = sbufCreate(1);
     sbuf_t *original = extra;
     require(! bufferqueueTryPushFront(&b, &extra) && extra == original, "shared refusal changed ownership");
@@ -2459,8 +2467,12 @@ static void testSharedBudget(void)
     bufferqueueDestroy(&moved);
     bufferbudgetAssertEmpty(&budget);
     require(moved.budget == NULL, "destroy retained binding");
+    sbufSetLength(extra, 1);
     require(bufferqueueTryPushBack(&b, &extra), "unbound insertion");
-    require(bufferqueueTryAttachBudget(&b, &budget), "populated attach");
+    bufferqueueAttachBudget(&b, &budget);
+    require(b.budget == &budget && budget.used.bytes == bufferqueueGetLength(&b) &&
+                budget.used.charge == bufferqueueGetCharge(&b) && bufferqueueFront(&b) == extra,
+            "required populated attachment changed ownership or charged incorrectly");
     buffer_queue_t refused = bufferqueueCreate(1);
     extra                  = sbufCreate(1);
     require(bufferqueueTryPushBack(&refused, &extra), "unbound second insertion");

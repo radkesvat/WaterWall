@@ -136,9 +136,7 @@ static void udpconnectorPacketDestinationDropPending(udpconnector_lstate_t      
         lineReuseBuffer(ls->line, udpconnectorPopWrite(ls, &cache->pending_queue));
     bufferqueueDestroy(&cache->pending_queue);
     cache->pending_queue = bufferqueueCreate(kUdpPauseQueueCapacity);
-    const bool attached  = bufferqueueTryAttachBudget(&cache->pending_queue, &ls->write_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&cache->pending_queue, &ls->write_budget);
 }
 
 static bool udpconnectorPacketDestinationFail(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls,

@@ -172,11 +172,8 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     bufferbudgetInit(&context->input_budget, limits);
     bufferqueueInitEmpty(&context->application);
     bufferqueueInitEmpty(&context->input);
-    bool app_attached   = bufferqueueTryAttachBudget(&context->application, &context->application_budget);
-    bool input_attached = bufferqueueTryAttachBudget(&context->input, &context->input_budget);
-    assert(app_attached && input_attached);
-    discard app_attached;
-    discard input_attached;
+    bufferqueueAttachBudget(&context->application, &context->application_budget);
+    bufferqueueAttachBudget(&context->input, &context->input_budget);
     context->next = state->workers[context->wid];
     if (context->next != NULL)
         context->next->previous = context;

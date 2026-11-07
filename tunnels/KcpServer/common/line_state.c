@@ -91,9 +91,7 @@ bool kcpserverLinestateInitialize(kcpserver_lstate_t *ls, line_t *l, tunnel_t *t
     bufferqueueInitEmpty(&carrier->input);
     bufferbudgetInit(&carrier->input_budget,
                      (buffer_budget_cost_t) {.bytes = 2U * 1024U * 1024U, .charge = 8U * 1024U * 1024U});
-    bool attached = bufferqueueTryAttachBudget(&carrier->input, &carrier->input_budget);
-    assert(attached);
-    discard  attached;
+    bufferqueueAttachBudget(&carrier->input, &carrier->input_budget);
     uint64_t now = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(l)));
     if (! kcpserverArmPending(carrier, touDeadline(now, ts->no_recv_timeout_ms)))
     {

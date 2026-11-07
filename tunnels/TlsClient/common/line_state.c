@@ -103,9 +103,7 @@ bool tlsclientLinestateInitializeWithShaping(tlsclient_lstate_t *ls, SSL_CTX *sc
         .verbose         = verbose,
     };
     bufferbudgetInit(&ls->pending_budget, (buffer_budget_cost_t) {kTlsClientPendingPlaintextBytes, 8U * 1024U * 1024U});
-    const bool attached = bufferqueueTryAttachBudget(&ls->bq, &ls->pending_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->bq, &ls->pending_budget);
 
     if (record_shaping->enabled)
     {

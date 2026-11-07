@@ -6,9 +6,7 @@ void httpReceiveInit(http_receive_t *receive)
     bufferqueueInitEmpty(&receive->pending);
     bufferbudgetInit(&receive->budget,
                      (buffer_budget_cost_t) {.bytes = kHttpReceiveNestedBytes, .charge = kHttpReceiveNestedCharge});
-    const bool attached = bufferqueueTryAttachBudget(&receive->pending, &receive->budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&receive->pending, &receive->budget);
 }
 
 void httpReceiveDestroy(http_receive_t *receive, buffer_pool_t *pool)

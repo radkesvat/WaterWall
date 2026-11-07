@@ -8,9 +8,7 @@ void awqInit(adapter_write_queue_t *q, bool blocked)
     q->blocked    = blocked;
     q->pause_sent = false;
     bufferbudgetInit(&q->budget, (buffer_budget_cost_t) {kAwqMaxRetained, kAwqMaxRetained});
-    const bool attached = bufferqueueTryAttachBudget(&q->queue, &q->budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&q->queue, &q->budget);
 }
 
 void awqDestroy(adapter_write_queue_t *q)

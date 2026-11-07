@@ -16,10 +16,8 @@ void vmessserverLinestateInitialize(vmessserver_lstate_t *ls, tunnel_t *t, line_
     bufferbudgetInit(&ls->upstream_budget, limits);
     bufferbudgetInit(&ls->response_budget, limits);
     vmessRecordReaderInit(&ls->record_reader, lineGetBufferPool(l), &ls->upstream_budget);
-    bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->upstream_budget) &&
-                    bufferqueueTryAttachBudget(&ls->pending_down, &ls->response_budget);
-    assert(attached);
-    discard               attached;
+    bufferqueueAttachBudget(&ls->pending_up, &ls->upstream_budget);
+    bufferqueueAttachBudget(&ls->pending_down, &ls->response_budget);
     vmessserver_tstate_t *ts = tunnelGetState(t);
     atomicAddU64(kind == kVmessServerLineKindClient ? &ts->stats.carriers : &ts->stats.backends, 1);
 }

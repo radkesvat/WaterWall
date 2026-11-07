@@ -6,9 +6,7 @@ void ipv4streamInputInit(ipv4stream_input_t *input)
     bufferqueueInitEmpty(&input->pending);
     bufferbudgetInit(&input->budget,
                      (buffer_budget_cost_t) {.bytes = kIpv4StreamNestedBytes, .charge = kIpv4StreamNestedCharge});
-    const bool attached = bufferqueueTryAttachBudget(&input->pending, &input->budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&input->pending, &input->budget);
 }
 
 void ipv4streamInputDestroy(ipv4stream_input_t *input)

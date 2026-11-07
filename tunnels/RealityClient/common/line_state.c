@@ -9,9 +9,7 @@ void realityclientLinestateInitialize(realityclient_lstate_t *ls, buffer_pool_t 
         .phase          = kRealityClientPhaseTlsHandshake,
     };
     bufferbudgetInit(&ls->pending_budget, (buffer_budget_cost_t) {kRealityClientPendingBytes, 8U * 1024U * 1024U});
-    const bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->pending_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending_up, &ls->pending_budget);
 }
 
 void realityclientLinestateDestroy(realityclient_lstate_t *ls)

@@ -69,10 +69,16 @@ static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *p
         bufferpoolReuseBuffer(pool, *additional);
         *additional = NULL;
     }
-    const bool attached = replay->pending.budget == NULL ? bufferqueueTryAttachBudget(&replay->pending, budget)
-                                                         : bufferqueueTryRebindBudget(&replay->pending, budget);
-    assert(attached);
-    discard attached;
+    if (replay->pending.budget == NULL)
+    {
+        bufferqueueAttachBudget(&replay->pending, budget);
+    }
+    else
+    {
+        const bool rebound = bufferqueueTryRebindBudget(&replay->pending, budget);
+        assert(rebound);
+        discard rebound;
+    }
     bufferqueuePushBack(&replay->pending, merged);
     return true;
 }

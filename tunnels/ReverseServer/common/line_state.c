@@ -15,9 +15,7 @@ void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, lin
     bufferbudgetInit(&ls->pending_budget,
                      (buffer_budget_cost_t) {.bytes = kReverseServerPendingBytes, .charge = 8U * 1024U * 1024U});
     bufferqueueInitEmpty(&ls->pending);
-    bool attached = bufferqueueTryAttachBudget(&ls->pending, &ls->pending_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending, &ls->pending_budget);
 }
 
 void reverseserverLinestateDestroy(reverseserver_lstate_t *ls)

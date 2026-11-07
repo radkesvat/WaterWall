@@ -39,9 +39,7 @@ void httpclientLinestateInitialize(httpclient_lstate_t *ls, tunnel_t *t, line_t 
                                  .h2_request_headers_sent        = false};
     bufferbudgetInit(&ls->pending_up_budget,
                      (buffer_budget_cost_t) {kHttpClientPendingMaxBytes, kHttpClientPendingMaxCharge});
-    bool attached = bufferqueueTryAttachBudget(&ls->pending_up, &ls->pending_up_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&ls->pending_up, &ls->pending_up_budget);
     httpReceiveInit(&ls->receive);
     h2DataInit(&ls->h2_data, lineGetBufferPool(l), kHttpClientHttp2DataBytes);
 }

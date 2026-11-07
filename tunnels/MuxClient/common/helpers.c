@@ -66,11 +66,9 @@ void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *chi
         LOGF("MuxClient: failed to publish child CID index entry");
         abortProgramNow(1);
     }
+    // A newly joining child owns an empty queue.
     assert(bufferqueueGetEntryCount(&child->pending_child_data) == 0);
-    const bool attached =
-        bufferqueueTryAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
-    assert(attached); // A newly joining child owns an empty queue.
-    discard attached;
+    bufferqueueAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
     child->parent = parent;
 
     child->child_next = parent->child_next;

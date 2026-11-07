@@ -342,10 +342,7 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
         abortProgramNow(1);
     }
     assert(bufferqueueGetEntryCount(&child->pending_child_data) == 0);
-    const bool attached =
-        bufferqueueTryAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
-    assert(attached);
-    discard attached;
+    bufferqueueAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
     child->parent = parent;
 
     child->child_next = parent->child_next;
