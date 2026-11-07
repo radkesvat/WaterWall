@@ -41,11 +41,7 @@ void h2DataAppend(h2_data_queue_t *queue, sbuf_t *payload, bool end_stream)
     *item                = (h2_data_item_t) {.payload = payload, .end_stream = end_stream};
     if (payload != NULL)
     {
-        buffer_budget_cost_t cost;
-        bool                 valid = bufferbudgetTryGetCost(payload, &cost);
-        assert(valid);
-        discard valid;
-        item->charge = cost.charge;
+        item->charge = sbufGetQueueCharge(payload);
         assert(queue->retained_charge <= SIZE_MAX - item->charge);
         queue->retained_charge += item->charge;
     }

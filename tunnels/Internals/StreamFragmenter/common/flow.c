@@ -176,10 +176,10 @@ void streamfragmenterDrain(tunnel_t *t, line_t *l)
             job->consumed += length;
             ++job->next_cut;
             job->delay_started = false;
-            buffer_budget_cost_t cost;
-            const bool           valid = bufferbudgetTryGetCost(job->buf, &cost);
-            assert(valid);
-            discard valid;
+            const buffer_budget_cost_t cost = {
+                .bytes  = sbufGetLength(job->buf),
+                .charge = sbufGetQueueCharge(job->buf),
+            };
             bufferbudgetReservationReduce(&job->reservation, cost);
         }
         else
