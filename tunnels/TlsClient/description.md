@@ -193,7 +193,7 @@ or provide independent TLS and TCP cut profiles.
 `wait-for-est` defaults to true: output waits until transport Est has been
 forwarded, then fragment delays start. The TLS assembly deadline may run before
 Est or during advisory Pause; a completed rewrite is no longer subject to that
-deadline. Pause/Resume pass through transparently, including duplicates, and
+deadline. Received Pause/Resume combine with the helper's local source pressure;
 ready output does not wait for Resume.
 Timed eligibility starts at the first Est by default. Explicit `wait-for-est:
 false` permits output scheduling before Est. Later buffering may combine writes
@@ -202,7 +202,7 @@ or change spacing on the wire; neither mode promises TCP packet boundaries.
 The helper borrows the same line and uses its own bounded FIFO: 8 MiB logical
 bytes, 8 MiB capacity charge, and 1,024 jobs. Reentry, Finish, and shutdown use
 StreamFragmenter's normal ordering and cleanup. The helper releases its own
-pressure at its low watermarks, independently of forwarded Pause/Resume. When
+pressure at its low watermarks, and combines it with the latest received pressure before resuming its source. When
 shaping and the startup wait have finished and retained work has drained, it
 destroys its line state and permanently bypasses itself. TlsClient remains active
 for TLS processing. This budget is separate from TLS plaintext and
@@ -248,15 +248,17 @@ capture, overhead, connection-success, and classifier measurements justify publi
 Padding is standard zero-valued TLS 1.3 `TLSInnerPlaintext` padding and adds the selected number of bytes to ciphertext,
 subject to the remaining legal TLS record capacity. Delay starts after encryption and adds up to the selected latency.
 Records stay in wire order with `release_at = max(now + delay, previous_release_at)`. Queued ciphertext is bounded to 8
-MiB per line, with locally originated producer Pause at 6 MiB and Resume at 3 MiB. Incoming Pause and Resume
-are relayed transparently, including duplicates. Due ciphertext drains keep their existing timing and FIFO order without
+MiB per line, with local producer pressure set at 6 MiB and cleared at 3 MiB. The producer remains paused while
+local pressure or the latest received Pause is active. A received Resume cannot release local pressure, and clearing
+local pressure cannot release a received Pause. Repeated received notifications still pass through when no local hold
+blocks them. Due ciphertext drains keep their existing timing and FIFO order without
 waiting for Resume; Pause does not cancel the release timer. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
 released in FIFO order, including during advisory Pause. Local state and upstream `Finish` are completed before the
 callback returns.
 
 After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
 TLS record can overtake delayed ciphertext. While that ordering barrier is active, the node retains its local shaping
-hold even below the normal low watermark; relayed Resume remains advisory. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
+hold even below the normal low watermark; received Resume does not release it. At an empty queue and complete write-BIO boundary, the timer and per-line shaping
 queue are released; later TLS output is forwarded directly without record parsing or shaping metadata, including during
 advisory Pause. The 8 MiB limit and 6/3 MiB watermarks therefore bound only the finite active shaping window. TLS record
 encryption and decryption remain active, so shaping retirement does not permanently bypass the tunnel.
@@ -347,9 +349,9 @@ transactional admission refusal closes the borrowed line through its owner and f
 releases this FIFO through `SSL_write()` without waiting for wire Resume; genuine local shaping and ordering barriers
 still apply. New input cannot overtake the retained head. Ciphertext-shaping limits remain separate.
 The first retained plaintext buffer is published before notifying the cleartext source with Pause. Locally originated
-protocol/order and ciphertext-shaping pressure share one source notification latch and release it when their work settles.
-Incoming Pause and Resume are relayed independently, including duplicates. This source pressure does not pause incoming
-TLS handshake records.
+protocol/order and ciphertext-shaping pressure combine with the latest received wire pressure in one source
+notification. The source resumes only when all reasons clear, including after shaping retirement. Received notifications
+still pass through when no local hold blocks them. This source pressure does not pause incoming TLS handshake records.
 
 ### Upstream payload behavior
 

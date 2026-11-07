@@ -143,6 +143,7 @@ typedef struct client_lifecycle_context_s
     uint32_t       source_resume_count;
     bool           kill_on_application_payload;
     bool           pause_and_reenter_application;
+    bool           resume_consumer_on_application;
     unsigned       active_overflow_mode;
     const uint8_t *expected_application;
     size_t         expected_application_length;
@@ -360,7 +361,15 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 bufferbudgetGetUsage(&ls->pending_budget).charge ==
                     ls->pending_reservation.cost.charge + bufferqueueGetCharge(&ls->pending_up),
             "active plaintext consumption was not published before reentrant wire output");
-        realityclientTunnelDownStreamPause(context->reality, l);
+        if (context->resume_consumer_on_application)
+        {
+            realityclientTunnelDownStreamResume(context->reality, l);
+            realityclientTunnelDownStreamResume(context->reality, l);
+            requireClient(ls->plaintext_producer_paused && context->source_resume_count == 0,
+                          "consumer Resume released the active plaintext FIFO hold");
+        }
+        else
+            realityclientTunnelDownStreamPause(context->reality, l);
         if (context->active_overflow_mode != 0)
         {
             if (context->active_overflow_mode == 1)
@@ -1584,9 +1593,9 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     realityclientTunnelDownStreamPause(fixture.reality, fixture.line);
     realityclientTunnelDownStreamPause(fixture.reality, fixture.line);
     requireClient(strcmp(fixture.context.events, "E") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
-                      fixture.context.source_pause_count == 4 && fixture.context.source_resume_count == 1 &&
-                      ls->plaintext_producer_paused,
-                  "Reality did not relay repeated pressure while keeping early plaintext private");
+                      fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0 &&
+                      ls->plaintext_producer_paused && ls->next_paused,
+                  "Reality lost its plaintext hold during repeated or reentrant consumer pressure");
 
     clientFixtureEnableTls13Takeover(&fixture);
     fixture.next->fnPayloadU              = clientNextHandoffPayload;
@@ -1595,20 +1604,28 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     requireClient(ls->phase == kRealityClientPhaseTls13AwaitAck && ls->session_keys_ready &&
                       strcmp(fixture.context.events, "ER") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2,
                   "Reality completion hook failed to bind TLS or released pre-ACK plaintext");
-    fixture.context.expected_control_kind         = kRealityV2RecordKindHandoffConfirm;
-    fixture.context.advance_kind_after_confirm    = true;
-    fixture.context.pause_and_reenter_application = mode < 4 && mode != 1;
-    fixture.context.kill_on_application_payload   = mode == 1;
-    fixture.context.finish_on_source_resume       = mode == 2;
-    fixture.context.repause_on_source_resume      = mode == 3;
-    fixture.context.active_overflow_mode          = mode >= 4 ? mode - 3 : 0;
+    fixture.context.expected_control_kind          = kRealityV2RecordKindHandoffConfirm;
+    fixture.context.advance_kind_after_confirm     = true;
+    fixture.context.pause_and_reenter_application  = (mode < 4 && mode != 1) || mode == 6;
+    fixture.context.resume_consumer_on_application = mode == 6;
+    fixture.context.kill_on_application_payload    = mode == 1;
+    fixture.context.finish_on_source_resume        = mode == 2;
+    fixture.context.repause_on_source_resume       = mode == 3;
+    fixture.context.active_overflow_mode           = mode == 4 || mode == 5 ? mode - 3 : 0;
     realityclientTunnelDownStreamPayload(fixture.reality, fixture.line, clientBuildHandoffAck(&fixture));
+    if (mode == 2)
+    {
+        requireClient(lineIsAlive(fixture.line) && ! ls->plaintext_producer_paused && ls->next_paused &&
+                          fixture.context.source_resume_count == 0,
+                      "local plaintext release cleared the consumer hold before Resume-close reentry");
+        realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
+    }
     if (mode == 1)
     {
         requireClient(! lineIsAlive(fixture.line) && strcmp(fixture.context.events, "ERCQD") == 0,
                       "Reality callback close during active plaintext drain leaked callbacks");
     }
-    else if (mode >= 4)
+    else if (mode == 4 || mode == 5)
     {
         requireClient(ls->pending_active == NULL && ls->pending_reservation.budget == NULL &&
                           bufferbudgetGetUsage(&ls->pending_budget).charge == 0 &&
@@ -1617,23 +1634,27 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     }
     else if (mode == 2)
     {
-        requireClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 2 &&
+        requireClient(! lineIsAlive(fixture.line) && fixture.context.source_resume_count == 1 &&
                           strcmp(fixture.context.events, "ERCQQQQU") == 0,
                       "Reality source Resume close accessed destroyed state");
     }
     else
     {
-        requireClient(
-            fixture.context.source_pause_count == (mode == 3 ? 6U : 5U) && fixture.context.source_resume_count == 2 &&
-                ! ls->plaintext_producer_paused,
-            "Reality did not independently release local source pressure after authenticated FIFO completion");
+        requireClient(fixture.context.source_pause_count == 1 &&
+                          fixture.context.source_resume_count == (mode == 6 ? 1U : 0U) &&
+                          ! ls->plaintext_producer_paused && ls->next_paused == (mode != 6),
+                      "Reality failed to preserve the remaining pressure reason after authenticated FIFO completion");
         requireClient(ls->phase == kRealityClientPhaseRealityActive && strcmp(fixture.context.events, "ERCQQQQ") == 0 &&
                           fixture.context.received_application_length == sizeof(expected) &&
                           bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->pending_active == NULL,
                       "Reality ACK failed to drain through advisory Pause in FIFO order");
         realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
+        if (mode == 3)
+            requireClient(ls->next_paused && fixture.context.source_pause_count == 2,
+                          "source Resume callback's renewed consumer pressure was overwritten");
         realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
-        requireClient(fixture.context.source_resume_count == 4 && strcmp(fixture.context.events, "ERCQQQQ") == 0,
+        requireClient(fixture.context.source_resume_count == (mode == 6 ? 3U : 2U) && ! ls->next_paused &&
+                          strcmp(fixture.context.events, "ERCQQQQ") == 0,
                       "Reality suppressed repeated Resume or repeated the completed plaintext drain");
         realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
     }
@@ -1750,6 +1771,7 @@ void realityTestClientCloseLifecycle(void)
     testClientCompletionDrainsThroughAdvisoryPause(3);
     testClientCompletionDrainsThroughAdvisoryPause(4);
     testClientCompletionDrainsThroughAdvisoryPause(5);
+    testClientCompletionDrainsThroughAdvisoryPause(6);
     testClientTerminalReentry();
     testClientFastRandomIsIndependentOfOsProvider();
     testClientHandoffRequestAndQueue();

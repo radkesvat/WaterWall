@@ -9,17 +9,31 @@ bool hpcQueue(tunnel_t *t, line_t *l, sbuf_t *b, unsigned direction)
     hpcClose(t, l);
     return false;
 }
-bool hpcPressure(tunnel_t *t, line_t *l)
+static bool updatePressure(tunnel_t *t, line_t *l, bool repeat)
 {
     hpc_lstate_t *ls = lineGetState(l, t);
     hpc_tstate_t *ts = tunnelGetState(t);
     if (ls->prev_finished || (! ts->connect && ls->accepted && ls->body.kind == kHpsBodyDone) || ! hpcAllowed(t, l))
         return true;
-    bool paused = ! ls->header_sent || (ts->connect && ! ls->accepted) || bufferqueueGetBufCount(&ls->pending[0]) != 0;
-    if (paused == ls->source_paused)
+    bool local = ! ls->header_sent || (ts->connect && ! ls->accepted) || ls->up_busy ||
+                 bufferqueueGetBufCount(&ls->pending[0]) != 0;
+    bool paused = local || ls->next_paused;
+    if (paused == ls->source_paused && (! repeat || local))
         return true;
     ls->source_paused = paused;
     return lineCallWithRef(l, paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume, t);
+}
+bool hpcPressure(tunnel_t *t, line_t *l)
+{
+    return updatePressure(t, l, false);
+}
+void hpcSetNextPaused(tunnel_t *t, line_t *l, bool paused)
+{
+    hpc_lstate_t *ls = lineGetState(l, t);
+    if (ls->prev_finished)
+        return;
+    ls->next_paused = paused;
+    discard updatePressure(t, l, true);
 }
 bool hpcSendHeader(tunnel_t *t, line_t *l)
 {

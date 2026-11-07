@@ -221,7 +221,7 @@ bool tlsclientUpdateSourcePressure(tunnel_t *t, line_t *l)
     {
         return true;
     }
-    bool paused = ls->shaping_producer_paused || ls->plaintext_producer_paused;
+    bool paused = ls->shaping_producer_paused || ls->plaintext_producer_paused || ls->next_paused;
     if (paused == ls->source_paused)
     {
         return true;

@@ -3,7 +3,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: pendingBoundary, run, borrowedFinish
- * Checks: Transparent repeated TCP signals, ready output through Pause, handshake/FIFO ordering,
+ * Checks: Combined TCP producer pressure, ready output through Pause, handshake/FIFO ordering,
  * TCP retirement after setup, UDP boundary pressure, pending limits and callback-driven closure.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -50,6 +50,7 @@ static unsigned  next_finishes;
 static bool      close_in_est, pause_in_est, reenter_data, udp_case;
 #ifndef SOCKS_EST_SERVER
 static bool close_in_relay_pause, close_in_source_pause, reenter_source_pause, complete_in_source_pause;
+static bool transport_pause_first, transport_resume_first;
 #endif
 
 static void repeatedSignals(void);
@@ -154,7 +155,7 @@ static void sourcePause(tunnel_t *t, line_t *l)
         twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 1, "source Pause preceded older input admission");
         tunnelUpStreamPayload(node, l, bytes(l, "D", 1));
         tunnelDownStreamResume(node, transport);
-        twfRequire(source_resumes == (udp_case ? 0U : 1U), "transport Resume violated exact-line pressure mapping");
+        twfRequire(source_resumes == 0, "transport Resume released the local protocol hold");
     }
 #endif
 }
@@ -164,10 +165,11 @@ static void sourceResume(tunnel_t *t, line_t *l)
     twfRequire(l == application, "source Resume escaped on an internal SOCKS line");
 #ifndef SOCKS_EST_SERVER
     socksLstate *ls = lineGetState(l, node);
-    if (udp_case)
+    if (tunnelIsActiveForLine(node, l))
         twfRequire(! ls->source_pause_sent && ! ls->next_paused && ! ls->draining_up &&
-                       bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->phase == kSocks5ClientPhaseEstablished,
-                   "UDP source resumed before protocol backlog/transport hold cleared");
+                       bufferqueueGetBufCount(&ls->pending_up) == 0 &&
+                       (! udp_case || ls->phase == kSocks5ClientPhaseEstablished),
+                   "source resumed before protocol backlog/transport hold cleared");
 #endif
     ++source_resumes;
 }
@@ -275,12 +277,21 @@ static void initializeNext(tunnel_t *t, line_t *l)
 static void repeatedSignals(void)
 {
     unsigned pauses = source_pauses, resumes = source_resumes;
+    unsigned expected = 2;
+#ifndef SOCKS_EST_SERVER
+    if (tunnelIsActiveForLine(node, application))
+    {
+        socksLstate *ls = lineGetState(application, node);
+        if (ls->draining_up || bufferqueueGetBufCount(&ls->pending_up) != 0)
+            expected = 0;
+    }
+#endif
     tunnelDownStreamPause(node, application);
     tunnelDownStreamPause(node, application);
     tunnelDownStreamResume(node, application);
     tunnelDownStreamResume(node, application);
-    twfRequire(source_pauses == pauses + 2 && source_resumes == resumes + 2,
-               "TCP downstream Pause/Resume suppressed repeated notifications");
+    twfRequire(source_pauses == pauses + expected && source_resumes == resumes + expected,
+               "TCP downstream signals did not preserve combined producer pressure");
     pauses  = read_pause_count;
     resumes = read_resume_count;
     tunnelUpStreamPause(node, application);
@@ -306,7 +317,7 @@ static void bypassedTraffic(void)
 
 static void run(bool close_now, bool udp)
 {
-    twfSetCase("SOCKS TCP advisory signals and ready FIFO release preserve UDP boundary control");
+    twfSetCase("SOCKS TCP combines protocol and transport holds while ready FIFO and UDP mapping progress");
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 300);
     createTunnels();
@@ -364,6 +375,8 @@ static void run(bool close_now, bool udp)
     addresscontextSetIpPort(&ts->target_addr, &ip, 80);
     tunnelUpStreamInit(node, application);
     line_t *control = transport;
+    if (transport_pause_first)
+        tunnelDownStreamPause(node, control);
     tunnelUpStreamPayload(node, application, bytes(application, "A", 1));
     if (close_in_source_pause)
     {
@@ -380,8 +393,7 @@ static void run(bool close_now, bool udp)
         repeatedSignals();
         goto client_done;
     }
-    twfRequire(source_pauses == 1 && source_resumes == (reenter_source_pause && ! udp ? 1U : 0U),
-               "protocol wait lost its advisory source pressure");
+    twfRequire(source_pauses == 1 && source_resumes == 0, "protocol wait lost its combined source pressure");
     twfRequire(up_len == 0 && greeting_count == 0, "application escaped before negotiation");
     if (! udp)
         tunnelDownStreamPause(node, control);
@@ -399,9 +411,10 @@ static void run(bool close_now, bool udp)
                    "application Pause violated exact-line handshake mapping");
         if (! udp)
             repeatedSignals();
-        tunnelDownStreamPause(node, control);
+        if (! transport_resume_first)
+            tunnelDownStreamPause(node, control);
         const uint8_t response[] = {5, 0, 0, 1, 127, 0, 0, 1, 0, 80};
-        reenter_data             = ! udp;
+        reenter_data             = ! udp && ! transport_resume_first;
         tunnelDownStreamPayload(node, control, bytes(control, response, sizeof(response)));
         if (close_in_relay_pause)
         {
@@ -419,13 +432,23 @@ static void run(bool close_now, bool udp)
             twfRequire(up_len == 1 && upstream[0] == 'A', "UDP drain ignored nested Pause");
             tunnelDownStreamResume(node, transport);
         }
-        twfRequire(up_len == (reenter_source_pause ? 4U : 3U) &&
-                       memoryEqual(upstream, reenter_source_pause ? "ADBC" : "ABC", up_len),
+        else if (! transport_resume_first)
+        {
+            twfRequire(source_pauses == 1 && source_resumes == 0 && tunnelIsActiveForLine(node, application),
+                       "local FIFO release cleared transport Pause or retired its tracking");
+            tunnelDownStreamResume(node, control);
+        }
+        twfRequire(up_len == (transport_resume_first ? 2U
+                              : reenter_source_pause ? 4U
+                                                     : 3U) &&
+                       memoryEqual(upstream,
+                                   transport_resume_first ? "AB"
+                                   : reenter_source_pause ? "ADBC"
+                                                          : "ABC",
+                                   up_len),
                    "nested application input overtook FIFO");
-        twfRequire(source_pauses == (udp ? 1U : 6U) && source_resumes == (udp                    ? 1U
-                                                                          : reenter_source_pause ? 4U
-                                                                                                 : 3U),
-                   "protocol backlog lost local pressure release or external notifications");
+        twfRequire(source_pauses == 1 && source_resumes == 1,
+                   "protocol and transport holds did not release the source exactly once");
         if (! udp)
         {
             bypassedTraffic();
@@ -703,6 +726,12 @@ int main(void)
 #ifndef SOCKS_EST_SERVER
     run(false, true);
     run(true, true);
+    transport_pause_first = true;
+    run(false, false);
+    transport_pause_first  = false;
+    transport_resume_first = true;
+    run(false, false);
+    transport_resume_first   = false;
     complete_in_source_pause = true;
     run(false, false);
     complete_in_source_pause = false;

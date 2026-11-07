@@ -25,12 +25,12 @@ bool socks5clientMaybeSendGreeting(tunnel_t *t, line_t *l)
     return socks5clientSendGreeting(t, l, ls);
 }
 
-static bool updateSourcePressure(tunnel_t *t, line_t *l)
+static bool updateSourcePressure(tunnel_t *t, line_t *l, bool repeat)
 {
     socks5client_lstate_t *ls     = lineGetState(l, t);
-    const bool             paused = (ls->kind != kSocks5ClientLineKindDirect && ls->next_paused) || ls->draining_up ||
-                        bufferqueueGetBufCount(&ls->pending_up) != 0;
-    if (ls->source_pause_sent == paused)
+    const bool             local  = ls->draining_up || bufferqueueGetBufCount(&ls->pending_up) != 0;
+    const bool             paused = ls->next_paused || local;
+    if (ls->source_pause_sent == paused && (! repeat || local))
         return true;
     ls->source_pause_sent = paused;
     const bool alive =
@@ -47,7 +47,7 @@ bool socks5clientQueuePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         socks5clientCloseLineBidirectional(t, l);
         return false;
     }
-    return updateSourcePressure(t, l);
+    return updateSourcePressure(t, l, false);
 }
 
 bool socks5clientDrainPending(tunnel_t *t, line_t *l)
@@ -79,7 +79,7 @@ bool socks5clientDrainPending(tunnel_t *t, line_t *l)
     if (alive)
     {
         ls->draining_up = false;
-        alive           = updateSourcePressure(t, l);
+        alive           = updateSourcePressure(t, l, false);
         if (alive)
             tryBypass(t, l);
     }
@@ -92,10 +92,9 @@ void socks5clientSetNextPaused(tunnel_t *t, line_t *l, bool paused)
     socks5client_lstate_t *ls = lineGetState(l, t);
     if (ls->kind == kSocks5ClientLineKindDirect)
     {
-        if (paused)
-            tunnelPrevDownStreamPause(t, l);
-        else
-            tunnelPrevDownStreamResume(t, l);
+        ls->next_paused = paused;
+        if (updateSourcePressure(t, l, true))
+            tryBypass(t, l);
         return;
     }
     ls->next_paused           = paused;
@@ -116,10 +115,10 @@ void socks5clientSetNextPaused(tunnel_t *t, line_t *l, bool paused)
     }
     if (application_ls->next_paused)
     {
-        discard updateSourcePressure(t, application);
+        discard updateSourcePressure(t, application, false);
         return;
     }
     if (UNLIKELY(! socks5clientDrainPending(t, application)))
         return;
-    discard updateSourcePressure(t, application);
+    discard updateSourcePressure(t, application, false);
 }

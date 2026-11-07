@@ -111,7 +111,7 @@ These guardrails do not replace the mandatory guide reading:
    required loops, chains, tunnel state, and pools remain alive. Termination has one
    coordinator; a shutdown request is not cleanup.
 10. [Flow](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx#flow-control-roles-and-admission):
-    only adapters, exact-line heads/tails, SpeedLimit and UserController shaping gate producers.
+    combine local/received holds per line/direction; neither Resume releases the other.
 11. Tunnel constructors may return `NULL`; check before assigning callbacks or
     accessing state. External callback roots must close admission and quiesce before
     their reachable state is reclaimed.

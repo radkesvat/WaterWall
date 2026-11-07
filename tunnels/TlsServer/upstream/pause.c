@@ -9,6 +9,7 @@ void tlsserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     {
         return;
     }
+    ls->prev_paused = true;
 
     if (ls->fallback_mode)
     {

@@ -38,9 +38,10 @@ active retained head; equality is accepted. Admission is transactional, and over
 its owner. Authenticated completion drains older plaintext in FIFO order without waiting for advisory Resume.
 Reentrant input cannot overtake the current head, and pre-ACK application data remains private.
 The first retained plaintext buffer is published before requesting source Pause. Once authenticated activation and
-FIFO completion release that local hold, the node sends its own Resume. Incoming Pause/Resume, including repeats,
-are forwarded independently; they do not gate ready output or release the local protocol hold. Incoming TLS and
-authenticated handoff records continue to make progress during the protocol wait.
+FIFO completion release that local hold, the node sends Resume only if the next side is also unpaused. The latest
+received Pause/Resume and the local plaintext hold are independent reasons to pause the source; neither reason
+releases the other. Received notifications, including repeats, forward while the local hold is clear. They do not
+gate ready output. Incoming TLS and authenticated handoff records continue to make progress during the protocol wait.
 RealityClient stays active after takeover because it must encrypt, authenticate and sequence every record; it cannot
 permanently bypass itself.
 

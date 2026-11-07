@@ -140,7 +140,7 @@ The first downstream Est starts the timed eligibility window and is forwarded
 immediately. The startup gate remains closed during that notification: nested
 Payload, Resume or Est cannot release data or start a fragment-delay timer. After
 forwarding returns on the live line, scheduling begins at the FIFO head. Duplicate Est notifications still forward but do not restart either the
-eligibility window or fragment delays. Pause/Resume pass through without changing
+eligibility window or fragment delays. Pause/Resume update source pressure without changing
 fragment scheduling.
 
 This can keep configured delays from being consumed while a following TCP
@@ -155,8 +155,9 @@ One FIFO owns all retained upstream payloads, including its active head. Bypasse
 payloads and arrivals after eligibility ends remain behind older work. Reentrant
 arrivals cannot overtake an active job's remainder.
 
-Pause/Resume are advisory and forward transparently in both directions, including
-duplicates. Due fragments and ready FIFO work do not wait for Resume. The next
+Pause/Resume are advisory. Upstream notifications forward transparently, including
+duplicates. Downstream notifications combine with local backlog pressure before
+notifying the source. Due fragments and ready FIFO work do not wait for Resume. The next
 fragment's delay starts only after the previous fragment is forwarded.
 
 Once shaping eligibility ends, or initial TLS handling finishes, the node
@@ -181,10 +182,11 @@ Capacity charge uses WaterWall's buffer-budget accounting, including empty
 buffers and retained ordinary allocation capacity. It is not an RSS or physical
 kernel-pipe-memory limit. Job metadata is bounded by the job count. Fragment
 extraction additionally uses one transient output buffer before transferring it
-to the next node. Locally originated Pause is released automatically with Resume
-at the low watermarks. This local hold is independent of forwarded Pause/Resume;
-a forwarded Resume does not settle the node's own hold, and a forwarded Pause
-does not prevent releasing it.
+to the next node. The local hold clears automatically at the low watermarks.
+The source stays paused while either this hold or the latest downstream Pause
+remains active; neither reason releases the other. Downstream notifications,
+including repeats, forward while the local hold is clear. Once local shaping
+retires, the matched source pressure remains in effect through permanent bypass.
 
 Admission overflow or recoverable job/timer setup refusal closes this connection
 in both directions. It never drops arbitrary TCP bytes while leaving the

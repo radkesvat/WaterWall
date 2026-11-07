@@ -60,6 +60,7 @@ struct hpc_lstate_s
     bool                        accepted : 1;
     bool                        up_busy : 1;
     bool                        down_busy : 1;
+    bool                        next_paused : 1;
     bool                        source_paused : 1;
     bool                        prev_finished : 1;
     bool                        next_finished : 1;

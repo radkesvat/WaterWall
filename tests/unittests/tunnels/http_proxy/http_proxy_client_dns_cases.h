@@ -240,7 +240,7 @@ static void dnsTests(void)
         dnsComplete(ARES_SUCCESS, both, 2);
         require(source_paused && writes == 1 && established == 2, "startup pressure/Est");
         tunnelDownStreamResume(proxy, line);
-        require(! source_paused && writes == 1, "advisory transport Resume was not relayed");
+        require(source_paused && writes == 1, "transport Resume released the pending CONNECT protocol hold");
         sendText(true, "HTTP/1.1 200 OK\r\n\r\n");
         require(strstr(sent, "\r\n\r\nolderpauseearlyearlyresume") && ! source_paused &&
                     (! rep || second_up == identity),

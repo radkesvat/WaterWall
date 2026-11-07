@@ -7,5 +7,7 @@ void tlsclientTunnelDownStreamPause(tunnel_t *t, line_t *l)
     {
         return;
     }
+    ls->next_paused   = true;
+    ls->source_paused = true;
     tunnelPrevDownStreamPause(t, l);
 }

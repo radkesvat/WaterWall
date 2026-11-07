@@ -245,6 +245,10 @@ bool realityclientSetSourcePaused(tunnel_t *t, line_t *l, bool paused)
         return true;
     }
     ls->plaintext_producer_paused = paused;
+    if (ls->next_paused)
+    {
+        return true;
+    }
     if (UNLIKELY(paused ? ! lineCallWithRef(l, tunnelPrevDownStreamPause, t)
                         : ! lineCallWithRef(l, tunnelPrevDownStreamResume, t)))
     {

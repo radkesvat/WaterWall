@@ -7,5 +7,10 @@ void realityclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     {
         return;
     }
+    ls->next_paused = false;
+    if (ls->plaintext_producer_paused)
+    {
+        return;
+    }
     tunnelPrevDownStreamResume(t, l);
 }

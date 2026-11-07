@@ -72,6 +72,7 @@ typedef struct tlsserver_lstate_s
     bool downstream_finishing;
     bool downstream_finish_deferred;
     bool pending_branch_pause; /* Latest receiver Pause before selected branch Init. */
+    bool prev_paused;
     bool shaping_producer_paused;
     /* Monotonic: once true, an uninitialized shaping_output is intentional. */
     bool shaping_retired;

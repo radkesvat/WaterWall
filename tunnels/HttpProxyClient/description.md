@@ -309,11 +309,13 @@ has accepted the request.
 
 CONNECT holds application data until a successful final response, then relays
 opaque bytes. HTTP mode can send its body immediately after the request header
-and receive a response while uploading. Pause/Resume are relayed transparently,
-including duplicates. Ready headers, FIFO drains and chunk suffixes do not wait
-for Resume; protocol barriers and storage bounds still apply. Locally originated
-protocol/FIFO Pause is released when its hold clears, while a relayed Resume may
-override that advisory signal.
+and receive a response while uploading. Source pressure combines the latest
+next-side Pause/Resume with startup, CONNECT acceptance and active/pending upload
+holds. The source receives Resume only after both local and transport holds
+clear; neither hold can release the other. Duplicate transport notifications
+pass through when no local hold remains. Ready headers, FIFO drains and chunk
+suffixes do not wait for Resume; protocol barriers and storage bounds still apply.
+Receive-pressure notifications toward the next side continue to pass through.
 
 Both modes remain active for the lifetime of the line: CONNECT retains its
 configured idle deadline after negotiation, and HTTP mode also retains body
