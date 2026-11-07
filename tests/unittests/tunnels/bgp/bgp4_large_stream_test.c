@@ -294,7 +294,7 @@ static sbuf_t *fixtureBytes(bgp_fixture_t *f, const void *bytes, uint32_t length
         b = twfTrackAcquired(testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f->env.pool), length));
         const splice_buffer_metadata_t m = sbufSpliceMetadata(b);
         twfRequire(write(m.pipefd[1], bytes, length) == (ssize_t) length, "small source pipe write failed");
-        b->capacity = b->l_pad + length;
+        b->capacity = b->initial_headroom + length;
     }
     else
 #endif
@@ -346,7 +346,7 @@ static void fixtureReceive(tunnel_t *t, line_t *l, sbuf_t *b)
     f->ordinary_deliveries += ! sbufIsSplice(b);
     f->last_buffer       = b;
     f->last_pipe         = sbufIsSplice(b) ? sbufSpliceMetadata(b).pipefd[0] : -1;
-    f->headroom          = sbufGetLeftCapacity(b);
+    f->headroom          = sbufGetHeadroom(b);
     f->reads_at_delivery = pipe_read_bytes;
     uint32_t n           = sbufGetLength(b);
     twfRequire(f->length + n <= 4U * 1024 * 1024, "test capture overflow");
@@ -923,7 +923,7 @@ static void testEncoderPipeFallback(void)
             for (uint32_t i = 0; i < body; ++i)
                 bytes[i] = pattern(prefix + i);
             twfRequire(write(sbufSpliceMetadata(input).pipefd[1], bytes, body) == body, "source pipe fill failed");
-            input->capacity = input->l_pad + body;
+            input->capacity = input->initial_headroom + body;
             sbufSetLength(input, body);
             sbufShiftLeft(input, prefix);
             for (uint32_t i = 0; i < prefix; ++i)

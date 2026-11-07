@@ -75,7 +75,7 @@ static void receive(tunnel_t *t, line_t *line, sbuf_t *buf)
         twfRequire(buf == f->expected_identity, "paired relay replaced the original buffer");
     else
         twfRequire(! sbufIsSplice(buf), "unpaired replay must use ordinary storage");
-    twfRequire(sbufGetLeftCapacity(buf) >= 64, "relay lost onward padding");
+    twfRequire(sbufGetHeadroom(buf) >= 64, "relay lost onward padding");
     uint8_t  *bytes  = t == f->prev ? f->downstream : f->upstream;
     uint32_t *length = t == f->prev ? &f->downstream_length : &f->upstream_length;
     twfRequire(*length + sbufGetLength(buf) <= sizeof(f->upstream), "test capture overflow");
@@ -168,7 +168,7 @@ static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t 
     twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, length - prefix) ==
                    (ssize_t) (length - prefix),
                "populate private pipe");
-    buf->capacity = buf->l_pad + length - prefix;
+    buf->capacity = buf->initial_headroom + length - prefix;
     sbufSetLength(buf, length - prefix);
     sbufShiftLeft(buf, prefix);
     sbufWrite(buf, data, prefix);

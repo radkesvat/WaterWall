@@ -134,7 +134,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
     {
         sbuf_t *input = bufferpoolGetLargeBuffer(env.pool);
         input         = sbufReserveSpace(input, length);
-        twfRequire(headroom <= sbufGetLeftCapacity(input), "fixture headroom exceeds allocation");
+        twfRequire(headroom <= sbufGetHeadroom(input), "fixture headroom exceeds allocation");
         input->data = input->head + headroom;
         sbufSetLength(input, length);
         for (uint32_t i = 0; i < length; ++i)
@@ -412,7 +412,7 @@ static void testPacketClonePadding(bool server)
     else
         tunnelUpStreamPayload(t, line, input);
     twfRequire(wire != NULL && sbufGetLength(wire) == length + 5, "packet record framing changed");
-    twfRequire(sbufGetLeftCapacity(wire) >= 123, "packet clone discarded onward padding");
+    twfRequire(sbufGetHeadroom(wire) >= 123, "packet clone discarded onward padding");
     const uint8_t *bytes = sbufGetRawPtr(wire);
     twfRequire(bytes[0] == 23 && bytes[1] == 3 && bytes[2] == 3 && (((uint32_t) bytes[3] << 8) | bytes[4]) == length,
                "packet record header changed");

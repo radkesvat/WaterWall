@@ -322,7 +322,7 @@ static void caseCompactTranscript(bool bound, bool shared_budget, bool refuse)
     twfRequire(usage.bytes == 7 + other.bytes && usage.charge == fit.allocation_charge + other.charge &&
                    bufferqueueGetBufCount(&state->replay.pending) == 1,
                "compaction lost shared budget accounting");
-    twfRequire(sbufGetLeftCapacity(bufferqueueFront(&state->replay.pending)) >=
+    twfRequire(sbufGetHeadroom(bufferqueueFront(&state->replay.pending)) >=
                    bufferpoolGetLargeBufferPadding(fixture.env.pool),
                "compaction lost onward padding");
     twfRequire(initialized(&fixture) == kFallbackReplayOk, "compact transcript scheduling failed");
@@ -595,7 +595,7 @@ static sbuf_t *pipePayload(replay_fixture_t *fixture)
     sbuf_t           *buffer   = twfTrackAcquired(testSpliceSourceBuffer(padding + 32, sizeof(body) - 1));
     twfRequire(write(sbufSpliceMetadata(buffer).pipefd[1], body, sizeof(body) - 1) == sizeof(body) - 1,
                "failed to populate fixture's private pipe body");
-    buffer->capacity = buffer->l_pad + sizeof(body) - 1;
+    buffer->capacity = buffer->initial_headroom + sizeof(body) - 1;
     sbufSetLength(buffer, sizeof(body) - 1);
     sbufShiftLeft(buffer, sizeof(prefix) - 1);
     memoryCopy(sbufGetMutablePtr(buffer), prefix, sizeof(prefix) - 1);

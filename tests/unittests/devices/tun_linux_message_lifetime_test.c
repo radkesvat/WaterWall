@@ -2072,7 +2072,7 @@ static void testOffloadScratchGeometryWithoutStartupAllocation(test_env_t *env)
                     "stored scratch geometry or prepaid charge changed");
             require(bringUpDevice(tdev) && gso_scratch_buffer != NULL, "real reader did not allocate its own scratch");
             require(sbufGetTotalCapacityNoPadding(gso_scratch_buffer) == tdev->offload_scratch_capacity &&
-                        sbufGetLeftPadding(gso_scratch_buffer) == tdev->offload_scratch_padding &&
+                        sbufGetInitialHeadroom(gso_scratch_buffer) == tdev->offload_scratch_padding &&
                         sbufGetAllocationCharge(gso_scratch_buffer) == tdev->offload_scratch_charge,
                     "real reader scratch disagrees with the validated capacity, padding or charge");
             require(bringDownDevice(tdev) && gso_scratch_destroy_count == 1,
@@ -3726,7 +3726,7 @@ static size_t padding_growth_output_allowance;
 
 static void observeGsoAfterPaddingGrowth(tun_device_t *tdev, void *userdata, sbuf_t *buf, uint8_t wid)
 {
-    require(sbufGetLeftCapacity(buf) >= 64, "later pool padding change removed original chain headroom");
+    require(sbufGetHeadroom(buf) >= 64, "later pool padding change removed original chain headroom");
     require(sbufGetAllocationCharge(buf) <= padding_growth_output_allowance,
             "later pool padding change exceeded prepaid output allocation allowance");
     buffer_pool_fit_t grown_fit;

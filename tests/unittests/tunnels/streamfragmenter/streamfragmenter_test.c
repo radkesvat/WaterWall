@@ -120,7 +120,7 @@ static sbuf_t *input(const char *data, uint32_t length)
         require(buf != NULL, "source pipe allocation");
         if (body)
             require(write(sbufSpliceMetadata(buf).pipefd[1], data + prefix, body) == body, "source pipe contents");
-        buf->capacity = buf->l_pad + body;
+        buf->capacity = buf->initial_headroom + body;
         buf->len      = body;
         if (prefix)
         {
@@ -227,7 +227,7 @@ static void capture(tunnel_t *t, line_t *l, sbuf_t *buf)
     require(writes < ARRAY_SIZE(lengths), "capture count");
     uint32_t length = sbufGetLength(buf);
     require(length < sizeof(output) - output_size, "capture bytes");
-    require(sbufGetLeftCapacity(buf) >= 64, "onward padding lost");
+    require(sbufGetHeadroom(buf) >= 64, "onward padding lost");
     lengths[writes]   = length;
     times[writes]     = now_us;
     spliced[writes++] = sbufIsSplice(buf);

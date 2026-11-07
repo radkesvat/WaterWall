@@ -255,7 +255,7 @@ static void testMixedRepresentations(void)
     buf = bufferpoolGetSpliceBuffer(env.pool);
     twfRequire(buf != NULL && write(sbufSpliceMetadata(buf).pipefd[1], "BC", 2) == 2,
                "failed to fill private splice pipe");
-    buf->capacity = buf->l_pad + 2;
+    buf->capacity = buf->initial_headroom + 2;
     sbufSetLength(buf, 2);
     sbuf_t *splice = buf;
     twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued && buf == NULL, "splice ownership was not admitted");

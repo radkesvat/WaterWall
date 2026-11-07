@@ -68,7 +68,7 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
         }
     }
 
-    assert(sbufGetLeftCapacity(slice) >= use_left_padding);
+    assert(sbufGetHeadroom(slice) >= use_left_padding);
     if (use_left_padding > 0)
     {
         sbufShiftLeft(slice, use_left_padding);
@@ -223,7 +223,7 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
 {
     assert(self != NULL && destination != NULL);
     assert(! sbufIsSplice(destination));
-    assert(sbufGetLeftCapacity(destination) <= destination->capacity);
+    assert(sbufGetHeadroom(destination) <= destination->capacity);
 
     const size_t length   = sbufGetLength(destination);
     const size_t writable = sbufGetMaximumWriteableSize(destination);

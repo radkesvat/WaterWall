@@ -81,8 +81,7 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
     twfRequire(pair != NULL, "HalfDuplexClient framed an unknown child line");
 
     twfRequire(! sbufIsSplice(buf), "combined intro must be ordinary");
-    twfRequire(sbufGetLeftCapacity(buf) >= (is_upload ? pair->minimum_upload_padding : 64),
-               "output lost onward padding");
+    twfRequire(sbufGetHeadroom(buf) >= (is_upload ? pair->minimum_upload_padding : 64), "output lost onward padding");
     const size_t length = sbufGetLength(buf);
     if (is_upload)
     {

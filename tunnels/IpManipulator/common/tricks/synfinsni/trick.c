@@ -91,7 +91,7 @@ static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip
 static sbuf_t *synfinsnitrickDuplicateStandalonePacket(const sbuf_t *source)
 {
     uint32_t packet_len = sbufGetLength((sbuf_t *) source);
-    sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetLeftPadding((sbuf_t *) source));
+    sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetInitialHeadroom((sbuf_t *) source));
 
     sbufSetLength(copy, packet_len);
     memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr((sbuf_t *) source), packet_len);

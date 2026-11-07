@@ -6,7 +6,7 @@ static bool keepaliveserverSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_
 {
     const uint32_t length = sbufGetLength(buf);
     assert(length <= kKeepAliveServerMaxPayloadChunkSize);
-    assert(sbufGetLeftCapacity(buf) >= kKeepAliveServerFramePrefixSize);
+    assert(sbufGetHeadroom(buf) >= kKeepAliveServerFramePrefixSize);
     /* Only the real left padding is written, including for a private-pipe body. */
     sbufShiftLeft(buf, kKeepAliveServerFramePrefixSize);
     uint8_t *header         = sbufGetMutablePtr(buf);

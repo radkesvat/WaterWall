@@ -530,7 +530,7 @@ static sbuf_t *receiverInput(line_t *line, const uint8_t *bytes, uint32_t length
         twfRequire(buf != NULL, "failed to create receiver fixture private pipe");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes, length) == (ssize_t) length,
                    "failed to populate receiver fixture private pipe");
-        buf->capacity = buf->l_pad + length;
+        buf->capacity = buf->initial_headroom + length;
         sbufSetLength(buf, length);
         return buf;
     }

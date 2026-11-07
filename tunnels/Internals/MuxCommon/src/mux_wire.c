@@ -137,7 +137,7 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
 
     sbuf_t  *encoded           = bufferpoolGetLargeBuffer(pool);
     size_t   required_capacity = 0;
-    if (UNLIKELY(! sbufTryComputeCapacity(encoded_length, sbufGetLeftPadding(encoded), &required_capacity)))
+    if (UNLIKELY(! sbufTryComputeCapacity(encoded_length, sbufGetInitialHeadroom(encoded), &required_capacity)))
     {
         bufferpoolReuseBuffer(pool, encoded);
         bufferpoolReuseBuffer(pool, input);
@@ -224,8 +224,8 @@ bool muxEncodeSpliceBatch(buffer_pool_t *pool, sbuf_t *input, mux_cid_t cid, boo
         {
             const uint32_t capacity = sbufSpliceMetadata(candidate).pipe_capacity;
             size_t         cost;
-            if (capacity < count || sbufGetLeftCapacity(candidate) < padding ||
-                ! sbufTryComputeQueueCharge((uint32_t) candidate->l_pad + count, &cost) || cost > allowance)
+            if (capacity < count || sbufGetHeadroom(candidate) < padding ||
+                ! sbufTryComputeQueueCharge((uint32_t) candidate->initial_headroom + count, &cost) || cost > allowance)
             {
                 bufferpoolReuseBuffer(pool, candidate);
                 candidate = NULL;

@@ -116,7 +116,7 @@ sbuf_t *obfuscatorEncodeStream(buffer_pool_t *pool, sbuf_t *buf, uint32_t skip, 
 {
     assert(! sbufIsSplice(buf));
     const uint32_t length = sbufGetLength(buf);
-    if (length <= UINT16_MAX && sbufGetLeftCapacity(buf) >= kObfuscatorTlsRecordHeaderSize)
+    if (length <= UINT16_MAX && sbufGetHeadroom(buf) >= kObfuscatorTlsRecordHeaderSize)
     {
         obfuscatorApplyXor(buf, skip, key);
         sbufShiftLeft(buf, kObfuscatorTlsRecordHeaderSize);

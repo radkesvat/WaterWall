@@ -105,7 +105,7 @@ void sbufSpliceCheckBuffer(const sbuf_t *buf)
         abortProgramNow(1);
     }
 #endif
-    sbufSplicePoolCheckPadding(buf->l_pad);
+    sbufSplicePoolCheckPadding(buf->initial_headroom);
 }
 
 uint16_t sbufSplicePoolPadding(void)
@@ -227,7 +227,7 @@ void sbufSplicePoolDestroy(void)
 size_t sbufGetAllocationCharge(const sbuf_t *buf)
 {
     assert(buf != NULL);
-    const size_t storage = sbufIsSplice(buf) ? (size_t) sbufGetLeftPadding(buf) + SPLICE_BUFFER_STORAGE_SIZE
+    const size_t storage = sbufIsSplice(buf) ? (size_t) sbufGetInitialHeadroom(buf) + SPLICE_BUFFER_STORAGE_SIZE
                                              : (size_t) sbufGetTotalCapacity(buf);
     return sizeof(sbuf_t) + storage + (size_t) kSbufAllocationAlignment;
 }
@@ -307,7 +307,7 @@ static sbuf_t *sbufAllocate(size_t capacity, uint16_t pad_left)
     b->len      = 0;
     b->data     = b->head + pad_left;
     b->capacity = capacity;
-    b->l_pad    = pad_left;
+    b->initial_headroom = pad_left;
 
     return b;
 }
@@ -360,7 +360,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     assert(b != NULL && dest != NULL);
     assert(b != dest);
 
-    const size_t source_offset = sbufGetLeftCapacity(b);
+    const size_t source_offset = sbufGetHeadroom(b);
     const size_t source_length = sbufGetLength(b);
     const size_t dest_capacity = sbufGetTotalCapacity(dest);
 
@@ -381,7 +381,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
 
 sbuf_t *sbufDuplicate(sbuf_t *b)
 {
-    sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->l_pad);
+    sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->initial_headroom);
 
     if (UNLIKELY(! sbufDuplicateTo(b, newbuf)))
     {
@@ -431,7 +431,7 @@ sbuf_t *sbufSlice(sbuf_t *const b, const size_t bytes)
 {
     assert(b != NULL && ! sbufIsSplice(b));
     assert(bytes <= sbufGetLength(b));
-    sbuf_t *newbuf = sbufCreateWithPadding(bytes, b->l_pad);
+    sbuf_t *newbuf = sbufCreateWithPadding(bytes, b->initial_headroom);
     sbufMoveTo(newbuf, b, bytes);
     return newbuf;
 }
@@ -514,7 +514,7 @@ void sbufSpliceDiscard(sbuf_t *buf)
     sbufSpliceCheckBuffer(buf);
     if (buf->len == 0)
     {
-        buf->data = buf->head + buf->l_pad;
+        buf->data = buf->head + buf->initial_headroom;
         return;
     }
 #if WW_HAVE_SPLICE
@@ -553,7 +553,7 @@ void sbufSpliceDiscard(sbuf_t *buf)
     }
 #endif
     buf->len    = 0;
-    buf->data   = buf->head + buf->l_pad;
+    buf->data   = buf->head + buf->initial_headroom;
 }
 
 bool sbufSpliceIsReusable(const sbuf_t *buf)
@@ -585,7 +585,7 @@ void sbufDestroySplice(sbuf_t *buf)
     master_pool_t *pool = GSTATE.splice_inventory->pool;
     if (sbufSpliceMetadata(buf).pipefd[0] >= 0)
     {
-        buf->capacity            = (size_t) buf->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
+        buf->capacity            = (size_t) buf->initial_headroom + SPLICE_BUFFER_STORAGE_SIZE;
         master_pool_item_t *item = buf;
         masterpoolReuseItems(pool, &item, 1);
     }

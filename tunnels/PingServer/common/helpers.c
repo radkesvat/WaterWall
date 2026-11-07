@@ -32,7 +32,7 @@ static void pingserverDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dire
              (unsigned int) kPingWireMaxInnerPacketLength,
              (unsigned int) kPingWireEncapsulationOverhead,
              (unsigned int) kMaxAllowedPacketLength,
-             (unsigned int) sbufGetLeftCapacity(buf),
+             (unsigned int) sbufGetHeadroom(buf),
              (unsigned int) kPingWireEncapsulationOverhead);
     }
     lineReuseBuffer(l, buf);
@@ -70,7 +70,7 @@ void pingserverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         pingserverDrop(t, l, buf, "outgoing", "IPv4 packet exceeds maximum inner size");
         return;
     }
-    if (sbufGetLeftCapacity(buf) < kPingWireEncapsulationOverhead)
+    if (sbufGetHeadroom(buf) < kPingWireEncapsulationOverhead)
     {
         pingserverDrop(t, l, buf, "outgoing", "insufficient left headroom to prepend IPv4/ICMP headers");
         return;

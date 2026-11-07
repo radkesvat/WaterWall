@@ -138,7 +138,7 @@ static sbuf_t *tryMakeSplicePattern(buffer_pool_t *pool, uint32_t length)
         written += (uint32_t) result;
     }
 
-    input->capacity = input->l_pad + length;
+    input->capacity = input->initial_headroom + length;
     sbufSetLength(input, length);
     return input;
 }
@@ -156,7 +156,7 @@ static sbuf_t *tryMakeLargeSplicePattern(buffer_pool_t *pool, uint32_t length, c
     require(input != NULL, "could not allocate large splice payload");
     const uint32_t resident = length > kMuxMaxDataFrameLength ? length - kMuxMaxDataFrameLength : 0;
     require(resident <= 16, "large fixture prefix exceeds real headroom");
-    if (resident > sbufGetLeftCapacity(input))
+    if (resident > sbufGetHeadroom(input))
     {
         /* An independently padded source exercises a destination inventory
          * whose fixed headroom is deliberately insufficient for encoding. */
@@ -188,7 +188,7 @@ static sbuf_t *tryMakeLargeSplicePattern(buffer_pool_t *pool, uint32_t length, c
         offset += (uint32_t) n;
     }
     /* Publish only after every claimed byte is owned, exactly like NIO. */
-    input->capacity = input->l_pad + body;
+    input->capacity = input->initial_headroom + body;
     sbufSetLength(input, body);
     sbufShiftLeft(input, resident);
     for (uint32_t i = 0; i < resident; ++i)
@@ -705,7 +705,7 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
                                       : original_capacity;
         require(sbufGetTotalCapacityNoPadding(retained) == expected, "paused retention selected the wrong pooled tier");
         require(sbufGetLength(retained) == lengths[i], "paused retention changed the payload length");
-        require(sbufGetLeftCapacity(retained) >= bufferpoolGetLargeBufferPadding(pool),
+        require(sbufGetHeadroom(retained) >= bufferpoolGetLargeBufferPadding(pool),
                 "paused retention lost onward padding");
         for (uint32_t j = 0; j < lengths[i]; ++j)
             require(((const uint8_t *) sbufGetRawPtr(retained))[j] == patternByte(j),
@@ -759,7 +759,7 @@ static void testQueuedFrameExtraction(buffer_pool_t *pool)
             sbuf_t *read = muxReadFrameBody(stream, &frame, false);
             require(sbufGetLength(read) == length && (splicestreamLength(stream) == 0),
                     "queued frame extraction changed wire length");
-            require(sbufGetLeftCapacity(read) >= bufferpoolGetLargeBufferPadding(pool),
+            require(sbufGetHeadroom(read) >= bufferpoolGetLargeBufferPadding(pool),
                     "queued frame extraction consumed onward padding");
             buffer_pool_fit_t fit;
             require(bufferpoolQueryBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool), &fit),
@@ -816,7 +816,7 @@ static void testQueueCapacityCharge(buffer_pool_t *pool)
     require(sbufGetQueueCharge(small) == sizeof(sbuf_t) + small->capacity + kSbufAllocationAlignment,
             "splice queue charge omitted logical capacity or counted kernel/control storage");
     require(sbufGetAllocationCharge(small) ==
-                sizeof(sbuf_t) + small->l_pad + SPLICE_BUFFER_STORAGE_SIZE + kSbufAllocationAlignment,
+                sizeof(sbuf_t) + small->initial_headroom + SPLICE_BUFFER_STORAGE_SIZE + kSbufAllocationAlignment,
             "physical splice allocation helper changed");
     sbufSpliceClosePipe(small); /* Deliberately shrunk test pipe must not rejoin the full-sized inventory. */
     bufferpoolReuseBuffer(pool, small);
@@ -824,7 +824,7 @@ static void testQueueCapacityCharge(buffer_pool_t *pool)
     for (unsigned prefix = 0; prefix <= 3; ++prefix)
     {
         sbuf_t *empty   = sbufCreateSplice(64);
-        empty->capacity = empty->l_pad;
+        empty->capacity = empty->initial_headroom;
         sbufShiftLeft(empty, prefix);
         require(sbufGetQueueCharge(empty) == sizeof(sbuf_t) + 64 + kSbufAllocationAlignment,
                 "empty/prefix-only charge counted padding twice");
@@ -925,11 +925,10 @@ static void testLargeMaterialization(buffer_pool_t *pool)
             {
                 // Test exact cursor preservation; sbufEnsureOrdinary() restores
                 // the pool padding instead of retaining the source cursor.
-                sbuf_t *result =
-                    bufferpoolGetBestFit(pool, sbufGetLength(source), (uint16_t) sbufGetLeftCapacity(source));
+                sbuf_t *result = bufferpoolGetBestFit(pool, sbufGetLength(source), (uint16_t) sbufGetHeadroom(source));
                 result         = sbufSpliceMaterializeToBuffer(source, result, pool);
                 require(! sbufIsSplice(result) && sbufGetLength(result) == length + 4 &&
-                            sbufGetLeftCapacity(result) == 28 && memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
+                            sbufGetHeadroom(result) == 28 && memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
                         "full materialization lost prefix or residual headroom");
                 buffer_pool_fit_t fit;
                 require(bufferpoolQueryBestFit(pool, length + 4, 28, &fit) &&
@@ -945,11 +944,11 @@ static void testLargeMaterialization(buffer_pool_t *pool)
                 sbufWrite(result, ">>", 2);
                 sbufSetLength(result, 2);
                 sbufSpliceReadToBuffer(source, result, 6);
-                require(sbufGetLength(source) == length - 2 && sbufGetLeftCapacity(source) == 32,
+                require(sbufGetLength(source) == length - 2 && sbufGetHeadroom(source) == 32,
                         "partial read did not consume prefix and exactly two body bytes");
                 sbufSpliceReadToBuffer(source, result, length - 2);
                 require(sbufGetLength(source) == 0 && sbufGetLength(result) == length + 6 &&
-                            sbufGetLeftCapacity(result) == 32 && memoryEqual(sbufGetRawPtr(result), ">>HEAD", 6),
+                            sbufGetHeadroom(result) == 32 && memoryEqual(sbufGetRawPtr(result), ">>HEAD", 6),
                         "partial append lost existing bytes or padding");
                 for (uint32_t j = 0; j < length; ++j)
                     require(sbufGetMutablePtr(result)[j + 6] == patternByte(j),
@@ -1019,7 +1018,7 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
                 require(n > 0, "real mixed-frame source write failed");
                 written += (uint32_t) n;
             }
-            input->capacity = input->l_pad + count - prefix;
+            input->capacity = input->initial_headroom + count - prefix;
             sbufSetLength(input, count - prefix);
             sbufShiftLeft(input, prefix);
             memoryCopy(sbufGetMutablePtr(input), wire + offset, prefix);
@@ -1032,7 +1031,7 @@ static void testMaximumMixedFrame(buffer_pool_t *pool, bool mixed)
             "maximum mixed frame not ready");
     sbuf_t *body = muxReadFrameBody(stream, &frame, true);
     require((body->flags & kSbufFlagSplice) == 0 && sbufGetLength(body) == length &&
-                sbufGetLeftCapacity(body) >= bufferpoolGetLargeBufferPadding(pool),
+                sbufGetHeadroom(body) >= bufferpoolGetLargeBufferPadding(pool),
             "maximum slot-pressure fallback lost ordinary storage, length or padding");
     for (uint32_t i = 0; i < length; ++i)
         require(sbufGetMutablePtr(body)[i] == patternByte(i), "maximum mixed-frame fallback corrupted bytes");

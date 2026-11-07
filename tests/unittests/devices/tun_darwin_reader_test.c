@@ -145,7 +145,7 @@ static void fixtureDistribute(device_reader_session_t *session, sbuf_t **buffers
         const expected_packet_t *expected = &expected_packets[delivered++];
         const sbuf_t            *buffer   = buffers[i];
         require(sbufGetLength(buffer) == expected->length, "packet boundary or FIFO changed");
-        require(sbufGetLeftCapacity(buffer) == kFixturePadding && sbufGetLeftPadding(buffer) == kFixturePadding,
+        require(sbufGetHeadroom(buffer) == kFixturePadding && sbufGetInitialHeadroom(buffer) == kFixturePadding,
                 "utun framing consumed chain padding");
         const uint8_t *bytes = sbufGetRawPtr(buffer);
         require(((uintptr_t) bytes & 31U) == 0, "delivered packet lost pool alignment");

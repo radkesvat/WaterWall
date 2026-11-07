@@ -32,7 +32,8 @@ static void probePrepare(tunnel_t *tunnel)
         require(sbufSplicePoolCount() == 0 && sbufSplicePoolCapacity() == 0,
                 "inventory allocated pipes before first demand");
     sbuf_t *buf = bufferpoolGetSpliceBuffer(pool);
-    require(buf != NULL && buf->l_pad == 160, "preparation could not acquire a correctly padded splice buffer");
+    require(buf != NULL && buf->initial_headroom == 160,
+            "preparation could not acquire a correctly padded splice buffer");
     bufferpoolReuseBuffer(pool, buf);
 #endif
     if (++prepared == 3 && fail_prepare)

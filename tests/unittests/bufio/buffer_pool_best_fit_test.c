@@ -107,7 +107,8 @@ static void checkBestFitQuery(buffer_pool_t *pool, uint32_t bytes, uint16_t padd
             "best-fit query selected the wrong geometry");
 
     sbuf_t *buf = bufferpoolGetBestFit(pool, bytes, padding);
-    require(fit.payload_capacity == sbufGetTotalCapacityNoPadding(buf) && fit.left_padding == sbufGetLeftPadding(buf) &&
+    require(fit.payload_capacity == sbufGetTotalCapacityNoPadding(buf) &&
+                fit.left_padding == sbufGetInitialHeadroom(buf) &&
                 fit.allocation_charge == sbufGetAllocationCharge(buf),
             "best-fit prediction disagrees with the actual allocation");
     bufferpoolReuseBuffer(pool, buf);
@@ -204,7 +205,7 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
     {
         buffers[i] = bufferpoolGetMediumBuffer(pool);
-        require(sbufGetLength(buffers[i]) == 0 && sbufGetLeftCapacity(buffers[i]) == 32,
+        require(sbufGetLength(buffers[i]) == 0 && sbufGetHeadroom(buffers[i]) == 32,
                 "medium reuse did not restore its length and headroom");
     }
     for (size_t i = 0; i < ARRAY_SIZE(buffers); ++i)
@@ -223,7 +224,7 @@ static void testMediumPoolGeometry(uint32_t large_size, uint32_t medium_size)
                                             large_size);
     bufferpoolUpdateAllocationPaddings(other, 96, 96, 32, 32);
     sbuf_t *padded = bufferpoolGetMediumBuffer(other);
-    require(sbufGetTotalCapacityNoPadding(padded) == other_medium_size && sbufGetLeftCapacity(padded) == 96,
+    require(sbufGetTotalCapacityNoPadding(padded) == other_medium_size && sbufGetHeadroom(padded) == 96,
             "shared medium checkout retained incompatible capacity or padding");
     bufferpoolReuseBuffer(other, padded);
     bufferpoolDestroy(other);
@@ -273,7 +274,7 @@ static void testIndependentSizing(void)
         require(bufferpoolQueryBestFit(pool, 65536, 64, &scratch_fit), "GSO scratch fit query failed");
         sbuf_t *scratch = sbufCreateWithPadding(scratch_fit.payload_capacity, scratch_fit.left_padding);
         require(scratch != NULL && sbufGetTotalCapacityNoPadding(scratch) == scratch_fit.payload_capacity &&
-                    sbufGetLeftPadding(scratch) == scratch_fit.left_padding &&
+                    sbufGetInitialHeadroom(scratch) == scratch_fit.left_padding &&
                     sbufGetAllocationCharge(scratch) == scratch_fit.allocation_charge,
                 "direct GSO scratch allocation disagreed with the six-profile best-fit geometry");
         sbufDestroy(scratch);
@@ -532,32 +533,32 @@ int main(void)
     sbuf_t *small = bufferpoolGetBestFit(pool, 512, 16);
     require(sbufGetTotalCapacityNoPadding(small) == bufferpoolGetSmallBufferSize(pool),
             "best-fit allocator did not select the small tier");
-    require(sbufGetLeftPadding(small) >= 16, "small best-fit buffer lacks requested padding");
+    require(sbufGetInitialHeadroom(small) >= 16, "small best-fit buffer lacks requested padding");
     bufferpoolReuseBuffer(pool, small);
 
     sbuf_t *large = bufferpoolGetBestFit(pool, 4096, 48);
     require(sbufGetTotalCapacityNoPadding(large) == bufferpoolGetLargeBufferSize(pool),
             "best-fit allocator did not select the large tier");
-    require(sbufGetLeftPadding(large) >= 48, "large best-fit buffer lacks requested padding");
+    require(sbufGetInitialHeadroom(large) >= 48, "large best-fit buffer lacks requested padding");
     bufferpoolReuseBuffer(pool, large);
 
     sbuf_t *padding_fallback = bufferpoolGetBestFit(pool, 512, 96);
-    require(sbufGetTotalCapacityNoPadding(padding_fallback) >= 512 && sbufGetLeftPadding(padding_fallback) >= 96,
+    require(sbufGetTotalCapacityNoPadding(padding_fallback) >= 512 && sbufGetInitialHeadroom(padding_fallback) >= 96,
             "best-fit padding fallback does not satisfy its geometry");
     require(sbufGetTotalCapacityNoPadding(padding_fallback) != bufferpoolGetSmallBufferSize(pool) ||
-                sbufGetLeftPadding(padding_fallback) != bufferpoolGetSmallBufferPadding(pool),
+                sbufGetInitialHeadroom(padding_fallback) != bufferpoolGetSmallBufferPadding(pool),
             "best-fit allocator returned an unsuitable pooled buffer");
     bufferpoolReuseBuffer(pool, padding_fallback);
 
     sbuf_t *size_fallback = bufferpoolGetBestFit(pool, 16384, 24);
-    require(sbufGetTotalCapacityNoPadding(size_fallback) >= 16384 && sbufGetLeftPadding(size_fallback) >= 24,
+    require(sbufGetTotalCapacityNoPadding(size_fallback) >= 16384 && sbufGetInitialHeadroom(size_fallback) >= 24,
             "best-fit size fallback does not satisfy its geometry");
     require(sbufGetTotalCapacityNoPadding(size_fallback) == MEDIUM_BUFFER_SIZE_RAM_HIGH,
             "best fit did not use the fixed medium tier above the smaller large tier");
     bufferpoolReuseBuffer(pool, size_fallback);
 
     sbuf_t *medium = bufferpoolGetMediumBuffer(pool);
-    require(medium == size_fallback && sbufGetLength(medium) == 0 && sbufGetLeftPadding(medium) == 64,
+    require(medium == size_fallback && sbufGetLength(medium) == 0 && sbufGetInitialHeadroom(medium) == 64,
             "medium checkout did not reuse/reset the pooled allocation");
     require(bufferpoolGetMediumBufferSize(pool) == 64 * 1024,
             "explicit medium capacity changed with the custom large-buffer size");

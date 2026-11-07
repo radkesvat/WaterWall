@@ -57,7 +57,7 @@ sbuf_t *easyPayload(bool splice)
         buf = bufferpoolGetSpliceBuffer(pool);
         easyRequire(buf != NULL, "checkout real splice buffer");
         easyRequire(write(sbufSpliceMetadata(buf).pipefd[1], "body", 4) == 4, "populate private pipe");
-        buf->capacity = buf->l_pad + 4;
+        buf->capacity = buf->initial_headroom + 4;
         sbufSetLength(buf, 4);
 #else
         easyRequire(false, "splice fixture on unsupported build");
@@ -101,7 +101,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         easyRequire(sbufIsSplice(buf) == f->splice, "forwarding changed representation");
         easyRequire(sbufGetLength(buf) == f->length, "logical length changed");
-        easyRequire(sbufGetLeftCapacity(buf) >= 32, "onward padding lost");
+        easyRequire(sbufGetHeadroom(buf) >= 32, "onward padding lost");
         if (f->splice)
         {
             easyRequire(sbufGetResidentPrefixLength(buf) == f->prefix, "pipe body was materialized");

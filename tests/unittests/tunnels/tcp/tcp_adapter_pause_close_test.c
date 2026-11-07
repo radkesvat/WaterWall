@@ -119,7 +119,7 @@ static sbuf_t *makeInput(buffer_pool_t *pool, bool splice_input)
         buf = bufferpoolGetSpliceBuffer(pool);
         twfRequire(buf != NULL, "failed to check out input private pipe");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], "payload", 7) == 7, "failed to fill input private pipe");
-        buf->capacity = (uint32_t) buf->l_pad + 7;
+        buf->capacity = (uint32_t) buf->initial_headroom + 7;
 #else
         twfRequire(false, "splice fixture is unsupported");
         return NULL;

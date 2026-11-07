@@ -295,12 +295,12 @@ static sbuf_t *headerPipe(line_t *l, const void *data, uint32_t length, uint32_t
 {
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf  = bufferpoolGetSpliceBuffer(pool);
-    twfRequire(buf != NULL && prefix <= length && prefix <= sbufGetLeftCapacity(buf), "header pipe geometry");
+    twfRequire(buf != NULL && prefix <= length && prefix <= sbufGetHeadroom(buf), "header pipe geometry");
     const uint8_t *bytes = data;
     uint32_t       body  = length - prefix;
     twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], bytes + prefix, body) == (ssize_t) body,
                "populate header pipe");
-    buf->capacity = buf->l_pad + body;
+    buf->capacity = buf->initial_headroom + body;
     sbufSetLength(buf, body);
     sbufShiftLeft(buf, prefix);
     memoryCopy(sbufGetMutablePtr(buf), bytes, prefix);

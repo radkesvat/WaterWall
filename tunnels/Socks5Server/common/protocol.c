@@ -138,7 +138,7 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
 
     buf     = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     *buf_io = buf;
-    if (sbufGetLeftCapacity(buf) < header_len)
+    if (sbufGetHeadroom(buf) < header_len)
     {
         sbuf_t  *wrapped = socks5serverAllocBuffer(l, (uint32_t) (payload + header_len));
         uint8_t *dst     = sbufGetMutablePtr(wrapped);

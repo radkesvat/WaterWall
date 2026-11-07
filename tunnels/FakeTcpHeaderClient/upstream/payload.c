@@ -23,7 +23,7 @@ void faketcpheaderclientUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                  (unsigned int) sbufGetLength(buf),
                  (unsigned int) faketcpheaderWireMaxNativeLength(&state->wire),
                  (unsigned int) faketcpheaderWireOverhead(&state->wire),
-                 (unsigned int) sbufGetLeftCapacity(buf));
+                 (unsigned int) sbufGetHeadroom(buf));
         }
         lineReuseBuffer(l, buf);
         return;

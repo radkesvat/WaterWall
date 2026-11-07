@@ -72,7 +72,7 @@ static sbuf_t *streamTestBytes(buffer_pool_t *pool, const void *bytes, uint32_t 
 static void streamCheckBytes(buffer_pool_t *pool, sbuf_t *b, const void *expected, uint32_t count)
 {
     require(sbufGetLength(b) == count, "frame body length changed");
-    require(sbufGetLeftCapacity(b) >= bufferpoolGetLargeBufferPadding(pool), "frame lost onward headroom");
+    require(sbufGetHeadroom(b) >= bufferpoolGetLargeBufferPadding(pool), "frame lost onward headroom");
     if ((b->flags & kSbufFlagSplice) != 0)
     {
         sbuf_t *ordinary = bufferpoolGetBestFit(pool, count, bufferpoolGetLargeBufferPadding(pool));
@@ -518,7 +518,7 @@ static void testSpliceStreamContracts(void)
     {
         sbuf_t *part = testSpliceSourceBuffer(bufferpoolGetSpliceBufferPadding(f.pool), 1);
         writeSpliceTestBody(sbufSpliceMetadata(part).pipefd[1], (const uint8_t *) "x", 1);
-        part->capacity = part->l_pad + 1;
+        part->capacity = part->initial_headroom + 1;
         sbufSetLength(part, 1);
         require(splicestreamPush(s, part), "tiny push failed");
     }

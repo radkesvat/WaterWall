@@ -73,7 +73,7 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
 sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
 {
     assert(pool != NULL && buf != NULL);
-    if (sbufGetLeftCapacity(buf) >= need)
+    if (sbufGetHeadroom(buf) >= need)
         return buf;
 
     const size_t   length  = sbufGetLength(buf);
@@ -83,7 +83,7 @@ sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
     assert(bufferpoolQueryBestFit(pool, length, padding, &fit));
 #endif
     sbuf_t *wrapped = sbufIsSplice(buf) ? bufferpoolGetSpliceBuffer(pool) : NULL;
-    if (wrapped != NULL && sbufGetLeftCapacity(wrapped) < padding)
+    if (wrapped != NULL && sbufGetHeadroom(wrapped) < padding)
     {
         bufferpoolReuseBuffer(pool, wrapped);
         wrapped = NULL;
@@ -107,7 +107,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
         abortProgramNow(1);
     }
 #if WW_HAVE_SPLICE
-    const size_t source_headroom = sbufGetLeftCapacity(buf);
+    const size_t source_headroom = sbufGetHeadroom(buf);
     const size_t prefix_bytes    = sbufGetResidentPrefixLength(buf);
     const size_t body_bytes      = buf->len - prefix_bytes;
 
@@ -138,7 +138,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
     }
 
     sbufByteCopy(dest->data, sbufGetRawPtr(buf), prefix_bytes);
-    spliceReadPipe(metadata.pipefd[0], dest->head + buf->l_pad, body_bytes, __func__);
+    spliceReadPipe(metadata.pipefd[0], dest->head + buf->initial_headroom, body_bytes, __func__);
 
     sbufSetLength(dest, buf->len);
     dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePooled | kSbufFlagRecalculateChecksum);
@@ -167,14 +167,14 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes)
     }
 #if WW_HAVE_SPLICE
     const size_t source_length   = sbufGetLength(buf);
-    const size_t source_headroom = sbufGetLeftCapacity(buf);
-    if (UNLIKELY(source_headroom > sbufGetLeftPadding(buf) || source_headroom > sbufGetTotalCapacity(buf) ||
+    const size_t source_headroom = sbufGetHeadroom(buf);
+    if (UNLIKELY(source_headroom > sbufGetInitialHeadroom(buf) || source_headroom > sbufGetTotalCapacity(buf) ||
                  source_length > sbufGetMaximumWriteableSize(buf)))
     {
         LOGF("sbufSpliceReadToBuffer: invalid source cursor or logical capacity");
         abortProgramNow(1);
     }
-    const size_t prefix_bytes = (size_t) sbufGetLeftPadding(buf) - source_headroom;
+    const size_t prefix_bytes = (size_t) sbufGetInitialHeadroom(buf) - source_headroom;
     if (UNLIKELY(source_length < prefix_bytes || bytes > source_length))
     {
         LOGF("sbufSpliceReadToBuffer: requested bytes or prefix exceed source length "
@@ -186,7 +186,7 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes)
     }
 
     const size_t dest_length   = sbufGetLength(dest);
-    const size_t dest_headroom = sbufGetLeftCapacity(dest);
+    const size_t dest_headroom = sbufGetHeadroom(dest);
     if (UNLIKELY(dest_headroom > sbufGetTotalCapacity(dest) || dest_length > sbufGetMaximumWriteableSize(dest) ||
                  bytes > sbufGetMaximumWriteableSize(dest) - dest_length))
     {
@@ -259,7 +259,7 @@ static size_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, size_t bytes)
             }
             moved += count;
             dest->len += count;
-            dest->capacity = dest->l_pad + dest->len;
+            dest->capacity = dest->initial_headroom + dest->len;
             continue;
         }
         if (UNLIKELY(result < 0 && errno == EINTR))
@@ -286,7 +286,7 @@ sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *dest, size_
     size_t moved = 0;
     if (dest != NULL && sbufIsSplice(dest))
     {
-        assert(dest->data == dest->head + dest->l_pad);
+        assert(dest->data == dest->head + dest->initial_headroom);
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(dest);
         if (metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0)
             moved = spliceAppendAvailable(source, dest, bytes);

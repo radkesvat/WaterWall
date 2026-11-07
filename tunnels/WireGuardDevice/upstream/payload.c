@@ -44,7 +44,7 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             }
             padded_len = (unpadded_len + 15U) & 0xFFFFFFF0U; // Round up to next 16 byte boundary
 
-            if (sbufGetLeftCapacity(q) < header_len)
+            if (sbufGetHeadroom(q) < header_len)
             {
                 LOGW("WireGuardDevice: dropping packet without enough left padding for transport header");
                 result = ERR_BUF;

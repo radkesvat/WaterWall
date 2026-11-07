@@ -463,7 +463,7 @@ static void protocolMainPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
                "protocol fixture payload exceeded the capture buffer");
 
     buf = halfduplexTestMaterialize(fixture->env.pool, buf);
-    twfRequire(sbufGetLeftCapacity(buf) >= 64, "server output lost onward padding");
+    twfRequire(sbufGetHeadroom(buf) >= 64, "server output lost onward padding");
     fixture->forwarded_length = sbufGetLength(buf);
     memoryCopy(fixture->forwarded_payload, sbufGetRawPtr(buf), fixture->forwarded_length);
     lineReuseBuffer(line, buf);
@@ -818,7 +818,7 @@ static uint32_t waiting_expected;
 static void     waitingPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     discard t;
-    twfRequire(! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= 64, "waiting replay representation/padding changed");
+    twfRequire(! sbufIsSplice(buf) && sbufGetHeadroom(buf) >= 64, "waiting replay representation/padding changed");
     twfRequire(sbufGetLength(buf) == waiting_expected, "waiting HalfDuplex body length changed");
     for (uint32_t i = 0; i < waiting_expected; ++i)
         twfRequire(sbufGetMutablePtr(buf)[i] == 0x71, "waiting HalfDuplex body bytes changed");

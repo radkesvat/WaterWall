@@ -68,8 +68,8 @@ static void testAllocationPageTouches(void)
             poison_aligned_allocation = true;
             sbuf_t *buf               = sbufCreateWithPadding(capacities[i], paddings[j]);
             poison_aligned_allocation = false;
-            require(buf->flags == 0 && buf->len == 0 && sbufGetLeftCapacity(buf) == sbufAlignLeftPadding(paddings[j]) &&
-                        buf->l_pad == sbufGetLeftCapacity(buf),
+            require(buf->flags == 0 && buf->len == 0 && sbufGetHeadroom(buf) == sbufAlignLeftPadding(paddings[j]) &&
+                        buf->initial_headroom == sbufGetHeadroom(buf),
                     "allocation page touches changed buffer metadata");
             for (size_t guard = 0; guard < 32; ++guard)
                 require(buf->head[buf->capacity + guard] == 0xa5, "allocation touched past its physical storage");
@@ -164,7 +164,7 @@ static void testSpliceCapacityAndPadding(void)
         require(buffer != NULL, "splice allocation returned NULL");
         require(sbufGetTotalCapacityNoPadding(buffer) == 32 && sbufGetTotalCapacity(buffer) == padding + 32U,
                 "splice control-storage capacity was rounded up or included its padding");
-        require(sbufGetLeftPadding(buffer) == padding && sbufGetLeftCapacity(buffer) == padding,
+        require(sbufGetInitialHeadroom(buffer) == padding && sbufGetHeadroom(buffer) == padding,
                 "splice allocation did not reserve aligned left padding");
         require(sbufGetLength(buffer) == 0 && buffer->flags == kSbufFlagSplice,
                 "splice buffer metadata was not initialized");

@@ -67,8 +67,8 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     }
 
     sbuf_t *combined = NULL;
-    if (head != NULL && head_charge <= max_charge && sbufGetLeftCapacity(head) >= padding &&
-        (sbufIsSplice(head) ? sbufGetLeftCapacity(head) == head->l_pad
+    if (head != NULL && head_charge <= max_charge && sbufGetHeadroom(head) >= padding &&
+        (sbufIsSplice(head) ? sbufGetHeadroom(head) == head->initial_headroom
                             : bufferqueueGetBufLen(tail) <= sbufGetTailCapacity(head)))
     {
         combined     = head;
@@ -79,7 +79,7 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
         bool has_pipe = head != NULL && sbufIsSplice(head);
         c_foreach(entry, ww_sbuffer_queue_t, tail->q) has_pipe |= sbufIsSplice(*entry.ref);
         combined = has_pipe ? bufferpoolGetSpliceBuffer(pool) : NULL;
-        if (combined != NULL && sbufGetLeftCapacity(combined) < padding)
+        if (combined != NULL && sbufGetHeadroom(combined) < padding)
         {
             bufferpoolReuseBuffer(pool, combined);
             combined = NULL;
@@ -90,7 +90,7 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     if (sbufIsSplice(combined))
     {
         size_t         charge;
-        const uint64_t pipe_capacity = (uint64_t) bytes + sbufGetLeftPadding(combined);
+        const uint64_t pipe_capacity = (uint64_t) bytes + sbufGetInitialHeadroom(combined);
         if (pipe_capacity > UINT32_MAX || ! sbufTryComputeQueueCharge((uint32_t) pipe_capacity, &charge) ||
             charge > max_charge)
         {
@@ -128,7 +128,7 @@ static sbuf_t *readerTakeExact(buffer_pool_t *pool, sbuf_t **active_head, buffer
 
     sbuf_t *head = readerHead(active_head, tail);
     assert(head != NULL);
-    if (sbufGetLength(head) == bytes && sbufGetLeftCapacity(head) >= padding)
+    if (sbufGetLength(head) == bytes && sbufGetHeadroom(head) >= padding)
     {
         *active_head = NULL;
         return head;
@@ -145,7 +145,7 @@ static sbuf_t *readerTakeExact(buffer_pool_t *pool, sbuf_t **active_head, buffer
     }
 
     sbuf_t *result = has_pipe ? bufferpoolGetSpliceBuffer(pool) : NULL;
-    if (result != NULL && sbufGetLeftCapacity(result) < padding)
+    if (result != NULL && sbufGetHeadroom(result) < padding)
     {
         bufferpoolReuseBuffer(pool, result);
         result = NULL;

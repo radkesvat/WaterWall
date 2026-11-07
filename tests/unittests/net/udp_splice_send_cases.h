@@ -37,7 +37,7 @@ static sbuf_t *makePipePayload(buffer_pool_t *pool, uint32_t body, const char *p
     char bytes[65536];
     memset(bytes, 'B', sizeof(bytes));
     require(body == 0 || write(meta.pipefd[1], bytes, body) == body, "populate UDP private pipe");
-    buf->capacity = buf->l_pad + body;
+    buf->capacity = buf->initial_headroom + body;
     sbufSetLength(buf, body);
     uint32_t prefix_len = (uint32_t) strlen(prefix);
     sbufShiftLeft(buf, prefix_len);
@@ -94,7 +94,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
         close(pipefd[1]);
     }
     uint32_t length = segments * sizeof(fragment);
-    buf->capacity   = buf->l_pad + length;
+    buf->capacity   = buf->initial_headroom + length;
     sbufSetLength(buf, length);
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = 0;
@@ -125,7 +125,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
         close(pipefd[1]);
     }
     length        = segments * sizeof(fragment);
-    buf->capacity = buf->l_pad + length;
+    buf->capacity = buf->initial_headroom + length;
     sbufSetLength(buf, length);
     sbufShiftLeft(buf, 60000);
     sbufWrite(buf, large_prefix, 60000);
@@ -157,7 +157,7 @@ static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
     require(send(client, bytes, sizeof(bytes), 0) == sizeof(bytes), "TCP fixture send");
     require(__real_splice(server, NULL, meta.pipefd[1], NULL, sizeof(bytes), 0) == sizeof(bytes),
             "TCP to private pipe");
-    buf->capacity = buf->l_pad + sizeof(bytes);
+    buf->capacity = buf->initial_headroom + sizeof(bytes);
     sbufSetLength(buf, sizeof(bytes));
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = 0;
@@ -189,7 +189,7 @@ static void checkOddFragmentDatagram(wio_t *io, buffer_pool_t *pool, const socka
         close(pipefd[0]);
         close(pipefd[1]);
     }
-    buf->capacity = buf->l_pad + 8;
+    buf->capacity = buf->initial_headroom + 8;
     sbufSetLength(buf, 8);
     observed_pipe = meta.pipefd[0];
     pipe_reads = splice_calls = udp_sendto_calls = 0;
@@ -289,7 +289,7 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
         char body[24] = {0};
         require(write(sbufSpliceMetadata(oversize).pipefd[1], body, sizeof(body)) == sizeof(body),
                 "oversize fixture body");
-        oversize->capacity = oversize->l_pad + sizeof(body);
+        oversize->capacity = oversize->initial_headroom + sizeof(body);
         sbufSetLength(oversize, sizeof(body));
         sbufShiftLeft(oversize, 65504);
         memset(sbufGetMutablePtr(oversize), 0, 65504);

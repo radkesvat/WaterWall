@@ -77,7 +77,7 @@ my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, 
     sbuf_t           *buf     = rx->sbuf;
     const uint16_t    padding = bufferpoolGetLargeBufferPadding(pool);
     if (buf == NULL || rx->origin_wid != owner_wid || rx->origin_pool != pool || sbufIsSplice(buf) ||
-        sbufGetLeftPadding(buf) < padding || sbufGetTotalCapacityNoPadding(buf) > TCP_WND)
+        sbufGetInitialHeadroom(buf) < padding || sbufGetTotalCapacityNoPadding(buf) > TCP_WND)
         return NULL;
 
     /* Reusing a large device scratch for a tiny stream delivery would retain
@@ -96,7 +96,7 @@ my_custom_pbuf_t *ptcReusableReceiveBuffer(struct pbuf *p, buffer_pool_t *pool, 
     if (payload < start || payload - start > sbufGetLength(buf))
         return NULL;
     const uint32_t offset = (uint32_t) (payload - start);
-    if (p->len > sbufGetLength(buf) - offset || sbufGetLeftCapacity(buf) + offset < padding)
+    if (p->len > sbufGetLength(buf) - offset || sbufGetHeadroom(buf) + offset < padding)
         return NULL;
     return rx;
 }

@@ -70,7 +70,7 @@ static sbuf_t *input(const void *bytes, size_t length)
             ssize_t n = write(sbufSpliceMetadata(b).pipefd[1], (const char *) bytes + prefix, body);
             require(n == (ssize_t) body, "real pipe write");
         }
-        b->capacity = b->l_pad + (uint32_t) body;
+        b->capacity = b->initial_headroom + (uint32_t) body;
         b->len      = (uint32_t) body;
         if (prefix)
         {

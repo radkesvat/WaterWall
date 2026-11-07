@@ -1112,7 +1112,7 @@ static bool httpclientSendHttp1ChunkedInput(tunnel_t *t, line_t *l, httpclient_l
         uint32_t framed_len = (uint32_t) prefix_len + body_len + 2;
         sbuf_t  *framed;
 
-        if (body_len == sbufGetLength(payload) && sbufGetLeftCapacity(payload) >= (uint32_t) prefix_len &&
+        if (body_len == sbufGetLength(payload) && sbufGetHeadroom(payload) >= (uint32_t) prefix_len &&
             sbufGetMaximumWriteableSize(payload) - body_len >= 2)
         {
             /* Preserve the original allocation when the complete chunk fits. */
@@ -2065,7 +2065,7 @@ bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lst
 
     httpclientMaskWebSocketPayload(payload, mask_key);
 
-    if (sbufGetLeftCapacity(payload) >= header_len)
+    if (sbufGetHeadroom(payload) >= header_len)
     {
         sbufShiftLeft(payload, (uint32_t) header_len);
         sbufWrite(payload, header, (uint32_t) header_len);

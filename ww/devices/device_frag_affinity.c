@@ -460,7 +460,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
             sbuf_t *grown = table->shared ? sbufCreateWithPadding(need, padding)
                                           : bufferpoolGetBestFit(table->release_pool, need, padding);
             if (UNLIKELY(sbufGetAllocationCharge(grown) != fit.allocation_charge ||
-                         sbufGetMaximumWriteableSize(grown) < need || sbufGetLeftCapacity(grown) < padding))
+                         sbufGetMaximumWriteableSize(grown) < need || sbufGetHeadroom(grown) < padding))
             {
                 LOGF("Device fragment assembly: best-fit allocation geometry changed");
                 abortProgramNow(1);

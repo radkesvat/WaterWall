@@ -56,7 +56,7 @@ static void observeBufferDisposal(sbuf_t *buf)
 
 void __wrap_sbufDestroy(sbuf_t *buf)
 {
-    if (check_datagram_sniff_disposal && sbufGetLeftPadding(buf) == 0)
+    if (check_datagram_sniff_disposal && sbufGetInitialHeadroom(buf) == 0)
         ++sniff_view_destroys;
     observeBufferDisposal(buf);
     __real_sbufDestroy(buf);
@@ -65,7 +65,7 @@ void __wrap_sbufDestroy(sbuf_t *buf)
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
 {
     // Every fixture datagram has onward padding; the detached inspection copy has none.
-    require(! check_datagram_sniff_disposal || sbufGetLeftPadding(buf) != 0,
+    require(! check_datagram_sniff_disposal || sbufGetInitialHeadroom(buf) != 0,
             "detached UDP sniff view was returned to the buffer pool");
     observeBufferDisposal(buf);
     __real_bufferpoolReuseBuffer(pool, buf);
@@ -276,7 +276,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
         const uint32_t length = fixture->datagram_lengths[index];
         require(sbufGetLength(buf) == length, "UDP replay changed datagram boundaries");
         require(! sbufIsSplice(buf), "UDP replay unexpectedly became splice input");
-        require(sbufGetLeftCapacity(buf) >= kOnwardPadding, "UDP replay lost onward padding");
+        require(sbufGetHeadroom(buf) >= kOnwardPadding, "UDP replay lost onward padding");
         require(length == 0 || memcmp(sbufGetRawPtr(buf), fixture->datagram_bytes[index], length) == 0,
                 "UDP replay changed datagram contents or order");
         lineReuseBuffer(l, buf);
@@ -311,7 +311,7 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     require(sbufIsSplice(buf) == fixture->expect_splice, "incorrect payload representation");
     require(! fixture->expected_buffer || buf == fixture->expected_buffer, "opaque forwarding replaced the buffer");
-    require(sbufGetLeftCapacity(buf) >= kOnwardPadding, "materialization lost onward padding");
+    require(sbufGetHeadroom(buf) >= kOnwardPadding, "materialization lost onward padding");
     require(sbufGetLength(buf) == fixture->expected_length, "replay changed payload length");
     uint8_t *bytes = memoryAllocate(fixture->expected_length);
     require(bytes != NULL, "allocate received-byte comparison");
@@ -428,7 +428,7 @@ static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t 
     const uint8_t *bytes = data;
     const uint32_t body  = length - prefix;
     require(write(sbufSpliceMetadata(buf).pipefd[1], bytes + prefix, body) == (ssize_t) body, "populate private pipe");
-    buf->capacity = buf->l_pad + body;
+    buf->capacity = buf->initial_headroom + body;
     sbufSetLength(buf, body);
     sbufShiftLeft(buf, prefix);
     sbufWrite(buf, bytes, prefix);

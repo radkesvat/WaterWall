@@ -349,7 +349,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         // Reserve before the ordinary merge, including full onward padding.
         if (ls->buffering != NULL &&
-            (total > sbufGetMaximumWriteableSize(ls->buffering) || sbufGetLeftCapacity(ls->buffering) < padding))
+            (total > sbufGetMaximumWriteableSize(ls->buffering) || sbufGetHeadroom(ls->buffering) < padding))
         {
             sbuf_t *merged = bufferpoolGetBestFit(pool, (uint32_t) total, padding);
             sbufConcatNoCheck(merged, ls->buffering);

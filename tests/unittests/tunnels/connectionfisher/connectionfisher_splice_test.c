@@ -98,7 +98,7 @@ static sbuf_t *input(const void *data, uint32_t length, bool pipe)
         twfRequire(buf != NULL && prefix <= UINT16_MAX - 128, "create exclusive splice input");
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,
                    "populate private body");
-        buf->capacity = buf->l_pad + body;
+        buf->capacity = buf->initial_headroom + body;
         sbufSetLength(buf, body);
         sbufShiftLeft(buf, prefix);
         memoryCopy(sbufGetMutablePtr(buf), data, prefix);

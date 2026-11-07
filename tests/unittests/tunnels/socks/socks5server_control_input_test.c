@@ -77,7 +77,7 @@ static sbuf_t *spliceBytes(const void *data, size_t len, size_t prefix)
     if (body)
         twfRequire(write(sbufSpliceMetadata(b).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,
                    "private pipe population failed");
-    b->capacity = b->l_pad + (uint32_t) body;
+    b->capacity = b->initial_headroom + (uint32_t) body;
     sbufSetLength(b, (uint32_t) body);
     sbufShiftLeft(b, (uint32_t) prefix);
     if (prefix)

@@ -87,8 +87,7 @@ static sbuf_t *fallbackReplayTakeBatch(fallback_replay_t *replay, buffer_pool_t 
 
     const uint32_t total   = (uint32_t) bufferqueueGetBufLen(&replay->pending);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-    if (bufferqueueGetBufCount(&replay->pending) == 1 &&
-        sbufGetLeftCapacity(bufferqueueFront(&replay->pending)) >= padding)
+    if (bufferqueueGetBufCount(&replay->pending) == 1 && sbufGetHeadroom(bufferqueueFront(&replay->pending)) >= padding)
     {
         return bufferqueuePopFront(&replay->pending);
     }
@@ -96,7 +95,7 @@ static sbuf_t *fallbackReplayTakeBatch(fallback_replay_t *replay, buffer_pool_t 
     bool has_splice = false;
     c_foreach(item, ww_sbuffer_queue_t, replay->pending.q) has_splice |= sbufIsSplice(*item.ref);
     sbuf_t *merged = has_splice ? bufferpoolGetSpliceBuffer(pool) : NULL;
-    if (merged != NULL && sbufGetLeftCapacity(merged) < padding)
+    if (merged != NULL && sbufGetHeadroom(merged) < padding)
     {
         bufferpoolReuseBuffer(pool, merged);
         merged = NULL;

@@ -187,7 +187,8 @@ static void destroySmallBufHandle(master_pool_item_t *item)
 
 static bool bufferMatchesGeometry(const sbuf_t *buf, uint32_t payload_capacity, uint16_t left_padding)
 {
-    return sbufGetTotalCapacityNoPadding((sbuf_t *) buf) == payload_capacity && sbufGetLeftPadding(buf) == left_padding;
+    return sbufGetTotalCapacityNoPadding((sbuf_t *) buf) == payload_capacity &&
+           sbufGetInitialHeadroom(buf) == left_padding;
 }
 
 static bool bufferpoolTiersHaveIdenticalGeometry(const buffer_pool_t *pool)
@@ -618,7 +619,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
             if (metadata.pipefd[0] >= 0)
             {
                 sbufSplicePoolCheckPadding(pool->splice_buffer_left_padding);
-                b->capacity = (size_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
+                b->capacity = (size_t) b->initial_headroom + SPLICE_BUFFER_STORAGE_SIZE;
                 if (pool->splice_buffers_container_len == kSpliceBufferLocalCacheLimit)
                     shrinkSpliceBuffers(pool);
                 pool->splice_buffers[pool->splice_buffers_container_len++] = b;
@@ -643,7 +644,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     // the sumation of capaicity and padding is the same, so we compare the capacity without padding and the padding
     // itself
     if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size &&
-        sbufGetLeftPadding(b) == pool->large_buffer_left_padding)
+        sbufGetInitialHeadroom(b) == pool->large_buffer_left_padding)
     {
         if (UNLIKELY(pool->large_buffers_container_len > pool->free_threshold))
         {
@@ -658,7 +659,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         pool->medium_buffers[pool->medium_buffers_container_len++] = b;
     }
     else if (sbufGetTotalCapacityNoPadding(b) == pool->small_buffers_size &&
-             sbufGetLeftPadding(b) == pool->small_buffer_left_padding)
+             sbufGetInitialHeadroom(b) == pool->small_buffer_left_padding)
     {
         if (UNLIKELY(pool->small_buffers_container_len > pool->free_threshold))
         {
@@ -849,9 +850,9 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
     sbuf_t *test_large_buf = sbufCreateWithPadding(rounded_large_buffer_size, 0);
     sbuf_t *test_small_buf = sbufCreateWithPadding(rounded_small_buffer_size, 0);
     assert(sbufGetTotalCapacityNoPadding(test_large_buf) == rounded_large_buffer_size);
-    assert(sbufGetLeftPadding(test_large_buf) == 0);
+    assert(sbufGetInitialHeadroom(test_large_buf) == 0);
     assert(sbufGetTotalCapacityNoPadding(test_small_buf) == rounded_small_buffer_size);
-    assert(sbufGetLeftPadding(test_small_buf) == 0);
+    assert(sbufGetInitialHeadroom(test_small_buf) == 0);
     sbufDestroy(test_large_buf);
     sbufDestroy(test_small_buf);
 #endif

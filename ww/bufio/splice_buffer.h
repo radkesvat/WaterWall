@@ -16,12 +16,12 @@ static_assert(sizeof(splice_buffer_metadata_t) <= SPLICE_BUFFER_STORAGE_SIZE,
 static inline splice_buffer_metadata_t sbufSpliceMetadata(const sbuf_t *buf)
 {
     splice_buffer_metadata_t metadata;
-    sbufByteCopy(&metadata, buf->head + buf->l_pad, sizeof(metadata));
+    sbufByteCopy(&metadata, buf->head + buf->initial_headroom, sizeof(metadata));
     return metadata;
 }
 static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t metadata)
 {
-    sbufByteCopy(buf->head + buf->l_pad, &metadata, sizeof(metadata));
+    sbufByteCopy(buf->head + buf->initial_headroom, &metadata, sizeof(metadata));
 }
 
 /** Proven addressable prefix of a valid buffer; never reads or materializes a pipe. */
@@ -30,9 +30,9 @@ static inline size_t sbufGetResidentPrefixLength(const sbuf_t *buf)
     assert(buf != NULL);
     if (! sbufIsSplice(buf))
         return sbufGetLength(buf);
-    const size_t headroom = sbufGetLeftCapacity(buf);
-    assert(headroom <= buf->l_pad && (size_t) buf->l_pad - headroom <= sbufGetLength(buf));
-    return (size_t) buf->l_pad - headroom;
+    const size_t headroom = sbufGetHeadroom(buf);
+    assert(headroom <= buf->initial_headroom && (size_t) buf->initial_headroom - headroom <= sbufGetLength(buf));
+    return (size_t) buf->initial_headroom - headroom;
 }
 
 /** Account for body bytes already removed from the private pipe by successful I/O.
@@ -86,7 +86,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
  * Real prefix bytes are copied first, followed by body bytes from the private pipe.
  * Source length decreases by bytes; only consumed real prefix advances data,
  * while consumed pipe body reduces logical capacity so metadata remains fixed at
- * head + l_pad. Both buffers stay caller-owned. Invalid representation, bounds,
+ * head + initial_headroom. Both buffers stay caller-owned. Invalid representation, bounds,
  * destination space, pipe state, or incomplete pipe contents are fatal invariants.
  * Unsupported builds abort.
  */

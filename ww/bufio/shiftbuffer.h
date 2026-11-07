@@ -17,7 +17,7 @@ enum
     /**
      * Represent kernel-backed payload with a splice sbuf wrapper whose actual
      * payload storage is 32 bytes. Private metadata at the original payload
-     * start (head + l_pad) holds an exclusively leased inventory pipe;
+     * start (head + initial_headroom) holds an exclusively leased inventory pipe;
      * the preceding bytes remain reserved left padding. The metadata stays
      * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
@@ -64,7 +64,7 @@ struct sbuf_s
     uint8_t *data;     // Moving resident-data position within head[].
     size_t   len;      // Logical payload length; splice bodies are not resident.
     size_t   capacity; // Ordinary storage or splice logical geometry, bounded by UINT32_MAX.
-    uint16_t l_pad;    // Original aligned padding reservation, unchanged after creation.
+    uint16_t initial_headroom; // Original aligned padding reservation, unchanged after creation.
     uint16_t flags;
 
     MSVC_ATTR_ALIGNED_32 uint8_t head[] GNU_ATTR_ALIGNED_32;
@@ -286,7 +286,7 @@ static inline void sbufReset(sbuf_t *b)
 {
     b->flags  = 0;
     b->len    = 0;
-    b->data   = b->head + b->l_pad;
+    b->data   = b->head + b->initial_headroom;
 }
 
 /**
@@ -443,13 +443,15 @@ static inline size_t sbufGetTotalCapacity(const sbuf_t *const b)
  */
 static inline size_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 {
-    return b->capacity - (b->l_pad);
+    return b->capacity - (b->initial_headroom);
 }
 
 /**
- * Gets left capacity of the buffer. (This means how much space is left, it gets reduced if you shift left)
+ * Gets current headroom: the byte offset from head to data, available for prepending.
+ * Prepending reduces it; consuming resident front bytes increases it, possibly
+ * beyond the immutable initial headroom.
  */
-static inline size_t sbufGetLeftCapacity(const sbuf_t *const b)
+static inline size_t sbufGetHeadroom(const sbuf_t *const b)
 {
     /* Supported targets use flat byte addresses. Unsigned address subtraction
      * preserves offsets above PTRDIFF_MAX on 32-bit targets; subtracting the
@@ -469,7 +471,7 @@ static inline size_t sbufGetLeftCapacity(const sbuf_t *const b)
  */
 static inline size_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 {
-    return (b->capacity - sbufGetLeftCapacity(b));
+    return (b->capacity - sbufGetHeadroom(b));
 }
 
 /**
@@ -479,37 +481,48 @@ static inline size_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 static inline size_t sbufGetTailCapacity(const sbuf_t *const b)
 {
     assert(b != NULL && ! sbufIsSplice(b));
-    assert(sbufGetLeftCapacity(b) <= b->capacity);
-    assert(b->len <= b->capacity - sbufGetLeftCapacity(b));
-    return b->capacity - sbufGetLeftCapacity(b) - b->len;
+    assert(sbufGetHeadroom(b) <= b->capacity);
+    assert(b->len <= b->capacity - sbufGetHeadroom(b));
+    return b->capacity - sbufGetHeadroom(b) - b->len;
 }
 
 /**
- * Gets the original left padding, rounded to 32 bytes when allocated and unchanged afterward.
+ * Gets the original headroom reservation, rounded to 32 bytes on allocation.
+ * This allocation property is unchanged by shifting, consumption, or reset.
  */
-static inline uint16_t sbufGetLeftPadding(const sbuf_t *const b)
+static inline uint16_t sbufGetInitialHeadroom(const sbuf_t *const b)
 {
-    return b->l_pad;
+    return b->initial_headroom;
 }
 
 /**
- * Shifts the buffer left by specified bytes.
+ * Prepends space and returns the updated data pointer, also when bytes is zero.
+ * Requires enough current headroom. The borrowed pointer does not extend the
+ * buffer's lifetime or transfer ownership; reacquire it after storage replacement.
+ * Neither alignment nor resident splice-body storage is implied by the result.
  */
-static inline void sbufShiftLeft(sbuf_t *const b, const size_t bytes)
+static inline uint8_t *sbufShiftLeft(sbuf_t *const b, const size_t bytes)
 {
-    assert(sbufGetLeftCapacity(b) >= bytes);
+    assert(sbufGetHeadroom(b) >= bytes);
     b->data -= bytes;
     b->len += bytes;
+    return b->data;
 }
 
 /**
- * Shifts the buffer right by specified bytes.
+ * Consumes resident front bytes and returns the updated data pointer, also for zero.
+ * Requires bytes <= len; on splice input, bytes must fit the resident prefix.
+ * The borrowed result has the same lifetime and alignment limits as ShiftLeft's.
+ * Complete ordinary consumption may return a one-past pointer; do not dereference
+ * an empty buffer's result. Consuming the last splice-prefix byte returns the
+ * metadata boundary, not a resident pipe body; use dedicated body helpers.
  */
-static inline void sbufShiftRight(sbuf_t *const b, const size_t bytes)
+static inline uint8_t *sbufShiftRight(sbuf_t *const b, const size_t bytes)
 {
     assert(b->len >= bytes);
     b->data += bytes;
     b->len -= bytes;
+    return b->data;
 }
 
 /**
@@ -517,8 +530,8 @@ static inline void sbufShiftRight(sbuf_t *const b, const size_t bytes)
  */
 static inline void sbufSetLength(sbuf_t *const b, const size_t bytes)
 {
-    assert(sbufGetLeftCapacity(b) <= b->capacity);
-    assert(bytes <= b->capacity - sbufGetLeftCapacity(b));
+    assert(sbufGetHeadroom(b) <= b->capacity);
+    assert(bytes <= b->capacity - sbufGetHeadroom(b));
     b->len = bytes;
 }
 
@@ -618,7 +631,7 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const size_t bytes)
     if (sbufGetMaximumWriteableSize(b) < bytes)
     {
         size_t   needed_writable = max(current_length, bytes);
-        sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
+        sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->initial_headroom);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
         sbufSetRecalculateChecksum(bigger_buf, sbufGetRecalculateChecksum(b));

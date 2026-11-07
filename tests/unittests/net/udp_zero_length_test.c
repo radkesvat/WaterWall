@@ -86,7 +86,7 @@ static void onUdpRead(wio_t *io, sbuf_t *buf)
     require(sbufGetLength(buf) == state->expected[index].length, "UDP datagram was truncated or combined");
     require(sbufGetTotalCapacityNoPadding(buf) == state->expected[index].capacity,
             "UDP read selected the wrong buffer tier");
-    require(buf->flags == 0 && sbufGetLeftCapacity(buf) >= bufferpoolGetLargeBufferPadding(state->pool),
+    require(buf->flags == 0 && sbufGetHeadroom(buf) >= bufferpoolGetLargeBufferPadding(state->pool),
             "UDP read lost its ordinary representation or required padding");
     const uint8_t *payload = sbufGetRawPtr(buf);
     for (uint32_t i = 0; i < sbufGetLength(buf); ++i)

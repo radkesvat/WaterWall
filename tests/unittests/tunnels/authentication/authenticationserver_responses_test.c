@@ -163,7 +163,7 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
     ++callbacks;
     twfRequire(sbufGetLength(b) <= kAuthenticationServerOutputChunkSize, "oversized transport handoff");
     twfRequire(sbufGetAllocationCharge(b) < 128U * 1024U, "oversized transport allocation charge");
-    twfRequire(sbufGetLeftCapacity(b) >= 64, "chunk lost chain padding");
+    twfRequire(sbufGetHeadroom(b) >= 64, "chunk lost chain padding");
     received = memoryReAllocate(received, received_length + sbufGetLength(b));
     memoryCopy(received + received_length, sbufGetRawPtr(b), sbufGetLength(b));
     received_length += sbufGetLength(b);

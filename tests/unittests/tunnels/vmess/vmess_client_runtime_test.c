@@ -262,7 +262,7 @@ static void payload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     const bool upstream = t == f.next;
     twfRequire(l == (upstream ? f.carrier : f.application), "Payload used wrong exact line");
-    twfRequire(! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= 64, "output lacks ordinary storage/onward padding");
+    twfRequire(! sbufIsSplice(buf) && sbufGetHeadroom(buf) >= 64, "output lacks ordinary storage/onward padding");
     size_t        *size    = upstream ? &f.up_size : &f.down_size;
     uint8_t       *capture = upstream ? f.up : f.down;
     const uint32_t count   = sbufGetLength(buf);

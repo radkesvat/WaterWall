@@ -46,7 +46,7 @@ static sbuf_t *input(const void *data, uint32_t length, bool splice, uint32_t pr
         uint32_t body = length - prefix;
         twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) data + prefix, body) == (ssize_t) body,
                    "populate initial private pipe");
-        buf->capacity = buf->l_pad + body;
+        buf->capacity = buf->initial_headroom + body;
         sbufSetLength(buf, body);
         sbufShiftLeft(buf, prefix);
         memoryCopy(sbufGetMutablePtr(buf), data, prefix);
@@ -82,7 +82,7 @@ static void init(tunnel_t *t, line_t *l)
 static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     twfRequire(t == (expect_down ? prev : next), "identity limiter changed callback direction");
-    twfRequire(sbufGetLeftCapacity(buf) >= 128, "identity materialization lost onward padding");
+    twfRequire(sbufGetHeadroom(buf) >= 128, "identity materialization lost onward padding");
     if (payloads == 0)
         twfRequire(! sbufIsSplice(buf), "initial identity replay was not ordinary");
     if (expected_identity)

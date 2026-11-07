@@ -202,7 +202,7 @@ static inline void bgpDecode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *bu
 static inline void bgpPrepend(sbuf_t *buf, const uint8_t *open, uint32_t open_length)
 {
     const uint32_t application = sbufGetLength(buf);
-    assert(sbufGetLeftCapacity(buf) >= kBgpFramePrefix + open_length);
+    assert(sbufGetHeadroom(buf) >= kBgpFramePrefix + open_length);
     sbufShiftLeft(buf, kBgpFramePrefix + open_length);
     uint8_t *h = sbufGetMutablePtr(buf);
     memorySet(h, 0xff, 16);
@@ -283,7 +283,7 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     {
         const uint32_t count = min(sbufGetLength(input), i == 0 ? first : (uint32_t) kBgpMaxApplication);
         sbuf_t        *frame;
-        if (count == sbufGetLength(input) && sbufGetLeftCapacity(input) >= kBgpFramePrefix + open_length)
+        if (count == sbufGetLength(input) && sbufGetHeadroom(input) >= kBgpFramePrefix + open_length)
         {
             frame = input;
             input = NULL;

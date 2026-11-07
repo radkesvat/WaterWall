@@ -706,7 +706,7 @@ static void testSpliceReuseValidation(void)
         {
             require(write(sbufSpliceMetadata(buf).pipefd[1], "data", length) == (ssize_t) length,
                     "could not fill recycle-check pipe");
-            buf->capacity = (uint32_t) buf->l_pad + length;
+            buf->capacity = (uint32_t) buf->initial_headroom + length;
             sbufSetLength(buf, length);
         }
         splice_reuse_checks = 0;
@@ -747,7 +747,7 @@ static void testPipeInventoryReuse(void)
     }
     require(write(initial.pipefd[1], "x", 1) == 1, "could not fill the inventory pipe");
     buf->len      = 1;
-    buf->capacity = buf->l_pad + 1;
+    buf->capacity = buf->initial_headroom + 1;
     sbuf_t *dest  = bufferpoolGetSmallBuffer(env.buffers);
     sbufSpliceReadToBuffer(buf, dest, 1);
     require(sbufGetLength(dest) == 1 && memoryEqual(sbufGetRawPtr(dest), "x", 1),
@@ -819,7 +819,7 @@ static void requireSplicePayload(splice_probe_t *probe, sbuf_t *buf, uint32_t bo
     require(memoryEqual(sbufGetRawPtr(buf), appended ? ">>HEAD" : "HEAD", prefix) &&
                 memoryEqual(sbufGetMutablePtr(buf) + prefix, probe->data + probe->received, body_bytes),
             "splice conversion lost prefix bytes or changed payload order");
-    require(sbufGetLeftCapacity(buf) == (appended ? 64 : 60) && sbufGetLeftPadding(buf) == 64,
+    require(sbufGetHeadroom(buf) == (appended ? 64 : 60) && sbufGetInitialHeadroom(buf) == 64,
             "splice conversion changed the expected padding layout");
 }
 
@@ -843,7 +843,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     const uint32_t limit = bufferpoolGetSplicePayloadLimit(pool);
     require(count <= min(probe->length - probe->received, limit) && count > 0,
             "splice delivery exceeded available bytes or its read cap");
-    require(sbufIsSplice(buf) && sbufGetLeftCapacity(buf) == 64 && buf->capacity == 64 + count,
+    require(sbufIsSplice(buf) && sbufGetHeadroom(buf) == 64 && buf->capacity == 64 + count,
             "splice dispatch supplied an invalid pipe-backed wrapper");
     const splice_buffer_metadata_t metadata  = sbufSpliceMetadata(buf);
     int                            available = -1;
@@ -998,15 +998,15 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
                     sbufGetLength(buf) == count + 4,
                 "zero-byte partial read changed either buffer");
         sbufSpliceReadToBuffer(buf, dest, 2);
-        require(sbufGetLeftCapacity(buf) == 62, "prefix-only read advanced beyond the real prefix");
+        require(sbufGetHeadroom(buf) == 62, "prefix-only read advanced beyond the real prefix");
         sbufSpliceReadToBuffer(buf, dest, 4);
-        require(sbufGetLeftCapacity(buf) == 64 && buf->capacity == 64 + count - 2 && sbufGetLength(buf) == count - 2,
+        require(sbufGetHeadroom(buf) == 64 && buf->capacity == 64 + count - 2 && sbufGetLength(buf) == count - 2,
                 "mixed prefix/body read left incorrect source accounting");
-        require(buf->data == buf->head + buf->l_pad,
+        require(buf->data == buf->head + buf->initial_headroom,
                 "splice body consumption advanced the data pointer into control storage");
         sbufSpliceReadToBuffer(buf, dest, sbufGetLength(buf));
-        require(sbufGetLength(buf) == 0 && buf->data == buf->head + buf->l_pad && sbufGetLeftCapacity(buf) == 64 &&
-                    buf->capacity == 64,
+        require(sbufGetLength(buf) == 0 && buf->data == buf->head + buf->initial_headroom &&
+                    sbufGetHeadroom(buf) == 64 && buf->capacity == 64,
                 "full partial consumption did not leave an empty wrapper");
         bufferpoolReuseBuffer(pool, buf);
     }
@@ -1412,7 +1412,7 @@ static sbuf_t *makeSpliceWriteBuffer(test_env_t *env, wio_t *source, int peer, c
                     (ssize_t) body_bytes,
                 "failed to fill write fixture pipe");
     }
-    buf->capacity = (uint32_t) sbufGetLeftPadding(buf) + body_bytes;
+    buf->capacity = (uint32_t) sbufGetInitialHeadroom(buf) + body_bytes;
     sbufSetLength(buf, body_bytes);
     sbufShiftLeft(buf, prefix_bytes);
     sbufWrite(buf, prefix, prefix_bytes);
@@ -1525,7 +1525,7 @@ static void testSpliceQueueCleanupAndRefusal(void)
         ordinary                                = bufferqueuePushBack(&queue, ordinary);
         sbuf_t                        *buf      = makeSpliceWriteBuffer(&env, source, sockets[1], "OLD", "prefix:");
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
-        const size_t                   length = buf->len, cursor = sbufGetLeftCapacity(buf), capacity = buf->capacity;
+        const size_t                   length = buf->len, cursor = sbufGetHeadroom(buf), capacity = buf->capacity;
         if (mode == 0)
         {
             // Refused growth in either direction must leave ownership and the private body untouched.
@@ -1537,7 +1537,7 @@ static void testSpliceQueueCleanupAndRefusal(void)
                     front ? bufferqueueTryPushFront(&queue, &input) : bufferqueueTryPushBack(&queue, &input);
                 int available = -1;
                 require(! accepted && ! fail_queue_allocation && input == buf && buf->len == length &&
-                            sbufGetLeftCapacity(buf) == cursor && buf->capacity == capacity &&
+                            sbufGetHeadroom(buf) == cursor && buf->capacity == capacity &&
                             sbufSpliceMetadata(buf).pipefd[0] == metadata.pipefd[0] &&
                             sbufSpliceMetadata(buf).pipefd[1] == metadata.pipefd[1] &&
                             ioctl(metadata.pipefd[0], FIONREAD, &available) == 0 && available == 3 &&
@@ -1618,22 +1618,22 @@ static void testSpliceMaterializationRetries(void)
             if (partial)
             {
                 require(sbufSpliceReadToBuffer(buf, dest, 7) == dest && sbufGetLength(dest) == 9 &&
-                            memoryEqual(sbufGetRawPtr(dest), ">>HEAD123", 9) && sbufGetLeftCapacity(dest) == 64,
+                            memoryEqual(sbufGetRawPtr(dest), ">>HEAD123", 9) && sbufGetHeadroom(dest) == 64,
                         "partial retries changed appended bytes or destination padding");
                 int available = -1;
-                require(sbufGetLength(buf) == 6 && sbufGetLeftCapacity(buf) == 64 && buf->capacity == 70 &&
+                require(sbufGetLength(buf) == 6 && sbufGetHeadroom(buf) == 64 && buf->capacity == 70 &&
                             ioctl(pipe_read_fd, FIONREAD, &available) == 0 && available == 6,
                         "partial retries changed the remaining private body or source accounting");
             }
             else
             {
                 require(sbufSpliceMaterializeToBuffer(buf, dest, env.buffers) == dest && sbufGetLength(dest) == 13 &&
-                            memoryEqual(sbufGetRawPtr(dest), "HEAD123456789", 13) && sbufGetLeftCapacity(dest) == 60,
+                            memoryEqual(sbufGetRawPtr(dest), "HEAD123456789", 13) && sbufGetHeadroom(dest) == 60,
                         "conversion retries changed payload order or left headroom");
             }
             const unsigned int expected_reads = mode == 0 ? 2 : (partial ? 2 : 5) + (mode == 2 ? 1 : 0);
             require(pipe_read_error == 0 && pipe_read_calls == expected_reads && dest->flags == 0 &&
-                        sbufGetLeftPadding(dest) == 64,
+                        sbufGetInitialHeadroom(dest) == 64,
                     "materialization failed to retry interrupted/short reads or preserve ordinary storage");
             pipe_read_fd          = -1;
             pipe_read_limit       = SIZE_MAX;
@@ -1679,7 +1679,7 @@ static void testPrivateBodies(void)
     require(pipe_calls == before, "unused/prefix-only wrapper created a pipe");
     sbufSpliceReadToBuffer(empty, prefix_dest, 1);
     require(sbufGetLength(prefix_dest) == 1 && memoryEqual(sbufGetRawPtr(prefix_dest), "h", 1) &&
-                sbufGetLength(empty) == 1 && sbufGetLeftCapacity(empty) == 63 && pipe_calls == before,
+                sbufGetLength(empty) == 1 && sbufGetHeadroom(empty) == 63 && pipe_calls == before,
             "prefix-only partial read changed the remainder or created a pipe");
     sbufSpliceMaterializeToBuffer(empty, prefix_dest, env.buffers);
     require(sbufGetLength(prefix_dest) == 1 && memoryEqual(sbufGetRawPtr(prefix_dest), "i", 1) && pipe_calls == before,
@@ -1896,7 +1896,7 @@ static void testSpliceWrite(splice_write_case_t kind)
         require(*write_queue_front(&destination->write_queue) == buf && sbufIsSplice(buf),
                 "splice remainder was not queued as a pipe-backed wrapper");
         const uint32_t prefix_sent = min((uint32_t) first_write, (uint32_t) strlen(prefix));
-        require(sbufGetLeftCapacity(buf) == 64U - strlen(prefix) + prefix_sent &&
+        require(sbufGetHeadroom(buf) == 64U - strlen(prefix) + prefix_sent &&
                     buf->capacity == 64U + strlen(body) - ((uint32_t) first_write - prefix_sent),
                 "partial write moved the descriptor cursor or retained incorrect logical capacity");
     }
@@ -2157,7 +2157,7 @@ static void ordinaryLargeRead(wio_t *io, sbuf_t *buf)
 {
     ordinary_read_probe_t *probe = weventGetUserdata(io);
     require(! wioIsSpliceEnabled(io) && buf->flags == 0, "ordinary large-buffer read used splice");
-    require(sbufGetTotalCapacityNoPadding(buf) == probe->expected_capacity && sbufGetLeftCapacity(buf) == 64,
+    require(sbufGetTotalCapacityNoPadding(buf) == probe->expected_capacity && sbufGetHeadroom(buf) == 64,
             "ordinary TCP read did not use the large tier with its reserved padding");
     require(sbufGetLength(buf) > 0, "ordinary TCP read delivered an empty payload");
     const uint8_t *payload = sbufGetRawPtr(buf);

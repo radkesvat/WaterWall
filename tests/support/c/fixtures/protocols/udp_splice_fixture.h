@@ -42,7 +42,7 @@ static sbuf_t *udpTestSplicePayload(buffer_pool_t *pool)
     static const char        body[]   = "pipe-backed datagram";
     splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
     twfRequire(write(metadata.pipefd[1], body, sizeof(body)) == sizeof(body), "populate adapter private pipe");
-    buf->capacity = buf->l_pad + sizeof(body);
+    buf->capacity = buf->initial_headroom + sizeof(body);
     sbufSetLength(buf, sizeof(body));
     return buf;
 }

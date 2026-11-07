@@ -16,7 +16,7 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
     uint32_t       length  = sbufGetLength(buf);
     const uint64_t total   = (uint64_t) length + kHLFDIntroSize;
     // Ordinary headroom also proves that the prepended length fits its uint32_t capacity.
-    const bool     reuse   = ! sbufIsSplice(buf) && sbufGetLeftCapacity(buf) >= kHLFDIntroSize;
+    const bool     reuse   = ! sbufIsSplice(buf) && sbufGetHeadroom(buf) >= kHLFDIntroSize;
     sbuf_t        *framed  = reuse ? buf : bufferpoolTryGetBestFit(pool, total, padding);
     if (framed == NULL)
     {
