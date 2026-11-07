@@ -29,25 +29,9 @@ if(TARGET ww_lwip_engine_test)
     "-Wl,--wrap=pbuf_clone" "-Wl,--wrap=pbuf_free")
   add_dependencies(waterwall_unit_tests lwip_udp_reuse_test)
   add_waterwall_unit_test(waterwall.lwip_udp_reuse_unit lwip_udp_reuse_test "unit;net;lwip;udp;ownership")
-  # Exercise timestamp-only paths without changing the production stack options.
-  get_target_property(lwip_timestamp_sources ww_lwip_engine_test SOURCES)
-  get_target_property(lwip_timestamp_source_dir ww_lwip_engine_test SOURCE_DIR)
-  list(TRANSFORM lwip_timestamp_sources PREPEND "${lwip_timestamp_source_dir}/" REGEX "^[^/]")
-  add_library(ww_lwip_timestamp_boundaries_test STATIC EXCLUDE_FROM_ALL ${lwip_timestamp_sources})
-  target_include_directories(ww_lwip_timestamp_boundaries_test PUBLIC
-    "$<TARGET_PROPERTY:ww_lwip_engine_test,INTERFACE_INCLUDE_DIRECTORIES>"
-    PRIVATE ${CMAKE_SOURCE_DIR}/ww/base ${CMAKE_SOURCE_DIR}/ww/libc)
-  target_compile_definitions(ww_lwip_timestamp_boundaries_test PUBLIC
-    "$<TARGET_PROPERTY:ww_lwip_engine_test,INTERFACE_COMPILE_DEFINITIONS>"
-    LWIP_TCP_TIMESTAMPS=1)
-  target_compile_options(ww_lwip_timestamp_boundaries_test PUBLIC
-    "$<TARGET_PROPERTY:ww_lwip_engine_test,INTERFACE_COMPILE_OPTIONS>")
-  target_link_options(ww_lwip_timestamp_boundaries_test PUBLIC
-    "$<TARGET_PROPERTY:ww_lwip_engine_test,INTERFACE_LINK_OPTIONS>")
-  target_link_libraries(ww_lwip_timestamp_boundaries_test PUBLIC waterwall_runtime_options ww_packet_batch)
-  set_target_properties(ww_lwip_timestamp_boundaries_test PROPERTIES UNITY_BUILD OFF)
+  # Use the shared engine's production timestamp option for boundary coverage too.
   waterwall_add_native_executable(lwip_timestamp_boundaries_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_timestamp_boundaries_test.c)
-  target_link_libraries(lwip_timestamp_boundaries_test PRIVATE ww_lwip_timestamp_boundaries_test pthread)
+  target_link_libraries(lwip_timestamp_boundaries_test PRIVATE ww_lwip_engine_test pthread)
   target_link_options(lwip_timestamp_boundaries_test PRIVATE "-Wl,--wrap=sys_now")
   add_dependencies(waterwall_unit_tests lwip_timestamp_boundaries_test)
   add_waterwall_unit_test(waterwall.lwip_timestamp_boundaries_unit lwip_timestamp_boundaries_test "unit;net;lwip;tcp;ownership")
