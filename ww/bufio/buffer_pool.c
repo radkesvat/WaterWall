@@ -551,7 +551,7 @@ bool bufferpoolQueryBestFit(const buffer_pool_t *pool, uint64_t minimum_payload,
     case kBufferPoolTierDedicated:
         break;
     }
-    uint32_t capacity;
+    size_t capacity;
     if (! sbufTryComputeCapacity(payload, padding, &capacity))
         return false;
     padding = sbufAlignLeftPadding(padding);
@@ -562,7 +562,7 @@ bool bufferpoolQueryBestFit(const buffer_pool_t *pool, uint64_t minimum_payload,
     return true;
 }
 
-sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint16_t minimum_left_padding)
+sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_payload, uint16_t minimum_left_padding)
 {
     switch (bufferpoolSelectBestFit(pool, minimum_payload, minimum_left_padding))
     {
@@ -584,10 +584,10 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_payload, uint
 
 sbuf_t *bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t minimum_payload, uint16_t minimum_left_padding)
 {
-    uint32_t capacity;
+    size_t capacity;
     if (! sbufTryComputeCapacity(minimum_payload, minimum_left_padding, &capacity))
         return NULL;
-    return bufferpoolGetBestFit(pool, (uint32_t) minimum_payload, minimum_left_padding);
+    return bufferpoolGetBestFit(pool, (size_t) minimum_payload, minimum_left_padding);
 }
 
 void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
@@ -618,7 +618,7 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
             if (metadata.pipefd[0] >= 0)
             {
                 sbufSplicePoolCheckPadding(pool->splice_buffer_left_padding);
-                b->capacity = (uint32_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
+                b->capacity = (size_t) b->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
                 if (pool->splice_buffers_container_len == kSpliceBufferLocalCacheLimit)
                     shrinkSpliceBuffers(pool);
                 pool->splice_buffers[pool->splice_buffers_container_len++] = b;
@@ -696,8 +696,8 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
 
 sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
 {
-    const uint32_t source_length = sbufGetLength(b);
-    sbuf_t        *bnew;
+    const size_t source_length = sbufGetLength(b);
+    sbuf_t      *bnew;
     if (sbufGetTotalCapacityNoPadding(b) == pool->large_buffers_size)
     {
         bnew = bufferpoolGetLargeBuffer(pool);
@@ -770,12 +770,14 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
  */
 static bool bufferpoolTryRoundBufferSize(uint32_t requested, uint32_t *rounded_out)
 {
-    uint32_t rounded = 0;
+    size_t rounded = 0;
     if (! sbufTryComputeCapacity(requested, 0, &rounded))
     {
         return false;
     }
-    *rounded_out = rounded;
+    /* The capacity helper retains the uint32_t geometry ceiling for every target. */
+    assert(rounded <= UINT32_MAX);
+    *rounded_out = (uint32_t) rounded;
     return true;
 }
 

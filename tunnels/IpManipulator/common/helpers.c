@@ -2354,7 +2354,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
         if (appended && complete)
         {
-            LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+            LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%zu",
                  ipmanipulatorTlsCaptureKindName(kind),
                  (unsigned int) slot->captured_packets_count,
                  sbufGetLength(slot->assembled_packet));
@@ -2732,7 +2732,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
     if (complete)
     {
-        LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%u",
+        LOGD("IpManipulator: %s completed fragmented TLS ClientHello capture packets=%u assembled-ip-len=%zu",
              ipmanipulatorTlsCaptureKindName(kind),
              (unsigned int) slot->captured_packets_count,
              sbufGetLength(slot->assembled_packet));

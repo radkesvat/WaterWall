@@ -76,7 +76,7 @@ static int retainInput(ww_lwip_engine_t *engine, struct pbuf *p, struct netif *n
     return ERR_OK;
 }
 
-static sbuf_t *createOutputBuffer(uint32_t length, uint16_t padding)
+static sbuf_t *createOutputBuffer(size_t length, uint16_t padding)
 {
     return twfTrackAcquired(sbufCreateWithPadding(length, padding));
 }

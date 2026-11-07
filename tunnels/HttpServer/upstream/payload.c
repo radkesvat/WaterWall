@@ -26,7 +26,7 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: upstream payload runtime=%d len=%u", ls->runtime_proto, sbufGetLength(buf));
+        LOGD("HttpServer: upstream payload runtime=%d len=%zu", ls->runtime_proto, sbufGetLength(buf));
     }
 
     if (ls->runtime_proto == kHttpServerRuntimeUpgradedRaw)

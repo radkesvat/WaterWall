@@ -68,19 +68,19 @@ static void testAllocationPageTouches(void)
             poison_aligned_allocation = true;
             sbuf_t *buf               = sbufCreateWithPadding(capacities[i], paddings[j]);
             poison_aligned_allocation = false;
-            require(buf->flags == 0 && buf->len == 0 && buf->curpos == sbufAlignLeftPadding(paddings[j]) &&
-                        buf->l_pad == buf->curpos,
+            require(buf->flags == 0 && buf->len == 0 && sbufGetLeftCapacity(buf) == sbufAlignLeftPadding(paddings[j]) &&
+                        buf->l_pad == sbufGetLeftCapacity(buf),
                     "allocation page touches changed buffer metadata");
             for (size_t guard = 0; guard < 32; ++guard)
-                require(buf->buf[buf->capacity + guard] == 0xa5, "allocation touched past its physical storage");
+                require(buf->head[buf->capacity + guard] == 0xa5, "allocation touched past its physical storage");
 #ifdef DEBUG
             for (size_t offset = 0; offset < buf->capacity; ++offset)
-                require(buf->buf[offset] == 0x55, "allocation changed the Debug diagnostic fill");
+                require(buf->head[offset] == 0x55, "allocation changed the Debug diagnostic fill");
 #else
             if (buf->capacity <= 2048)
             {
                 for (size_t offset = 0; offset < buf->capacity; ++offset)
-                    require(buf->buf[offset] == 0xa5, "small allocation was unnecessarily prefaulted");
+                    require(buf->head[offset] == 0xa5, "small allocation was unnecessarily prefaulted");
             }
             else
             {
@@ -88,15 +88,15 @@ static void testAllocationPageTouches(void)
                  * alignment and the touch loop's chosen store offsets. */
                 for (size_t offset = 0; offset < buf->capacity;)
                 {
-                    size_t count = 4096 - (((uintptr_t) buf->buf + offset) % 4096);
+                    size_t count = 4096 - (((uintptr_t) buf->head + offset) % 4096);
                     count        = min(count, (size_t) buf->capacity - offset);
                     bool touched = false;
                     for (size_t byte = 0; byte < count; ++byte)
-                        touched |= buf->buf[offset + byte] == 0;
+                        touched |= buf->head[offset + byte] == 0;
                     require(touched, "allocation missed a page intersecting its storage");
                     offset += count;
                 }
-                require(buf->buf[1] == 0xa5, "allocation cleared storage beyond sparse page touches");
+                require(buf->head[1] == 0xa5, "allocation cleared storage beyond sparse page touches");
             }
 #endif
             sbufDestroy(buf);
@@ -114,9 +114,9 @@ static uint32_t maxAlignedCapacity(void)
     return (uint32_t) (UINT32_MAX - (UINT32_MAX % kLine));
 }
 
-static uint32_t computeOrFail(uint64_t minimum_capacity, uint16_t pad_left, const char *message)
+static size_t computeOrFail(uint64_t minimum_capacity, uint16_t pad_left, const char *message)
 {
-    uint32_t capacity = 0;
+    size_t capacity = 0;
     require(sbufTryComputeCapacity(minimum_capacity, pad_left, &capacity), message);
     return capacity;
 }
@@ -149,7 +149,7 @@ static void testPaddingIsAlignedAndAdded(void)
             "33 bytes of padding did not align up to 64");
 
     // Padding whose alignment leaves the uint16_t domain cannot be honoured.
-    uint32_t capacity = 0;
+    size_t capacity = 0;
     require(! sbufTryComputeCapacity(kLine, UINT16_MAX, &capacity),
             "padding that overflows uint16_t on alignment was accepted");
 }
@@ -200,7 +200,7 @@ static void testUnrepresentableRequestsAreRejected(void)
 
     for (uint64_t request = (uint64_t) max_aligned + 1; request <= (uint64_t) UINT32_MAX; request++)
     {
-        uint32_t capacity = 0xA5A5A5A5U;
+        size_t capacity = 0xA5A5A5A5U;
         require(! sbufTryComputeCapacity(request, 0, &capacity),
                 "a request whose cache-line round-up overflows uint32_t was accepted");
         require(capacity == 0xA5A5A5A5U, "a rejected request still wrote an output capacity");
@@ -211,7 +211,7 @@ static void testUnrepresentableRequestsAreRejected(void)
                 max_aligned + 32,
             "the largest aligned capacity plus 32 padding computed the wrong total");
 
-    uint32_t capacity = 0;
+    size_t capacity = 0;
     require(! sbufTryComputeCapacity(max_aligned, (uint16_t) kLine, &capacity),
             "a capacity that only overflows once padding is added was accepted");
 
@@ -246,7 +246,7 @@ static void testFullAllocationMustFitInSizeT(void)
     const uint64_t largest_total            = simulated_32bit_size_max - kAllocationOverhead;
     // Largest cache-line aligned capacity whose whole allocation still fits.
     const uint32_t largest_ok = (uint32_t) (largest_total - (largest_total % kLine));
-    uint32_t       capacity   = 0;
+    size_t         capacity   = 0;
 
     require(sbufTryComputeCapacityWithin(largest_ok, 0, simulated_32bit_size_max, &capacity),
             "the largest fully representable capacity was rejected on a 32-bit size_t");
@@ -303,16 +303,14 @@ static void testFullAllocationMustFitInSizeT(void)
  * sbufCreateWithPadding() must reject an unrepresentable request rather
  * than returning a small buffer. It aborts, so this runs in a forked child.
  */
-static void testCreateRejectsUnrepresentableRequest(void)
+static void requireAllocationRequestRejected(size_t request, bool reserve)
 {
     pid_t child = fork();
     require(child >= 0, "failed to fork the capacity-overflow child");
 
     if (child == 0)
     {
-        // Pre-fix this returned a buffer of pad_left bytes reporting a capacity
-        // of pad_left, instead of refusing an impossible request.
-        sbuf_t *buf = sbufCreateWithPadding(UINT32_MAX, 0);
+        sbuf_t *buf = reserve ? sbufReserveSpace(sbufCreate(64), request) : sbufCreateWithPadding(request, 0);
         // Returning at all is the failure. The pointer is folded into the status
         // so the call cannot be optimised away, and so the two ways of returning
         // are distinguishable in the output.
@@ -323,8 +321,24 @@ static void testCreateRejectsUnrepresentableRequest(void)
     require(waitpid(child, &status, 0) == child, "failed to wait for the capacity-overflow child");
     require(WIFEXITED(status), "the capacity-overflow child did not exit normally");
     require(WEXITSTATUS(status) != kChildAllocationSucceeded,
-            "sbufCreateWithPadding() returned a buffer for a capacity it cannot represent");
+            "buffer creation or growth accepted an unrepresentable capacity");
     require(WEXITSTATUS(status) == 1, "the capacity-overflow child did not abort with the documented status");
+}
+
+static void testCreateRejectsUnrepresentableRequest(void)
+{
+    static const size_t requests[] = {
+        UINT32_MAX,
+#if SIZE_MAX > UINT32_MAX
+        (size_t) UINT32_MAX + 1,
+        SIZE_MAX,
+#endif
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(requests); ++i)
+    {
+        requireAllocationRequestRejected(requests[i], false);
+        requireAllocationRequestRejected(requests[i], true);
+    }
 }
 
 /*

@@ -83,7 +83,7 @@ static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
     twfRequire(! sbufIsSplice(buf), "combined intro must be ordinary");
     twfRequire(sbufGetLeftCapacity(buf) >= (is_upload ? pair->minimum_upload_padding : 64),
                "output lost onward padding");
-    const uint32_t length = sbufGetLength(buf);
+    const size_t length = sbufGetLength(buf);
     if (is_upload)
     {
         if (pair->expected_upload != NULL)
@@ -194,7 +194,7 @@ static void caseOrdinaryHeadroom(void)
             fixtureSetup(&fixture);
             client_pair_t *pair  = &fixture.pairs[0];
             sbuf_t        *input = twfTrackAcquired(sbufCreateWithPadding(lengths[j], paddings[i]));
-            input->curpos        = paddings[i]; // Exercise exact headroom despite allocation padding alignment.
+            input->data = input->head + paddings[i]; // Exercise exact headroom despite allocation padding alignment.
             sbufSetLength(input, lengths[j]);
             memoryCopyLarge(sbufGetMutablePtr(input), data, lengths[j]);
             if (paddings[i] >= kHLFDIntroSize)

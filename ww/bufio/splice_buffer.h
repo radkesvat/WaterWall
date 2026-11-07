@@ -16,28 +16,29 @@ static_assert(sizeof(splice_buffer_metadata_t) <= SPLICE_BUFFER_STORAGE_SIZE,
 static inline splice_buffer_metadata_t sbufSpliceMetadata(const sbuf_t *buf)
 {
     splice_buffer_metadata_t metadata;
-    sbufByteCopy(&metadata, buf->buf + buf->l_pad, sizeof(metadata));
+    sbufByteCopy(&metadata, buf->head + buf->l_pad, sizeof(metadata));
     return metadata;
 }
 static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t metadata)
 {
-    sbufByteCopy(buf->buf + buf->l_pad, &metadata, sizeof(metadata));
+    sbufByteCopy(buf->head + buf->l_pad, &metadata, sizeof(metadata));
 }
 
 /** Proven addressable prefix of a valid buffer; never reads or materializes a pipe. */
-static inline uint32_t sbufGetResidentPrefixLength(const sbuf_t *buf)
+static inline size_t sbufGetResidentPrefixLength(const sbuf_t *buf)
 {
     assert(buf != NULL);
     if (! sbufIsSplice(buf))
         return sbufGetLength(buf);
-    assert(buf->curpos <= buf->l_pad && (uint32_t) (buf->l_pad - buf->curpos) <= sbufGetLength(buf));
-    return (uint32_t) buf->l_pad - buf->curpos;
+    const size_t headroom = sbufGetLeftCapacity(buf);
+    assert(headroom <= buf->l_pad && (size_t) buf->l_pad - headroom <= sbufGetLength(buf));
+    return (size_t) buf->l_pad - headroom;
 }
 
 /** Account for body bytes already removed from the private pipe by successful I/O.
  * Performs no I/O; reduces length and logical capacity without moving the cursor
  * into metadata or consuming any resident prefix. */
-static inline void sbufSpliceConsumeBody(sbuf_t *buf, uint32_t bytes)
+static inline void sbufSpliceConsumeBody(sbuf_t *buf, size_t bytes)
 {
     assert(sbufIsSplice(buf));
     assert(bytes <= sbufGetLength(buf) - sbufGetResidentPrefixLength(buf));
@@ -83,13 +84,13 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
 /**
  * Append exactly bytes from a splice wrapper's logical front into ordinary dest.
  * Real prefix bytes are copied first, followed by body bytes from the private pipe.
- * Source length decreases by bytes; only consumed real prefix advances curpos,
+ * Source length decreases by bytes; only consumed real prefix advances data,
  * while consumed pipe body reduces logical capacity so metadata remains fixed at
- * buf + l_pad. Both buffers stay caller-owned. Invalid representation, bounds,
+ * head + l_pad. Both buffers stay caller-owned. Invalid representation, bounds,
  * destination space, pipe state, or incomplete pipe contents are fatal invariants.
  * Unsupported builds abort.
  */
-sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
+sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes);
 
 /** Append exactly bytes from owned source into destination, replacing destination
  * with complete ordinary storage on pipe pressure/unsupported destination. The
@@ -98,9 +99,9 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes);
  * size and padding is required onward headroom, also when destination is NULL.
  * Both ordinary and splice sources are accepted.
  * Source range and destination geometry are preconditions. No callbacks occur. */
-sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *destination, uint32_t bytes, uint32_t final_size,
+sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *destination, size_t bytes, size_t final_size,
                         uint16_t padding);
 
 /** Consume exactly bytes into sufficient resident memory. Source remains
  * caller-owned. */
-void sbufReadRangeToMemory(sbuf_t *source, void *destination, uint32_t bytes);
+void sbufReadRangeToMemory(sbuf_t *source, void *destination, size_t bytes);

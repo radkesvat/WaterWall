@@ -62,7 +62,7 @@ static void streamFillHeader(splice_stream_t *s)
 
 bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
 {
-    const uint32_t length = sbufGetLength(input);
+    const size_t length = sbufGetLength(input);
     if (length == 0)
     {
         bufferpoolReuseBuffer(s->pool, input);
@@ -104,7 +104,7 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
 
 bool splicestreamCanAdmit(const splice_stream_t *s, const sbuf_t *input, size_t max_bytes, size_t max_charge)
 {
-    const uint32_t length = sbufGetLength(input);
+    const size_t length = sbufGetLength(input);
     if (s->total > max_bytes || length > max_bytes - s->total || s->charge > max_charge)
         return false;
     size_t charge = 0;

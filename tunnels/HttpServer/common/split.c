@@ -962,7 +962,7 @@ void httpserverSplitProcessUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    uint32_t       capacity;
+    size_t         capacity;
     const uint64_t total = (uint64_t) bufferstreamGetBufLen(&ls->in_stream) + sbufGetLength(buf);
     if (! sbufTryComputeCapacity(total, bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)), &capacity))
     {

@@ -134,6 +134,7 @@ static void testBestFitQuery(void)
         .allocation_charge = 123, .payload_capacity = 456, .left_padding = 7, .pooled = true};
     buffer_pool_fit_t fit = sentinel;
     require(! bufferpoolQueryBestFit(pool, UINT64_MAX, 32, &fit) &&
+                ! bufferpoolQueryBestFit(pool, (uint64_t) UINT32_MAX + 1, 32, &fit) &&
                 ! bufferpoolQueryBestFit(pool, UINT32_MAX, 32, &fit) &&
                 ! bufferpoolQueryBestFit(pool, 0, UINT16_MAX, &fit),
             "best-fit query accepted unrepresentable geometry");
@@ -448,7 +449,7 @@ static void testDevicePoolGeometry(void)
         bufferpoolUpdateAllocationPaddings(worker, 32, 64, 96, 128);
         for (uint32_t minimum = 0; minimum <= 9000; minimum += 9000)
         {
-            uint32_t expected_small;
+            size_t expected_small;
             require(sbufTryComputeCapacity(max(4096U, minimum), 0, &expected_small), "MTU geometry");
             buffer_pool_t *device = devicePoolCreate(worker, minimum);
             require(device != NULL, "device pool construction");
@@ -561,7 +562,8 @@ int main(void)
     require(bufferpoolGetMediumBufferSize(pool) == 64 * 1024,
             "explicit medium capacity changed with the custom large-buffer size");
     bufferpoolReuseBuffer(pool, medium);
-    require(bufferpoolTryGetBestFit(pool, UINT64_MAX, 64) == NULL,
+    require(bufferpoolTryGetBestFit(pool, UINT64_MAX, 64) == NULL &&
+                bufferpoolTryGetBestFit(pool, (uint64_t) UINT32_MAX + 1, 64) == NULL,
             "checked best fit accepted an unrepresentable computed length");
 
     bufferpoolDestroy(pool);

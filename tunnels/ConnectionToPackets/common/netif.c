@@ -165,7 +165,7 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     assert(owner_packet_line != NULL && lineIsOnCurrentWorker(owner_packet_line));
     /* Initialize both outputs for MSVC's whole-program definite-assignment analysis. */
     const uint16_t padding  = bufferpoolGetLargeBufferPadding(lineGetBufferPool(owner_packet_line));
-    uint32_t       capacity = 0;
+    size_t         capacity = 0;
     size_t         charge   = 0;
     const bool     fits =
         sbufTryComputeCapacity(p->tot_len, padding, &capacity) && sbufTryComputeQueueCharge(capacity, &charge);

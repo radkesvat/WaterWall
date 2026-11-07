@@ -136,7 +136,7 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
     }
 
     sbuf_t  *encoded           = bufferpoolGetLargeBuffer(pool);
-    uint32_t required_capacity = 0;
+    size_t   required_capacity = 0;
     if (UNLIKELY(! sbufTryComputeCapacity(encoded_length, sbufGetLeftPadding(encoded), &required_capacity)))
     {
         bufferpoolReuseBuffer(pool, encoded);

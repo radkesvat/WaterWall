@@ -211,7 +211,7 @@ static void requireSpliceBody(buffer_pool_t *pool, sbuf_t *input, uint32_t lengt
 static uint32_t parseFrames(const sbuf_t *encoded, frame_view_t *frames, uint32_t capacity)
 {
     const uint8_t *bytes  = sbufGetRawPtr(encoded);
-    const uint32_t length = sbufGetLength(encoded);
+    const size_t   length = sbufGetLength(encoded);
     uint32_t       offset = 0;
     uint32_t       count  = 0;
 
@@ -697,7 +697,7 @@ static void testPausedRetentionStorage(buffer_pool_t *pool)
     for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
     {
         sbuf_t         *input             = makePayload(pool, lengths[i]);
-        const uint32_t  original_capacity = sbufGetTotalCapacityNoPadding(input);
+        const size_t    original_capacity = sbufGetTotalCapacityNoPadding(input);
         sbuf_t        *retained     = muxPrepareQueuedPayload(pool, input);
         const uint32_t expected = lengths[i] <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBufferSize(pool)
                                   : lengths[i] <= bufferpoolGetMediumBufferSize(pool)
@@ -925,10 +925,11 @@ static void testLargeMaterialization(buffer_pool_t *pool)
             {
                 // Test exact cursor preservation; sbufEnsureOrdinary() restores
                 // the pool padding instead of retaining the source cursor.
-                sbuf_t *result = bufferpoolGetBestFit(pool, sbufGetLength(source), (uint16_t) source->curpos);
+                sbuf_t *result =
+                    bufferpoolGetBestFit(pool, sbufGetLength(source), (uint16_t) sbufGetLeftCapacity(source));
                 result         = sbufSpliceMaterializeToBuffer(source, result, pool);
-                require(! sbufIsSplice(result) && sbufGetLength(result) == length + 4 && result->curpos == 28 &&
-                            memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
+                require(! sbufIsSplice(result) && sbufGetLength(result) == length + 4 &&
+                            sbufGetLeftCapacity(result) == 28 && memoryEqual(sbufGetRawPtr(result), "HEAD", 4),
                         "full materialization lost prefix or residual headroom");
                 buffer_pool_fit_t fit;
                 require(bufferpoolQueryBestFit(pool, length + 4, 28, &fit) &&
@@ -944,11 +945,11 @@ static void testLargeMaterialization(buffer_pool_t *pool)
                 sbufWrite(result, ">>", 2);
                 sbufSetLength(result, 2);
                 sbufSpliceReadToBuffer(source, result, 6);
-                require(sbufGetLength(source) == length - 2 && source->curpos == 32,
+                require(sbufGetLength(source) == length - 2 && sbufGetLeftCapacity(source) == 32,
                         "partial read did not consume prefix and exactly two body bytes");
                 sbufSpliceReadToBuffer(source, result, length - 2);
-                require(sbufGetLength(source) == 0 && sbufGetLength(result) == length + 6 && result->curpos == 32 &&
-                            memoryEqual(sbufGetRawPtr(result), ">>HEAD", 6),
+                require(sbufGetLength(source) == 0 && sbufGetLength(result) == length + 6 &&
+                            sbufGetLeftCapacity(result) == 32 && memoryEqual(sbufGetRawPtr(result), ">>HEAD", 6),
                         "partial append lost existing bytes or padding");
                 for (uint32_t j = 0; j < length; ++j)
                     require(sbufGetMutablePtr(result)[j + 6] == patternByte(j),

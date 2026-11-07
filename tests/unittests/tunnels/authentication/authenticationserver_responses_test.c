@@ -121,9 +121,9 @@ static bool             count_growth;
 static size_t           growth_bytes;
 static unsigned         growth_allocations;
 
-sbuf_t *__real_sbufCreateWithPadding(uint32_t size, uint16_t padding);
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t size, uint16_t padding);
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t size, uint16_t padding)
+sbuf_t *__real_sbufCreateWithPadding(size_t size, uint16_t padding);
+sbuf_t *__wrap_sbufCreateWithPadding(size_t size, uint16_t padding);
+sbuf_t *__wrap_sbufCreateWithPadding(size_t size, uint16_t padding)
 {
     /* Individual frames and output chunks use pool tiers no larger than
      * 64 KiB here. Count larger dedicated allocations to isolate message
@@ -424,7 +424,7 @@ static void testSessionAtEnvelopeEntry(void)
     configureCredentials();
     const char     auth[]   = "{\"name\":\"edge\",\"secret\":\"secret\"}";
     sbuf_t        *b        = envelope(kAuthenticationServerRequestTypeAuthenticate, auth, sizeof(auth) - 1U, 1);
-    const uint32_t previous = sbufGetLength(b);
+    const size_t   previous = sbufGetLength(b);
     b                       = sbufReserveSpace(b, previous + 13U);
     sbufSetLength(b, previous + 13U);
     uint8_t *p    = sbufGetMutablePtr(b);

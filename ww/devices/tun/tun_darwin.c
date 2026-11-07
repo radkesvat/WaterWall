@@ -450,7 +450,7 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
         if (UNLIKELY(sbufGetLength(buf) > UINT16_MAX))
         {
             if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunPacketWarningIntervalMs))
-                LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
+                LOGW("TunDevice: discarded a packet -> size %zu exceeds maximum IP packet size %u",
                      sbufGetLength(buf),
                      (unsigned) UINT16_MAX);
             bufferpoolReuseBuffer(worker->buffer_pool, buf);

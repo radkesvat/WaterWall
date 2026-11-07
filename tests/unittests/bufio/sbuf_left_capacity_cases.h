@@ -35,7 +35,8 @@ static void testOrdinaryLeftCapacity(void)
             require(! sbufIsSplice(result) && sbufGetLeftCapacity(result) >= needs[i],
                     "ordinary left-capacity repair lost headroom or changed representation");
             if (needs[i] <= 32)
-                require(result == source && result->curpos == 32 && memoryEqual(before, after, sizeof(before)),
+                require(result == source && sbufGetLeftCapacity(result) == 32 &&
+                            memoryEqual(before, after, sizeof(before)),
                         "sufficient ordinary headroom changed the buffer or pool caches");
             else
             {
@@ -69,8 +70,8 @@ static void testSpliceLeftCapacity(void)
                 sbufSetLength(source, body);
                 sbufShiftLeft(source, prefix);
                 memoryCopy(sbufGetMutablePtr(source), wire, prefix);
-                const uint16_t need   = mode == 0 ? 0 : mode == 1 ? (uint16_t) source->curpos : 33;
-                const uint32_t cursor = source->curpos;
+                const uint16_t need   = mode == 0 ? 0 : mode == 1 ? (uint16_t) sbufGetLeftCapacity(source) : 33;
+                const size_t   cursor = sbufGetLeftCapacity(source);
                 uint32_t       before[4], after[4];
                 bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
                 streamProbe     = true;
@@ -81,7 +82,7 @@ static void testSpliceLeftCapacity(void)
                 require(sbufIsSplice(result) && sbufGetLeftCapacity(result) >= need && streamReadBytes == 0,
                         "splice headroom repair materialized available pipe storage or lost padding");
                 if (mode != 2)
-                    require(result == source && result->curpos == cursor && streamSpliceBytes == 0 &&
+                    require(result == source && sbufGetLeftCapacity(result) == cursor && streamSpliceBytes == 0 &&
                                 memoryEqual(before, after, sizeof(before)),
                             "sufficient splice headroom changed the buffer, pipe or pool caches");
                 else

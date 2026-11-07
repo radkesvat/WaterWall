@@ -135,7 +135,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
         sbuf_t *input = bufferpoolGetLargeBuffer(env.pool);
         input         = sbufReserveSpace(input, length);
         twfRequire(headroom <= sbufGetLeftCapacity(input), "fixture headroom exceeds allocation");
-        input->curpos = headroom;
+        input->data = input->head + headroom;
         sbufSetLength(input, length);
         for (uint32_t i = 0; i < length; ++i)
             sbufGetMutablePtr(input)[i] = pattern(i);
@@ -284,7 +284,7 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
 }
 static uint32_t fillRecords(sbuf_t *input, uint32_t offset)
 {
-    const uint32_t length = sbufGetLength(input);
+    const size_t   length = sbufGetLength(input);
     uint8_t       *bytes  = sbufGetMutablePtr(input);
     memoryZero(bytes, length);
     uint32_t records = 0;

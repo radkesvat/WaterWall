@@ -27,7 +27,7 @@ bool vmessserverGatherHeader(vmessserver_lstate_t *ls, uint16_t needed)
         sbuf_t *head = receiveHead(ls);
         if (head == NULL)
             return false;
-        uint32_t count = min(needed - ls->header_filled, sbufGetLength(head));
+        uint32_t count = (uint32_t) MIN_SIZE(needed - ls->header_filled, sbufGetLength(head));
         sbufReadRangeToMemory(head, ls->header + ls->header_filled, count);
         bufferbudgetReservationSetBytes(&ls->input_reservation, sbufGetLength(head));
         ls->header_filled += count;

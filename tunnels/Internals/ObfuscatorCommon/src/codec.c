@@ -131,18 +131,18 @@ sbuf_t *obfuscatorEncodeStream(buffer_pool_t *pool, sbuf_t *buf, uint32_t skip, 
         bufferpoolReuseBuffer(pool, buf);
         return NULL;
     }
-    const uint32_t start = out->curpos;
+    uint8_t *const start = sbufGetMutablePtr(out);
     for (uint64_t record = 0; record < records; ++record)
     {
         const uint32_t n = min(sbufGetLength(buf), UINT16_MAX);
         writeHeader(out, n);
-        out->curpos += kObfuscatorTlsRecordHeaderSize;
+        out->data += kObfuscatorTlsRecordHeaderSize;
         sbufSetLength(out, 0);
         sbufMoveTo(out, buf, n);
         obfuscatorApplyXor(out, skip, key);
-        out->curpos += n;
+        out->data += n;
     }
-    out->curpos = start;
+    out->data = start;
     sbufSetLength(out, (uint32_t) total);
     bufferpoolReuseBuffer(pool, buf);
     return out;

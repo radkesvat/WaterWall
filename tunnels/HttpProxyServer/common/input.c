@@ -57,7 +57,7 @@ static bool remainderAllocationFits(hps_session_t *s, const sbuf_t *buffer)
     const uint64_t payload_bound = max((uint64_t) bufferpoolGetSmallBufferSize(pool), 2 * kHpsDeliveryHeadroomBytes);
     const uint16_t padding       = max(bufferpoolGetMediumBufferPadding(pool),
                                  max(bufferpoolGetSmallBufferPadding(pool), bufferpoolGetLargeBufferPadding(pool)));
-    uint32_t       capacity;
+    size_t         capacity;
     return sbufTryComputeCapacity(payload_bound, padding, &capacity) &&
            bufferCharge(buffer) <= (uint64_t) capacity + sizeof(sbuf_t) + kSbufAllocationAlignment;
 }

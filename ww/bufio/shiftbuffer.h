@@ -17,11 +17,11 @@ enum
     /**
      * Represent kernel-backed payload with a splice sbuf wrapper whose actual
      * payload storage is 32 bytes. Private metadata at the original payload
-     * start (buf + l_pad) holds an exclusively leased inventory pipe;
+     * start (head + l_pad) holds an exclusively leased inventory pipe;
      * the preceding bytes remain reserved left padding. The metadata stays
      * at that fixed offset when a tunnel prepends bytes by shifting left.
      * Length and capacity account for that logical payload, not the wrapper's
-     * physical storage, and must not be used as bounds for accessing buf bytes.
+     * physical storage, and must not be used as bounds for accessing head bytes.
      * Any claimed body bytes must already be in the private pipe. Empty bodies
      * may have an uninitialized or empty pipe.
      *
@@ -61,24 +61,22 @@ enum
 
 struct sbuf_s
 {
-    uint32_t curpos;
-    uint32_t len;
-    uint32_t capacity;
-    uint16_t l_pad; // constant when created, indicates how much bytes are available for switching left at the beginning
-                    // something like leave-room in lwip pbuf
-
+    uint8_t *data;     // Moving resident-data position within head[].
+    size_t   len;      // Logical payload length; splice bodies are not resident.
+    size_t   capacity; // Ordinary storage or splice logical geometry, bounded by UINT32_MAX.
+    uint16_t l_pad;    // Original aligned padding reservation, unchanged after creation.
     uint16_t flags;
 
-    MSVC_ATTR_ALIGNED_32 uint8_t buf[] GNU_ATTR_ALIGNED_32;
+    MSVC_ATTR_ALIGNED_32 uint8_t head[] GNU_ATTR_ALIGNED_32;
 };
 
 typedef struct sbuf_s sbuf_t;
 
 #define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
 
-static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, buf array is flexible");
+static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, head array is flexible");
 static_assert(_Alignof(sbuf_t) == 32, "sbuf_s alignment should be 32 bytes");
-static_assert(offsetof(sbuf_t, buf) == 32, "sbuf_s buf array should start at offset 32");
+static_assert(offsetof(sbuf_t, head) == 32, "sbuf_s head array should start at offset 32");
 
 /** Whether this valid buffer currently uses the splice representation. */
 static inline bool sbufIsSplice(const sbuf_t *buf)
@@ -135,7 +133,7 @@ static inline bool sbufIsPooledSplice(const sbuf_t *buf)
  *         *out_capacity untouched.
  */
 static inline bool sbufTryComputeCapacityWithin(uint64_t minimum_capacity, uint16_t pad_left, uint64_t size_max,
-                                                uint32_t *out_capacity)
+                                                size_t *out_capacity)
 {
     const uint64_t aligned_pad = (((uint64_t) pad_left) + 31U) & ~UINT64_C(31);
     if (aligned_pad > (uint64_t) UINT16_MAX)
@@ -148,7 +146,8 @@ static inline bool sbufTryComputeCapacityWithin(uint64_t minimum_capacity, uint1
      * bug: for any value within kCpuLineCacheSizeMin1 of the type's maximum, the
      * round-up wraps back to a small number and every later check passes. That
      * is true in 64-bit arithmetic just as it was in 32-bit, so widening the
-     * type alone would only have moved the boundary.
+     * type alone would only have moved the boundary. size_t storage does not
+     * expand supported geometry: pool, protocol and I/O limits remain unchanged.
      */
     if (minimum_capacity > (uint64_t) UINT32_MAX)
     {
@@ -192,7 +191,7 @@ static inline bool sbufTryComputeCapacityWithin(uint64_t minimum_capacity, uint1
         return false;
     }
 
-    *out_capacity = (uint32_t) total;
+    *out_capacity = (size_t) total;
     return true;
 }
 
@@ -223,7 +222,7 @@ static inline bool sbufTryComputeCapacityWithin(uint64_t minimum_capacity, uint1
  * @return true when the request is representable; false otherwise, leaving
  *         *out_capacity untouched.
  */
-static inline bool sbufTryComputeCapacity(uint64_t minimum_capacity, uint16_t pad_left, uint32_t *out_capacity)
+static inline bool sbufTryComputeCapacity(uint64_t minimum_capacity, uint16_t pad_left, size_t *out_capacity)
 {
     return sbufTryComputeCapacityWithin(minimum_capacity, pad_left, (uint64_t) SIZE_MAX, out_capacity);
 }
@@ -235,11 +234,11 @@ static inline bool sbufTryComputeCapacity(uint64_t minimum_capacity, uint16_t pa
  * @param src Source memory.
  * @param n Number of bytes to copy.
  */
-static inline void sbufByteCopy(void *restrict dst, const void *restrict src, const uint32_t n)
+static inline void sbufByteCopy(void *restrict dst, const void *restrict src, const size_t n)
 {
     uint8_t       *d = (uint8_t *) dst;
     const uint8_t *s = (const uint8_t *) src;
-    for (uint32_t i = 0; i < n; ++i)
+    for (size_t i = 0; i < n; ++i)
     {
         d[i] = s[i];
     }
@@ -274,7 +273,7 @@ size_t sbufGetAllocationCharge(const sbuf_t *buf);
  * Ordinary capacity is resident storage; splice capacity is logical geometry.
  * This is not a bound on kernel resources or physical memory. Checked forms leave
  * the result unchanged on overflow; the internal getter requires representability. */
-bool   sbufTryComputeQueueCharge(uint32_t capacity, size_t *charge);
+bool   sbufTryComputeQueueCharge(size_t capacity, size_t *charge);
 bool   sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge);
 size_t sbufGetQueueCharge(const sbuf_t *buf);
 
@@ -287,7 +286,7 @@ static inline void sbufReset(sbuf_t *b)
 {
     b->flags  = 0;
     b->len    = 0;
-    b->curpos = b->l_pad;
+    b->data   = b->head + b->l_pad;
 }
 
 /**
@@ -297,7 +296,7 @@ static inline void sbufReset(sbuf_t *b)
  * @param pad_left Requested left padding in bytes.
  * @return sbuf_t* Newly allocated buffer.
  */
-sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left);
 
 /**
  * @brief Create a new buffer with zero left padding.
@@ -305,7 +304,7 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
  * @param minimum_capacity Minimum payload capacity.
  * @return sbuf_t* Newly allocated buffer.
  */
-sbuf_t *sbufCreate(uint32_t minimum_capacity);
+sbuf_t *sbufCreate(size_t minimum_capacity);
 
 /**
  * @brief Allocate an unmanaged empty splice representation with control storage and padding.
@@ -386,7 +385,7 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
  * @param bytes Number of bytes to move.
  * @return sbuf_t* Destination buffer.
  */
-sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t bytes);
+sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, size_t bytes);
 
 /**
  * @brief Consume a leading ordinary payload slice into a new ordinary buffer.
@@ -401,7 +400,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, uint32_t byte
  * @param bytes Number of bytes to slice.
  * @return sbuf_t* New buffer containing sliced bytes.
  */
-sbuf_t *sbufSlice(sbuf_t *b, uint32_t bytes);
+sbuf_t *sbufSlice(sbuf_t *b, size_t bytes);
 
 /**
  * @brief Duplicate an ordinary buffer's complete payload, cursor and padding layout.
@@ -434,7 +433,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest);
  * Gets the buffer's capacity metadata. For ordinary buffers, this is a constant
  * allocation capacity; kSbufFlagSplice instead gives it a logical meaning.
  */
-static inline uint32_t sbufGetTotalCapacity(const sbuf_t *const b)
+static inline size_t sbufGetTotalCapacity(const sbuf_t *const b)
 {
     return b->capacity;
 }
@@ -442,7 +441,7 @@ static inline uint32_t sbufGetTotalCapacity(const sbuf_t *const b)
 /**
  * Gets total capacity excluding padding.
  */
-static inline uint32_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
+static inline size_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 {
     return b->capacity - (b->l_pad);
 }
@@ -450,9 +449,14 @@ static inline uint32_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
 /**
  * Gets left capacity of the buffer. (This means how much space is left, it gets reduced if you shift left)
  */
-static inline uint32_t sbufGetLeftCapacity(const sbuf_t *const b)
+static inline size_t sbufGetLeftCapacity(const sbuf_t *const b)
 {
-    return b->curpos;
+    /* Supported targets use flat byte addresses. Unsigned address subtraction
+     * preserves offsets above PTRDIFF_MAX on 32-bit targets; subtracting the
+     * pointers first would be undefined even if the result were cast to size_t.
+     * data must belong to this allocation (or its ordinary one-past end). */
+    assert((uintptr_t) b->data >= (uintptr_t) b->head);
+    return (size_t) ((uintptr_t) b->data - (uintptr_t) b->head);
 }
 
 /**
@@ -463,21 +467,21 @@ static inline uint32_t sbufGetLeftCapacity(const sbuf_t *const b)
  * These writable-storage guarantees apply to ordinary buffers. With
  * kSbufFlagSplice, the result is logical and does not describe physical storage.
  */
-static inline uint32_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
+static inline size_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
 {
-    return (b->capacity - b->curpos);
+    return (b->capacity - sbufGetLeftCapacity(b));
 }
 
 /**
  * Gets spare writable bytes after an ordinary buffer's current payload.
  * Requires valid ordinary-buffer geometry; splice capacity is not resident storage.
  */
-static inline uint32_t sbufGetTailCapacity(const sbuf_t *const b)
+static inline size_t sbufGetTailCapacity(const sbuf_t *const b)
 {
     assert(b != NULL && ! sbufIsSplice(b));
-    assert(b->curpos <= b->capacity);
-    assert(b->len <= b->capacity - b->curpos);
-    return b->capacity - b->curpos - b->len;
+    assert(sbufGetLeftCapacity(b) <= b->capacity);
+    assert(b->len <= b->capacity - sbufGetLeftCapacity(b));
+    return b->capacity - sbufGetLeftCapacity(b) - b->len;
 }
 
 /**
@@ -491,36 +495,37 @@ static inline uint16_t sbufGetLeftPadding(const sbuf_t *const b)
 /**
  * Shifts the buffer left by specified bytes.
  */
-static inline void sbufShiftLeft(sbuf_t *const b, const uint32_t bytes)
+static inline void sbufShiftLeft(sbuf_t *const b, const size_t bytes)
 {
     assert(sbufGetLeftCapacity(b) >= bytes);
-    b->curpos -= bytes;
+    b->data -= bytes;
     b->len += bytes;
 }
 
 /**
  * Shifts the buffer right by specified bytes.
  */
-static inline void sbufShiftRight(sbuf_t *const b, const uint32_t bytes)
+static inline void sbufShiftRight(sbuf_t *const b, const size_t bytes)
 {
     assert(b->len >= bytes);
-    b->curpos += bytes;
+    b->data += bytes;
     b->len -= bytes;
 }
 
 /**
  * Sets the length of the buffer.
  */
-static inline void sbufSetLength(sbuf_t *const b, const uint32_t bytes)
+static inline void sbufSetLength(sbuf_t *const b, const size_t bytes)
 {
-    assert(b->curpos + bytes <= b->capacity);
+    assert(sbufGetLeftCapacity(b) <= b->capacity);
+    assert(bytes <= b->capacity - sbufGetLeftCapacity(b));
     b->len = bytes;
 }
 
 /**
  * Gets the length of the buffer.
  */
-static inline uint32_t sbufGetLength(const sbuf_t *const b)
+static inline size_t sbufGetLength(const sbuf_t *const b)
 {
     return b->len;
 }
@@ -528,7 +533,7 @@ static inline uint32_t sbufGetLength(const sbuf_t *const b)
 /**
  * Consumes specified bytes from the buffer.
  */
-static inline void sbufConsume(sbuf_t *const b, const uint32_t bytes)
+static inline void sbufConsume(sbuf_t *const b, const size_t bytes)
 {
     assert(bytes <= b->len);
     sbufSetLength(b, sbufGetLength(b) - bytes);
@@ -539,7 +544,7 @@ static inline void sbufConsume(sbuf_t *const b, const uint32_t bytes)
  */
 static inline const void *sbufGetRawPtr(const sbuf_t *const b)
 {
-    return (void *) &(b->buf[b->curpos]);
+    return b->data;
 }
 
 /**
@@ -549,13 +554,13 @@ static inline const void *sbufGetRawPtr(const sbuf_t *const b)
  */
 static inline unsigned char *sbufGetMutablePtr(const sbuf_t *const b)
 {
-    return (void *) &(b->buf[b->curpos]);
+    return b->data;
 }
 
 /**
  * Reads data from buffer into destination.
  */
-static inline void sbufRead(const sbuf_t *const b, void *const dest, const uint32_t byte)
+static inline void sbufRead(const sbuf_t *const b, void *const dest, const size_t byte)
 {
     memoryCopy(dest, sbufGetRawPtr(b), byte);
 }
@@ -563,7 +568,7 @@ static inline void sbufRead(const sbuf_t *const b, void *const dest, const uint3
 /**
  * Writes data to buffer from source.
  */
-static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict const buffer, const uint32_t len)
+static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict const buffer, const size_t len)
 {
     memoryCopy(sbufGetMutablePtr(b), buffer, len);
 }
@@ -571,7 +576,7 @@ static inline void sbufWrite(sbuf_t *restrict const b, const void *restrict cons
 /**
  * Writes data to buffer from source. but optimal for large buffers.
  */
-static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict const buffer, const uint32_t len)
+static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict const buffer, const size_t len)
 {
     memoryCopyLarge(sbufGetMutablePtr(b), buffer, len);
 }
@@ -579,7 +584,7 @@ static inline void sbufWriteLarge(sbuf_t *restrict const b, const void *restrict
 /**
  * Writes zeros to buffer.
  */
-static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
+static inline void sbufWriteZeros(sbuf_t *restrict const b, const size_t len)
 {
     memoryZero(sbufGetMutablePtr(b), len);
 }
@@ -591,7 +596,7 @@ static inline void sbufWriteZeros(sbuf_t *restrict const b, const uint32_t len)
  * both allocations remain caller-owned. Copies bytes only, preserving each
  * buffer's checksum request.
  */
-static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, uint32_t length)
+static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, size_t length)
 {
     assert(sbufGetMaximumWriteableSize(to) >= length);
     memoryCopyLarge(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
@@ -606,13 +611,13 @@ static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict cons
  * original padding available.
  * The caller owns only the returned buffer and must use that pointer afterward.
  */
-static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
+static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const size_t bytes)
 {
-    uint32_t current_length = sbufGetLength(b);
+    size_t current_length = sbufGetLength(b);
 
     if (sbufGetMaximumWriteableSize(b) < bytes)
     {
-        uint32_t needed_writable = max(current_length, bytes);
+        size_t   needed_writable = max(current_length, bytes);
         sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->l_pad);
         sbufSetLength(bigger_buf, current_length);
         sbufWriteBuf(bigger_buf, b, current_length);
@@ -630,8 +635,9 @@ static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const uint32_t bytes)
  */
 static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restrict buf)
 {
-    uint32_t root_length   = sbufGetLength(root);
-    uint32_t append_length = sbufGetLength(buf);
+    size_t root_length   = sbufGetLength(root);
+    size_t append_length = sbufGetLength(buf);
+    assert(append_length <= sbufGetTailCapacity(root));
     sbufSetLength(root, root_length + append_length);
     memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 }
@@ -659,7 +665,7 @@ static inline uint8_t sbufReadUI8(const sbuf_t *const b)
  */
 static inline void sbufReadUnAlignedUI16(const sbuf_t *const b, uint16_t *const dest)
 {
-    sbufByteCopy(dest, sbufGetRawPtr(b), (uint32_t) sizeof(*dest));
+    sbufByteCopy(dest, sbufGetRawPtr(b), sizeof(*dest));
 }
 
 /**
@@ -667,7 +673,7 @@ static inline void sbufReadUnAlignedUI16(const sbuf_t *const b, uint16_t *const 
  */
 static inline void sbufReadUnAlignedUI64(const sbuf_t *const b, uint64_t *const dest)
 {
-    sbufByteCopy(dest, sbufGetRawPtr(b), (uint32_t) sizeof(*dest));
+    sbufByteCopy(dest, sbufGetRawPtr(b), sizeof(*dest));
 }
 
 /**
@@ -675,7 +681,7 @@ static inline void sbufReadUnAlignedUI64(const sbuf_t *const b, uint64_t *const 
  */
 static inline void sbufWriteUnAlignedI32(sbuf_t *const b, const int32_t data)
 {
-    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, sizeof(data));
 }
 
 /**
@@ -683,7 +689,7 @@ static inline void sbufWriteUnAlignedI32(sbuf_t *const b, const int32_t data)
  */
 static inline void sbufWriteUnAlignedUI32(sbuf_t *const b, const uint32_t data)
 {
-    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, sizeof(data));
 }
 
 /**
@@ -691,7 +697,7 @@ static inline void sbufWriteUnAlignedUI32(sbuf_t *const b, const uint32_t data)
  */
 static inline void sbufWriteUnAlignedI16(sbuf_t *const b, const int16_t data)
 {
-    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, sizeof(data));
 }
 
 /**
@@ -699,7 +705,7 @@ static inline void sbufWriteUnAlignedI16(sbuf_t *const b, const int16_t data)
  */
 static inline void sbufWriteUnAlignedUI16(sbuf_t *const b, const uint16_t data)
 {
-    sbufByteCopy(sbufGetMutablePtr(b), &data, (uint32_t) sizeof(data));
+    sbufByteCopy(sbufGetMutablePtr(b), &data, sizeof(data));
 }
 
 // Aligned

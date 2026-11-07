@@ -142,7 +142,7 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
         {
             if (atomicLogRateLimiterShouldLog(&tun_oversized_read_log, kTunPacketFailureLogIntervalMs))
             {
-                LOGW("TunDevice: discarded oversized input on %s (%u bytes, device MTU %u)",
+                LOGW("TunDevice: discarded oversized input on %s (%zu bytes, device MTU %u)",
                      tdev->name,
                      sbufGetLength(bufs[queued_count]),
                      mtu);
@@ -290,7 +290,7 @@ static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *bu
     {
         if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
+            LOGW("TunDevice: discarded a packet -> size %zu exceeds maximum IP packet size %u",
                  sbufGetLength(buf),
                  (unsigned) UINT16_MAX);
         }

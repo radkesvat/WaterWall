@@ -159,7 +159,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
 
     sbuf_t        *first  = input(pool, "abc", 3);
     sbuf_t        *second = input(pool, "defgh", 5);
-    const uint32_t cursor = first->curpos;
+    const size_t   cursor = sbufGetLeftCapacity(first);
     twfRequire(tlsbufferbioFeed(bio, first) && tlsbufferbioFeed(bio, second), "admit fragmented input");
     twfRequire(BIO_ctrl_pending(bio) == 8 && ! BIO_should_retry(bio), "input clears retry and counts bytes");
     twfRequire(tlsbufferbioPeek(bio, bytes, 6) == 6 && memoryCompare(bytes, "abcdef", 6) == 0 &&
@@ -168,7 +168,7 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
     twfRequire(BIO_read(bio, bytes, 1) == 1 && bytes[0] == 'a', "partial read");
 
     sbuf_t *taken = tlsbufferbioTake(bio);
-    twfRequire(taken == first && taken->curpos == cursor + 1 && sbufGetLength(taken) == 2 &&
+    twfRequire(taken == first && sbufGetLeftCapacity(taken) == cursor + 1 && sbufGetLength(taken) == 2 &&
                    memoryCompare(sbufGetRawPtr(taken), "bc", 2) == 0,
                "input is retained without a staging copy or compaction");
     bufferpoolReuseBuffer(pool, taken);

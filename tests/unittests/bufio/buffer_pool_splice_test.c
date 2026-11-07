@@ -231,7 +231,7 @@ static void checkSplice(sbuf_t *buffer, uint16_t padding)
     require(buffer != NULL && sbufIsSplice(buffer), "splice checkout failed");
     require(sbufGetTotalCapacityNoPadding(buffer) == SPLICE_BUFFER_STORAGE_SIZE,
             "splice checkout changed physical wrapper capacity");
-    require(buffer->l_pad == padding && buffer->curpos == padding && buffer->len == 0,
+    require(buffer->l_pad == padding && sbufGetLeftCapacity(buffer) == padding && buffer->len == 0,
             "splice checkout did not restore geometry");
     const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
     require(metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0 && metadata.pipe_capacity >= kPipeCapacity &&
@@ -675,7 +675,7 @@ static void testDiscard(void)
         require(discard_splice_calls >= 2 && discard_splice_error == 0,
                 "discard skipped its splice path or injected failure");
         require((discard_read_calls > 0) == (i > 1), "discard used the wrong fallback path");
-        require(sbufSpliceIsReusable(buffer) && buffer->curpos == buffer->l_pad &&
+        require(sbufSpliceIsReusable(buffer) && sbufGetLeftCapacity(buffer) == buffer->l_pad &&
                     sbufSpliceMetadata(buffer).pipefd[0] == metadata.pipefd[0] && sbufSplicePoolCount() == 1,
                 "discard left stale data or retired a healthy pipe");
     }
@@ -689,9 +689,9 @@ static void testDiscard(void)
                 sbufSpliceMetadata(buffer).pipefd[0] == metadata.pipefd[0],
             "prefix-only discard retired a healthy empty pipe");
     /* Materialization consumes all bytes without moving the source prefix cursor. */
-    buffer->curpos = buffer->l_pad - 4;
+    buffer->data = buffer->head + (buffer->l_pad - 4);
     sbufSpliceDiscard(buffer);
-    require(buffer->curpos == buffer->l_pad && sbufSpliceIsReusable(buffer),
+    require(sbufGetLeftCapacity(buffer) == buffer->l_pad && sbufSpliceIsReusable(buffer),
             "empty consumed prefix retained a shifted cursor");
     sbufDestroy(buffer);
     destroyInventory();

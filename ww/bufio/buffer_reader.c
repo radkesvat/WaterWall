@@ -18,7 +18,7 @@ static bool readerGatherPrefix(buffer_pool_t *pool, sbuf_t **active_head, buffer
         sbuf_t *head = readerHead(active_head, tail);
         if (head == NULL)
             return false;
-        const uint32_t count = min(needed - *filled, sbufGetLength(head));
+        const uint16_t count = (uint16_t) MIN_SIZE(needed - *filled, sbufGetLength(head));
         sbufReadRangeToMemory(head, dst + *filled, count);
         *filled += count;
         if (sbufGetLength(head) == 0)
@@ -39,10 +39,10 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     if (head_charge <= max_charge && bufferqueueGetCharge(tail) <= max_charge - head_charge)
         return true;
 
-    const uint32_t head_bytes = head == NULL ? 0 : sbufGetLength(head);
-    if (bufferqueueGetBufLen(tail) > UINT32_MAX - head_bytes)
+    const size_t head_bytes = head == NULL ? 0 : sbufGetLength(head);
+    if (head_bytes > UINT32_MAX || bufferqueueGetBufLen(tail) > UINT32_MAX - head_bytes)
         return false;
-    const uint32_t bytes = (uint32_t) bufferqueueGetBufLen(tail) + head_bytes;
+    const uint32_t bytes = (uint32_t) (bufferqueueGetBufLen(tail) + head_bytes);
     if (bytes == 0)
     {
         while ((head = readerHead(active_head, tail)) != NULL)
@@ -61,14 +61,15 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     if (head != NULL)
     {
         /* Growth headroom is optional; the exact retained bytes must fit first. */
-        const uint64_t grown = max(bytes, (uint64_t) sbufGetLength(head) * 2U);
+        const uint64_t grown = MAX_U64(bytes, (uint64_t) sbufGetLength(head) * 2U);
         if (bufferpoolQueryBestFit(pool, grown, padding, &fit) && fit.allocation_charge <= max_charge)
             capacity = (uint32_t) grown;
     }
 
     sbuf_t *combined = NULL;
     if (head != NULL && head_charge <= max_charge && sbufGetLeftCapacity(head) >= padding &&
-        (sbufIsSplice(head) ? head->curpos == head->l_pad : bufferqueueGetBufLen(tail) <= sbufGetTailCapacity(head)))
+        (sbufIsSplice(head) ? sbufGetLeftCapacity(head) == head->l_pad
+                            : bufferqueueGetBufLen(tail) <= sbufGetTailCapacity(head)))
     {
         combined     = head;
         *active_head = NULL;
@@ -194,7 +195,7 @@ void bufferreaderDestroy(buffer_reader_t *reader)
 
 bool bufferreaderTryPush(buffer_reader_t *reader, sbuf_t **input, size_t max_bytes)
 {
-    const uint32_t bytes = sbufGetLength(*input);
+    const size_t bytes = sbufGetLength(*input);
     if (reader->bytes > max_bytes || bytes > max_bytes - reader->bytes ||
         ! bufferqueueTryPushBack(&reader->pending, input))
         return false;

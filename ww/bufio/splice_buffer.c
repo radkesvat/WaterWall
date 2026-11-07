@@ -11,15 +11,15 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-static void spliceReadPipe(int fd, uint8_t *dest, uint32_t bytes, const char *caller)
+static void spliceReadPipe(int fd, uint8_t *dest, size_t bytes, const char *caller)
 {
-    uint32_t consumed = 0;
+    size_t consumed = 0;
     while (consumed < bytes)
     {
         const ssize_t result = read(fd, dest + consumed, bytes - consumed);
         if (LIKELY(result > 0))
         {
-            consumed += (uint32_t) result;
+            consumed += (size_t) result;
             continue;
         }
 
@@ -29,10 +29,10 @@ static void spliceReadPipe(int fd, uint8_t *dest, uint32_t bytes, const char *ca
             continue;
         }
         /* Claimed splice bytes must already exist in the private pipe. */
-        LOGF("%s: incomplete read from pipe (requested=%u, consumed=%u, result=%lld, errno=%d)",
+        LOGF("%s: incomplete read from pipe (requested=%zu, consumed=%zu, result=%lld, errno=%d)",
              caller,
-             (unsigned int) bytes,
-             (unsigned int) consumed,
+             bytes,
+             consumed,
              (long long) result,
              read_error);
         abortProgramNow(1);
@@ -59,8 +59,8 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
         return buf;
     }
 
-    const uint32_t length   = sbufGetLength(buf);
-    sbuf_t        *ordinary = bufferpoolTryGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
+    const size_t length   = sbufGetLength(buf);
+    sbuf_t      *ordinary = bufferpoolTryGetBestFit(pool, length, bufferpoolGetLargeBufferPadding(pool));
     if (ordinary == NULL)
     {
         return NULL;
@@ -76,7 +76,7 @@ sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
     if (sbufGetLeftCapacity(buf) >= need)
         return buf;
 
-    const uint32_t length  = sbufGetLength(buf);
+    const size_t   length  = sbufGetLength(buf);
     const uint16_t padding = max(bufferpoolGetLargeBufferPadding(pool), need);
 #ifndef NDEBUG
     buffer_pool_fit_t fit;
@@ -107,25 +107,26 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
         abortProgramNow(1);
     }
 #if WW_HAVE_SPLICE
-    const uint32_t prefix_bytes = sbufGetResidentPrefixLength(buf);
-    const uint32_t body_bytes   = buf->len - prefix_bytes;
+    const size_t source_headroom = sbufGetLeftCapacity(buf);
+    const size_t prefix_bytes    = sbufGetResidentPrefixLength(buf);
+    const size_t body_bytes      = buf->len - prefix_bytes;
 
-    if (UNLIKELY(buf->curpos > sbufGetTotalCapacity(dest)))
+    if (UNLIKELY(source_headroom > sbufGetTotalCapacity(dest)))
     {
         LOGF("sbufSpliceMaterializeToBuffer: destination too small for left headroom "
-             "(capacity=%u, left headroom=%u)",
-             (unsigned int) sbufGetTotalCapacity(dest),
-             (unsigned int) buf->curpos);
+             "(capacity=%zu, left headroom=%zu)",
+             sbufGetTotalCapacity(dest),
+             source_headroom);
         abortProgramNow(1);
     }
-    dest->curpos = buf->curpos;
+    dest->data = dest->head + source_headroom;
     if (UNLIKELY(sbufGetLength(buf) > sbufGetMaximumWriteableSize(dest)))
     {
         LOGF("sbufSpliceMaterializeToBuffer: destination too small "
-             "(capacity=%u, left headroom=%u, payload=%u)",
-             (unsigned int) sbufGetTotalCapacity(dest),
-             (unsigned int) buf->curpos,
-             (unsigned int) sbufGetLength(buf));
+             "(capacity=%zu, left headroom=%zu, payload=%zu)",
+             sbufGetTotalCapacity(dest),
+             source_headroom,
+             sbufGetLength(buf));
         abortProgramNow(1);
     }
 
@@ -136,8 +137,8 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
         abortProgramNow(1);
     }
 
-    sbufByteCopy(dest->buf + buf->curpos, sbufGetRawPtr(buf), prefix_bytes);
-    spliceReadPipe(metadata.pipefd[0], dest->buf + buf->l_pad, body_bytes, __func__);
+    sbufByteCopy(dest->data, sbufGetRawPtr(buf), prefix_bytes);
+    spliceReadPipe(metadata.pipefd[0], dest->head + buf->l_pad, body_bytes, __func__);
 
     sbufSetLength(dest, buf->len);
     dest->flags = buf->flags & (uint16_t) ~(kSbufFlagSplice | kSbufFlagSplicePooled | kSbufFlagRecalculateChecksum);
@@ -152,7 +153,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
 #endif
 }
 
-sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
+sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes)
 {
     if (UNLIKELY(buf == NULL || ! sbufIsSplice(buf)))
     {
@@ -165,34 +166,36 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
         abortProgramNow(1);
     }
 #if WW_HAVE_SPLICE
-    const uint32_t source_length = sbufGetLength(buf);
-    if (UNLIKELY(buf->curpos > sbufGetLeftPadding(buf) || buf->curpos > sbufGetTotalCapacity(buf) ||
+    const size_t source_length   = sbufGetLength(buf);
+    const size_t source_headroom = sbufGetLeftCapacity(buf);
+    if (UNLIKELY(source_headroom > sbufGetLeftPadding(buf) || source_headroom > sbufGetTotalCapacity(buf) ||
                  source_length > sbufGetMaximumWriteableSize(buf)))
     {
         LOGF("sbufSpliceReadToBuffer: invalid source cursor or logical capacity");
         abortProgramNow(1);
     }
-    const uint32_t prefix_bytes = (uint32_t) sbufGetLeftPadding(buf) - buf->curpos;
+    const size_t prefix_bytes = (size_t) sbufGetLeftPadding(buf) - source_headroom;
     if (UNLIKELY(source_length < prefix_bytes || bytes > source_length))
     {
         LOGF("sbufSpliceReadToBuffer: requested bytes or prefix exceed source length "
-             "(requested=%u, prefix=%u, length=%u)",
-             (unsigned int) bytes,
-             (unsigned int) prefix_bytes,
-             (unsigned int) source_length);
+             "(requested=%zu, prefix=%zu, length=%zu)",
+             bytes,
+             prefix_bytes,
+             source_length);
         abortProgramNow(1);
     }
 
-    const uint32_t dest_length = sbufGetLength(dest);
-    if (UNLIKELY(dest->curpos > sbufGetTotalCapacity(dest) || dest_length > sbufGetMaximumWriteableSize(dest) ||
+    const size_t dest_length   = sbufGetLength(dest);
+    const size_t dest_headroom = sbufGetLeftCapacity(dest);
+    if (UNLIKELY(dest_headroom > sbufGetTotalCapacity(dest) || dest_length > sbufGetMaximumWriteableSize(dest) ||
                  bytes > sbufGetMaximumWriteableSize(dest) - dest_length))
     {
         LOGF("sbufSpliceReadToBuffer: destination has insufficient append space "
-             "(requested=%u, length=%u, cursor=%u, capacity=%u)",
-             (unsigned int) bytes,
-             (unsigned int) dest_length,
-             (unsigned int) dest->curpos,
-             (unsigned int) sbufGetTotalCapacity(dest));
+             "(requested=%zu, length=%zu, cursor=%zu, capacity=%zu)",
+             bytes,
+             dest_length,
+             dest_headroom,
+             sbufGetTotalCapacity(dest));
         abortProgramNow(1);
     }
     if (UNLIKELY(bytes == 0))
@@ -200,9 +203,9 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
         return dest;
     }
 
-    const uint32_t copied_prefix = min(bytes, prefix_bytes);
-    const uint32_t body_bytes    = bytes - copied_prefix;
-    uint8_t       *target        = sbufGetMutablePtr(dest) + dest_length;
+    const size_t copied_prefix = min(bytes, prefix_bytes);
+    const size_t body_bytes    = bytes - copied_prefix;
+    uint8_t     *target        = sbufGetMutablePtr(dest) + dest_length;
     if (body_bytes != 0)
     {
         splice_buffer_metadata_t metadata = sbufSpliceMetadata(buf);
@@ -229,15 +232,15 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, uint32_t bytes)
 /* Progress is committed after each syscall. EAGAIN can mean destination slot
  * exhaustion even when nominal byte capacity remains; ordinary fallback then
  * validates the still-claimed source bytes through the exact read helper. */
-static uint32_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, uint32_t bytes)
+static size_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, size_t bytes)
 {
 #if WW_HAVE_SPLICE
     const splice_buffer_metadata_t target = sbufSpliceMetadata(dest);
-    uint32_t                       moved  = 0;
+    size_t                         moved  = 0;
     while (moved < bytes)
     {
-        const uint32_t resident = sbufGetResidentPrefixLength(source);
-        ssize_t        result;
+        const size_t resident = sbufGetResidentPrefixLength(source);
+        ssize_t      result;
         if (resident != 0)
             result = write(target.pipefd[1], sbufGetRawPtr(source), min(resident, bytes - moved));
         else
@@ -247,7 +250,7 @@ static uint32_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, uint32_t byt
         }
         if (result > 0)
         {
-            const uint32_t count = (uint32_t) result;
+            const size_t count = (size_t) result;
             if (resident != 0)
                 sbufShiftRight(source, count);
             else
@@ -275,15 +278,15 @@ static uint32_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, uint32_t byt
 #endif
 }
 
-sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *dest, uint32_t bytes, uint32_t final_size,
+sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *dest, size_t bytes, size_t final_size,
                         uint16_t padding)
 {
     assert(bytes <= sbufGetLength(source) && bytes <= final_size);
     assert(dest == NULL || sbufGetLength(dest) <= final_size - bytes);
-    uint32_t moved = 0;
+    size_t moved = 0;
     if (dest != NULL && sbufIsSplice(dest))
     {
-        assert(dest->curpos == dest->l_pad);
+        assert(dest->data == dest->head + dest->l_pad);
         const splice_buffer_metadata_t metadata = sbufSpliceMetadata(dest);
         if (metadata.pipefd[0] >= 0 && metadata.pipefd[1] >= 0)
             moved = spliceAppendAvailable(source, dest, bytes);
@@ -308,10 +311,10 @@ sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *dest, uint3
     return dest;
 }
 
-void sbufReadRangeToMemory(sbuf_t *source, void *destination, uint32_t bytes)
+void sbufReadRangeToMemory(sbuf_t *source, void *destination, size_t bytes)
 {
     assert(bytes <= sbufGetLength(source));
-    const uint32_t prefix = min(bytes, sbufGetResidentPrefixLength(source));
+    const size_t prefix = min(bytes, sbufGetResidentPrefixLength(source));
     sbufByteCopy(destination, sbufGetRawPtr(source), prefix);
     sbufShiftRight(source, prefix);
     if (bytes != prefix)

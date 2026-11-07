@@ -338,7 +338,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         assert(ls->buffering == NULL || ! sbufIsSplice(ls->buffering));
         const uint64_t retained = ls->buffering ? sbufGetLength(ls->buffering) : 0;
         const uint64_t total    = retained + sbufGetLength(buf);
-        uint32_t       capacity;
+        size_t         capacity;
         if (! sbufTryComputeCapacity(total, padding, &capacity))
             goto setup_failure;
 

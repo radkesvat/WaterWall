@@ -89,13 +89,13 @@ static void testBufferStreamSettleRetained(void)
             "empty retention settlement kept empty allocations below the limits");
 
     sbuf_t        *original        = makePooledBuffer(fixture.pool, false, 20, 7, 0x30);
-    const uint32_t original_cursor = original->curpos;
+    const size_t   original_cursor = sbufGetLeftCapacity(original);
     const size_t   original_charge = sbufGetAllocationCharge(original);
     bufferstreamPush(&stream, original);
     require(bufferstreamSettleRetained(&stream, original_charge), "exact retention limits were refused");
     require(bufferstreamSettleRetained(&stream, 0), "best-fit charge floor was refused");
     require(*bs_doublequeue_t_front(&stream.q) == original &&
-                (*bs_doublequeue_t_front(&stream.q))->curpos == original_cursor &&
+                sbufGetLeftCapacity(*bs_doublequeue_t_front(&stream.q)) == original_cursor &&
                 bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetCharge(&stream) == original_charge,
             "settlement copied input already within its effective limits");
     sbuf_t *read = bufferstreamFullRead(&stream);

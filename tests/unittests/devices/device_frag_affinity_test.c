@@ -23,7 +23,7 @@ static void        checkedFragmentPoolReuse(buffer_pool_t *pool, sbuf_t *buf)
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments recycled into a reader pool");
     bufferpoolReuseBuffer(pool, buf);
 }
-static sbuf_t *checkedFragmentPoolGet(buffer_pool_t *pool, uint32_t size, uint16_t padding)
+static sbuf_t *checkedFragmentPoolGet(buffer_pool_t *pool, size_t size, uint16_t padding)
 {
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments allocated from a reader pool");
     return bufferpoolGetBestFit(pool, size, padding);

@@ -707,7 +707,7 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
         if (UNLIKELY(sbufGetLength(buf) > WINTUN_MAX_IP_PACKET_SIZE))
         {
             if (atomicLogRateLimiterShouldLog(&tun_oversized_output_log, kTunDiscardReportIntervalMs))
-                LOGW("TunDevice: discarded a packet -> size %u exceeds maximum IP packet size %u",
+                LOGW("TunDevice: discarded a packet -> size %zu exceeds maximum IP packet size %u",
                      sbufGetLength(buf),
                      (unsigned) WINTUN_MAX_IP_PACKET_SIZE);
 

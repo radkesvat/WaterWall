@@ -449,7 +449,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
         if (! entry->assembly || need > sbufGetMaximumWriteableSize(entry->assembly))
         {
             buffer_pool_fit_t fit = {0};
-            uint32_t          capacity;
+            size_t            capacity;
             const bool        fits = table->shared ? sbufTryComputeCapacity(need, padding, &capacity) &&
                                                   sbufTryComputeQueueCharge(capacity, &fit.allocation_charge)
                                                    : bufferpoolQueryBestFit(table->release_pool, need, padding, &fit);

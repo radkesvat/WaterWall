@@ -677,7 +677,7 @@ void captureLinuxNetfilterExposePacket(sbuf_t *buff, const uint8_t *message, con
     uintptr_t message_addr   = (uintptr_t) message;
     uint32_t  payload_offset = (uint32_t) (payload_addr - message_addr);
 
-    buff->curpos += payload_offset;
+    buff->data += payload_offset;
     sbufSetLength(buff, view->payload_length);
 }
 

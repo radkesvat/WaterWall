@@ -195,10 +195,10 @@ void                           __real_masterpoolDestroy(master_pool_t *pool);
 void                           __wrap_masterpoolDestroy(master_pool_t *pool);
 void                           __real_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
 void                           __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf);
-sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__real_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__real_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left);
+sbuf_t *__wrap_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left);
 void                           __real_sbufDestroy(sbuf_t *buf);
 void                           __wrap_sbufDestroy(sbuf_t *buf);
 bool __wrap_tunLinuxGsoMaxSegmentsConfigure(const char *ifname, uint32_t requested, uint32_t *active);
@@ -1084,7 +1084,7 @@ void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *buf)
     }
 }
 
-sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_capacity, uint16_t pad_left)
 {
     sbuf_t *buf = __real_bufferpoolGetBestFit(pool, minimum_capacity, pad_left);
     if (inside_reader_callback && gso_scratch_buffer == NULL && minimum_capacity == 65536)
@@ -1094,7 +1094,7 @@ sbuf_t *__wrap_bufferpoolGetBestFit(buffer_pool_t *pool, uint32_t minimum_capaci
     return buf;
 }
 
-sbuf_t *__wrap_sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *__wrap_sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left)
 {
     if (record_startup_packet_allocations && minimum_capacity >= kTunOffloadPacketStorageCapacity)
         ++startup_packet_allocations;

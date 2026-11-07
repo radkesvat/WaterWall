@@ -14,7 +14,7 @@
 #endif
 #include "wlibc.h"
 
-static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left);
+static sbuf_t *sbufAllocate(size_t capacity, uint16_t pad_left);
 
 #if WW_HAVE_SPLICE
 /* Owned by GSTATE. Startup fixes limits and aligned padding before producers
@@ -68,8 +68,7 @@ static sbuf_t *sbufSplicePoolCreateBuffer(sbuf_splice_inventory_t *inventory)
         errno = error;
         return NULL;
     }
-    sbuf_t *buf =
-        sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) inventory->padding, (uint16_t) inventory->padding);
+    sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (size_t) inventory->padding, (uint16_t) inventory->padding);
     buf->flags = kSbufFlagSplice | kSbufFlagSplicePooled;
     sbufSpliceSetMetadata(
         buf, (splice_buffer_metadata_t) {.pipefd = {pair[0], pair[1]}, .pipe_capacity = (uint32_t) capacity});
@@ -233,10 +232,10 @@ size_t sbufGetAllocationCharge(const sbuf_t *buf)
     return sizeof(sbuf_t) + storage + (size_t) kSbufAllocationAlignment;
 }
 
-bool sbufTryComputeQueueCharge(uint32_t capacity, size_t *charge)
+bool sbufTryComputeQueueCharge(size_t capacity, size_t *charge)
 {
     const size_t overhead = sizeof(sbuf_t) + (size_t) kSbufAllocationAlignment;
-    if ((uint64_t) capacity > SIZE_MAX - overhead)
+    if (capacity > SIZE_MAX - overhead)
         return false;
     *charge = overhead + (size_t) capacity;
     return true;
@@ -250,8 +249,8 @@ bool sbufTryGetQueueCharge(const sbuf_t *buf, size_t *charge)
 size_t sbufGetQueueCharge(const sbuf_t *buf)
 {
     const size_t   overhead = sizeof(sbuf_t) + (size_t) kSbufAllocationAlignment;
-    const uint32_t capacity = sbufGetTotalCapacity(buf);
-    assert((uint64_t) capacity <= SIZE_MAX - overhead);
+    const size_t   capacity = sbufGetTotalCapacity(buf);
+    assert(capacity <= SIZE_MAX - overhead);
     return overhead + (size_t) capacity;
 }
 
@@ -278,17 +277,17 @@ void sbufDestroy(sbuf_t *b)
     memoryFreeAligned(b);
 }
 
-static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
+static sbuf_t *sbufAllocate(size_t capacity, uint16_t pad_left)
 {
     size_t  total_size = sizeof(sbuf_t) + (size_t) capacity;
     sbuf_t *b          = memoryAllocateAligned(total_size, kSbufAllocationAlignment);
 
 #ifdef DEBUG
-    memorySet(b->buf, 0x55, capacity);
+    memorySet(b->head, 0x55, capacity);
 #else
     if (capacity > 2048)
     {
-        volatile uint8_t *bytes     = b->buf;
+        volatile uint8_t *bytes     = b->head;
         size_t            remaining = capacity;
         /* Prefault fresh storage, including padding, with a minimum page size
          * of 4096 bytes. Touch the last byte for a trailing unaligned page.
@@ -306,14 +305,14 @@ static sbuf_t *sbufAllocate(uint32_t capacity, uint16_t pad_left)
 
     b->flags    = 0;
     b->len      = 0;
-    b->curpos   = pad_left;
+    b->data     = b->head + pad_left;
     b->capacity = capacity;
     b->l_pad    = pad_left;
 
     return b;
 }
 
-sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
+sbuf_t *sbufCreateWithPadding(size_t minimum_capacity, uint16_t pad_left)
 {
     pad_left = sbufAlignLeftPadding(pad_left);
 
@@ -329,7 +328,7 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
      * nonsensical, so this is Category D. Callers holding an untrusted length
      * must pre-validate with sbufTryComputeCapacity() and fail locally instead.
      */
-    uint32_t real_cap = 0;
+    size_t real_cap = 0;
     if (! sbufTryComputeCapacity(minimum_capacity, pad_left, &real_cap))
     {
         printError("sbuf: capacity overflow (minimum_capacity + pad_left)");
@@ -342,7 +341,7 @@ sbuf_t *sbufCreateWithPadding(uint32_t minimum_capacity, uint16_t pad_left)
     return sbufAllocate(real_cap, pad_left);
 }
 
-sbuf_t *sbufCreate(uint32_t minimum_capacity)
+sbuf_t *sbufCreate(size_t minimum_capacity)
 {
     return sbufCreateWithPadding(minimum_capacity, 0);
 }
@@ -350,7 +349,7 @@ sbuf_t *sbufCreate(uint32_t minimum_capacity)
 sbuf_t *sbufCreateSplice(uint16_t pad_left)
 {
     pad_left    = sbufAlignLeftPadding(pad_left);
-    sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (uint32_t) pad_left, pad_left);
+    sbuf_t *buf = sbufAllocate(SPLICE_BUFFER_STORAGE_SIZE + (size_t) pad_left, pad_left);
     buf->flags  = kSbufFlagSplice;
     sbufSpliceSetMetadata(buf, (splice_buffer_metadata_t) {.pipefd = {-1, -1}});
     return buf;
@@ -361,16 +360,16 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     assert(b != NULL && dest != NULL);
     assert(b != dest);
 
-    const uint32_t source_curpos = b->curpos;
-    const uint32_t source_length = sbufGetLength(b);
-    const uint32_t dest_capacity = sbufGetTotalCapacity(dest);
+    const size_t source_offset = sbufGetLeftCapacity(b);
+    const size_t source_length = sbufGetLength(b);
+    const size_t dest_capacity = sbufGetTotalCapacity(dest);
 
-    if (UNLIKELY(source_curpos > dest_capacity || source_length > dest_capacity - source_curpos))
+    if (UNLIKELY(source_offset > dest_capacity || source_length > dest_capacity - source_offset))
     {
         return false;
     }
 
-    dest->curpos = source_curpos;
+    dest->data = dest->head + source_offset;
     sbufSetLength(dest, source_length);
     if (source_length > 0)
     {
@@ -395,12 +394,12 @@ sbuf_t *sbufDuplicate(sbuf_t *b)
 
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 {
-    uint32_t root_length   = sbufGetLength(root);
-    uint32_t append_length = sbufGetLength(buf);
+    size_t root_length   = sbufGetLength(root);
+    size_t append_length = sbufGetLength(buf);
 
-    if (UNLIKELY(root_length > UINT32_MAX - append_length))
+    if (UNLIKELY(append_length > UINT32_MAX || root_length > UINT32_MAX - append_length))
     {
-        printError("sbuf: concat overflow (root=%u, append=%u)", root_length, append_length);
+        printError("sbuf: concat overflow (root=%zu, append=%zu)", root_length, append_length);
         abortProgramNow(1);
     }
 
@@ -412,13 +411,13 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
     return root;
 }
 
-sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_t bytes)
+sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const size_t bytes)
 {
-    uint32_t dest_length = sbufGetLength(dest);
+    size_t dest_length = sbufGetLength(dest);
 
     assert(bytes <= sbufGetLength(source));
-    assert(dest_length <= UINT32_MAX - bytes);
-    assert(dest_length + bytes <= sbufGetMaximumWriteableSize(dest));
+    assert(dest_length <= sbufGetMaximumWriteableSize(dest));
+    assert(bytes <= sbufGetMaximumWriteableSize(dest) - dest_length);
 
     memoryCopyLarge(sbufGetMutablePtr(dest) + dest_length, sbufGetRawPtr(source), bytes);
     sbufSetLength(dest, dest_length + bytes);
@@ -428,7 +427,7 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const uint32_
     return dest;
 }
 
-sbuf_t *sbufSlice(sbuf_t *const b, const uint32_t bytes)
+sbuf_t *sbufSlice(sbuf_t *const b, const size_t bytes)
 {
     assert(b != NULL && ! sbufIsSplice(b));
     assert(bytes <= sbufGetLength(b));
@@ -515,7 +514,7 @@ void sbufSpliceDiscard(sbuf_t *buf)
     sbufSpliceCheckBuffer(buf);
     if (buf->len == 0)
     {
-        buf->curpos = buf->l_pad;
+        buf->data = buf->head + buf->l_pad;
         return;
     }
 #if WW_HAVE_SPLICE
@@ -554,7 +553,7 @@ void sbufSpliceDiscard(sbuf_t *buf)
     }
 #endif
     buf->len    = 0;
-    buf->curpos = buf->l_pad;
+    buf->data   = buf->head + buf->l_pad;
 }
 
 bool sbufSpliceIsReusable(const sbuf_t *buf)
@@ -586,7 +585,7 @@ void sbufDestroySplice(sbuf_t *buf)
     master_pool_t *pool = GSTATE.splice_inventory->pool;
     if (sbufSpliceMetadata(buf).pipefd[0] >= 0)
     {
-        buf->capacity            = (uint32_t) buf->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
+        buf->capacity            = (size_t) buf->l_pad + SPLICE_BUFFER_STORAGE_SIZE;
         master_pool_item_t *item = buf;
         masterpoolReuseItems(pool, &item, 1);
     }
