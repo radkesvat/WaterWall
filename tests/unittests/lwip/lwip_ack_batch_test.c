@@ -71,7 +71,7 @@ static err_t output(struct netif *netif, struct pbuf *packet, const ip4_addr_t *
 {
     (void) destination;
     fixture_t *f = netif->state;
-    uint8_t    bytes[60];
+    uint8_t    bytes[64];
     CHECK(f == &fixtures[owner] && wwLwipEngineCurrent() == f->engine);
     const uint16_t copied = (uint16_t) LWIP_MIN(packet->tot_len, sizeof(bytes));
     CHECK(copied >= 40 && pbuf_copy_partial(packet, bytes, copied, 0) == copied);
