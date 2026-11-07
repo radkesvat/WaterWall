@@ -774,8 +774,7 @@ static bool echsnitrickSelectTemplateForOffset(const ipmanipulator_tls_capture_s
         sbuf_t                       *buf  = slot->captured_packets[i].buf;
         echsnitrick_tcp_packet_info_t info = {0};
 
-        if (buf == NULL ||
-            ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+        if (buf == NULL || ! echsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
         {
             return false;
         }
@@ -1223,7 +1222,7 @@ static void echsnitrickProcessCompletedCapture(tunnel_t *t, const echsnitrick_fl
     uint64_t                now_ms = getTickMS();
     char                    sni_name[kIpManipulatorMaxTlsHostNameLen + 1];
 
-    const uint8_t *assembled     = (const uint8_t *) sbufGetRawPtr(slot->assembled_packet);
+    const uint8_t *assembled     = sbufGetRawPtr(slot->assembled_packet);
     uint32_t       assembled_len = sbufGetLength(slot->assembled_packet);
 
     echsnitrick_clienthello_match_t        match        = {0};
@@ -1299,9 +1298,8 @@ static void echsnitrickProcessCompletedCapture(tunnel_t *t, const echsnitrick_fl
      */
     echsnitrick_tcp_packet_info_t first_info = {0};
     if (slot->captured_packets[0].buf == NULL ||
-        ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(slot->captured_packets[0].buf),
-                                        sbufGetLength(slot->captured_packets[0].buf),
-                                        &first_info))
+        ! echsnitrickParseTcpPacketInfo(
+            sbufGetRawPtr(slot->captured_packets[0].buf), sbufGetLength(slot->captured_packets[0].buf), &first_info))
     {
         echsnitrickLogReject("the first captured packet is no longer parseable", sni_name);
         ipmanipulatorReleaseCapturedPacketsNormal(t, slot);
@@ -1431,9 +1429,8 @@ static bool echsnitrickIsPendingRetransmitLocked(const ipmanipulator_echsni_flow
         const ipmanipulator_captured_packet_t *pending      = &flow->pending_original_packets[i];
         echsnitrick_tcp_packet_info_t          pending_info = {0};
 
-        if (pending->buf == NULL || ! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(pending->buf),
-                                                                    sbufGetLength(pending->buf),
-                                                                    &pending_info))
+        if (pending->buf == NULL ||
+            ! echsnitrickParseTcpPacketInfo(sbufGetRawPtr(pending->buf), sbufGetLength(pending->buf), &pending_info))
         {
             continue;
         }
@@ -1488,7 +1485,7 @@ bool echsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     echsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                      now_ms = getTickMS();
 
-    if (! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! echsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }
@@ -1545,7 +1542,7 @@ bool echsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     echsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                      now_ms = getTickMS();
 
-    if (! echsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! echsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }

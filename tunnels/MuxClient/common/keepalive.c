@@ -68,7 +68,8 @@ static bool muxclientProbeParent(tunnel_t *t, line_t *l)
         return true;
     /* An unsent probe retains its due time without entering the FIFO or
      * starting a reply deadline. */
-    if (state->output.transport_paused || state->output.pumping || bufferqueueGetBufCount(&state->output.pending) != 0)
+    if (state->output.transport_paused || state->output.pumping ||
+        bufferqueueGetEntryCount(&state->output.pending) != 0)
         return true;
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));

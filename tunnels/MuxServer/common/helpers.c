@@ -341,7 +341,7 @@ void muxserverJoinConnection(muxserver_lstate_t *parent, muxserver_lstate_t *chi
         LOGF("MuxServer: failed to publish child CID index entry");
         abortProgramNow(1);
     }
-    assert(bufferqueueGetBufCount(&child->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child->pending_child_data) == 0);
     const bool attached =
         bufferqueueTryAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
     assert(attached);
@@ -485,9 +485,9 @@ static void muxserverParentStatsLogTask(tunnel_t *t, line_t *parent_l)
          stats.child_write_paused,
          bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
          splicestreamCharge(parent_ls->parent_state->read_stream),
-         (size_t) bufferqueueGetBufLen(&output->pending),
+         (size_t) bufferqueueGetLength(&output->pending),
          output->charge,
-         (size_t) bufferqueueGetBufCount(&output->pending),
+         (size_t) bufferqueueGetEntryCount(&output->pending),
          boolToYesNo(output->transport_paused),
          boolToYesNo(output->sources_throttled),
          stats.parent_write_paused,
@@ -882,7 +882,7 @@ static bool muxserverHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
                                                  muxserver_lstate_t *parent_ls, line_t *child_l,
                                                  muxserver_lstate_t *child_ls)
 {
-    size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
+    size_t pending_bytes = bufferqueueGetLength(&child_ls->pending_child_data);
 
     if (child_ls->close_state == kMuxServerChildCloseOpen && ! child_ls->paused && child_ls->flow_paused_sent &&
         pending_bytes < ts->child_buffer_resume_threshold)
@@ -905,7 +905,7 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
     assert(child_ls->close_state != kMuxServerChildCloseParentGoneDraining);
 
     lineRef(parent_l);
-    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    while (! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
@@ -947,7 +947,7 @@ muxserver_child_drain_result_t muxserverDrainAttachedChild(tunnel_t *t, line_t *
     }
 
     const muxserver_child_drain_result_t result =
-        ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+        ! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0
             ? kMuxServerChildDrainReadyToFinish
             : kMuxServerChildDrainBlocked;
     lineUnref(parent_l);
@@ -1045,7 +1045,7 @@ muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *
     assert(child_ls->parent == NULL);
     assert(child_ls->detached_registered);
 
-    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    while (! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
@@ -1063,7 +1063,7 @@ muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *
         }
     }
 
-    return ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+    return ! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0
                ? kMuxServerChildDrainReadyToFinish
                : kMuxServerChildDrainBlocked;
 }
@@ -1071,7 +1071,7 @@ muxserver_child_drain_result_t muxserverDrainDetachedChild(tunnel_t *t, line_t *
 void muxserverFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxserver_lstate_t *child_ls)
 {
     assert(! child_ls->paused);
-    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0);
 
     muxserverRemoveDetachedChild(t, child_l, child_ls);
     muxserverLinestateDestroy(t, child_ls);
@@ -1107,7 +1107,7 @@ bool muxserverFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxserver
     assert(child_ls->parent == parent_ls);
     discard parent_ls;
     assert(! child_ls->paused);
-    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0);
 
     lineRef(parent_l);
     muxserverLeaveConnection(child_ls);
@@ -1392,7 +1392,7 @@ void muxserverDrainParentOutput(tunnel_t *t, line_t *parent_l)
             break;
         parent = lineGetState(parent_l, t);
         output = &parent->parent_state->output;
-        if (output->transport_paused || ! bufferqueueGetBufCount(&output->pending))
+        if (output->transport_paused || ! bufferqueueGetEntryCount(&output->pending))
             break;
         /* A new snapshot requires FIFO progress; starting children finish in Init/Est. */
         sbuf_t *buf = muxParentOutputPop(output);
@@ -1432,9 +1432,9 @@ bool muxserverSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxse
         lineRef(writer_l);
     mux_parent_output_t *output = &parent->parent_state->output;
     assert((flag != kMuxFlagPing && flag != kMuxFlagPong) ||
-           (sbufGetLength(buf) == kMuxFrameLength && ((const uint8_t *) sbufGetRawPtr(buf))[3] == flag));
+           (sbufGetLength(buf) == kMuxFrameLength && (sbufGetRawPtr(buf))[3] == flag));
     const bool direct =
-        ! output->pumping && ! output->transport_paused && bufferqueueGetBufCount(&output->pending) == 0;
+        ! output->pumping && ! output->transport_paused && bufferqueueGetEntryCount(&output->pending) == 0;
     if (! direct)
     {
         buf = muxPrepareRetainedCandidate(pool, buf, false);

@@ -185,7 +185,7 @@ static sbuf_t *payload(const void *data, uint32_t length, bool splice, uint32_t 
 static void requireOrdinaryPending(line_t *line, const void *bytes, uint32_t length)
 {
     reverseserver_lstate_t *ls = lineGetState(line, fixture->reverse);
-    twfRequire(bufferqueueGetBufLen(&ls->pending) == length, "waiting length changed");
+    twfRequire(bufferqueueGetLength(&ls->pending) == length, "waiting length changed");
     uint32_t offset = 0;
     c_foreach(entry, ww_sbuffer_queue_t, ls->pending.q)
     {
@@ -561,8 +561,8 @@ static void testPendingBudget(bool user, bool entries, bool paired)
             reverseserverTunnelUpStreamPayload(f.reverse, line, buf);
     }
     reverseserver_lstate_t *ls = lineGetState(line, f.reverse);
-    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(&ls->pending) == count &&
-                   bufferqueueGetBufLen(&ls->pending) == (size_t) count * size,
+    twfRequire(lineIsAlive(line) && bufferqueueGetEntryCount(&ls->pending) == count &&
+                   bufferqueueGetLength(&ls->pending) == (size_t) count * size,
                "retention refused its exact inclusive budget");
     if (paired)
     {
@@ -586,7 +586,7 @@ static void testPendingBudget(bool user, bool entries, bool paired)
         else
             reverseserverTunnelUpStreamPayload(f.reverse, line, payload("", 0, false, 0));
     }
-    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(&ls->pending) == count,
+    twfRequire(lineIsAlive(line) && bufferqueueGetEntryCount(&ls->pending) == count,
                "empty application input consumed backlog entries");
     if (user)
         reverseserverTunnelDownStreamPayload(f.reverse, line, payload("x", 1, false, 0));

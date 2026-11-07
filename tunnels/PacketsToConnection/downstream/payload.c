@@ -93,7 +93,7 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
         if (writable == 0)
             break;
         const uint16_t write_len = (uint16_t) min((uint32_t) writable, buf_len - written);
-        err = tcp_write(tpcb, (const uint8_t *) sbufGetRawPtr(buf) + written, write_len, TCP_WRITE_FLAG_COPY);
+        err                      = tcp_write(tpcb, sbufGetRawPtr(buf) + written, write_len, TCP_WRITE_FLAG_COPY);
         if (err != ERR_OK)
             break;
         written += write_len;

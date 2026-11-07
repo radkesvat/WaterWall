@@ -159,7 +159,7 @@ static void vmessserverCloseLine(tunnel_t *t, line_t *l, vmessserver_close_origi
             ls->finish_pending = true;
             return;
         }
-        if (bufferqueueGetBufCount(&ls->pending_down) != 0)
+        if (bufferqueueGetEntryCount(&ls->pending_down) != 0)
         {
             ls->finish_pending = true;
             discard vmessserverDrainResponse(t, l, true);

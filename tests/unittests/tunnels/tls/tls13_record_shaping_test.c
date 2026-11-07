@@ -248,7 +248,7 @@ static size_t appendRecord(uint8_t *destination, size_t body_length, uint8_t fil
 static sbuf_t *makeBuffer(buffer_pool_t *pool, const uint8_t *bytes, size_t length)
 {
     sbuf_t *buffer = bufferpoolGetLargeBuffer(pool);
-    require(length <= sbufGetMaximumWriteableSize(buffer), "shaping test buffer was too small");
+    require(length <= sbufGetWritableCapacity(buffer), "shaping test buffer was too small");
     memoryCopy(sbufGetMutablePtr(buffer), bytes, length);
     sbufSetLength(buffer, (uint32_t) length);
     return buffer;

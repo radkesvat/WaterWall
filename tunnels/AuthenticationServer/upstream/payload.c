@@ -54,7 +54,7 @@ void authenticationserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationServer: upstream payload bytes=%u", (unsigned int) sbufGetLength(buf));
+        LOGD("AuthenticationServer: upstream payload bytes=%zu", sbufGetLength(buf));
     }
 
     lineRef(l);

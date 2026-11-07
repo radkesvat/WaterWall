@@ -272,7 +272,7 @@ static void testBackendFinishDuringEst(void)
     const uint8_t expected[] = {0, 0, 0, 1, 'X'};
     twfRequire(f.est_count == 1 && f.init_count == 2 && f.up_len == 2 && memoryCompare(f.up, "AB", 2) == 0 &&
                    f.down_len == sizeof(expected) && memoryCompare(f.down, expected, sizeof(expected)) == 0 &&
-                   bufferqueueGetBufCount(&ls->pending_down) == 0,
+                   bufferqueueGetEntryCount(&ls->pending_down) == 0,
                "VlessServer replacement backend could not deliver replies after Est callback Finish");
     closeFixture(&f);
 }
@@ -284,7 +284,7 @@ static void overflowResponseBytes(est_fixture_t *f, line_t *l)
     sbufSetLength(large, kVlessServerMaxPendingBytes);
     tunnelDownStreamPayload(f->node, l, large);
     vlessserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufLen(&ls->pending_down) == kVlessServerMaxPendingBytes,
+    twfRequire(bufferqueueGetLength(&ls->pending_down) == kVlessServerMaxPendingBytes,
                "VlessServer refused exact response FIFO byte limit");
     tunnelDownStreamPayload(f->node, l, estBytes(l, "X", 1));
 }
@@ -402,7 +402,7 @@ static void testUdpSplitLengthPrefix(bool empty_frame)
                        split_udp_payload_count == 1,
                    "VlessServer did not deliver exactly one split empty UDP datagram");
         twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
-                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetBufCount(&ls->pending_up) == 0,
+                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetEntryCount(&ls->pending_up) == 0,
                    "VlessServer split empty UDP datagram retained parser input");
         applicationInput(&f, 'B');
         twfRequire(lineIsAlive(f.line) && split_udp_payload_count == 2 && f.up_len == 2 &&

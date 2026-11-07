@@ -274,7 +274,7 @@ static void testPausedTimer(bool up)
     pauseConsumer();
     tokens(8);
     tick();
-    twfRequire(payloads == 0 && bufferqueueGetBufLen(queue()) == 8, "paused timer sent queued bytes to its consumer");
+    twfRequire(payloads == 0 && bufferqueueGetLength(queue()) == 8, "paused timer sent queued bytes to its consumer");
     twfRequire(timer() == NULL && resumes == 0, "paused backlog kept polling or released source");
     tokens(0);
     close_resume = true;
@@ -305,7 +305,7 @@ static void testSplit(bool up, bool splice, uint32_t prefix, const char *mode)
     measuring                   = true;
     tokens(2);
     tick();
-    twfRequire(received_length == 2 && bufferqueueGetBufLen(queue()) == 7, "split/reentry lost FIFO remainder");
+    twfRequire(received_length == 2 && bufferqueueGetLength(queue()) == 7, "split/reentry lost FIFO remainder");
     twfRequire(materialized == 0, "feasible split read pipe bytes into userspace");
     tokens(32);
     tick();
@@ -374,7 +374,7 @@ static void testBudgetedSpliceFallback(bool up)
                "refused temporary wrapper budget prevented ordinary partial progress");
     twfRequire(materialized == 2048 - 7, "budget fallback did not consume the exact granted pipe range");
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(budget);
-    twfRequire(usage.bytes == 2048 && bufferqueueGetBufCount(queue()) == 1 &&
+    twfRequire(usage.bytes == 2048 && bufferqueueGetEntryCount(queue()) == 1 &&
                    usage.charge == sbufGetQueueCharge(bufferqueueFront(queue())),
                "budget fallback retained temporary output/wrapper costs after handoff");
     expect_ordinary = false;
@@ -442,7 +442,7 @@ static void testLimits(bool up, unsigned dimension)
         sbuf_t *buf = bufferpoolGetBestFit(env.pool, kExpectedBytes, kPadding);
         sbufSetLength(buf, kExpectedBytes);
         submit(buf);
-        twfRequire(lineIsAlive(line) && bufferqueueGetBufLen(queue()) == kExpectedBytes,
+        twfRequire(lineIsAlive(line) && bufferqueueGetLength(queue()) == kExpectedBytes,
                    "refused exact payload-byte limit");
     }
     else
@@ -473,7 +473,7 @@ static void testManyBuffersWithinCharge(bool up, bool splice)
         charge += sbufGetQueueCharge(buf);
         submit(buf);
     }
-    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(queue()) == 1025 &&
+    twfRequire(lineIsAlive(line) && bufferqueueGetEntryCount(queue()) == 1025 &&
                    bufferqueueGetCharge(queue()) == charge && charge < kExpectedCharge,
                "count alone refused empty buffers within retained-charge allowance");
     independent_sources = false;
@@ -611,7 +611,7 @@ static void testQuiesce(bool up)
     speedlimit_tstate_t *settings = tunnelGetState(node);
     twfRequire(settings->worker_buckets[0].active_lines == state(), "active line absent from owner inventory");
     speedlimitTunnelWorkerQuiesce(node, 0, NULL);
-    twfRequire(timer() == NULL && bufferqueueGetBufLen(queue()) == 8,
+    twfRequire(timer() == NULL && bufferqueueGetLength(queue()) == 8,
                "quiescence did not detach timer while preserving owner-drain buffers");
     teardown();
 }

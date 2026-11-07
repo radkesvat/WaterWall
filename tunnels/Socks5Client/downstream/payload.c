@@ -29,7 +29,7 @@ void socks5clientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     }
-    if (ls->input_draining || bufferqueueGetBufCount(&ls->pending_down) != 0)
+    if (ls->input_draining || bufferqueueGetEntryCount(&ls->pending_down) != 0)
     {
         if (socks5clientQueueReplyInput(t, l, buf) && ! ls->input_draining)
             discard socks5clientDrainHandshakeInput(t, l, ls);

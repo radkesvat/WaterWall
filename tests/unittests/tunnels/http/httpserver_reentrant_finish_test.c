@@ -64,9 +64,9 @@ bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
     return ! refuse_timer_reset && __real_wtimerReset(timer, timeout_ms);
 }
 
-uint32_t __wrap_bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
+uint32_t __wrap_bufferpoolGetLargeBufferSize(const buffer_pool_t *pool);
 
-uint32_t __wrap_bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
+uint32_t __wrap_bufferpoolGetLargeBufferSize(const buffer_pool_t *pool)
 {
     discard pool;
     return forced_send_chunk_size;

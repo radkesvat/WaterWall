@@ -86,8 +86,8 @@ static api_result_t errorBody(const node_api_call_context_t *context, const char
         context->working_memory_allowance < kAuthenticationServerApiScratchCharge ||
         fit.allocation_charge > context->working_memory_allowance - kAuthenticationServerApiScratchCharge)
         return (api_result_t) {.result_code = kApiResultError};
-    sbuf_t *buffer = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
-    sbufSetLength(buffer, (uint32_t) length);
+    sbuf_t *buffer = bufferpoolGetBestFit(pool, length, 0);
+    sbufSetLength(buffer, length);
     memoryCopy(sbufGetMutablePtr(buffer), text, (size_t) length);
     return (api_result_t) {.result_code = kApiResultError, .buffer = buffer};
 }
@@ -127,7 +127,7 @@ api_result_t authenticationserverApiRenderMeasured(const node_api_call_context_t
     if (! bufferpoolQueryBestFit(pool, measured, 0, &fit) || retained_charge > context->working_memory_allowance ||
         fit.allocation_charge > context->working_memory_allowance - retained_charge)
         return (api_result_t) {.result_code = kApiResultError};
-    sbuf_t                            *buffer = bufferpoolGetBestFit(pool, (uint32_t) measured, 0);
+    sbuf_t                            *buffer = bufferpoolGetBestFit(pool, measured, 0);
     authenticationserver_json_writer_t writer = {
         .output = (char *) sbufGetMutablePtr(buffer), .capacity = measured, .deadline_ms = context->deadline_ms};
     render(&writer, view);
@@ -137,7 +137,7 @@ api_result_t authenticationserverApiRenderMeasured(const node_api_call_context_t
         return (api_result_t) {.result_code = kApiResultError};
     }
     assert(! writer.overflow && writer.used == measured);
-    sbufSetLength(buffer, (uint32_t) measured);
+    sbufSetLength(buffer, measured);
     return (api_result_t) {.result_code = kApiResultOk, .buffer = buffer};
 }
 
@@ -159,6 +159,6 @@ const char *authenticationserverApiPrepareAck(sbuf_t *buffer, size_t capacity, u
         return "timeout";
     if (w.overflow)
         return "response_too_large";
-    sbufSetLength(buffer, (uint32_t) w.used);
+    sbufSetLength(buffer, w.used);
     return NULL;
 }

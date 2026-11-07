@@ -6,11 +6,11 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
 {
     socks5server_lstate_t *ls      = lineGetState(l, t);
     buffer_queue_t        *queue   = upstream ? &ls->pending_up : &ls->pending_down;
-    const size_t           prefix  = upstream ? bufferstreamGetBufLen(&ls->in_stream) : 0;
+    const size_t           prefix  = upstream ? bufferstreamGetLength(&ls->in_stream) : 0;
     const size_t           length  = sbufGetLength(buf);
     const size_t           charge  = upstream ? bufferstreamGetCharge(&ls->in_stream) : 0;
     if (UNLIKELY(length > kSocks5ServerMaxPendingBytes || prefix > kSocks5ServerMaxPendingBytes - length ||
-                 bufferqueueGetBufLen(queue) > kSocks5ServerMaxPendingBytes - length - prefix ||
+                 bufferqueueGetLength(queue) > kSocks5ServerMaxPendingBytes - length - prefix ||
                  charge > kSocks5ServerMaxPendingCharge ||
                  bufferqueueGetCharge(queue) > kSocks5ServerMaxPendingCharge - charge ||
                  sbufGetQueueCharge(buf) > kSocks5ServerMaxPendingCharge - charge - bufferqueueGetCharge(queue) ||
@@ -48,15 +48,15 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
     {
         // The original request tail precedes any input nested in Init or Est.
         while (! ls->input_draining && ! ls->next_initializing &&
-               (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetBufCount(&ls->pending_up)))
+               (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetEntryCount(&ls->pending_up)))
         {
-            sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamIdealRead(&ls->in_stream)
+            sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamTakeChunk(&ls->in_stream)
                                                                 : bufferqueuePopFront(&ls->pending_up);
             if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, buf)) ||
                 ! socks5serverHasControlState(t, l))
                 return false;
         }
-        while (ls->connect_reply_sent && bufferqueueGetBufCount(&ls->pending_down))
+        while (ls->connect_reply_sent && bufferqueueGetEntryCount(&ls->pending_down))
         {
             sbuf_t *buf = bufferqueuePopFront(&ls->pending_down);
             if (UNLIKELY(! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf)) ||
@@ -64,14 +64,14 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
                 return false;
         }
     } while (! ls->input_draining && ! ls->next_initializing &&
-             (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetBufCount(&ls->pending_up)));
+             (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetEntryCount(&ls->pending_up)));
     ls->control_draining = false;
     if (ls->kind == kSocks5ServerLineKindControlTcp && ls->phase == kSocks5ServerPhaseTcpEstablished &&
         ! ls->input_draining && ! ls->next_initializing && ! ls->pending_read_pause)
     {
         assert(ls->next_initialized && ls->connect_reply_sent);
-        assert(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
-               bufferqueueGetBufCount(&ls->pending_down) == 0);
+        assert(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
+               bufferqueueGetEntryCount(&ls->pending_down) == 0);
         socks5serverLinestateDestroy(ls);
         tunnelBypassLine(t, l);
     }

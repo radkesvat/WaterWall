@@ -133,7 +133,7 @@ static bool drainRecords(tunnel_t *t, line_t *l, line_t *application, vmessclien
                 deliver = false;
             }
             else
-                sbufShiftRight(out, (uint32_t) envelope);
+                sbufShiftRight(out, envelope);
         }
         if (deliver)
         {

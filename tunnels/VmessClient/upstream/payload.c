@@ -29,16 +29,15 @@ void vmessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ts->packetaddr && ls->kind == kVmessClientLineKindUdpApplication)
     {
         const size_t     envelope = vmessPacketAddrHeaderSize(&next_ls->packet_target);
-        sbuf_t          *encoded  = bufferpoolGetBestFit(lineGetBufferPool(l),
-                                               (uint32_t) (length + envelope),
-                                               bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
+        sbuf_t          *encoded  = bufferpoolGetBestFit(
+            lineGetBufferPool(l), (length + envelope), bufferpoolGetLargeBufferPadding(lineGetBufferPool(l)));
         size_t           written  = 0;
         wcrypto_status_t status   = vmessPacketAddrEncode(
-            &next_ls->packet_target, sbufGetMutablePtr(encoded), sbufGetMaximumWriteableSize(encoded), &written);
+            &next_ls->packet_target, sbufGetMutablePtr(encoded), sbufGetWritableCapacity(encoded), &written);
         assert(status == kWCryptoOk && written == envelope);
         discard status;
         memoryCopy(sbufGetMutablePtr(encoded) + written, sbufGetRawPtr(buf), length);
-        sbufSetLength(encoded, (uint32_t) (written + length));
+        sbufSetLength(encoded, (written + length));
         lineReuseBuffer(l, buf);
         buf = encoded;
     }

@@ -96,14 +96,14 @@ static bool genericpoolTryComputeGeometry(uint32_t pool_width, uint32_t *capacit
  * @param destroy_h Item destruction callback.
  * @return generic_pool_t* Initialized pool object.
  */
-static generic_pool_t *allocateGenericPool(master_pool_t *mp, uint32_t item_size, uint32_t pool_width,
+static generic_pool_t *allocateGenericPool(master_pool_t *mp, size_t item_size, uint32_t pool_width,
                                            PoolItemCreateHandle create_h, PoolItemDestroyHandle destroy_h,
                                            bool install_callbacks)
 {
     uint32_t capacity;
     uint32_t free_threshold;
     size_t   required_size;
-    if (mp == NULL || create_h == NULL || destroy_h == NULL ||
+    if (mp == NULL || create_h == NULL || destroy_h == NULL || item_size > UINT32_MAX ||
         ! genericpoolTryComputeGeometry(pool_width, &capacity, &free_threshold, &required_size))
     {
         return NULL;
@@ -197,19 +197,19 @@ generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint
     return allocateGenericPool(mp, 0, pool_width, poolMasterAllocator, mp->destroy_item_handle, false);
 }
 
-generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size)
+generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, size_t item_size)
 {
     return allocateGenericPool(
         mp, item_size, GENERIC_POOL_DEFAULT_WIDTH, poolDefaultAllocator, poolDefaultDeallocator, true);
 }
 
-generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, size_t item_size,
                                                                  uint32_t pool_width)
 {
     return allocateGenericPool(mp, item_size, pool_width, poolDefaultAllocator, poolDefaultDeallocator, true);
 }
 
-generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, size_t item_size,
                                                                              uint32_t pool_width)
 {
     return allocateGenericPool(

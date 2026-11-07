@@ -61,7 +61,7 @@ bool quicFeedInput(quic_context_t *context)
                                                    : "carrier storage budget exceeded");
         return true;
     }
-    sbufShiftRight(buffer, (uint32_t) consumed);
+    sbufShiftRight(buffer, consumed);
     bufferbudgetReservationSetBytes(&context->input_reservation, sbufGetLength(buffer));
     if (sbufGetLength(buffer) == 0)
     {

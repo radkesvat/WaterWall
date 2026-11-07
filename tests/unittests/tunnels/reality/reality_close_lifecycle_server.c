@@ -664,7 +664,7 @@ static sbuf_t *buildServerInboundRecord(server_lifecycle_fixture_t *fixture, uin
 
     sbuf_t  *buf       = bufferpoolGetSmallBuffer(fixture->pool);
     uint32_t frame_len = kRealityV2TlsRecordHeaderSize + layout.wire_body_len;
-    requireServer(frame_len <= sbufGetMaximumWriteableSize(buf), "first-alert fixture buffer is too small");
+    requireServer(frame_len <= sbufGetWritableCapacity(buf), "first-alert fixture buffer is too small");
     sbufSetLength(buf, frame_len);
     uint8_t *frame          = sbufGetMutablePtr(buf);
     frame[0]                = descriptor.outer_content_type;
@@ -768,7 +768,7 @@ static sbuf_t *buildServerTls13GenericCandidate(server_lifecycle_fixture_t *fixt
 {
     uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
     sbuf_t  *record    = bufferpoolGetLargeBuffer(fixture->pool);
-    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
+    requireServer(frame_len <= sbufGetWritableCapacity(record),
                   "server generic candidate fixture exceeds the large buffer");
     record = sbufReserveSpace(record, frame_len);
     sbufSetLength(record, frame_len);
@@ -1083,7 +1083,7 @@ static void testServerPendingPrefixFlushesBeforeFinish(void)
 
         requireServer(realityserverProcessUpstream(
                           fixture.reality, fixture.line, serverBufferFromBytes(&fixture, plausible_prefix, length)) &&
-                          ls->mode == kRealityServerModePending && bufferstreamGetBufLen(&ls->read_stream) == length &&
+                          ls->mode == kRealityServerModePending && bufferstreamGetLength(&ls->read_stream) == length &&
                           fixture.context.events_len == 0,
                       "server did not retain a plausible incomplete TLS prefix while open");
 
@@ -1173,7 +1173,7 @@ static void testServerSensitiveModesDoNotFlushPendingBytes(void)
         ls->protected_init_sent       = modes[i] == kRealityServerModeAuthorized;
         requireServer(realityserverProcessUpstream(
                           fixture.reality, fixture.line, serverBufferFromBytes(&fixture, prefix, sizeof(prefix))) &&
-                          bufferstreamGetBufLen(&ls->read_stream) == sizeof(prefix),
+                          bufferstreamGetLength(&ls->read_stream) == sizeof(prefix),
                       "server rejected the sensitive-mode truncation fixture");
         realityserverHandleUpstreamFinish(fixture.reality, fixture.line);
         requireServer(fixture.context.destination_upstream_records == 0 &&
@@ -2148,7 +2148,7 @@ static void testServerTls13PendingBudgetCannotOverwriteReentrantHandoff(void)
     const uint32_t body_len  = kRealityV2ControlMaxTlsRecordBody + 1U;
     const uint32_t frame_len = kRealityV2TlsRecordHeaderSize + body_len;
     sbuf_t        *record    = bufferpoolGetLargeBuffer(fixture.pool);
-    requireServer(frame_len <= sbufGetMaximumWriteableSize(record),
+    requireServer(frame_len <= sbufGetWritableCapacity(record),
                   "server re-entrant budget fixture exceeds the large buffer");
     record = sbufReserveSpace(record, frame_len);
     sbufSetLength(record, frame_len);
@@ -2627,7 +2627,7 @@ static void runServerSizingCase(uint16_t tls_version, const reality_v2_record_pr
     memorySet(ls->s2c_iv, 0x86, sizeof(ls->s2c_iv));
 
     sbuf_t *input = bufferpoolGetLargeBuffer(pool);
-    requireServer(input_len <= sbufGetMaximumWriteableSize(input), "server sizing input does not fit the test buffer");
+    requireServer(input_len <= sbufGetWritableCapacity(input), "server sizing input does not fit the test buffer");
     input = sbufReserveSpace(input, input_len);
     sbufSetLength(input, input_len);
     uint8_t *input_bytes    = sbufGetMutablePtr(input);

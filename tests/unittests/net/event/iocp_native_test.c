@@ -185,7 +185,7 @@ static SOCKET connectClient(uint16_t port)
 static sbuf_t *makeFilledBuffer(buffer_pool_t *pool, char value, uint32_t len)
 {
     sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
-    require(len <= sbufGetMaximumWriteableSize(buf), "test payload exceeds the large-buffer capacity");
+    require(len <= sbufGetWritableCapacity(buf), "test payload exceeds the large-buffer capacity");
     memorySet(sbufGetMutablePtr(buf), value, len);
     sbufSetLength(buf, len);
     return buf;

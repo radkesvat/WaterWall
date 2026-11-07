@@ -27,7 +27,7 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
         if ((ls->phase == kSocks5ServerPhaseTcpEstablished || ls->phase == kSocks5ServerPhaseConnectWaitEst) &&
-            ! ls->next_initializing && ! ls->control_draining && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
+            ! ls->next_initializing && ! ls->control_draining && bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
             bufferstreamIsEmpty(&ls->in_stream))
         {
             tunnelNextUpStreamPayload(t, l, buf);

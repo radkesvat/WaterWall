@@ -796,7 +796,7 @@ bool junkdatagramsenderQuicHttp3Generate(sbuf_t *buf, const junkdatagramsender_m
     char     hostname[96];
     uint32_t client_hello_len = 0;
 
-    uint32_t write_limit = sbufGetMaximumWriteableSize(buf);
+    uint32_t write_limit = sbufGetWritableCapacity(buf);
     if (args != NULL && args->max_packet_size > 0 && args->max_packet_size < write_limit)
     {
         write_limit = args->max_packet_size;

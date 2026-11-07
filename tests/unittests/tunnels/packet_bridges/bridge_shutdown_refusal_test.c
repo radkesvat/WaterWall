@@ -158,7 +158,7 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
                 "CTP owner drain retained terminal or flow registration");
         require(lineIsAlive(normal_line) && ls->tunnel == bridge && ls->tcp_pcb == NULL,
                 "CTP owner drain did not preserve source-owned normal line state");
-        require(bufferqueueGetBufLen(&ls->pending_queue) == (udp_init_scenario ? 0 : 19),
+        require(bufferqueueGetLength(&ls->pending_queue) == (udp_init_scenario ? 0 : 19),
                 "CTP released source-owned pending lifetime early");
         tunnelNextUpStreamFinish(source, normal_line);
         require(lineIsAlive(normal_line), "CTP destroyed its borrowed normal line");

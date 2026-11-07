@@ -162,7 +162,7 @@ int main(void)
         kFrameLength = kEncryptionTlsHeaderSize + kBodyLength,
     };
     sbuf_t *frame = bufferpoolGetSmallBuffer(pool);
-    require(frame != NULL && sbufGetMaximumWriteableSize(frame) >= kFrameLength,
+    require(frame != NULL && sbufGetWritableCapacity(frame) >= kFrameLength,
             "failed to allocate Encryption failure frame");
     sbufSetLength(frame, kFrameLength);
     uint8_t *bytes = sbufGetMutablePtr(frame);

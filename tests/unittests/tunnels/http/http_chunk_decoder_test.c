@@ -88,14 +88,14 @@ static void caseEverySplit(void)
         chunkPush(&fixture, wire, split);
         require(chunkCollect(&fixture, output, sizeof(output), &used) == kHttpChunkNeedMore,
                 "partial message was completed or rejected");
-        require(bufferstreamGetBufLen(&fixture.stream) == 0, "partial framing retained peer bytes");
+        require(bufferstreamGetLength(&fixture.stream) == 0, "partial framing retained peer bytes");
         chunkPush(&fixture, wire + split, sizeof(wire) - 1 - split);
         require(chunkCollect(&fixture, output, sizeof(output), &used) == kHttpChunkDone,
                 "split message did not complete");
         require(used == 5 && memcmp(output, "abcde", 5) == 0, "split changed decoded body bytes");
-        require(bufferstreamGetBufLen(&fixture.stream) == 4, "decoder consumed bytes after the message");
+        require(bufferstreamGetLength(&fixture.stream) == 4, "decoder consumed bytes after the message");
         uint8_t following[4];
-        bufferstreamViewBytesAt(&fixture.stream, 0, following, sizeof(following));
+        bufferstreamCopyBytesAt(&fixture.stream, 0, following, sizeof(following));
         require(memcmp(following, "NEXT", 4) == 0, "decoder changed bytes after the message");
         chunkTeardown(&fixture);
     }
@@ -115,7 +115,7 @@ static void caseByteAtATime(void)
         const http_chunk_result_t result = chunkCollect(&fixture, output, sizeof(output), &used);
         require(result == (i == sizeof(wire) - 2 ? kHttpChunkDone : kHttpChunkNeedMore),
                 "one-byte delivery changed decoder completion");
-        require(bufferstreamGetBufLen(&fixture.stream) == 0, "one-byte framing stayed buffered");
+        require(bufferstreamGetLength(&fixture.stream) == 0, "one-byte framing stayed buffered");
     }
     require(used == 4 && memcmp(output, "body", 4) == 0, "one-byte delivery changed the body");
     chunkTeardown(&fixture);

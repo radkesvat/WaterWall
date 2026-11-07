@@ -408,7 +408,7 @@ static void nio_read(wio_t *io)
 
         // Only bytes already held in this private pipe become visible to the callback.
         buf->capacity = (uint32_t) sbufGetInitialHeadroom(buf) + (uint32_t) moved;
-        sbufSetLength(buf, (uint32_t) moved);
+        sbufSetLength(buf, moved);
         if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
         {
             bufferpoolReuseBuffer(pool, buf);
@@ -431,7 +431,7 @@ read_ordinary:
         {
             buffer_pool_t *pool = io->loop->bufpool;
             // UDP must fit the entire next datagram.
-            buf = bufferpoolGetBestFit(pool, (uint32_t) queued_bytes, bufferpoolGetLargeBufferPadding(pool));
+            buf = bufferpoolGetBestFit(pool, queued_bytes, bufferpoolGetLargeBufferPadding(pool));
             break;
         }
         // A failed/zero hint still needs a receive: empty UDP and transient readiness are distinct.
@@ -448,7 +448,7 @@ read_ordinary:
         break;
     }
 
-    unsigned int available = sbufGetMaximumWriteableSize(buf);
+    unsigned int available = sbufGetWritableCapacity(buf);
     assert(available > 0);
 
     nread = __nio_read(io, sbufGetMutablePtr(buf), available);

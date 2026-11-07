@@ -8,8 +8,8 @@
 typedef struct splice_frame_reader_s
 {
     splice_stream_t *stream;
-    size_t           nested_bytes;
-    size_t           retained_charge;
+    size_t           nested_byte_limit;
+    size_t           retained_charge_limit;
     uint32_t         frame_remaining;
     bool             splice_output : 1;
     bool             draining : 1;
@@ -30,7 +30,7 @@ typedef enum splice_frame_admit_e
  * The pool must outlive Destroy. Limits are literal bounds, including zero;
  * splice_output is an immutable capability, with ordinary fallback on refusal. */
 void spliceframereaderInit(splice_frame_reader_t *reader, buffer_pool_t *pool, uint32_t header_size,
-                           size_t nested_bytes, size_t retained_charge, bool splice_output);
+                           size_t nested_byte_limit, size_t retained_charge_limit, bool splice_output);
 /* Releases all retained input and zeroes the reader, including during a drain. */
 void spliceframereaderDestroy(splice_frame_reader_t *reader);
 

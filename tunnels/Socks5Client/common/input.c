@@ -4,7 +4,7 @@
 
 static int getCommandReplyLength(buffer_stream_t *stream)
 {
-    size_t available = bufferstreamGetBufLen(stream);
+    size_t available = bufferstreamGetLength(stream);
     if (available < 4)
     {
         return 0;
@@ -12,7 +12,7 @@ static int getCommandReplyLength(buffer_stream_t *stream)
 
     uint8_t header[5] = {0};
     size_t  peek_len  = min(available, sizeof(header));
-    bufferstreamViewBytesAt(stream, 0, header, peek_len);
+    bufferstreamCopyBytesAt(stream, 0, header, peek_len);
 
     switch (header[3])
     {
@@ -60,13 +60,13 @@ static bool parseHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate_t *l
 
         if (ls->phase == kSocks5ClientPhaseWaitMethod)
         {
-            if (bufferstreamGetBufLen(&ls->in_stream) < 2)
+            if (bufferstreamGetLength(&ls->in_stream) < 2)
             {
                 return true;
             }
 
             uint8_t reply[2];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, reply, sizeof(reply));
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, reply, sizeof(reply));
             lineReuseBuffer(l, readHandshakePrefix(l, ls, sizeof(reply)));
 
             if (reply[0] != kSocks5Version)
@@ -116,13 +116,13 @@ static bool parseHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate_t *l
 
         if (ls->phase == kSocks5ClientPhaseWaitAuth)
         {
-            if (bufferstreamGetBufLen(&ls->in_stream) < 2)
+            if (bufferstreamGetLength(&ls->in_stream) < 2)
             {
                 return true;
             }
 
             uint8_t reply[2];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, reply, sizeof(reply));
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, reply, sizeof(reply));
             lineReuseBuffer(l, readHandshakePrefix(l, ls, sizeof(reply)));
 
             if (reply[0] != kSocks5AuthVersion || reply[1] != 0x00)
@@ -229,10 +229,10 @@ bool socks5clientQueueReplyInput(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     socks5client_lstate_t *ls      = lineGetState(l, t);
     const size_t           length  = sbufGetLength(buf);
-    const size_t           active  = bufferstreamGetBufLen(&ls->in_stream);
+    const size_t           active  = bufferstreamGetLength(&ls->in_stream);
     const size_t           charge  = bufferstreamGetCharge(&ls->in_stream);
     if (length > kSocks5ClientMaxPendingDownBytes || active > kSocks5ClientMaxPendingDownBytes - length ||
-        bufferqueueGetBufLen(&ls->pending_down) > kSocks5ClientMaxPendingDownBytes - length - active ||
+        bufferqueueGetLength(&ls->pending_down) > kSocks5ClientMaxPendingDownBytes - length - active ||
         charge > kSocks5ClientMaxPendingCharge ||
         bufferqueueGetCharge(&ls->pending_down) > kSocks5ClientMaxPendingCharge - charge ||
         sbufGetQueueCharge(buf) > kSocks5ClientMaxPendingCharge - charge - bufferqueueGetCharge(&ls->pending_down) ||
@@ -256,7 +256,7 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
             return false;
         if (ls->phase == kSocks5ClientPhaseEstablished)
             break;
-        if (bufferstreamGetBufLen(&ls->in_stream) > kSocks5ClientMaxHandshakeBytes)
+        if (bufferstreamGetLength(&ls->in_stream) > kSocks5ClientMaxHandshakeBytes)
         {
             socks5clientCloseLineBidirectional(t, l);
             return false;
@@ -280,11 +280,11 @@ bool socks5clientDrainHandshakeInput(tunnel_t *t, line_t *l, socks5client_lstate
     /* Finish the accepted reply's opaque tail, then its reentrant FIFO. */
     while (! bufferstreamIsEmpty(&ls->in_stream))
     {
-        sbuf_t *tail = bufferstreamIdealRead(&ls->in_stream);
+        sbuf_t *tail = bufferstreamTakeChunk(&ls->in_stream);
         if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail) || ! socks5clientHasLineState(t, l))
             return false;
     }
-    while (bufferqueueGetBufCount(&ls->pending_down) != 0)
+    while (bufferqueueGetEntryCount(&ls->pending_down) != 0)
     {
         sbuf_t *tail = bufferqueuePopFront(&ls->pending_down);
         if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, tail) || ! socks5clientHasLineState(t, l))

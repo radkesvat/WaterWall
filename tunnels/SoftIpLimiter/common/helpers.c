@@ -230,7 +230,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softi
                                                                            buffer_stream_t                *stream,
                                                                            hash_t *identifier_out)
 {
-    size_t available = bufferstreamGetBufLen(stream);
+    size_t available = bufferstreamGetLength(stream);
 
     if (mode == kSoftIpLimiterIdentifierVless)
     {
@@ -248,7 +248,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softi
         }
 
         uint8_t uuid[kSoftIpLimiterVlessUuidLen] = {0};
-        bufferstreamViewBytesAt(stream, 1, uuid, sizeof(uuid));
+        bufferstreamCopyBytesAt(stream, 1, uuid, sizeof(uuid));
         *identifier_out = calcHashBytes(uuid, sizeof(uuid));
         memoryZero(uuid, sizeof(uuid));
         return kSoftIpLimiterExtractOk;
@@ -260,7 +260,7 @@ softiplimiter_extract_result_t softiplimiterTryExtractIdentifierFromStream(softi
         uint8_t inspect[kSoftIpLimiterTrojanPasswordLen + 2U] = {0};
         if (inspect_len > 0)
         {
-            bufferstreamViewBytesAt(stream, 0, inspect, inspect_len);
+            bufferstreamCopyBytesAt(stream, 0, inspect, inspect_len);
         }
         return softiplimiterTryExtractIdentifierFromBytes(mode, inspect, inspect_len, identifier_out);
     }

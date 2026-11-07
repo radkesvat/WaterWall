@@ -62,7 +62,7 @@ static enum tlsserver_probe_classification_e tlsserverClassifyFallbackProbe(tlss
         return kTlsServerProbeTlsLike;
     }
 
-    const size_t saved_len = bufferstreamGetBufLen(&ls->fallback_probe);
+    const size_t saved_len = bufferstreamGetLength(&ls->fallback_probe);
     const size_t buf_len   = sbufGetLength(buf);
 
     if (saved_len >= 2)
@@ -196,7 +196,7 @@ static bool tlsserverReadDecryptedData(tunnel_t *t, line_t *l, tlsserver_lstate_
         }
 
         sbuf_t *data_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-        int     avail    = (int) sbufGetMaximumWriteableSize(data_buf);
+        int     avail    = (int) sbufGetWritableCapacity(data_buf);
         int     n        = SSL_read(ls->ssl, sbufGetMutablePtr(data_buf), avail);
 
         if (n > 0)
@@ -312,8 +312,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->verbose)
     {
-        LOGD("TlsServer: worker %u received %u upstream TLS bytes", (unsigned int) lineGetWID(l),
-             (unsigned int) sbufGetLength(buf));
+        LOGD("TlsServer: worker %u received %zu upstream TLS bytes", (unsigned int) lineGetWID(l), sbufGetLength(buf));
     }
 
     if (! ls->tls_committed && ts->fallback_tunnel != NULL && sbufGetLength(buf) > 0)
@@ -340,7 +339,7 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (probe_result == kTlsServerProbeNeedMore || ts->expected_sni != NULL)
         {
             /* Bound the original wire transcript, including record headers and coalesced trailing bytes. */
-            if (sbufGetLength(buf) > kTlsServerMaxFallbackPendingBytes - bufferstreamGetBufLen(&ls->fallback_probe))
+            if (sbufGetLength(buf) > kTlsServerMaxFallbackPendingBytes - bufferstreamGetLength(&ls->fallback_probe))
             {
                 LOGW("TlsServer: pre-routing ClientHello buffer limit exceeded");
                 lineReuseBuffer(l, buf);

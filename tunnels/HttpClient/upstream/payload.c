@@ -37,7 +37,7 @@ void httpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     /* Older readiness input stays ahead of input nested in its replay. HTTP/1
      * chunk and raw-upgrade serializers keep their stricter nested admission. */
     if (ls->runtime_proto != kHttpClientRuntimeUpgradedRaw && ! ls->h1_write_in_progress &&
-        (ls->pending_up_draining || bufferqueueGetBufCount(&ls->pending_up) != 0))
+        (ls->pending_up_draining || bufferqueueGetEntryCount(&ls->pending_up) != 0))
     {
         if (! httpclientQueuePendingUp(l, ls, buf) || ! httpclientTransportFlushPendingUp(t, l, ls))
             failAndCloseU(t, l, ls);

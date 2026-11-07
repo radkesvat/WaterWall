@@ -82,53 +82,53 @@ static inline void bufferpoolDebugCheckThreadAccess(buffer_pool_t *pool)
 #define bufferpoolDebugCheckThreadAccess(pool) ((void) 0)
 #endif
 
-uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
+uint32_t bufferpoolGetLargeBufferSize(const buffer_pool_t *pool)
 {
     return pool->large_buffers_size;
 }
 
-uint32_t bufferpoolGetSplicePayloadLimit(buffer_pool_t *pool)
+uint32_t bufferpoolGetSplicePayloadLimit(const buffer_pool_t *pool)
 {
     return pool->splice_payload_limit;
 }
 
-uint32_t bufferpoolGetWaitingBudgetBasis(buffer_pool_t *pool)
+uint32_t bufferpoolGetWaitingBudgetBasis(const buffer_pool_t *pool)
 {
     return pool->waiting_budget_basis;
 }
 
-uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool)
+uint16_t bufferpoolGetLargeBufferPadding(const buffer_pool_t *pool)
 {
     return pool->large_buffer_left_padding;
 }
 
-uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool)
+uint32_t bufferpoolGetMediumBufferSize(const buffer_pool_t *pool)
 {
     return pool->medium_buffers_size;
 }
 
-uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool)
+uint16_t bufferpoolGetMediumBufferPadding(const buffer_pool_t *pool)
 {
     return pool->medium_buffer_left_padding;
 }
 
-uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool)
+uint32_t bufferpoolGetSmallBufferSize(const buffer_pool_t *pool)
 {
     return pool->small_buffers_size;
 }
 
-uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool)
+uint16_t bufferpoolGetSmallBufferPadding(const buffer_pool_t *pool)
 {
     return pool->small_buffer_left_padding;
 }
 
-uint32_t bufferpoolGetSpliceBufferStorageSize(buffer_pool_t *pool)
+uint32_t bufferpoolGetSpliceBufferStorageSize(const buffer_pool_t *pool)
 {
     discard pool;
     return SPLICE_BUFFER_STORAGE_SIZE;
 }
 
-uint16_t bufferpoolGetSpliceBufferPadding(buffer_pool_t *pool)
+uint16_t bufferpoolGetSpliceBufferPadding(const buffer_pool_t *pool)
 {
     return pool->splice_buffer_left_padding;
 }
@@ -187,8 +187,7 @@ static void destroySmallBufHandle(master_pool_item_t *item)
 
 static bool bufferMatchesGeometry(const sbuf_t *buf, uint32_t payload_capacity, uint16_t left_padding)
 {
-    return sbufGetTotalCapacityNoPadding((sbuf_t *) buf) == payload_capacity &&
-           sbufGetInitialHeadroom(buf) == left_padding;
+    return sbufGetTotalCapacityNoPadding(buf) == payload_capacity && sbufGetInitialHeadroom(buf) == left_padding;
 }
 
 static bool bufferpoolTiersHaveIdenticalGeometry(const buffer_pool_t *pool)
@@ -695,7 +694,7 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
     return b1;
 }
 
-sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
+sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *b)
 {
     const size_t source_length = sbufGetLength(b);
     sbuf_t      *bnew;
@@ -716,7 +715,7 @@ sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b)
         return sbufDuplicate(b);
     }
 
-    if (UNLIKELY(source_length > sbufGetMaximumWriteableSize(bnew)))
+    if (UNLIKELY(source_length > sbufGetWritableCapacity(bnew)))
     {
         bufferpoolReuseBuffer(pool, bnew);
         return sbufDuplicate(b);

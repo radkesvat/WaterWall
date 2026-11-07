@@ -79,7 +79,7 @@ static int tlsbufferbioRead(BIO *bio, char *out, int length)
     while (copied < wanted)
     {
         sbuf_t        *buf = *ww_sbuffer_queue_t_front(&state->buffers);
-        const uint32_t n   = (uint32_t) min(wanted - copied, (size_t) sbufGetLength(buf));
+        const size_t   n   = min(wanted - copied, sbufGetLength(buf));
         memoryCopyLarge(out + copied, sbufGetRawPtr(buf), n);
         sbufShiftRight(buf, n);
         state->pending -= n;
@@ -105,25 +105,25 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
         return -1;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
-    if (buf != NULL && (uint32_t) length <= sbufGetTailCapacity(buf))
+    if (buf != NULL && (size_t) length <= sbufGetTailroom(buf))
     {
-        const uint32_t previous = sbufGetLength(buf);
+        const size_t previous = sbufGetLength(buf);
         memoryCopyLarge(sbufGetMutablePtr(buf) + previous, data, (size_t) length);
-        sbufSetLength(buf, previous + (uint32_t) length);
+        sbufSetLength(buf, previous + (size_t) length);
         state->pending += (size_t) length;
         return length;
     }
 
     buf = bufferpoolGetLargeBuffer(state->pool);
-    buf = sbufReserveSpace(buf, (uint32_t) length);
+    buf                 = sbufReserveSpace(buf, length);
     const size_t charge = sbufGetQueueCharge(buf);
     if (UNLIKELY(charge > kTlsBufferBioMaxCharge - state->charge))
     {
         bufferpoolReuseBuffer(state->pool, buf);
         return -1;
     }
-    sbufWriteLarge(buf, data, (uint32_t) length);
-    sbufSetLength(buf, (uint32_t) length);
+    sbufWriteLarge(buf, data, length);
+    sbufSetLength(buf, length);
     discard ww_sbuffer_queue_t_push_back(&state->buffers, buf);
     state->pending += (size_t) length;
     state->charge += charge;
@@ -265,18 +265,18 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
         return NULL;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
-    bool    new_buffer = buf == NULL || capacity > sbufGetTailCapacity(buf);
+    bool    new_buffer = buf == NULL || capacity > sbufGetTailroom(buf);
     if (new_buffer)
     {
         buf                   = bufferpoolGetLargeBuffer(state->pool);
-        buf                   = sbufReserveSpace(buf, (uint32_t) (capacity + alignment - 1));
+        buf                   = sbufReserveSpace(buf, (capacity + alignment - 1));
         const size_t charge   = sbufGetQueueCharge(buf);
         if (UNLIKELY(charge > kTlsBufferBioMaxCharge - state->charge))
         {
             bufferpoolReuseBuffer(state->pool, buf);
             return NULL;
         }
-        const uint32_t offset = (uint32_t) ((0 - (uintptr_t) sbufGetMutablePtr(buf) - prefix_len) & (alignment - 1));
+        const size_t offset = (0 - (uintptr_t) sbufGetMutablePtr(buf) - prefix_len) & (alignment - 1);
         /* Advance an empty cursor without spending the chain's left padding. */
         sbufSetLength(buf, offset);
         sbufShiftRight(buf, offset);
@@ -290,7 +290,7 @@ uint8_t *tlsbufferbioReserveWrite(BIO *bio, size_t capacity, size_t alignment, s
     state->reserved_capacity = capacity;
     state->reserved_new      = new_buffer;
     BIO_clear_retry_flags(bio);
-    return (uint8_t *) sbufGetMutablePtr(buf) + sbufGetLength(buf);
+    return sbufGetMutablePtr(buf) + sbufGetLength(buf);
 }
 
 void tlsbufferbioFinishWrite(BIO *bio, size_t written)

@@ -210,7 +210,7 @@ static void feedDownstreamPacket(uint16_t src_port)
     const wid_t previous = tosSetCurrentWorker(0);
     sbuf_t     *buf      = bufferpoolGetSmallBuffer(lineGetBufferPool(g_fixture.stream_line));
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= kTestPacketLength, "the test buffer is too small");
+    twfRequire(sbufGetWritableCapacity(buf) >= kTestPacketLength, "the test buffer is too small");
     sbufSetLength(buf, kTestPacketLength);
     buildIpv4(sbufGetMutablePtr(buf), 0x0A000001U, src_port, 0xC0000201U, 443);
 
@@ -225,7 +225,7 @@ static void feedTwoDownstreamPackets(uint16_t first_port, uint16_t second_port)
     const wid_t previous = tosSetCurrentWorker(0);
     sbuf_t     *buf      = bufferpoolGetSmallBuffer(lineGetBufferPool(g_fixture.stream_line));
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= (kTestPacketLength * 2U), "the test buffer is too small");
+    twfRequire(sbufGetWritableCapacity(buf) >= (kTestPacketLength * 2U), "the test buffer is too small");
     sbufSetLength(buf, kTestPacketLength * 2U);
 
     uint8_t *raw = sbufGetMutablePtr(buf);

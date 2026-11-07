@@ -1181,7 +1181,7 @@ static void queueReplyAndRetireBackend(est_fixture_t *f, line_t *carrier)
     tunnelDownStreamPayload(f->node, backend, estBytes(backend, "queued", 6));
     tunnelDownStreamFin(f->node, backend);
     twfRequire(! lineIsAlive(backend) &&
-                   bufferqueueGetBufCount(&((vmessserver_lstate_t *) lineGetState(f->line, f->node))->pending_down) ==
+                   bufferqueueGetEntryCount(&((vmessserver_lstate_t *) lineGetState(f->line, f->node))->pending_down) ==
                        1,
                "backend death discarded independently queued reply");
 }

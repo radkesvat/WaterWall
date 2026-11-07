@@ -81,9 +81,9 @@ bool trojanserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     size_t header_len = addr_len + 2U + kTrojanServerCrlfLen;
     if (UNLIKELY(sbufGetHeadroom(buf) < header_len))
     {
-        buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kTrojanServerUdpHeaderMaxLen);
+        buf = sbufEnsureHeadroom(lineGetBufferPool(l), buf, kTrojanServerUdpHeaderMaxLen);
     }
-    sbufShiftLeft(buf, (uint32_t) header_len);
+    sbufShiftLeft(buf, header_len);
 
     *buf_io = buf;
 

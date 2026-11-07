@@ -1740,11 +1740,11 @@ static void testAllProtocolBytes(void)
     /* Odd native body with exactly the advertised headroom and no tail capacity. */
     const uint16_t length = buildNative(packet, 255, 20, 39);
     sbuf_t        *buf    = makeBuffer(packet, length, 25);
-    require(sbufGetTailCapacity(buf) == 0, "no-tail-space fixture has spare tail space");
+    require(sbufGetTailroom(buf) == 0, "no-tail-space fixture has spare tail space");
     requireResult(faketcpheaderWireEncode(&config, NULL, kFakeTcpHeaderWireClient, buf),
                   kFakeTcpHeaderWireOk,
                   "protocol tag needed spare tail space");
-    require(sbufGetHeadroom(buf) == 0 && sbufGetTailCapacity(buf) == 0, "framing changed end of occupied storage");
+    require(sbufGetHeadroom(buf) == 0 && sbufGetTailroom(buf) == 0, "framing changed end of occupied storage");
     decodeOk(&config, kFakeTcpHeaderWireServer, buf, packet, length);
     sbufDestroy(buf);
 

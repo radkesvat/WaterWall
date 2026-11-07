@@ -40,9 +40,9 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
         return true;
 
     const size_t head_bytes = head == NULL ? 0 : sbufGetLength(head);
-    if (head_bytes > UINT32_MAX || bufferqueueGetBufLen(tail) > UINT32_MAX - head_bytes)
+    if (head_bytes > UINT32_MAX || bufferqueueGetLength(tail) > UINT32_MAX - head_bytes)
         return false;
-    const uint32_t bytes = (uint32_t) (bufferqueueGetBufLen(tail) + head_bytes);
+    const size_t bytes = bufferqueueGetLength(tail) + head_bytes;
     if (bytes == 0)
     {
         while ((head = readerHead(active_head, tail)) != NULL)
@@ -57,19 +57,19 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     if (! bufferpoolQueryBestFit(pool, bytes, padding, &fit) || fit.allocation_charge > max_charge)
         return false;
 
-    uint32_t capacity = bytes;
+    size_t capacity = bytes;
     if (head != NULL)
     {
         /* Growth headroom is optional; the exact retained bytes must fit first. */
         const uint64_t grown = MAX_U64(bytes, (uint64_t) sbufGetLength(head) * 2U);
         if (bufferpoolQueryBestFit(pool, grown, padding, &fit) && fit.allocation_charge <= max_charge)
-            capacity = (uint32_t) grown;
+            capacity = (size_t) grown;
     }
 
     sbuf_t *combined = NULL;
     if (head != NULL && head_charge <= max_charge && sbufGetHeadroom(head) >= padding &&
         (sbufIsSplice(head) ? sbufGetHeadroom(head) == head->initial_headroom
-                            : bufferqueueGetBufLen(tail) <= sbufGetTailCapacity(head)))
+                            : bufferqueueGetLength(tail) <= sbufGetTailroom(head)))
     {
         combined     = head;
         *active_head = NULL;
@@ -91,7 +91,7 @@ static bool readerSettleRetained(buffer_pool_t *pool, sbuf_t **active_head, buff
     {
         size_t         charge;
         const uint64_t pipe_capacity = (uint64_t) bytes + sbufGetInitialHeadroom(combined);
-        if (pipe_capacity > UINT32_MAX || ! sbufTryComputeQueueCharge((uint32_t) pipe_capacity, &charge) ||
+        if (pipe_capacity > UINT32_MAX || ! sbufTryComputeQueueCharge((size_t) pipe_capacity, &charge) ||
             charge > max_charge)
         {
             if (combined == head)
@@ -118,9 +118,9 @@ static sbuf_t *readerTakeExact(buffer_pool_t *pool, sbuf_t **active_head, buffer
     assert(tail->budget == NULL);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
 #ifndef NDEBUG
-    const uint32_t    active_bytes = *active_head == NULL ? 0 : sbufGetLength(*active_head);
+    const size_t      active_bytes = *active_head == NULL ? 0 : sbufGetLength(*active_head);
     buffer_pool_fit_t fit;
-    assert(bytes <= active_bytes || bytes - active_bytes <= bufferqueueGetBufLen(tail));
+    assert(bytes <= active_bytes || bytes - active_bytes <= bufferqueueGetLength(tail));
     assert(bufferpoolQueryBestFit(pool, bytes, padding, &fit));
 #endif
     if (bytes == 0)
@@ -249,8 +249,8 @@ bool bufferreaderSettle(buffer_reader_t *reader, size_t max_charge)
 
 bool bufferreaderMoveToQueue(buffer_reader_t *reader, buffer_queue_t *destination, bool restore_header)
 {
-    assert(destination != &reader->pending && destination->budget == NULL && bufferqueueGetBufCount(destination) == 0 &&
-           reader->pending.budget == NULL);
+    assert(destination != &reader->pending && destination->budget == NULL &&
+           bufferqueueGetEntryCount(destination) == 0 && reader->pending.budget == NULL);
     assert(restore_header || reader->header_filled == 0);
     if (reader->head != NULL)
     {

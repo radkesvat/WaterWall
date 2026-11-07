@@ -126,7 +126,7 @@ static sbuf_t *makeDownloadHello(speedtestserver_fixture_t *fixture)
 {
     const uint32_t frame_size = kSpeedTestServerFrameHeaderSize + kSpeedTestServerHelloSize;
     sbuf_t        *buf        = bufferpoolGetSmallBuffer(fixture->env.pool);
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= frame_size, "SpeedTestServer Hello exceeded test buffer");
+    twfRequire(sbufGetWritableCapacity(buf) >= frame_size, "SpeedTestServer Hello exceeded test buffer");
     sbufSetLength(buf, frame_size);
 
     uint8_t *frame = sbufGetMutablePtr(buf);
@@ -247,7 +247,7 @@ static sbuf_t *makeInputBytes(speedtestserver_fixture_t *fixture, const uint8_t 
     }
 
     sbuf_t *buf = bufferpoolGetSmallBuffer(fixture->env.pool);
-    twfRequire(length <= sbufGetMaximumWriteableSize(buf), "SpeedTestServer ordinary fixture is too large");
+    twfRequire(length <= sbufGetWritableCapacity(buf), "SpeedTestServer ordinary fixture is too large");
     memoryCopy(sbufGetMutablePtr(buf), bytes, length);
     sbufSetLength(buf, length);
     return buf;

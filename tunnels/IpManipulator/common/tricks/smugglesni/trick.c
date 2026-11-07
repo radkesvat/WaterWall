@@ -399,7 +399,7 @@ static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, line_t *l, ipmanipulator_
         return false;
     }
 
-    const uint8_t *generated_bytes = (const uint8_t *) sbufGetRawPtr(tls_hello);
+    const uint8_t *generated_bytes = sbufGetRawPtr(tls_hello);
 
     sni_match_t fake_match = {0};
     if (! parseTlsRecordSni(generated_bytes, generated_len, &fake_match))
@@ -443,7 +443,7 @@ static bool smugglesnitrickBuildFakeBatch(tunnel_t *t, line_t *l, ipmanipulator_
         assert(lineIsOnCurrentWorker(orig_entry->line));
 
         if (! smugglesnitrickParseTcpPacketInfo(
-                (const uint8_t *) sbufGetRawPtr(orig_entry->buf), sbufGetLength(orig_entry->buf), &orig_info))
+                sbufGetRawPtr(orig_entry->buf), sbufGetLength(orig_entry->buf), &orig_info))
         {
             goto fail;
         }
@@ -571,7 +571,7 @@ void smugglesnitrickLogDownStreamServerHello(tunnel_t *t, line_t *l, sbuf_t *buf
     discard l;
 
     smugglesnitrick_tcp_packet_info_t info   = {0};
-    const uint8_t                    *packet = (const uint8_t *) sbufGetRawPtr(buf);
+    const uint8_t                    *packet = sbufGetRawPtr(buf);
 
     if (! smugglesnitrickParseTcpPacketInfo(packet, sbufGetLength(buf), &info))
     {
@@ -638,7 +638,7 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint64_t                          barrier_deadline         = 0;
     wid_t                             barrier_owner_wid        = kInvalidWID;
 
-    if (! smugglesnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! smugglesnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }
@@ -834,7 +834,7 @@ bool smugglesnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     /* status == kIpManipulatorTlsCaptureStatusReady */
     sni_match_t    match          = {0};
-    const uint8_t *assembled_data = (const uint8_t *) sbufGetRawPtr(captured_slot.assembled_packet);
+    const uint8_t *assembled_data = sbufGetRawPtr(captured_slot.assembled_packet);
     uint32_t       assembled_len  = sbufGetLength(captured_slot.assembled_packet);
 
     bool valid_ch = parseClientHelloSni(assembled_data, assembled_len, &match);

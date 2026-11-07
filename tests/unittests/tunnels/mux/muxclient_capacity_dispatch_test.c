@@ -917,7 +917,7 @@ static void caseIdleParentWaitsForOutput(uint8_t mode, bool stop)
     muxclientTunnelUpStreamPayload(f.mux, child, buf);
     fixtureFinishChild(&f, child);
     twfRequire(lineIsAlive(parent) && parent_state->children_count == 0 && parent_state->parent_state->owned &&
-                   bufferqueueGetBufCount(&parent_state->parent_state->output.pending) == 2,
+                   bufferqueueGetEntryCount(&parent_state->parent_state->output.pending) == 2,
                "last-child Finish lost parent output ownership");
     twfRequire(f.trace.next_payload == 0, "final Close bypassed parent Pause");
     if (mode != kConcurrencyModeFixedConnectionsCount)

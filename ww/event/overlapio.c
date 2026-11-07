@@ -340,7 +340,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     {
         record->sbuf = bufferpoolGetLargeBuffer(io->loop->bufpool);
     }
-    record->buf.len = sbufGetMaximumWriteableSize(record->sbuf);
+    record->buf.len = sbufGetWritableCapacity(record->sbuf);
     record->buf.buf = (CHAR *) sbufGetMutablePtr(record->sbuf);
 
     DWORD dwbytes = 0;
@@ -857,7 +857,7 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
 
     if (io->read_cb != NULL)
     {
-        sbufSetLength(buf, (uint32_t) record->bytes);
+        sbufSetLength(buf, record->bytes);
         io->last_read_hrtime = io->loop->cur_hrtime;
         // Common read path so WIO_READ_ONCE and related semantics still apply.
         wioHandleRead(io, buf);
@@ -1668,7 +1668,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
     }
 
     bool send_blocked = false;
-    int  nwrite       = send(wioGetFD(io), sbufGetRawPtr(buf), len, 0);
+    int  nwrite       = send(wioGetFD(io), (const char *) sbufGetRawPtr(buf), len, 0);
     if (nwrite < 0)
     {
         int err = socketERRNO();
@@ -1724,7 +1724,7 @@ int wioWrite(wio_t *io, sbuf_t *buf)
 
     if (nwrite > 0)
     {
-        sbufShiftRight(buf, (uint32_t) nwrite);
+        sbufShiftRight(buf, nwrite);
     }
 
     int add_error = wioAddAlreadyAdmitted(io, wio_handle_events, WW_WRITE);

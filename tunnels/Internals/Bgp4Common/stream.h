@@ -245,9 +245,9 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     const uint64_t remainder  = length > first ? (uint64_t) length - first : 0;
     const uint64_t frames     = 1 + (remainder + kBgpMaxApplication - 1) / kBgpMaxApplication;
     const uint64_t wire_bytes = (uint64_t) length + frames * kBgpFramePrefix + open_length;
-    const size_t   queued     = bufferqueueGetBufCount(&s->output);
+    const size_t   queued     = bufferqueueGetEntryCount(&s->output);
     const bool     direct     = frames == 1 && queued == 0 && ! s->encode_pumping;
-    if (wire_bytes > kBgpPendingBytes - bufferqueueGetBufLen(&s->output))
+    if (wire_bytes > kBgpPendingBytes - bufferqueueGetLength(&s->output))
     {
         bufferpoolReuseBuffer(pool, input);
         bgpClose(t, l, s, "encoded byte limit exceeded");

@@ -290,7 +290,7 @@ static void prevDownStreamPause(tunnel_t *t, line_t *l)
     if (fixture->inject_on_pause || fixture->finish_on_pause)
     {
         udpconnector_lstate_t *ls = lineGetState(l, fixture->connector);
-        twfRequire(ls->queue_pause_sent && bufferqueueGetBufCount(&ls->pause_queue) == 1,
+        twfRequire(ls->queue_pause_sent && bufferqueueGetEntryCount(&ls->pause_queue) == 1,
                    "UDP Pause preceded FIFO/latch publication");
         if (fixture->finish_on_pause)
         {
@@ -1119,7 +1119,7 @@ static void testCase16_FinishFlushesQueueErrorRecycles(void)
     ls1->write_paused = true;
     sbuf_t *buf       = makeDatagram(&fixture, "queued_msg");
     udpconnectorTunnelUpStreamPayload(fixture.connector, l1, buf);
-    twfRequireEqualU32(bufferqueueGetBufCount(&ls1->pause_queue), 1, "datagram must be queued");
+    twfRequireEqualU32(bufferqueueGetEntryCount(&ls1->pause_queue), 1, "datagram must be queued");
 
     udpconnectorTunnelUpStreamFinish(fixture.connector, l1);
     lineDestroy(l1);
@@ -1277,7 +1277,7 @@ static void testCase21_PacketDnsFailurePreservesExistingBindings(void)
     ts->worker_pools[0].quiescing = false;
 
     twfRequireEqualU32(ls->bindings_count, 1, "existing binding must be preserved");
-    twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue), 0, "failed peer queue must be dropped in full");
+    twfRequireEqualU32(bufferqueueGetEntryCount(&cache->pending_queue), 0, "failed peer queue must be dropped in full");
     twfRequire(! cache->has_context && ! cache->resolving, "failed peer cache must return to unresolved state");
     twfRequire(cache->pending_queue.budget == &ls->write_budget &&
                    bufferbudgetGetUsage(&ls->write_budget).charge == sibling_charge,
@@ -1373,7 +1373,7 @@ static void testCase22_MutableContextChangeRetainsOldBinding(void)
     addresscontextSetPort(dest_ctx, 20003);
     addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     udpconnectorTunnelUpStreamPayload(fixture.connector, l, makeDatagram(&fixture, "same_resolved_domain"));
-    twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue), 0, "same mutable domain started redundant DNS");
+    twfRequireEqualU32(bufferqueueGetEntryCount(&cache->pending_queue), 0, "same mutable domain started redundant DNS");
     twfRequireEqualU32(ls->bindings_count, 3, "same resolved domain did not acquire its concrete peer binding");
 
     /* Conversely, an upstream context that already resolves the same domain
@@ -1407,7 +1407,7 @@ static void testCase22_MutableContextChangeRetainsOldBinding(void)
     addresscontextFromSockAddr(dest_ctx, &addr5);
     addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
     udpconnectorTunnelUpStreamPayload(fixture.connector, l, makeDatagram(&fixture, "new_context_during_dns"));
-    twfRequireEqualU32(bufferqueueGetBufCount(&cache->pending_queue),
+    twfRequireEqualU32(bufferqueueGetEntryCount(&cache->pending_queue),
                        0,
                        "mutable-context datagram was queued behind a different in-flight DNS peer");
     twfRequireEqualU32(ls->bindings_count, 4, "in-flight DNS context change created an unrequested binding");
@@ -1972,7 +1972,7 @@ static void testQueueAdmission(void)
         twfRequireEqualU32(fixture.pause_calls, 1, "UDP Pause was duplicated by reentry");
         if (! close_on_pause)
         {
-            twfRequire(bufferqueueGetBufCount(&ls->pause_queue) == 2, "nested UDP input was lost");
+            twfRequire(bufferqueueGetEntryCount(&ls->pause_queue) == 2, "nested UDP input was lost");
             sbuf_t *first  = udpconnectorPopWrite(ls, &ls->pause_queue);
             sbuf_t *second = udpconnectorPopWrite(ls, &ls->pause_queue);
             twfRequire(memoryEqual(sbufGetRawPtr(first), "A", 1) && memoryEqual(sbufGetRawPtr(second), "B", 1),

@@ -192,8 +192,7 @@ sbuf_t *bufferqueuePushBack(buffer_queue_t *self, sbuf_t *b)
 {
     if (UNLIKELY(! bufferqueueTryPushBack(self, &b)))
     {
-        printError("buffer queue: failed to admit %u byte(s) with no per-flow recovery path",
-                   (unsigned int) sbufGetLength(b));
+        printError("buffer queue: failed to admit %zu byte(s) with no per-flow recovery path", sbufGetLength(b));
         abortProgramNow(1);
     }
     return b;
@@ -203,8 +202,7 @@ sbuf_t *bufferqueuePushFront(buffer_queue_t *self, sbuf_t *b)
 {
     if (UNLIKELY(! bufferqueueTryPushFront(self, &b)))
     {
-        printError("buffer queue: failed to readmit %u byte(s) with no per-flow recovery path",
-                   (unsigned int) sbufGetLength(b));
+        printError("buffer queue: failed to readmit %zu byte(s) with no per-flow recovery path", sbufGetLength(b));
         abortProgramNow(1);
     }
     return b;
@@ -243,7 +241,7 @@ sbuf_t *bufferqueuePopFrontReserved(buffer_queue_t *self, buffer_budget_reservat
     return bufferqueuePop(self, reservation);
 }
 
-const sbuf_t *bufferqueueFront(buffer_queue_t *self)
+const sbuf_t *bufferqueueFront(const buffer_queue_t *self)
 {
     if (UNLIKELY(ww_sbuffer_queue_t_size(&self->q) == 0))
     {
@@ -252,12 +250,12 @@ const sbuf_t *bufferqueueFront(buffer_queue_t *self)
     return *ww_sbuffer_queue_t_front(&self->q);
 }
 
-size_t bufferqueueGetBufCount(buffer_queue_t *self)
+size_t bufferqueueGetEntryCount(const buffer_queue_t *self)
 {
     return (size_t) (ww_sbuffer_queue_t_size(&self->q));
 }
 
-size_t bufferqueueGetBufLen(buffer_queue_t *self)
+size_t bufferqueueGetLength(const buffer_queue_t *self)
 {
     return self->total_len;
 }

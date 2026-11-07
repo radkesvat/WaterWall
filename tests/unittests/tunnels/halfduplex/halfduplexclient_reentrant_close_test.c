@@ -296,7 +296,7 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             halfduplexclientTunnelDownStreamPause(r.client, r.upload);
             halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("queued", 6));
-            twfRequire(bufferqueueGetBufCount(
+            twfRequire(bufferqueueGetEntryCount(
                            &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 1,
                        "intro reentry did not retain the pending upload");
             halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
@@ -448,7 +448,7 @@ static void runRuntimeCase(unsigned mode)
                            r.upload_bytes[r.upload_length - 1] == 'x',
                        "exact temporary byte limit truncated input");
         if (mode == 1)
-            twfRequire(bufferqueueGetBufCount(
+            twfRequire(bufferqueueGetEntryCount(
                            &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 0,
                        "first-intro nested batch stranded behind Pause");
         if (mode == 12)
@@ -527,12 +527,12 @@ static void caseUploadFinishKeepsResponse(upload_finish_stage_t stage, bool hold
             twfRequireEqualU32(r.download_finishes, 0, "upload Finish prematurely closed download");
             halfduplexclient_lstate_t *ls = lineGetState(r.main, r.client);
             twfRequire(ls->upload_line == NULL, "retired upload remained attached to main");
-            twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 0,
+            twfRequire(bufferqueueGetEntryCount(&ls->pending_up) == 0,
                        "upload retirement retained queued application input");
             const unsigned upload_callbacks = r.upload_callbacks;
             halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("late", 4));
             twfRequireEqualU32(r.upload_callbacks, upload_callbacks, "late application payload reached retired upload");
-            twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 0,
+            twfRequire(bufferqueueGetEntryCount(&ls->pending_up) == 0,
                        "late application payload was queued after upload retirement");
             halfduplexclientTunnelUpStreamPause(r.client, r.main);
             halfduplexclientTunnelUpStreamResume(r.client, r.main);

@@ -210,9 +210,9 @@ void apiserverProgress(tunnel_t *t, line_t *line)
             good = false;
             break;
         }
-        sbuf_t *out = bufferpoolGetBestFit(pool, (uint32_t) n, padding);
+        sbuf_t *out = bufferpoolGetBestFit(pool, n, padding);
         memcpy(sbufGetMutablePtr(out), ls->output + ls->output_offset, n);
-        sbufSetLength(out, (uint32_t) n);
+        sbufSetLength(out, n);
         ls->output_offset += n;
         output_bytes += n;
         /* Transfer ownership and retire this chunk's local reservation before reentry. */

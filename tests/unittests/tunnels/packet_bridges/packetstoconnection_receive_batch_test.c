@@ -76,7 +76,7 @@ static struct pbuf *makeCustomInput(sbuf_t *buf, uint16_t length, uint16_t trim_
     const uint32_t total  = header + length + trim_right;
     if (buf == NULL)
         buf = bufferpoolGetBestFit(fixture->env.pool, total, bufferpoolGetLargeBufferPadding(fixture->env.pool));
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= total && total <= UINT16_MAX, "invalid custom RX fixture");
+    twfRequire(sbufGetWritableCapacity(buf) >= total && total <= UINT16_MAX, "invalid custom RX fixture");
     sbufSetLength(buf, total);
     uint8_t *bytes = sbufGetMutablePtr(buf);
     memoryZero(bytes, total);
@@ -504,7 +504,7 @@ static void caseBoundAndCancellation(void)
         submit(8192);
     ptc_lstate_t *ls = lineGetState(f.line, f.ptc);
     twfRequireEqualU32(sbufGetLength(ls->rx_delivery), TCP_WND, "receive did not reach its exact bound");
-    twfRequire(sbufGetMaximumWriteableSize(ls->rx_delivery) <= TCP_WND, "receive staging exceeded its storage bound");
+    twfRequire(sbufGetWritableCapacity(ls->rx_delivery) <= TCP_WND, "receive staging exceeded its storage bound");
     ww_lwip_engine_t *previous;
     twfRequire(wwLwipEngineEnter(f.engine, &previous), "bound fixture engine entry failed");
     struct pbuf *p = makeInput(1);

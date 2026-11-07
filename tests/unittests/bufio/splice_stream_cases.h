@@ -522,7 +522,7 @@ static void testSpliceStreamContracts(void)
         sbufSetLength(part, 1);
         require(splicestreamPush(s, part), "tiny push failed");
     }
-    require(bufferqueueGetBufCount(&s->pending) == 159, "retention silently converted pipes");
+    require(bufferqueueGetEntryCount(&s->pending) == 159, "retention silently converted pipes");
     size_t before   = splicestreamCharge(s);
     streamProbe     = true;
     streamReadBytes = 0;

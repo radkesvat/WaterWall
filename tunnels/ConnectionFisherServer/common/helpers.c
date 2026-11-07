@@ -60,7 +60,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
     buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
     bufferstreamPush(&ls->in_stream, buf);
 
-    if (bufferstreamGetBufLen(&ls->in_stream) < kConnectionFisherServerHandshakeLength)
+    if (bufferstreamGetLength(&ls->in_stream) < kConnectionFisherServerHandshakeLength)
     {
         return;
     }
@@ -85,7 +85,7 @@ void connectionfisherserverHandleHandshakePayload(tunnel_t *t, line_t *l, sbuf_t
         sbuf_t *extra = bufferstreamFullRead(&ls->in_stream);
         /* No callback ran during handshake parsing; this ordinary tail is the
          * sole entry, and its allocated capacity has a representable charge. */
-        assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
+        assert(bufferqueueGetEntryCount(&ls->pending_up) == 0);
         bufferqueuePushFront(&ls->pending_up, extra);
     }
     connectionfisherserverRetireReadStream(ls);

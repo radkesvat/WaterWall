@@ -22,8 +22,9 @@ void tlsserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (ls->verbose)
     {
-        LOGD("TlsServer: worker %u received %u downstream cleartext bytes", (unsigned int) lineGetWID(l),
-             (unsigned int) sbufGetLength(buf));
+        LOGD("TlsServer: worker %u received %zu downstream cleartext bytes",
+             (unsigned int) lineGetWID(l),
+             sbufGetLength(buf));
     }
 
     if (! ls->handshake_completed)

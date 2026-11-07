@@ -88,12 +88,12 @@ static inline bool bufferreaderBodyReady(const buffer_reader_t *reader, uint32_t
     return bufferreaderBodyBytes(reader) >= bytes;
 }
 
-static inline size_t bufferreaderEntryCount(buffer_reader_t *reader)
+static inline size_t bufferreaderEntryCount(const buffer_reader_t *reader)
 {
-    return bufferqueueGetBufCount(&reader->pending) + (reader->head != NULL);
+    return bufferqueueGetEntryCount(&reader->pending) + (reader->head != NULL);
 }
 
-static inline uint32_t bufferreaderHeadLength(const buffer_reader_t *reader)
+static inline size_t bufferreaderHeadLength(const buffer_reader_t *reader)
 {
     return reader->head == NULL ? 0 : sbufGetLength(reader->head);
 }

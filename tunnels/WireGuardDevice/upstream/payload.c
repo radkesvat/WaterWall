@@ -92,11 +92,8 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             // }
 
             // Then encrypt
-            if (! wireguardEncryptPacket(dst,
-                                         sbufGetMaximumWriteableSize(q) - (size_t) (dst - sbufGetMutablePtr(q)),
-                                         dst,
-                                         padded_len,
-                                         keypair))
+            if (! wireguardEncryptPacket(
+                    dst, sbufGetWritableCapacity(q) - (size_t) (dst - sbufGetMutablePtr(q)), dst, padded_len, keypair))
             {
                 LOGW("WireGuardDevice: transport packet encryption failed");
                 result = ERR_IF;

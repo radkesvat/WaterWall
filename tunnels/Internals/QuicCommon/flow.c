@@ -108,7 +108,7 @@ static bool quicDeliverEvent(quic_context_t *context)
         return true;
     }
     sbuf_t *buffer = bufferpoolGetBestFit(context->pool, length, padding);
-    if (length > sbufGetMaximumWriteableSize(buffer))
+    if (length > sbufGetWritableCapacity(buffer))
     {
         bufferpoolReuseBuffer(context->pool, buffer);
         quicFail(context, "output allocation budget exceeded");
@@ -264,7 +264,7 @@ void quicReconcileFinal(quic_context_t *context)
     if (quicDrainExpired(context))
         return;
     if (! context->fin_sent && context->active_application == NULL &&
-        bufferqueueGetBufCount(&context->application) == 0 && ww_quic_engine_ready(context->engine))
+        bufferqueueGetEntryCount(&context->application) == 0 && ww_quic_engine_ready(context->engine))
     {
         context->fin_sent = ww_quic_engine_finish(context->engine);
         if (context->fin_sent)

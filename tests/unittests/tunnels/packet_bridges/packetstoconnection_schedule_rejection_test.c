@@ -590,7 +590,7 @@ static void caseScaledSendCapacity(unsigned mode)
     }
     else
     {
-        twfRequire(ls->write_paused && bufferqueueGetBufCount(&ls->pause_queue) == 1, "PTC lost the refused suffix");
+        twfRequire(ls->write_paused && bufferqueueGetEntryCount(&ls->pause_queue) == 1, "PTC lost the refused suffix");
         const sbuf_t *suffix = sbuf_ack_queue_t_front(&ls->ack_queue)->buf;
         twfRequire(suffix != NULL && sbufGetLength(suffix) == length - admitted,
                    "PTC retained already copied bytes or lost its suffix");
@@ -606,7 +606,7 @@ static void caseScaledSendCapacity(unsigned mode)
         twfRequire(ptcFlushWriteQueue(ls) == kPtcFlushComplete, "PTC stopped draining at the 16-bit API boundary");
         requireQueuedBytes(pcb, length + later);
         leaveEngine();
-        twfRequire(! ls->write_paused && ! ls->write_poll_armed && bufferqueueGetBufCount(&ls->pause_queue) == 0,
+        twfRequire(! ls->write_paused && ! ls->write_poll_armed && bufferqueueGetEntryCount(&ls->pause_queue) == 0,
                    "PTC retained pause state after admitting the complete FIFO");
         twfRequireEqualU32(ls->pending_bytes, length + later, "draining changed pending acknowledgement totals");
     }

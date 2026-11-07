@@ -332,8 +332,8 @@ sbuf_t *authenticationserverGetAllUsersHandle(const uint8_t correlation_id[kAuth
     assert(length <= hard);
     sbuf_t *response =
         authenticationserverCreateResponseFrame(l, kAuthenticationServerResponseTypeUsers, correlation_id, NULL, 0);
-    response = sbufReserveSpace(response, (uint32_t) length + kAuthenticationServerResponseHeaderSize);
-    sbufSetLength(response, (uint32_t) length + kAuthenticationServerResponseHeaderSize);
+    response = sbufReserveSpace(response, length + kAuthenticationServerResponseHeaderSize);
+    sbufSetLength(response, length + kAuthenticationServerResponseHeaderSize);
     const uint32_t network_length = htonl((uint32_t) length);
     memoryCopy(sbufGetMutablePtr(response) + 1 + kAuthenticationServerCorrelationIdSize, &network_length, 4);
     uint8_t *output = sbufGetMutablePtr(response) + kAuthenticationServerResponseHeaderSize;

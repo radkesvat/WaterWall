@@ -887,7 +887,7 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
         break;
     case kSplicePartialCapacity: {
         sbuf_t *dest = bufferpoolGetLargeBuffer(pool);
-        sbufSetLength(dest, sbufGetMaximumWriteableSize(dest));
+        sbufSetLength(dest, sbufGetWritableCapacity(dest));
         sbufSpliceReadToBuffer(buf, dest, 1);
         break;
     }
@@ -1437,7 +1437,8 @@ static void testSpliceBufferQueue(void)
     require(bufferqueuePushFront(&queue, a) == a && bufferqueuePushBack(&queue, empty) == empty &&
                 bufferqueueTryPushBack(&queue, &b),
             "mixed queue insertion failed or replaced a splice wrapper");
-    require(bufferqueueGetBufCount(&queue) == 4 && bufferqueueGetBufLen(&queue) == 16 && bufferqueueFront(&queue) == a,
+    require(bufferqueueGetEntryCount(&queue) == 4 && bufferqueueGetLength(&queue) == 16 &&
+                bufferqueueFront(&queue) == a,
             "mixed queue lost entries, order, or logical byte accounting");
     size_t charge =
         sbufGetQueueCharge(a) + sbufGetQueueCharge(ordinary) + sbufGetQueueCharge(empty) + sbufGetQueueCharge(b);
@@ -1446,20 +1447,20 @@ static void testSpliceBufferQueue(void)
     buffer_budget_t budget;
     bufferbudgetInit(&budget, (buffer_budget_cost_t) {16, charge});
     require(bufferqueueTryAttachBudget(&queue, &budget) && budget.used.charge == charge &&
-                bufferqueueGetBufCount(&queue) == 4,
+                bufferqueueGetEntryCount(&queue) == 4,
             "populated mixed queue exact attachment failed");
     buffer_budget_t destination;
     bufferbudgetInit(&destination, (buffer_budget_cost_t) {16, charge});
     require(bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &destination &&
                 budget.used.bytes == 0 && budget.used.charge == 0 && destination.used.bytes == 16 &&
-                destination.used.charge == charge && bufferqueueGetBufCount(&queue) == 4 &&
+                destination.used.charge == charge && bufferqueueGetEntryCount(&queue) == 4 &&
                 bufferqueueFront(&queue) == a,
             "mixed queue rebinding lost retained identity or accounting");
     require(bufferqueueTryRebindBudget(&queue, &budget) && destination.used.bytes == 0 && destination.used.charge == 0,
             "mixed queue return rebinding retained destination usage");
     buffer_budget_reservation_t active = {0};
     charge -= sbufGetQueueCharge(a);
-    require(bufferqueuePopFrontReserved(&queue, &active) == a && bufferqueueGetBufLen(&queue) == 11,
+    require(bufferqueuePopFrontReserved(&queue, &active) == a && bufferqueueGetLength(&queue) == 11,
             "splice pop changed identity or queue accounting");
     require(bufferqueueGetCharge(&queue) == charge, "popped splice allocation remained charged to queue");
     sbuf_t *dest = bufferpoolGetLargeBuffer(env.buffers);
@@ -1467,14 +1468,14 @@ static void testSpliceBufferQueue(void)
     require(sbufGetLength(dest) == 3 && memoryEqual(sbufGetRawPtr(dest), "a:A", 3),
             "queued splice lost its real prefix or body");
     require(budget.used.bytes == 16 && budget.used.charge == charge + active.cost.charge &&
-                bufferqueueGetBufCount(&queue) == 3,
+                bufferqueueGetEntryCount(&queue) == 3,
             "mixed active retention disappeared");
     buffer_budget_cost_t remainder_cost;
     require(bufferbudgetTryGetCost(a, &remainder_cost), "splice remainder cost");
     bufferbudgetReservationReduce(&active, remainder_cost);
     sbuf_t *remainder = a;
     require(bufferqueueTryPushFrontReserved(&queue, &remainder, &active) && remainder == a &&
-                bufferqueueGetBufLen(&queue) == 13 && bufferqueueGetBufCount(&queue) == 4,
+                bufferqueueGetLength(&queue) == 13 && bufferqueueGetEntryCount(&queue) == 4,
             "partial splice reinsertion changed ownership or byte accounting");
     charge += sbufGetQueueCharge(a);
     require(bufferqueueGetCharge(&queue) == charge, "splice reinsertion used its old capacity charge");
@@ -1498,7 +1499,7 @@ static void testSpliceBufferQueue(void)
     require(sbufGetLength(dest) == 5 && memoryEqual(sbufGetRawPtr(dest), "b:BBB", 5),
             "queue mixed independent private bodies");
     bufferpoolReuseBuffer(env.buffers, dest);
-    require(bufferqueueGetBufCount(&queue) == 0 && bufferqueueGetBufLen(&queue) == 0 &&
+    require(bufferqueueGetEntryCount(&queue) == 0 && bufferqueueGetLength(&queue) == 0 &&
                 bufferqueueGetCharge(&queue) == 0 && bufferqueueFront(&queue) == NULL &&
                 bufferqueuePopFront(&queue) == NULL,
             "drained mixed queue retained entries or bytes");
@@ -1541,8 +1542,8 @@ static void testSpliceQueueCleanupAndRefusal(void)
                             sbufSpliceMetadata(buf).pipefd[0] == metadata.pipefd[0] &&
                             sbufSpliceMetadata(buf).pipefd[1] == metadata.pipefd[1] &&
                             ioctl(metadata.pipefd[0], FIONREAD, &available) == 0 && available == 3 &&
-                            memoryEqual(sbufGetRawPtr(buf), "prefix:", 7) && bufferqueueGetBufCount(&queue) == 1 &&
-                            bufferqueueGetBufLen(&queue) == 1 && bufferqueueFront(&queue) == ordinary &&
+                            memoryEqual(sbufGetRawPtr(buf), "prefix:", 7) && bufferqueueGetEntryCount(&queue) == 1 &&
+                            bufferqueueGetLength(&queue) == 1 && bufferqueueFront(&queue) == ordinary &&
                             bufferqueueGetCharge(&queue) == sbufGetQueueCharge(ordinary),
                         "refused splice insertion consumed ownership, data, or queue state");
             }
@@ -1554,8 +1555,8 @@ static void testSpliceQueueCleanupAndRefusal(void)
         pipe_read_error                 = mode == 1 ? EINTR : mode == 2 ? EIO : 0;
         const unsigned int pipes_before = pipe_calls;
         bufferqueueDestroy(&queue);
-        require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetBufLen(&queue) == 0 &&
-                    bufferqueueGetBufCount(&queue) == 0,
+        require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetLength(&queue) == 0 &&
+                    bufferqueueGetEntryCount(&queue) == 0,
                 "queue destruction retained accounting or entries");
         require(pipe_read_error == 0 && pipe_calls == pipes_before,
                 "queue cleanup skipped its drain or created a pipe");
@@ -2323,7 +2324,7 @@ static void testBufferQueueCharge(void)
     setup(&env);
     buffer_queue_t queue;
     bufferqueueInitEmpty(&queue);
-    require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetBufLen(&queue) == 0, "empty queue has stale accounting");
+    require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetLength(&queue) == 0, "empty queue has stale accounting");
     sbuf_t *a     = sbufCreateWithPadding(97, 64);
     sbuf_t *b     = sbufCreateWithPadding(7, 32);
     sbuf_t *empty = sbufCreateWithPadding(47, 32);
@@ -2335,21 +2336,21 @@ static void testBufferQueueCharge(void)
     a                   = bufferqueuePushBack(&queue, a);
     b                   = bufferqueuePushFront(&queue, b);
     empty               = bufferqueuePushBack(&queue, empty);
-    require(bufferqueueGetCharge(&queue) == charge && bufferqueueGetBufLen(&queue) == 5 &&
-                bufferqueueGetBufCount(&queue) == 3,
+    require(bufferqueueGetCharge(&queue) == charge && bufferqueueGetLength(&queue) == 5 &&
+                bufferqueueGetEntryCount(&queue) == 3,
             "queue charge did not include ordinary capacity, padding and empty entries");
 
     buffer_queue_t moved = queue;
     bufferqueueInitEmpty(&queue);
     require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetCharge(&moved) == charge &&
-                bufferqueueGetBufLen(&moved) == 5,
+                bufferqueueGetLength(&moved) == 5,
             "whole-queue ownership transfer lost charge or left it in the source");
     const size_t b_charge = sbufGetQueueCharge(b);
     require(bufferqueuePopFront(&moved) == b && bufferqueueGetCharge(&moved) == charge - b_charge,
             "pop did not release the queued charge");
     sbufShiftRight(b, 1);
     b = bufferqueuePushBack(&moved, b);
-    require(bufferqueueGetCharge(&moved) == charge && bufferqueueGetBufLen(&moved) == 4,
+    require(bufferqueueGetCharge(&moved) == charge && bufferqueueGetLength(&moved) == 4,
             "partial ordinary consumption changed retained capacity charge");
     require(bufferqueuePopFront(&moved) == a && memoryEqual(sbufGetRawPtr(a), "abc", 3), "queue lost first payload");
     bufferpoolReuseBuffer(env.buffers, a);
@@ -2358,7 +2359,7 @@ static void testBufferQueueCharge(void)
     require(bufferqueuePopFront(&moved) == b && sbufGetLength(b) == 1 && sbufReadUI8(b) == 'e',
             "queue changed reinserted payload order or content");
     bufferpoolReuseBuffer(env.buffers, b);
-    require(bufferqueueGetCharge(&moved) == 0 && bufferqueueGetBufLen(&moved) == 0, "drained queue retained charge");
+    require(bufferqueueGetCharge(&moved) == 0 && bufferqueueGetLength(&moved) == 0, "drained queue retained charge");
     bufferqueueDestroy(&moved);
 
     /* Exercise representability without allocating SIZE_MAX bytes. Failed
@@ -2375,9 +2376,9 @@ static void testBufferQueueCharge(void)
             sbuf_t    *input   = a;
             const bool accepted =
                 front ? bufferqueueTryPushFront(&queue, &input) : bufferqueueTryPushBack(&queue, &input);
-            require(! accepted && input == a && bufferqueueGetBufCount(&queue) == 0 && sbufReadUI8(a) == 'X' &&
+            require(! accepted && input == a && bufferqueueGetEntryCount(&queue) == 0 && sbufReadUI8(a) == 'X' &&
                         bufferqueueGetCharge(&queue) == (bytes ? 0 : SIZE_MAX) &&
-                        bufferqueueGetBufLen(&queue) == (bytes ? SIZE_MAX : 0),
+                        bufferqueueGetLength(&queue) == (bytes ? SIZE_MAX : 0),
                     "unrepresentable admission changed queue accounting or caller ownership");
         }
     }
@@ -2391,14 +2392,14 @@ static void testBufferQueueCharge(void)
         fail_queue_allocation = true;
         const bool accepted = front ? bufferqueueTryPushFront(&queue, &input) : bufferqueueTryPushBack(&queue, &input);
         require(! accepted && ! fail_queue_allocation && input == b && bufferqueueFront(&queue) == a &&
-                    bufferqueueGetCharge(&queue) == sbufGetQueueCharge(a) && bufferqueueGetBufLen(&queue) == 1,
+                    bufferqueueGetCharge(&queue) == sbufGetQueueCharge(a) && bufferqueueGetLength(&queue) == 1,
                 "failed ordinary insertion changed queue accounting or caller ownership");
     }
     bufferpoolReuseBuffer(env.buffers, b);
 #endif
     bufferqueueDestroy(&queue);
-    require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetBufLen(&queue) == 0 &&
-                bufferqueueGetBufCount(&queue) == 0,
+    require(bufferqueueGetCharge(&queue) == 0 && bufferqueueGetLength(&queue) == 0 &&
+                bufferqueueGetEntryCount(&queue) == 0,
             "nonempty queue destruction did not reset accounting");
     testWorkerUnbindWID();
     bufferqueueDestroy(&queue);
@@ -2426,7 +2427,7 @@ static void testSharedBudget(void)
     require(! bufferqueueTryPushFront(&b, &extra) && extra == original, "shared refusal changed ownership");
     buffer_budget_reservation_t active = {0};
     input                              = bufferqueuePopFrontReserved(&a, &active);
-    require(budget.used.charge == charge && bufferqueueGetBufCount(&a) == 0 && a.total_charge == 0,
+    require(budget.used.charge == charge && bufferqueueGetEntryCount(&a) == 0 && a.total_charge == 0,
             "reserved pop uncharged");
     require(! bufferqueueTryPushBack(&b, &extra), "active allowance disappeared");
     sbufShiftRight(input, 1);
@@ -2453,7 +2454,7 @@ static void testSharedBudget(void)
     buffer_queue_t moved = b;
     bufferqueueInitEmpty(&b);
     bufferqueueDestroy(&b);
-    require(moved.budget == &budget && budget.used.charge == charge && bufferqueueGetBufCount(&moved) == 1,
+    require(moved.budget == &budget && budget.used.charge == charge && bufferqueueGetEntryCount(&moved) == 1,
             "move lost binding");
     bufferqueueDestroy(&moved);
     bufferbudgetAssertEmpty(&budget);
@@ -2464,7 +2465,7 @@ static void testSharedBudget(void)
     extra                  = sbufCreate(1);
     require(bufferqueueTryPushBack(&refused, &extra), "unbound second insertion");
     require(! bufferqueueTryAttachBudget(&refused, &budget) && refused.budget == NULL &&
-                budget.used.charge == bufferqueueGetCharge(&b) && bufferqueueGetBufCount(&b) == 1,
+                budget.used.charge == bufferqueueGetCharge(&b) && bufferqueueGetEntryCount(&b) == 1,
             "populated attach ignored sibling");
     bufferqueueDestroy(&refused);
     bufferqueueDestroy(&b);
@@ -2487,7 +2488,8 @@ static void testSharedBudget(void)
     require(bufferqueueTryPushBack(&a, &input) && bufferqueueTryPushBack(&b, &extra), "two sibling admission");
     const size_t sibling_charge = sbufGetQueueCharge(extra);
     bufferqueueDestroy(&a);
-    require(budget.used.charge == sibling_charge && bufferqueueGetBufCount(&b) == 1, "destroy erased nonempty sibling");
+    require(budget.used.charge == sibling_charge && bufferqueueGetEntryCount(&b) == 1,
+            "destroy erased nonempty sibling");
     bufferqueueDestroy(&b);
     bufferbudgetAssertEmpty(&budget);
     teardown(&env);
@@ -2537,7 +2539,7 @@ static void testBudgetRebinding(void)
         require(! bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &source &&
                     source.used.bytes == original_usage.bytes && source.used.charge == original_usage.charge &&
                     destination.used.bytes == 1 && destination.used.charge == 1 && bufferqueueFront(&queue) == first &&
-                    bufferqueueGetBufCount(&queue) == 2 && bufferqueueGetBufLen(&queue) == queued.bytes &&
+                    bufferqueueGetEntryCount(&queue) == 2 && bufferqueueGetLength(&queue) == queued.bytes &&
                     bufferqueueGetCharge(&queue) == queued.charge,
                 "refused rebind changed a budget or queue ownership");
         bufferbudgetRelease(&destination, (buffer_budget_cost_t) {1, 1});
@@ -2546,7 +2548,7 @@ static void testBudgetRebinding(void)
     require(bufferqueueTryRebindBudget(&queue, &destination) && queue.budget == &destination &&
                 source.used.bytes == active.cost.bytes &&
                 source.used.charge == active.cost.charge + sbufGetQueueCharge(sibling_buffer) &&
-                active.budget == &source && sibling.budget == &source && bufferqueueGetBufCount(&sibling) == 1 &&
+                active.budget == &source && sibling.budget == &source && bufferqueueGetEntryCount(&sibling) == 1 &&
                 destination.used.bytes == queued.bytes && destination.used.charge == queued.charge,
             "rebind moved sibling or active reservation accounting");
     require(bufferqueueTryRebindBudget(&queue, &destination) && destination.used.bytes == queued.bytes &&
@@ -2555,7 +2557,7 @@ static void testBudgetRebinding(void)
     require(bufferqueuePopFront(&queue) == first && memoryEqual(sbufGetRawPtr(first), "ab", 2) &&
                 bufferqueueFront(&queue) == second && memoryEqual(sbufGetRawPtr(second), "cde", 3) &&
                 destination.used.bytes == 3 && destination.used.charge == sbufGetQueueCharge(second) &&
-                bufferqueueGetBufCount(&queue) == 1 &&
+                bufferqueueGetEntryCount(&queue) == 1 &&
                 source.used.charge == active.cost.charge + sbufGetQueueCharge(sibling_buffer),
             "rebound pop changed FIFO, identity, payload or the source budget");
     bufferpoolReuseBuffer(env.buffers, first);

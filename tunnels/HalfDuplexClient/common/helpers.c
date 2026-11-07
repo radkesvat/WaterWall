@@ -27,7 +27,7 @@ bool halfduplexclientDrainPending(tunnel_t *t, line_t *main, bool admitted)
     // admitted is used only by the outer first-input dispatch, whose FIFO can
     // contain only nested admitted input. Init/backlog release respects Pause.
     while (lineIsAlive(main) && ls->main_line == main && (admitted || ! ls->next_paused) &&
-           bufferqueueGetBufCount(&ls->pending_up) != 0)
+           bufferqueueGetEntryCount(&ls->pending_up) != 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
         if (UNLIKELY(! halfduplexclientForwardPayload(t, main, buf)))

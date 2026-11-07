@@ -147,7 +147,7 @@ bool socks5serverHandleUdpClientPayload(tunnel_t *t, line_t *l, socks5server_lst
         return false;
     }
 
-    sbufShiftRight(buf, (uint32_t) (3 + identity.consumed));
+    sbufShiftRight(buf, (3 + identity.consumed));
     const bool remote_alive = lineCallWithRefWithBuf(remote_l, tunnelNextUpStreamPayload, t, buf);
 
     lineUnref(l);

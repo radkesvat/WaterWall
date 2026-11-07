@@ -37,7 +37,7 @@ void httpserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    if (ls->pending_down_draining || bufferqueueGetBufCount(&ls->pending_down) != 0)
+    if (ls->pending_down_draining || bufferqueueGetEntryCount(&ls->pending_down) != 0)
     {
         if (! httpserverTransportQueuePendingDown(l, ls, buf) || ! httpserverTransportFlushPendingDown(t, l, ls))
             failAndCloseDownStream(t, l, ls);

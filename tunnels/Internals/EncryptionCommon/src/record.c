@@ -40,7 +40,7 @@ wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, const uint8_t key[32]
     uint32_t ciphertext_length = plaintext_length + kEncryptionTagSize;
     uint32_t body_length       = kEncryptionNonceSize + ciphertext_length;
 
-    if (sbufGetMaximumWriteableSize(*buffer) < ciphertext_length)
+    if (sbufGetWritableCapacity(*buffer) < ciphertext_length)
         *buffer = sbufReserveSpace(*buffer, ciphertext_length);
 
     uint8_t *frame = sbufShiftLeft(*buffer, kEncryptionFramePrefixSize);
@@ -53,7 +53,7 @@ wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, const uint8_t key[32]
     getRandomBytes(nonce, kEncryptionNonceSize);
 
     uint8_t         *ciphertext = frame + kEncryptionFramePrefixSize;
-    size_t           capacity   = sbufGetMaximumWriteableSize(*buffer) - kEncryptionFramePrefixSize;
+    size_t           capacity   = sbufGetWritableCapacity(*buffer) - kEncryptionFramePrefixSize;
     wcrypto_status_t status     = encryptAead(
         algorithm, ciphertext, capacity, ciphertext, plaintext_length, frame, kEncryptionTlsHeaderSize, nonce, key);
     if (status == kWCryptoOk)
@@ -65,11 +65,11 @@ encryption_frame_result_t encryptionReadFrame(buffer_stream_t *stream, uint32_t 
 {
     assert(max_payload > 0 && max_payload <= kEncryptionHardMaxFramePayload);
     assert(frame != NULL);
-    if (bufferstreamGetBufLen(stream) < kEncryptionTlsHeaderSize)
+    if (bufferstreamGetLength(stream) < kEncryptionTlsHeaderSize)
         return kEncryptionFrameNeedMore;
 
     uint8_t header[kEncryptionTlsHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
     if (header[0] != kEncryptionTlsApplicationData || header[1] != kEncryptionTlsVersionMajor ||
         header[2] != kEncryptionTlsVersionMinor)
         return kEncryptionFrameInvalid;
@@ -80,7 +80,7 @@ encryption_frame_result_t encryptionReadFrame(buffer_stream_t *stream, uint32_t 
         return kEncryptionFrameInvalid;
 
     uint32_t frame_length = kEncryptionTlsHeaderSize + body_length;
-    if (bufferstreamGetBufLen(stream) < frame_length)
+    if (bufferstreamGetLength(stream) < frame_length)
         return kEncryptionFrameNeedMore;
 
     *frame = bufferstreamReadExact(stream, frame_length);
@@ -100,7 +100,7 @@ wcrypto_status_t encryptionDecodeFrame(uint32_t algorithm, const uint8_t key[32]
     uint32_t         ciphertext_length = body_length - kEncryptionNonceSize;
     uint8_t         *nonce             = frame + kEncryptionTlsHeaderSize;
     uint8_t         *ciphertext        = frame + kEncryptionFramePrefixSize;
-    size_t           capacity          = sbufGetMaximumWriteableSize(buffer) - kEncryptionFramePrefixSize;
+    size_t           capacity          = sbufGetWritableCapacity(buffer) - kEncryptionFramePrefixSize;
     wcrypto_status_t status            = decryptAead(
         algorithm, ciphertext, capacity, ciphertext, ciphertext_length, frame, kEncryptionTlsHeaderSize, nonce, key);
     if (status == kWCryptoOk)

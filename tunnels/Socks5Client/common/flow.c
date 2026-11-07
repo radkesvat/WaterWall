@@ -8,8 +8,8 @@ static void tryBypass(tunnel_t *t, line_t *l)
         return;
     socks5client_lstate_t *ls = lineGetState(l, t);
     if (ls->kind != kSocks5ClientLineKindDirect || ls->phase != kSocks5ClientPhaseEstablished || ls->input_draining ||
-        ls->draining_up || ls->source_pause_sent || bufferqueueGetBufCount(&ls->pending_up) != 0 ||
-        bufferqueueGetBufCount(&ls->pending_down) != 0)
+        ls->draining_up || ls->source_pause_sent || bufferqueueGetEntryCount(&ls->pending_up) != 0 ||
+        bufferqueueGetEntryCount(&ls->pending_down) != 0)
         return;
     assert(bufferstreamIsEmpty(&ls->in_stream) && ! ls->greeting_due);
     socks5clientLinestateDestroy(ls);
@@ -28,7 +28,7 @@ bool socks5clientMaybeSendGreeting(tunnel_t *t, line_t *l)
 static bool updateSourcePressure(tunnel_t *t, line_t *l, bool repeat)
 {
     socks5client_lstate_t *ls     = lineGetState(l, t);
-    const bool             local  = ls->draining_up || bufferqueueGetBufCount(&ls->pending_up) != 0;
+    const bool             local  = ls->draining_up || bufferqueueGetEntryCount(&ls->pending_up) != 0;
     const bool             paused = ls->next_paused || local;
     if (ls->source_pause_sent == paused && (! repeat || local))
         return true;
@@ -64,7 +64,7 @@ bool socks5clientDrainPending(tunnel_t *t, line_t *l)
     ls->draining_up = true;
     while (lineIsAlive(l) && socks5clientHasLineState(t, l) &&
            (ls->kind == kSocks5ClientLineKindDirect || ! ls->next_paused) &&
-           bufferqueueGetBufCount(&ls->pending_up) != 0)
+           bufferqueueGetEntryCount(&ls->pending_up) != 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
         if (ls->kind == kSocks5ClientLineKindUdpApplication)

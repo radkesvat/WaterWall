@@ -183,7 +183,7 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             sbuf_t *tickets = pending <= bufferpoolGetSmallBufferSize(lineGetBufferPool(l))
                                   ? bufferpoolGetSmallBuffer(lineGetBufferPool(l))
                                   : bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-            requireTlsClient(pending <= sbufGetMaximumWriteableSize(tickets),
+            requireTlsClient(pending <= sbufGetWritableCapacity(tickets),
                              "TlsClient coalesced ticket flight exceeds its pooled buffer");
             sbufSetLength(tickets, (uint32_t) pending);
             requireTlsClient(BIO_read(server_wbio, sbufGetMutablePtr(tickets), (int) pending) == (int) pending,
@@ -205,7 +205,7 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         unsigned mode               = context->pending_drain_mode - 1;
         context->pending_drain_mode = 0;
-        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetBufLen(&ls->bq) == 1 &&
+        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetLength(&ls->bq) == 1 &&
                              ls->pending_reservation.budget == &ls->pending_budget &&
                              ls->pending_reservation.cost.bytes == 16384 &&
                              bufferbudgetGetUsage(&ls->pending_budget).bytes == 16385 &&
@@ -224,7 +224,7 @@ static void fakePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         sbufSetLength(nested, 1);
         sbufWriteUI8(nested, 'C');
         tlsclientTunnelUpStreamPayload(t->prev, l, nested);
-        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetBufLen(&ls->bq) == 2,
+        requireTlsClient(sbufGetLength(ls->pending_plaintext) == 16384 && bufferqueueGetLength(&ls->bq) == 2,
                          "TLS reentrant plaintext overtook its active FIFO head");
 
         if (mode >= 4)
@@ -527,7 +527,7 @@ static sbuf_t *makeBytes(tlsclient_lifecycle_fixture_t *fixture, const uint8_t *
 {
     sbuf_t *buf = len <= bufferpoolGetSmallBufferSize(fixture->pool) ? bufferpoolGetSmallBuffer(fixture->pool)
                                                                      : bufferpoolGetLargeBuffer(fixture->pool);
-    requireTlsClient(len <= sbufGetMaximumWriteableSize(buf), "TlsClient test buffer is too small");
+    requireTlsClient(len <= sbufGetWritableCapacity(buf), "TlsClient test buffer is too small");
     sbufSetLength(buf, len);
     if (len > 0)
     {
@@ -589,7 +589,7 @@ static void testTakeoverAccumulatorSplitsAndCoalescesRecords(void)
     bool    invalid = false;
     requireTlsClient(tlsclientTakeoverTryReadRecord(ls, &first, &invalid) && ! invalid,
                      "TlsClient did not extract first coalesced record");
-    requireTlsClient(bufferstreamGetBufLen(&ls->takeover_stream) == 7,
+    requireTlsClient(bufferstreamGetLength(&ls->takeover_stream) == 7,
                      "TlsClient consumed beyond first coalesced record boundary");
     requireTlsClient(tlsclientTakeoverTryReadRecord(ls, &second, &invalid) && ! invalid,
                      "TlsClient did not extract second coalesced record");
@@ -617,7 +617,7 @@ static void testTakeoverAccumulatorRejectsInvalidHeader(void)
     bool    invalid = false;
     requireTlsClient(! tlsclientTakeoverTryReadRecord(ls, &record, &invalid) && invalid && record == NULL,
                      "TlsClient accepted an invalid takeover record type");
-    requireTlsClient(bufferstreamGetBufLen(&ls->takeover_stream) == sizeof(invalid_record),
+    requireTlsClient(bufferstreamGetLength(&ls->takeover_stream) == sizeof(invalid_record),
                      "TlsClient consumed invalid takeover bytes before failure cleanup");
 
     tlsclientLinestateDestroy(ls);
@@ -731,8 +731,7 @@ static sbuf_t *drainBioToBuffer(tlsclient_lifecycle_fixture_t *fixture, BIO *bio
 
     sbuf_t *buf = pending <= bufferpoolGetSmallBufferSize(fixture->pool) ? bufferpoolGetSmallBuffer(fixture->pool)
                                                                          : bufferpoolGetLargeBuffer(fixture->pool);
-    requireTlsClient(pending <= sbufGetMaximumWriteableSize(buf),
-                     "TlsClient test TLS flight exceeded the pooled buffer");
+    requireTlsClient(pending <= sbufGetWritableCapacity(buf), "TlsClient test TLS flight exceeded the pooled buffer");
     sbufSetLength(buf, (uint32_t) pending);
     requireTlsClient(BIO_read(bio, sbufGetMutablePtr(buf), (int) pending) == (int) pending,
                      "TlsClient test could not drain a TLS flight");
@@ -1369,7 +1368,7 @@ static void testPendingPlaintextLimits(void)
         {
             tlsclientTunnelUpStreamPayload(
                 fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, kTlsClientPendingPlaintextBytes, 'A'));
-            requireTlsClient(bufferqueueGetBufLen(&ls->bq) == kTlsClientPendingPlaintextBytes,
+            requireTlsClient(bufferqueueGetLength(&ls->bq) == kTlsClientPendingPlaintextBytes,
                              "TLS exact plaintext byte limit was refused");
         }
         requireTlsClient(! fixture.context.saw_payload && ! ls->handshake_completed,
@@ -1410,14 +1409,14 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     fixture.context.enqueue_on_source_pause = true;
     tlsclientTunnelUpStreamPayload(fixture.tls, fixture.line, makeRepeatedPlaintext(&fixture, 32768, 'A'));
     requireTlsClient(fixture.context.source_pause_count == 2 && fixture.context.source_resume_count == 0 &&
-                         bufferqueueGetBufLen(&ls->bq) == 32769 && ls->plaintext_producer_paused && ls->source_paused,
+                         bufferqueueGetLength(&ls->bq) == 32769 && ls->plaintext_producer_paused && ls->source_paused,
                      "TLS wire Resume released early FIFO pressure");
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamEst(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
     tlsclientTunnelDownStreamPause(fixture.tls, fixture.line);
     requireTlsClient(fixture.context.source_pause_count == 4 && ! fixture.context.saw_payload &&
-                         ! ls->handshake_completed && bufferqueueGetBufLen(&ls->bq) == 32769,
+                         ! ls->handshake_completed && bufferqueueGetLength(&ls->bq) == 32769,
                      "TLS repeated advisory Pause was filtered or released plaintext before handshake");
     int n = SSL_connect(ls->ssl);
     requireTlsClient(n < 0 && SSL_get_error(ls->ssl, n) == SSL_ERROR_WANT_READ &&
@@ -1461,7 +1460,7 @@ static void testOrdinaryHandshakePendingDrain(unsigned mode)
     else
     {
         requireTlsClient(ls->handshake_completed && ls->pending_plaintext == NULL &&
-                             bufferqueueGetBufCount(&ls->bq) == 0 && ! ls->plaintext_producer_paused &&
+                             bufferqueueGetEntryCount(&ls->bq) == 0 && ! ls->plaintext_producer_paused &&
                              ls->source_paused && ls->next_paused && fixture.context.source_resume_count == 0 &&
                              fixture.context.source_pause_count == 6,
                          "TLS FIFO did not drain while preserving received pressure");
@@ -1547,7 +1546,7 @@ static void testReceiveRetirementDrainsPendingPlaintext(bool finish_on_resume)
                          tlsrecordshapingOutputQueueCount(&ls->shaping_output) == 4 &&
                          ls->shaping_output_timer != NULL && ls->shaping_producer_paused &&
                          ls->pending_plaintext != NULL && sbufGetLength(ls->pending_plaintext) == 16384 &&
-                         bufferqueueGetBufLen(&ls->bq) == 1 && ls->plaintext_producer_paused && ls->source_paused,
+                         bufferqueueGetLength(&ls->bq) == 1 && ls->plaintext_producer_paused && ls->source_paused,
                      "TLS receive-retirement fixture did not stop at its four-record shaping boundary");
     requireTlsClient(completeServerHandshake(server), "TLS receive-retirement server handshake failed");
 
@@ -1570,7 +1569,7 @@ static void testReceiveRetirementDrainsPendingPlaintext(bool finish_on_resume)
     {
         requireTlsClient(lineIsAlive(fixture.line) && ls->shaping_retired && ls->shaping_output_timer == NULL,
                          "TLS receive path did not retire its final shaped records and timer");
-        requireTlsClient(ls->pending_plaintext == NULL && bufferqueueGetBufCount(&ls->bq) == 0 &&
+        requireTlsClient(ls->pending_plaintext == NULL && bufferqueueGetEntryCount(&ls->bq) == 0 &&
                              ls->pending_reservation.budget == NULL &&
                              bufferbudgetGetUsage(&ls->pending_budget).charge == 0 && ! ls->plaintext_producer_paused &&
                              ! ls->source_paused && fixture.context.source_resume_count == 1,

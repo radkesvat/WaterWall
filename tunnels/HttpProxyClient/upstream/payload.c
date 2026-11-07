@@ -29,7 +29,7 @@ bool hpcUpload(tunnel_t *t, line_t *l, sbuf_t *b)
             ls->suffix = hpcBuffer(l, 2);
             memoryCopy(sbufGetMutablePtr(ls->suffix), "\r\n", 2);
             sbufSetLength(ls->suffix, 2);
-            sbufShiftLeft(b, (uint32_t) count);
+            sbufShiftLeft(b, count);
             memoryCopy(sbufGetMutablePtr(b), prefix, (size_t) count);
         }
     }
@@ -64,7 +64,7 @@ void httpproxyclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     ls->progress_at = hpcNow(l);
     if (ls->init_busy || ls->up_busy || ! ls->header_sent || (ts->connect && ! ls->accepted) ||
-        bufferqueueGetBufCount(&ls->pending[0]))
+        bufferqueueGetEntryCount(&ls->pending[0]))
     {
         if (! hpcQueue(t, l, b, 0) || ! hpcPressure(t, l))
             return;

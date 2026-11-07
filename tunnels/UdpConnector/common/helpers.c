@@ -71,7 +71,7 @@ bool udpconnectorFlushWriteQueue(udpconnector_lstate_t *ls)
     udpconnector_binding_t *binding = ls->fixed_binding != NULL ? ls->fixed_binding : ls->last_send_binding;
     assert(binding != NULL && binding->active);
 
-    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pause_queue) > 0)
     {
         sbuf_t *buf = udpconnectorPopWrite(ls, &ls->pause_queue);
         if (! udpconnectorBindingCanSend(binding))
@@ -91,7 +91,7 @@ bool udpconnectorReplayWriteQueue(udpconnector_lstate_t *ls)
     tunnel_t *t = ls->tunnel;
     line_t   *l = ls->line;
 
-    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pause_queue) > 0)
     {
         sbuf_t *buf = udpconnectorPopWrite(ls, &ls->pause_queue);
         udpconnectorTunnelUpStreamPayload(t, l, buf);

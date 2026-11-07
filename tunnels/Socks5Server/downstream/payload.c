@@ -10,7 +10,7 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (ls->kind == kSocks5ServerLineKindControlTcp)
     {
         if (ls->phase == kSocks5ServerPhaseTcpEstablished && ! ls->control_draining &&
-            bufferqueueGetBufCount(&ls->pending_down) == 0)
+            bufferqueueGetEntryCount(&ls->pending_down) == 0)
         {
             tunnelPrevDownStreamPayload(t, l, buf);
             return;

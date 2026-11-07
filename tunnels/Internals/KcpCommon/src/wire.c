@@ -124,7 +124,7 @@ sbuf_t *touWireCreate(buffer_pool_t *pool, uint8_t kind, const uint8_t client[kT
     {
         return NULL;
     }
-    sbufSetLength(buf, (uint32_t) size);
+    sbufSetLength(buf, size);
     const bool encoded = touWireEncode(sbufGetMutablePtr(buf), size, kind, client, server, body, body_len);
     assert(encoded);
     discard encoded;

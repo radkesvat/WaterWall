@@ -135,7 +135,7 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
             ls->kind == kVmessClientLineKindUdpCarrier ? available : min(available, (size_t) kVmessClientTcpRecordSize);
         size_t         capacity = (ls->request_sent ? 0 : 374) + take + 18 + 16 + 63;
         buffer_pool_t *pool     = lineGetBufferPool(l);
-        sbuf_t        *frame  = bufferpoolGetBestFit(pool, (uint32_t) capacity, bufferpoolGetLargeBufferPadding(pool));
+        sbuf_t        *frame    = bufferpoolGetBestFit(pool, capacity, bufferpoolGetLargeBufferPadding(pool));
         size_t         prefix = 0, written = 0;
         if (! ls->request_sent && ! vmessclientCommitRequest(ls, sbufGetMutablePtr(frame), capacity, &prefix))
         {
@@ -180,7 +180,7 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
         }
         if (! header_only)
         {
-            sbufShiftRight(ls->transmit_head, (uint32_t) take);
+            sbufShiftRight(ls->transmit_head, take);
             bufferbudgetReservationSetBytes(&ls->transmit_reservation, sbufGetLength(ls->transmit_head));
             if (sbufGetLength(ls->transmit_head) == 0)
             {
@@ -189,7 +189,7 @@ void vmessclientTransmit(tunnel_t *t, line_t *l)
                 bufferbudgetReservationRelease(&ls->transmit_reservation);
             }
         }
-        sbufSetLength(frame, (uint32_t) (prefix + written));
+        sbufSetLength(frame, (prefix + written));
         atomicAddU64Explicit(&ts->stats.tx_wire_bytes, prefix + written, memory_order_relaxed);
         /* Request marker and both cipher contexts are published before this callback. */
         tunnelNextUpStreamPayload(t, l, frame);

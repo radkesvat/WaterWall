@@ -58,4 +58,4 @@ context_t *contextqueuePop(context_queue_t *self);
  * @param self Queue to inspect.
  * @return size_t Number of queued elements.
  */
-size_t contextqueueLen(context_queue_t *self);
+size_t contextqueueLen(const context_queue_t *self);

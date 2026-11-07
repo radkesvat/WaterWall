@@ -70,8 +70,8 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool);
  * Cache counts follow the pool width. Linux NIO UDP reads may also
  * select this tier through best-fit allocation. */
 sbuf_t  *bufferpoolGetMediumBuffer(buffer_pool_t *pool);
-uint32_t bufferpoolGetMediumBufferSize(buffer_pool_t *pool);
-uint16_t bufferpoolGetMediumBufferPadding(buffer_pool_t *pool);
+uint32_t bufferpoolGetMediumBufferSize(const buffer_pool_t *pool);
+uint16_t bufferpoolGetMediumBufferPadding(const buffer_pool_t *pool);
 
 /**
  * Retrieves a small buffer from the buffer pool.
@@ -162,7 +162,7 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
  * @param pool The buffer pool.
  * @return The size of large buffers.
  */
-uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
+uint32_t bufferpoolGetLargeBufferSize(const buffer_pool_t *pool);
 
 /**
  * @brief Get configured left padding for large buffers.
@@ -170,14 +170,14 @@ uint32_t bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
  * @param pool Buffer pool instance.
  * @return uint16_t Left padding in bytes.
  */
-uint16_t bufferpoolGetLargeBufferPadding(buffer_pool_t *pool);
+uint16_t bufferpoolGetLargeBufferPadding(const buffer_pool_t *pool);
 
 /**
  * Gets the size of small buffers in the buffer pool.
  * @param pool The buffer pool.
  * @return The size of small buffers.
  */
-uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
+uint32_t bufferpoolGetSmallBufferSize(const buffer_pool_t *pool);
 
 /**
  * @brief Get configured left padding for small buffers.
@@ -185,20 +185,20 @@ uint32_t bufferpoolGetSmallBufferSize(buffer_pool_t *pool);
  * @param pool Buffer pool instance.
  * @return uint16_t Left padding in bytes.
  */
-uint16_t bufferpoolGetSmallBufferPadding(buffer_pool_t *pool);
+uint16_t bufferpoolGetSmallBufferPadding(const buffer_pool_t *pool);
 
 /** Configured socket splice request limit, excluding padding.
  * Fixed at construction, independent of wrapper storage and actual kernel pipe capacity. */
-uint32_t bufferpoolGetSplicePayloadLimit(buffer_pool_t *pool);
+uint32_t bufferpoolGetSplicePayloadLimit(const buffer_pool_t *pool);
 
 /** Profile-selected basis for waiting budgets, independent of buffer storage and receive headroom. */
-uint32_t bufferpoolGetWaitingBudgetBasis(buffer_pool_t *pool);
+uint32_t bufferpoolGetWaitingBudgetBasis(const buffer_pool_t *pool);
 
 /** Return the fixed 32-byte control-storage capacity, excluding padding and logical payload size. */
-uint32_t bufferpoolGetSpliceBufferStorageSize(buffer_pool_t *pool);
+uint32_t bufferpoolGetSpliceBufferStorageSize(const buffer_pool_t *pool);
 
 /** Return the pool's configured splice left padding. */
-uint16_t bufferpoolGetSpliceBufferPadding(buffer_pool_t *pool);
+uint16_t bufferpoolGetSpliceBufferPadding(const buffer_pool_t *pool);
 
 /**
  * Appends and merges two exclusively owned ordinary buffers.
@@ -209,7 +209,7 @@ uint16_t bufferpoolGetSpliceBufferPadding(buffer_pool_t *pool);
  * @param b2 The second buffer.
  * @return A pointer to the merged buffer.
  */
-sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
+WW_MUST_USE sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restrict b2);
 
 /**
  * Duplicates a buffer using the buffer pool.
@@ -217,4 +217,4 @@ sbuf_t *sbufAppendMerge(buffer_pool_t *pool, sbuf_t *restrict b1, sbuf_t *restri
  * @param b The buffer to duplicate.
  * @return A pointer to the duplicated buffer.
  */
-sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *b);
+sbuf_t *sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *b);

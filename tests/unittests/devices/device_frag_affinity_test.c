@@ -33,7 +33,7 @@ static bool checkedFragmentPoolFit(const buffer_pool_t *pool, uint64_t size, uin
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments queried a reader pool");
     return bufferpoolQueryBestFit(pool, size, padding, fit);
 }
-static uint16_t checkedFragmentPoolPadding(buffer_pool_t *pool)
+static uint16_t checkedFragmentPoolPadding(const buffer_pool_t *pool)
 {
     require(! atomicLoadRelaxed(&forbid_fragment_pool_access), "shared fragments read padding from a reader pool");
     return bufferpoolGetLargeBufferPadding(pool);

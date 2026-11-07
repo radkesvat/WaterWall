@@ -338,7 +338,7 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
             continue;
         }
 
-        sbufSetLength(bufs[queued_count], (uint32_t) nread - sizeof(family));
+        sbufSetLength(bufs[queued_count], nread - sizeof(family));
 
         if (UNLIKELY(sbufGetLength(bufs[queued_count]) > tunDeviceMtu(tdev)))
         {
@@ -463,7 +463,7 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
             continue;
         }
 
-        const uint8_t version = (uint8_t) (((const uint8_t *) sbufGetRawPtr(buf))[0] >> 4U);
+        const uint8_t version = (uint8_t) ((sbufGetRawPtr(buf))[0] >> 4U);
         uint32_t      family;
         if (version == 4)
         {

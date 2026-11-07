@@ -626,7 +626,7 @@ uint32_t portghosttrickGetTailLength(const ipmanipulator_tstate_t *state);
 bool     portghosttrickApply(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 bool     portghosttrickRestore(tunnel_t *t, line_t *l, sbuf_t **buf_ptr);
 
-sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len);
+sbuf_t *clonePacketWithLength(line_t *l, const sbuf_t *buf, uint32_t new_len);
 bool    parseTlsRecordSni(const uint8_t *tls, uint32_t tls_len, sni_match_t *match);
 bool    parseClientHelloSni(const uint8_t *packet, uint32_t packet_length, sni_match_t *match);
 /*

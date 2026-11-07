@@ -9,7 +9,7 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     if (ls->role == kConnectionFisherClientRoleMain)
     {
         if (ls->selected_child != NULL && ! ls->selecting_child && ! ls->pumping_up &&
-            bufferqueueGetBufCount(&ls->pending_up) == 0)
+            bufferqueueGetEntryCount(&ls->pending_up) == 0)
         {
             discard lineCallWithRefWithBuf(ls->selected_child, tunnelNextUpStreamPayload, t, buf);
             return;
@@ -20,7 +20,7 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
             lineReuseBuffer(l, buf);
             return;
         }
-        if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherMaxPendingUpBytes - bufferqueueGetBufLen(&ls->pending_up) ||
+        if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherMaxPendingUpBytes - bufferqueueGetLength(&ls->pending_up) ||
                      bufferqueueGetCharge(&ls->pending_up) > kConnectionFisherMaxPendingCharge ||
                      sbufGetQueueCharge(buf) >
                          kConnectionFisherMaxPendingCharge - bufferqueueGetCharge(&ls->pending_up) ||

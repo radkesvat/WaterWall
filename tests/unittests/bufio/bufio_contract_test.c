@@ -37,6 +37,23 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+/* Keep byte-oriented access, source immutability and generic length types in
+ * the public contract even when a smaller implicit conversion would compile. */
+static_assert(_Generic(&sbufGetRawPtr, const uint8_t *(*) (const sbuf_t *): true, default: false),
+              "raw access must expose const bytes");
+static_assert(_Generic(&sbufGetMutablePtr, uint8_t *(*) (sbuf_t *): true, default: false),
+              "mutable access must require a mutable buffer");
+static_assert(_Generic(&sbufDuplicate, sbuf_t *(*) (const sbuf_t *): true, default: false),
+              "duplicate must accept a const source");
+static_assert(_Generic(&sbufDuplicateByPool, sbuf_t *(*) (buffer_pool_t *, const sbuf_t *): true, default: false),
+              "pooled duplicate must accept a const source");
+static_assert(_Generic(&sbufWriteBuf, void (*)(sbuf_t *, const sbuf_t *, size_t): true, default: false),
+              "byte copy must accept a const source");
+static_assert(_Generic(&bufferstreamGetHeadLength, size_t (*)(const buffer_stream_t *): true, default: false),
+              "stream head length must retain size_t width");
+static_assert(_Generic(&bufferreaderHeadLength, size_t (*)(const buffer_reader_t *): true, default: false),
+              "reader head length must retain size_t width");
+
 enum
 {
     kChildReturned              = 66,
@@ -128,13 +145,13 @@ static size_t streamQueueCount(const buffer_stream_t *stream)
 static sbuf_t *makePooledBuffer(buffer_pool_t *pool, bool large, uint32_t length, uint32_t cursor_offset, uint8_t seed)
 {
     sbuf_t *buf = large ? bufferpoolGetLargeBuffer(pool) : bufferpoolGetSmallBuffer(pool);
-    require(cursor_offset <= sbufGetMaximumWriteableSize(buf), "test cursor offset exceeds pooled buffer capacity");
+    require(cursor_offset <= sbufGetWritableCapacity(buf), "test cursor offset exceeds pooled buffer capacity");
     if (cursor_offset > 0)
     {
         sbufSetLength(buf, cursor_offset);
         sbufShiftRight(buf, cursor_offset);
     }
-    require(length <= sbufGetMaximumWriteableSize(buf), "test payload exceeds cursor-relative buffer capacity");
+    require(length <= sbufGetWritableCapacity(buf), "test payload exceeds cursor-relative buffer capacity");
     sbufSetLength(buf, length);
     fillPattern(buf, seed);
     return buf;
@@ -145,12 +162,12 @@ static sbuf_t *makeLargePooledBuffer(buffer_pool_t *pool, uint32_t length, uint3
     sbuf_t *buf = bufferpoolGetLargeBuffer(pool);
     if (cursor_offset > 0)
     {
-        require(cursor_offset <= sbufGetMaximumWriteableSize(buf), "large-buffer cursor offset is out of range");
+        require(cursor_offset <= sbufGetWritableCapacity(buf), "large-buffer cursor offset is out of range");
         sbufSetLength(buf, cursor_offset);
         sbufShiftRight(buf, cursor_offset);
     }
     buf = sbufReserveSpace(buf, length);
-    require(length <= sbufGetMaximumWriteableSize(buf), "grown large buffer cannot hold the requested test payload");
+    require(length <= sbufGetWritableCapacity(buf), "grown large buffer cannot hold the requested test payload");
     sbufSetLength(buf, length);
     fillPattern(buf, seed);
     return buf;
@@ -174,7 +191,7 @@ static void requirePatternRange(const sbuf_t *buf, uint32_t at, uint32_t length,
 
 static void recycleIdealRead(buffer_stream_t *stream)
 {
-    sbuf_t *buf = bufferstreamIdealRead(stream);
+    sbuf_t *buf = bufferstreamTakeChunk(stream);
     bufferpoolReuseBuffer(stream->pool, buf);
 }
 
@@ -345,7 +362,7 @@ static void testChecksumRequestReserveSpace(void)
                     sbufGetRecalculateChecksum(buffer) == (requested != 0),
                 "no-growth reserve changed allocation, cursor or request");
         buffer = sbufReserveSpace(buffer, 256);
-        require(sbufGetLength(buffer) == 39 && sbufGetMaximumWriteableSize(buffer) >= 256 &&
+        require(sbufGetLength(buffer) == 39 && sbufGetWritableCapacity(buffer) >= 256 &&
                     sbufGetInitialHeadroom(buffer) == 64 && sbufGetHeadroom(buffer) == 64 &&
                     buffer->data == buffer->head + 64 &&
                     ((uintptr_t) sbufGetRawPtr(buffer) % kSbufAllocationAlignment) == 0,
@@ -380,7 +397,7 @@ static void testChecksumRequestByteOperations(void)
         sbufDestroy(slice);
         sbufConcatNoCheck(dest, source);
         require(sbufGetRecalculateChecksum(dest) == dest_request, "concat inferred checksum intent from its source");
-        sbufSetLength(dest, sbufGetMaximumWriteableSize(dest));
+        sbufSetLength(dest, sbufGetWritableCapacity(dest));
         dest = sbufConcat(dest, source);
         require(sbufGetRecalculateChecksum(dest) == dest_request &&
                     sbufGetRecalculateChecksum(source) == source_request,
@@ -485,7 +502,7 @@ static void testSliceHandlesPrependedPayload(void)
         require(sbufGetLength(slice) == sliced, "slice lost prepended payload bytes");
         require(sbufGetInitialHeadroom(slice) == padding && sbufGetHeadroom(slice) == padding,
                 "slice did not restore the source's original padding");
-        require(sbufGetLength(slice) <= sbufGetMaximumWriteableSize(slice),
+        require(sbufGetLength(slice) <= sbufGetWritableCapacity(slice),
                 "slice allocation cannot hold its complete payload");
         requirePatternRange(slice, 0, sliced, 0x30, "slice changed its leading payload bytes");
         require(sbufGetHeadroom(source) == original_cursor + sliced && sbufGetLength(source) == suffix_lengths[i],
@@ -502,17 +519,17 @@ static void testOrdinaryTailCapacity(void)
 {
     static const uint8_t header[] = "header-bytes";
     sbuf_t              *buffer   = sbufCreateWithPadding(128, 64);
-    const size_t         capacity = sbufGetMaximumWriteableSize(buffer);
+    const size_t         capacity = sbufGetWritableCapacity(buffer);
     uint8_t             *cursor   = sbufShiftLeft(buffer, 0);
     require(cursor == buffer->data && cursor == buffer->head + 64, "zero-byte prepend returned the wrong cursor");
     cursor = sbufShiftRight(buffer, 0);
     require(cursor == buffer->data && cursor == buffer->head + 64 && sbufGetLength(buffer) == 0 &&
                 sbufGetHeadroom(buffer) == 64 && sbufGetInitialHeadroom(buffer) == 64,
             "zero-byte consumption changed empty-buffer geometry or returned the wrong cursor");
-    require(sbufGetTailCapacity(buffer) == capacity, "empty buffer lost writable tail capacity");
+    require(sbufGetTailroom(buffer) == capacity, "empty buffer lost writable tail capacity");
     sbufSetLength(buffer, 16);
     fillPattern(buffer, 0x40);
-    require(sbufGetTailCapacity(buffer) == capacity - 16, "payload length did not reduce writable tail capacity");
+    require(sbufGetTailroom(buffer) == capacity - 16, "payload length did not reduce writable tail capacity");
     cursor = sbufShiftLeft(buffer, sizeof(header) - 1);
     require(cursor == buffer->data && cursor == buffer->head + 52 && sbufGetLength(buffer) == 28 &&
                 sbufGetHeadroom(buffer) == 52 && sbufGetInitialHeadroom(buffer) == 64,
@@ -520,17 +537,17 @@ static void testOrdinaryTailCapacity(void)
     memoryCopy(cursor, header, sizeof(header) - 1);
     require(memoryEqual(sbufGetRawPtr(buffer), header, sizeof(header) - 1), "prepend result misplaced header bytes");
     requirePatternRange(buffer, sizeof(header) - 1, 16, 0x40, "prepend result overwrote the original payload");
-    require(sbufGetTailCapacity(buffer) == capacity - 16, "prepend changed writable tail capacity");
+    require(sbufGetTailroom(buffer) == capacity - 16, "prepend changed writable tail capacity");
     cursor = sbufShiftRight(buffer, 20);
     require(cursor == buffer->data && cursor == buffer->head + 72 && sbufGetLength(buffer) == 8 &&
                 sbufGetHeadroom(buffer) == 72 && sbufGetInitialHeadroom(buffer) == 64,
             "partial consumption returned the wrong cursor or changed initial headroom");
     requirePatternRange(buffer, 0, 8, 0x48, "partial consumption changed the remaining payload");
-    require(sbufGetTailCapacity(buffer) == capacity - 16, "front consumption changed writable tail capacity");
-    sbufConsume(buffer, 4);
-    require(sbufGetTailCapacity(buffer) == capacity - 12, "tail consumption did not restore writable tail capacity");
-    sbufSetLength(buffer, sbufGetMaximumWriteableSize(buffer));
-    require(sbufGetTailCapacity(buffer) == 0, "full buffer retained writable tail capacity");
+    require(sbufGetTailroom(buffer) == capacity - 16, "front consumption changed writable tail capacity");
+    sbufReduceLength(buffer, 4);
+    require(sbufGetTailroom(buffer) == capacity - 12, "tail consumption did not restore writable tail capacity");
+    sbufSetLength(buffer, sbufGetWritableCapacity(buffer));
+    require(sbufGetTailroom(buffer) == 0, "full buffer retained writable tail capacity");
     cursor = sbufShiftRight(buffer, sbufGetLength(buffer));
     require(cursor == buffer->data && cursor == buffer->head + sbufGetTotalCapacity(buffer) &&
                 sbufGetLength(buffer) == 0 && sbufGetHeadroom(buffer) == sbufGetTotalCapacity(buffer) &&
@@ -542,11 +559,11 @@ static void testOrdinaryTailCapacity(void)
     cursor = sbufShiftRight(buffer, 0);
     require(cursor == buffer->data && cursor == buffer->head + sbufGetTotalCapacity(buffer),
             "zero-byte consumption changed the empty one-past cursor");
-    require(sbufGetTailCapacity(buffer) == 0, "empty end cursor gained writable tail capacity");
+    require(sbufGetTailroom(buffer) == 0, "empty end cursor gained writable tail capacity");
     sbufDestroy(buffer);
 
     buffer = sbufCreateWithPadding(0, 32);
-    require(sbufGetTailCapacity(buffer) == 0, "padding-only allocation exposed padding as writable tail capacity");
+    require(sbufGetTailroom(buffer) == 0, "padding-only allocation exposed padding as writable tail capacity");
     sbufDestroy(buffer);
 }
 
@@ -582,7 +599,7 @@ static void testViewByteAcrossQueuedBuffers(buffer_pool_t *pool)
     sbuf_t         *first  = bufferpoolGetSmallBuffer(pool);
     sbuf_t         *second = bufferpoolGetSmallBuffer(pool);
 
-    const size_t offset = sbufGetMaximumWriteableSize(first) - sizeof(first_bytes);
+    const size_t offset = sbufGetWritableCapacity(first) - sizeof(first_bytes);
     sbufSetLength(first, offset);
     sbufShiftRight(first, offset);
     sbufSetLength(first, sizeof(first_bytes));
@@ -613,9 +630,9 @@ static void testUnifiedPush(void)
     bufferstreamPush(&stream, first);
     bufferstreamPush(&stream, second);
     require(streamQueueCount(&stream) == 1, "unified push did not coalesce fitting input");
-    require(bufferstreamGetBufLen(&stream) == 5, "unified push changed logical stream size");
+    require(bufferstreamGetLength(&stream) == 5, "unified push changed logical stream size");
 
-    sbuf_t *read = bufferstreamIdealRead(&stream);
+    sbuf_t *read = bufferstreamTakeChunk(&stream);
     require(sbufGetLength(read) == 5, "unified push lost bytes");
     requirePatternRange(read, 0, 3, 0x10, "unified push changed first input data");
     requirePatternRange(read, 3, 2, 0x20, "unified push changed second input data");
@@ -629,8 +646,8 @@ static void testUnifiedPush(void)
     bufferstreamPush(&stream, empty);
     bufferstreamPush(&stream, nonempty);
     require(streamQueueCount(&stream) == 1, "eligible empty tail did not absorb input");
-    require(bufferstreamGetBufLen(&stream) == 2, "zero-length push changed logical size");
-    read = bufferstreamIdealRead(&stream);
+    require(bufferstreamGetLength(&stream) == 2, "zero-length push changed logical size");
+    read = bufferstreamTakeChunk(&stream);
     require(sbufGetLength(read) == 2, "empty tail lost following bytes");
     requirePatternRange(read, 0, 2, 0x30, "empty tail changed following data");
     bufferpoolReuseBuffer(fixture.pool, read);
@@ -660,7 +677,7 @@ static void testCoalescingOneByteFragmentsAndDequeBack(void)
         expected[i] = (uint8_t) i;
         bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 1, 0, (uint8_t) i));
     }
-    require(bufferstreamGetBufLen(&stream) == total, "one-byte coalescing changed stream size");
+    require(bufferstreamGetLength(&stream) == total, "one-byte coalescing changed stream size");
     require(streamQueueCount(&stream) == (total + small_size - 1U) / small_size,
             "one-byte coalescing retained more than the capacity-derived queue minimum");
 
@@ -727,9 +744,9 @@ static void testCoalescingCopyAndInputBoundaries(void)
         bufferstreamPush(&stream, tail);
         bufferstreamPush(&stream, source);
         require(streamQueueCount(&stream) == 1, "eligible copy-boundary input did not coalesce");
-        require(bufferstreamGetBufLen(&stream) == 7U + sizes[i], "copy-boundary coalescing changed stream size");
+        require(bufferstreamGetLength(&stream) == 7U + sizes[i], "copy-boundary coalescing changed stream size");
 
-        sbuf_t *combined = bufferstreamIdealRead(&stream);
+        sbuf_t *combined = bufferstreamTakeChunk(&stream);
         require(combined == tail, "copy-boundary coalescing replaced the tail allocation");
         require(sbufGetHeadroom(tail) == saved_curpos && sbufGetHeadroom(tail) == saved_left &&
                     sbufGetInitialHeadroom(tail) == saved_lpad,
@@ -747,7 +764,7 @@ static void testCoalescingCopyAndInputBoundaries(void)
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, over);
     require(streamQueueCount(&stream) == 2, "4097-byte input crossed the 4096-byte coalescing cap");
-    require(bufferstreamGetBufLen(&stream) == 7U + kCoalescingMaximumInputSize + 1U,
+    require(bufferstreamGetLength(&stream) == 7U + kCoalescingMaximumInputSize + 1U,
             "over-cap fallback changed aggregate stream size");
     require(*bs_doublequeue_t_back(&stream.q) == over, "over-cap input lost ordinary enqueue identity");
     require(sbufGetLength(tail) == 7 && sbufGetLength(over) == kCoalescingMaximumInputSize + 1U,
@@ -771,7 +788,7 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 1, "partially consumed tail was not coalesced");
-    sbuf_t *combined = bufferstreamIdealRead(&stream);
+    sbuf_t *combined = bufferstreamTakeChunk(&stream);
     require(combined == tail && sbufGetHeadroom(tail) == saved_curpos && sbufGetHeadroom(tail) == saved_left &&
                 sbufGetInitialHeadroom(tail) == saved_lpad,
             "partially consumed tail geometry changed during append");
@@ -783,14 +800,14 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     const uint32_t incoming = 257;
     stream                  = bufferstreamCreate(fixture.pool, 0);
     tail                    = makePooledBuffer(fixture.pool, true, 0, 31, 0);
-    const size_t maximum    = sbufGetMaximumWriteableSize(tail);
+    const size_t maximum    = sbufGetWritableCapacity(tail);
     sbufSetLength(tail, maximum - incoming);
     fillPattern(tail, 0x33);
     source = makePooledBuffer(fixture.pool, true, incoming, 15, 0xB0);
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 1, "exact tail fit did not coalesce");
-    combined = bufferstreamIdealRead(&stream);
+    combined = bufferstreamTakeChunk(&stream);
     require(sbufGetLength(combined) == maximum, "exact tail fit did not fill writable capacity");
     requirePatternRange(combined, maximum - incoming, incoming, 0xB0, "exact-fit append bytes are incorrect");
     bufferpoolReuseBuffer(fixture.pool, combined);
@@ -798,7 +815,7 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
 
     stream                  = bufferstreamCreate(fixture.pool, 0);
     tail                    = makePooledBuffer(fixture.pool, true, 0, 31, 0);
-    const size_t tail_len   = sbufGetMaximumWriteableSize(tail) - incoming + 1U;
+    const size_t tail_len   = sbufGetWritableCapacity(tail) - incoming + 1U;
     sbufSetLength(tail, tail_len);
     fillPattern(tail, 0x44);
     source                         = makePooledBuffer(fixture.pool, true, incoming, 15, 0xC0);
@@ -812,7 +829,7 @@ static void testCoalescingConsumedTailAndFitPolicy(void)
     bufferstreamPush(&stream, tail);
     bufferstreamPush(&stream, source);
     require(streamQueueCount(&stream) == 2, "one-byte-too-large source was partially coalesced");
-    require(bufferstreamGetBufLen(&stream) == (size_t) tail_len + incoming,
+    require(bufferstreamGetLength(&stream) == (size_t) tail_len + incoming,
             "no-fit fallback changed aggregate stream size");
     require(*bs_doublequeue_t_front(&stream.q) == tail && *bs_doublequeue_t_back(&stream.q) == source,
             "no-fit fallback changed ordinary queue identity or order");
@@ -851,13 +868,13 @@ static void testCoalescingReadApisAndViews(void)
 
     buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
     const uint32_t  total  = populateCoalescedReadStream(fixture.pool, &stream);
-    require(bufferstreamGetBufLen(&stream) == total, "coalesced read fixture has the wrong logical size");
+    require(bufferstreamGetLength(&stream) == total, "coalesced read fixture has the wrong logical size");
     for (uint32_t i = 0; i < total; ++i)
     {
         require(bufferstreamViewByteAt(&stream, i) == (uint8_t) i, "byte view changed the coalesced logical stream");
     }
     uint8_t view[70];
-    bufferstreamViewBytesAt(&stream, 205, view, sizeof(view));
+    bufferstreamCopyBytesAt(&stream, 205, view, sizeof(view));
     for (uint32_t i = 0; i < sizeof(view); ++i)
     {
         require(view[i] == (uint8_t) (205U + i), "range view changed bytes across a coalesced queue boundary");
@@ -867,7 +884,7 @@ static void testCoalescingReadApisAndViews(void)
     require(sbufGetLength(read) == 230, "ReadExact returned the wrong coalesced length");
     requirePatternRange(read, 0, 230, 0, "ReadExact changed coalesced byte order");
     bufferpoolReuseBuffer(fixture.pool, read);
-    require(bufferstreamGetBufLen(&stream) == total - 230U, "ReadExact changed remaining logical size");
+    require(bufferstreamGetLength(&stream) == total - 230U, "ReadExact changed remaining logical size");
     read = bufferstreamFullRead(&stream);
     require(sbufGetLength(read) == total - 230U, "FullRead returned the wrong post-ReadExact length");
     requirePatternRange(read, 0, total - 230U, (uint8_t) 230, "FullRead changed post-ReadExact byte order");
@@ -921,7 +938,7 @@ static void testCoalescingImmediatePoolSettlement(void)
     require(streamQueueCount(&stream) == 1, "eligible settlement source did not coalesce");
     require(small_count + 1U == small_baseline, "eligible source was not returned immediately and exactly once");
 
-    sbuf_t *read = bufferstreamIdealRead(&stream);
+    sbuf_t *read = bufferstreamTakeChunk(&stream);
     require(read == tail, "settlement test lost the retained tail");
     bufferpoolCachedTierCountsForTest(fixture.pool, &large_count, &small_count, NULL, NULL);
     require(small_count + 1U == small_baseline, "reading the tail recycled it before ownership was returned");
@@ -950,7 +967,7 @@ static void testCoalescingZeroExclusion(void)
     poolFixtureDestroy(&fixture);
 }
 
-static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_padding, uint32_t bytes,
+static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t split_headroom_budget, uint32_t bytes,
                                    expected_exact_tier_e expected_tier, bool strip_prefix)
 {
     buffer_pool_t *pool       = fixture->pool;
@@ -959,7 +976,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
     const uint16_t small_pad  = bufferpoolGetSmallBufferPadding(pool);
     const uint16_t large_pad  = bufferpoolGetLargeBufferPadding(pool);
 
-    buffer_stream_t stream      = bufferstreamCreate(pool, use_left_padding);
+    buffer_stream_t stream      = bufferstreamCreate(pool, split_headroom_budget);
     sbuf_t         *source      = makeLargePooledBuffer(pool, bytes + 1U, 0, 0x21);
     const uint16_t  source_lpad = sbufGetInitialHeadroom(source);
     bufferstreamPush(&stream, source);
@@ -967,7 +984,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
     sbuf_t *result = bufferstreamReadExact(&stream, bytes);
     require(sbufGetLength(result) == bytes, "exact-read allocation returned the wrong requested length");
     requirePatternRange(result, 0, bytes, 0x21, "exact-read allocation changed requested bytes");
-    require(bufferstreamGetBufLen(&stream) == 1 && streamQueueCount(&stream) == 1,
+    require(bufferstreamGetLength(&stream) == 1 && streamQueueCount(&stream) == 1,
             "exact-read allocation did not preserve the one-byte source remainder");
     require(*bs_doublequeue_t_front(&stream.q) == source && sbufGetLength(source) == 1,
             "exact-read allocation replaced or resized the source remainder");
@@ -982,7 +999,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
                 "padding-aware exact read did not select the small tier");
         require(sbufGetInitialHeadroom(result) == small_pad,
                 "small exact-read result changed physical initial_headroom");
-        require(sbufGetHeadroom(result) == (uint32_t) small_pad - use_left_padding,
+        require(sbufGetHeadroom(result) == (uint32_t) small_pad - split_headroom_budget,
                 "small exact-read result consumed the wrong padding budget");
         break;
     case kExpectedExactLarge:
@@ -990,7 +1007,7 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
                 "exact read did not retain the required large tier");
         require(sbufGetInitialHeadroom(result) == large_pad,
                 "large exact-read result changed physical initial_headroom");
-        require(sbufGetHeadroom(result) == (uint32_t) large_pad - use_left_padding,
+        require(sbufGetHeadroom(result) == (uint32_t) large_pad - split_headroom_budget,
                 "large exact-read result consumed the wrong padding budget");
         break;
     case kExpectedExactGrown:
@@ -998,24 +1015,24 @@ static void runExactAllocationCase(pool_fixture_t *fixture, uint16_t use_left_pa
                 "oversized exact read did not use the reserve-space fallback");
         require(sbufGetInitialHeadroom(result) == large_pad,
                 "oversized exact read lost full large-tier initial_headroom");
-        require(sbufGetHeadroom(result) == (uint32_t) large_pad - use_left_padding,
+        require(sbufGetHeadroom(result) == (uint32_t) large_pad - split_headroom_budget,
                 "oversized exact-read fallback did not restore full left capacity");
         break;
     }
 
     if (strip_prefix)
     {
-        require(expected_tier == kExpectedExactSmall && bytes >= use_left_padding,
+        require(expected_tier == kExpectedExactSmall && bytes >= split_headroom_budget,
                 "invalid parser-strip exact-read fixture");
-        sbufShiftRight(result, use_left_padding);
+        sbufShiftRight(result, split_headroom_budget);
         require(sbufGetHeadroom(result) == small_pad && sbufGetHeadroom(result) == small_pad,
                 "stripping the declared prefix did not restore small-buffer cursor geometry");
-        require(sbufGetLength(result) == bytes - use_left_padding,
+        require(sbufGetLength(result) == bytes - split_headroom_budget,
                 "stripping the declared prefix changed payload length incorrectly");
         requirePatternRange(result,
                             0,
-                            bytes - use_left_padding,
-                            (uint8_t) (0x21U + use_left_padding),
+                            bytes - split_headroom_budget,
+                            (uint8_t) (0x21U + split_headroom_budget),
                             "stripping the declared prefix changed payload bytes");
     }
 
@@ -1131,7 +1148,7 @@ static void runPushOverflowInvariant(bool merge_eligible, size_t incoming_length
     };
     const size_t initial_size      = incoming_length > UINT32_MAX ? 1 : UINT32_MAX;
     state->stream.size             = initial_size;
-    state->stream.use_left_padding = 0;
+    state->stream.split_headroom_budget = 0;
 
     pid_t child = fork();
     require(child >= 0, "failed to fork push-overflow invariant child");
@@ -1265,10 +1282,10 @@ static void testMoveExactBytesTo(void)
     bufferpoolReuseBuffer(fixture.pool, destination);
 
     destination = bufferpoolGetSmallBuffer(fixture.pool);
-    sbufSetLength(destination, sbufGetMaximumWriteableSize(destination) - 8);
+    sbufSetLength(destination, sbufGetWritableCapacity(destination) - 8);
     bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 8, 0, 0x70));
     bufferstreamMoveExactBytesTo(&stream, destination, 8);
-    require(sbufGetLength(destination) == sbufGetMaximumWriteableSize(destination), "exact append fit was rejected");
+    require(sbufGetLength(destination) == sbufGetWritableCapacity(destination), "exact append fit was rejected");
     bufferstreamMoveExactBytesTo(&stream, destination, 0);
     bufferpoolReuseBuffer(fixture.pool, destination);
     bufferstreamDestroy(&stream);
@@ -1587,7 +1604,7 @@ static void testContextPayloadOwnership(void)
     require(context.payload == NULL, "coalescing stream push retained context payload ownership");
     require(streamQueueCount(&stream) == 1, "context payload input did not coalesce");
 
-    payload = bufferstreamIdealRead(&stream);
+    payload = bufferstreamTakeChunk(&stream);
     require(sbufGetLength(payload) == 16, "context stream transfer changed payload length");
     requirePatternRange(payload, 0, 8, 0x30, "context stream transfer changed first payload bytes");
     requirePatternRange(payload, 8, 8, 0x40, "context stream transfer changed coalesced payload bytes");

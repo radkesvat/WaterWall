@@ -23,7 +23,7 @@ static inline void bufferstreamCheckSbufByteCount(size_t bytes, const char *oper
     }
 }
 
-static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
+static size_t bufferstreamValidatePush(const buffer_stream_t *self, const sbuf_t *buf)
 {
     assert(self != NULL && buf != NULL);
     assert(! sbufIsSplice(buf));
@@ -37,30 +37,30 @@ static uint32_t bufferstreamValidatePush(buffer_stream_t *self, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    return (uint32_t) buf_len;
+    return buf_len;
 }
 
-static void bufferstreamEnqueueValidated(buffer_stream_t *self, sbuf_t *buf, uint32_t buf_len)
+static void bufferstreamEnqueueValidated(buffer_stream_t *self, sbuf_t *buf, size_t buf_len)
 {
     bs_doublequeue_t_push_back(&self->q, buf);
     self->size += buf_len;
 }
 
-static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t bytes)
+static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, size_t bytes)
 {
-    const uint16_t use_left_padding = self->use_left_padding;
-    const uint32_t required_payload = bytes > use_left_padding ? bytes - use_left_padding : 0;
+    const uint16_t split_headroom_budget = self->split_headroom_budget;
+    const size_t   required_payload      = bytes > split_headroom_budget ? bytes - split_headroom_budget : 0;
     sbuf_t        *slice;
 
     if (required_payload <= bufferpoolGetSmallBufferSize(self->pool) &&
-        use_left_padding <= bufferpoolGetSmallBufferPadding(self->pool))
+        split_headroom_budget <= bufferpoolGetSmallBufferPadding(self->pool))
     {
         slice = bufferpoolGetSmallBuffer(self->pool);
     }
     else
     {
         slice = bufferpoolTryGetBestFit(
-            self->pool, required_payload, max(use_left_padding, bufferpoolGetLargeBufferPadding(self->pool)));
+            self->pool, required_payload, max(split_headroom_budget, bufferpoolGetLargeBufferPadding(self->pool)));
         if (slice == NULL)
         {
             printError("BufferStream: exact read allocation is unrepresentable");
@@ -68,20 +68,21 @@ static sbuf_t *bufferstreamAllocExactReadBuffer(buffer_stream_t *self, uint32_t 
         }
     }
 
-    assert(sbufGetHeadroom(slice) >= use_left_padding);
-    if (use_left_padding > 0)
+    assert(sbufGetHeadroom(slice) >= split_headroom_budget);
+    if (split_headroom_budget > 0)
     {
-        sbufShiftLeft(slice, use_left_padding);
+        sbufShiftLeft(slice, split_headroom_budget);
         sbufSetLength(slice, 0);
     }
 
     return sbufReserveSpace(slice, bytes);
 }
 
-void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t use_left_padding)
+void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t split_headroom_budget)
 {
     assert(self != NULL && pool != NULL);
-    *self = (buffer_stream_t) {.pool = pool, .q = bs_doublequeue_t_init(), .use_left_padding = use_left_padding};
+    *self =
+        (buffer_stream_t) {.pool = pool, .q = bs_doublequeue_t_init(), .split_headroom_budget = split_headroom_budget};
 }
 
 size_t bufferstreamGetCharge(const buffer_stream_t *self)
@@ -101,7 +102,7 @@ size_t bufferstreamGetCharge(const buffer_stream_t *self)
 bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge)
 {
     assert(self != NULL && self->pool != NULL);
-    const size_t bytes = bufferstreamGetBufLen(self);
+    const size_t bytes = bufferstreamGetLength(self);
     if (bytes == 0)
     {
         bufferstreamEmpty(self);
@@ -115,7 +116,7 @@ bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge)
     const size_t charge_limit = max(max_charge, fit.allocation_charge);
     if (bufferstreamGetCharge(self) > charge_limit)
     {
-        sbuf_t *compact = bufferpoolGetBestFit(self->pool, (uint32_t) bytes, padding);
+        sbuf_t *compact = bufferpoolGetBestFit(self->pool, bytes, padding);
         bufferstreamMoveExactBytesTo(self, compact, bytes);
         bufferstreamEmpty(self);
         bufferstreamPush(self, compact);
@@ -123,14 +124,14 @@ bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge)
     return true;
 }
 
-buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding)
+buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t split_headroom_budget)
 {
     assert(pool != NULL);
 
-    buffer_stream_t bs = {.use_left_padding = use_left_padding,
-                          .q                = bs_doublequeue_t_with_capacity(kBufferStreamQCap),
-                          .pool             = pool,
-                          .size             = 0};
+    buffer_stream_t bs = {.split_headroom_budget = split_headroom_budget,
+                          .q                     = bs_doublequeue_t_with_capacity(kBufferStreamQCap),
+                          .pool                  = pool,
+                          .size                  = 0};
 
     return bs;
 }
@@ -160,7 +161,7 @@ void bufferstreamDestroy(buffer_stream_t *self)
 
 void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 {
-    const uint32_t incoming_len = bufferstreamValidatePush(self, buf);
+    const size_t incoming_len = bufferstreamValidatePush(self, buf);
 
     if (! bs_doublequeue_t_is_empty(&self->q) && incoming_len > 0 &&
         incoming_len <= kBufferStreamCoalescingMaxIncomingSize)
@@ -170,7 +171,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
         if (tail != buf)
         {
             const size_t tail_len   = sbufGetLength(tail);
-            const size_t tail_spare = sbufGetTailCapacity(tail);
+            const size_t tail_spare = sbufGetTailroom(tail);
 
             if (incoming_len <= tail_spare)
             {
@@ -201,9 +202,9 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes)
         size_t available = sbufGetLength(container);
         if (available > bytes)
         {
-            sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, (uint32_t) bytes);
+            sbuf_t *slice = bufferstreamAllocExactReadBuffer(self, bytes);
 
-            slice = sbufMoveTo(slice, container, (uint32_t) bytes);
+            slice = sbufMoveTo(slice, container, bytes);
             bs_doublequeue_t_push_front(&self->q, container);
             return slice;
         }
@@ -226,7 +227,7 @@ void bufferstreamMoveExactBytesTo(buffer_stream_t *self, sbuf_t *destination, si
     assert(sbufGetHeadroom(destination) <= destination->capacity);
 
     const size_t length   = sbufGetLength(destination);
-    const size_t writable = sbufGetMaximumWriteableSize(destination);
+    const size_t writable = sbufGetWritableCapacity(destination);
     if (UNLIKELY(bytes > self->size))
     {
         LOGF("BufferStream: exact move exceeds available source bytes");
@@ -294,7 +295,7 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes)
     }
 }
 
-sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
+sbuf_t *bufferstreamTakeChunk(buffer_stream_t *self)
 {
     assert(self && self->size > 0);
     assert(bs_doublequeue_t_size(&self->q) > 0); // Ensure queue is not empty
@@ -304,7 +305,7 @@ sbuf_t *bufferstreamIdealRead(buffer_stream_t *self)
     return container;
 }
 
-uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
+uint8_t bufferstreamViewByteAt(const buffer_stream_t *self, size_t at)
 {
     if (UNLIKELY(self == NULL))
     {
@@ -320,12 +321,12 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
     size_t offset = at;
     c_foreach(i, bs_doublequeue_t, self->q)
     {
-        sbuf_t *b    = *i.ref;
-        size_t  blen = sbufGetLength(b);
+        const sbuf_t *b    = *i.ref;
+        const size_t  blen = sbufGetLength(b);
 
         if (offset < blen)
         {
-            return ((uint8_t *) sbufGetRawPtr(b))[offset];
+            return sbufGetRawPtr(b)[offset];
         }
 
         offset -= blen;
@@ -335,7 +336,7 @@ uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at)
     abortProgramNow(1);
 }
 
-void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
+void bufferstreamCopyBytesAt(const buffer_stream_t *self, size_t at, uint8_t *buf, size_t len)
 {
     // Use subtraction-based bounds checks to avoid overflow in (at + len).
     const bool valid =
@@ -343,7 +344,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
     assert(valid);
     if (UNLIKELY(! valid))
     {
-        printError("BufferStream: invalid byte-view range (offset=%zu, length=%zu)", at, len);
+        printError("BufferStream: invalid byte-copy range (offset=%zu, length=%zu)", at, len);
         abortProgramNow(1);
     }
 
@@ -352,8 +353,8 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
 
     c_foreach(qi, bs_doublequeue_t, self->q)
     {
-        sbuf_t *b    = *qi.ref;
-        size_t  blen = sbufGetLength(b);
+        const sbuf_t *b    = *qi.ref;
+        const size_t  blen = sbufGetLength(b);
 
         // Skip buffers that are entirely before our starting position
         if (remaining_offset >= blen)
@@ -366,7 +367,7 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
         size_t copy_start = remaining_offset;
         size_t copy_len   = min(len - buf_i, blen - copy_start);
 
-        memoryCopy(buf + buf_i, ((char *) sbufGetRawPtr(b)) + copy_start, copy_len);
+        memoryCopy(buf + buf_i, sbufGetRawPtr(b) + copy_start, copy_len);
         buf_i += copy_len;
         remaining_offset = 0; // For subsequent buffers, start from beginning
 
@@ -376,6 +377,6 @@ void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, siz
         }
     }
 
-    printError("BufferStream: size accounting is inconsistent while viewing %zu byte(s) at offset %zu", len, at);
+    printError("BufferStream: size accounting is inconsistent while copying %zu byte(s) at offset %zu", len, at);
     abortProgramNow(1);
 }

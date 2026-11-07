@@ -49,14 +49,13 @@ void halfduplexserverReplayStartup(tunnel_t *t, line_t *main)
         // No callbacks while preparing the complete admitted tail. At most one
         // more Payload is needed, even if that callback generates further input.
         sbuf_t *tail = NULL;
-        if (bufferqueueGetBufCount(&ls->startup_pending) == 1)
+        if (bufferqueueGetEntryCount(&ls->startup_pending) == 1)
             tail = bufferqueuePopFront(&ls->startup_pending);
-        else if (bufferqueueGetBufCount(&ls->startup_pending) != 0)
+        else if (bufferqueueGetEntryCount(&ls->startup_pending) != 0)
         {
-            const size_t length = bufferqueueGetBufLen(&ls->startup_pending);
+            const size_t length = bufferqueueGetLength(&ls->startup_pending);
             assert(length <= kHalfDuplexServerStartupBytes);
-            tail = bufferpoolGetBestFit(
-                ls->startup_pool, (uint32_t) length, bufferpoolGetLargeBufferPadding(ls->startup_pool));
+            tail = bufferpoolGetBestFit(ls->startup_pool, length, bufferpoolGetLargeBufferPadding(ls->startup_pool));
             sbuf_t *entry;
             while ((entry = bufferqueuePopFront(&ls->startup_pending)) != NULL)
             {

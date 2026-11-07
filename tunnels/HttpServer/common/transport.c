@@ -813,8 +813,8 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     if (sbufGetHeadroom(payload) >= (uint32_t) prefix_len)
     {
-        sbufShiftLeft(payload, (uint32_t) prefix_len);
-        sbufWrite(payload, chunk_prefix, (uint32_t) prefix_len);
+        sbufShiftLeft(payload, prefix_len);
+        sbufWrite(payload, chunk_prefix, prefix_len);
     }
     else
     {
@@ -827,10 +827,10 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
 
     bool     appended_tail = false;
     uint32_t old_len       = sbufGetLength(payload);
-    if (sbufGetMaximumWriteableSize(payload) >= old_len + 2)
+    if (sbufGetWritableCapacity(payload) >= old_len + 2)
     {
         sbufSetLength(payload, old_len + 2);
-        memoryCopy((uint8_t *) sbufGetMutablePtr(payload) + old_len, "\r\n", 2);
+        memoryCopy(sbufGetMutablePtr(payload) + old_len, "\r\n", 2);
         appended_tail = true;
     }
 
@@ -1766,8 +1766,8 @@ bool httpserverTransportSendWebSocketData(tunnel_t *t, line_t *l, httpserver_lst
 
     if (sbufGetHeadroom(payload) >= header_len)
     {
-        sbufShiftLeft(payload, (uint32_t) header_len);
-        sbufWrite(payload, header, (uint32_t) header_len);
+        sbufShiftLeft(payload, header_len);
+        sbufWrite(payload, header, header_len);
         return httpserverSendRawDown(t, l, ls, payload);
     }
 
@@ -1871,7 +1871,7 @@ bool httpserverTransportFlushPendingDown(tunnel_t *t, line_t *l, httpserver_lsta
     /* Retain the oldest buffer and its charge while response headers can
      * reenter. New input joins this FIFO until its outer drain completes. */
     ls->pending_down_draining = true;
-    while (bufferqueueGetBufCount(&ls->pending_down) > 0)
+    while (bufferqueueGetEntryCount(&ls->pending_down) > 0)
     {
         if (ls->runtime_proto == kHttpServerRuntimeHttp2 && ! ls->h2_response_headers_sent)
         {
@@ -1936,9 +1936,9 @@ void httpserverTransportQueueUpgradePayload(tunnel_t *t, line_t *l, sbuf_t *buf,
 
 static bool httpserverTransportDrainRawUp(tunnel_t *t, line_t *l, httpserver_lstate_t *ls)
 {
-    while (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetBufCount(&ls->split_pending_up) != 0)
+    while (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetEntryCount(&ls->split_pending_up) != 0)
     {
-        sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamIdealRead(&ls->in_stream)
+        sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamTakeChunk(&ls->in_stream)
                                                             : bufferqueuePopFront(&ls->split_pending_up);
 
         if (ls->next_finished)
@@ -1966,7 +1966,7 @@ bool httpserverTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpserver_l
     {
         if (! httpserverTransportDrainRawUp(t, l, ls) || ! httpserverTransportFlushPendingDown(t, l, ls))
             return false;
-    } while (bufferqueueGetBufCount(&ls->split_pending_up) != 0);
+    } while (bufferqueueGetEntryCount(&ls->split_pending_up) != 0);
     if (ls->receive.draining)
         return true;
     assert(ls->split_role == kHttpServerSplitRoleNone);
@@ -2062,7 +2062,7 @@ static bool httpserverTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpse
 bool httpserverTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpserver_lstate_t *ls, sbuf_t *buf)
 {
     uint32_t       len = sbufGetLength(buf);
-    const uint8_t *ptr = (const uint8_t *) sbufGetRawPtr(buf);
+    const uint8_t *ptr = sbufGetRawPtr(buf);
 
     while (len > 0)
     {
@@ -2126,7 +2126,7 @@ bool httpserverTransportDetectRuntimeProtocol(tunnel_t *t, line_t *l, httpserver
         return httpserverTransportEnsureHttp2Session(t, l, ls);
     }
 
-    size_t len = bufferstreamGetBufLen(&ls->in_stream);
+    size_t len = bufferstreamGetLength(&ls->in_stream);
     if (len == 0)
     {
         return true;
@@ -2135,7 +2135,7 @@ bool httpserverTransportDetectRuntimeProtocol(tunnel_t *t, line_t *l, httpserver
     size_t probe_len = minSize(len, HTTP2_MAGIC_LEN);
 
     uint8_t probe_buf[HTTP2_MAGIC_LEN];
-    bufferstreamViewBytesAt(&ls->in_stream, 0, probe_buf, probe_len);
+    bufferstreamCopyBytesAt(&ls->in_stream, 0, probe_buf, probe_len);
 
     bool magic_prefix = (memoryCompare(probe_buf, HTTP2_MAGIC, probe_len) == 0);
 
@@ -2170,7 +2170,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
     size_t     header_end = 0;
     const bool complete   = bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end);
-    if ((complete ? header_end : bufferstreamGetBufLen(&ls->in_stream)) > kHttpServerMaxHeaderBytes)
+    if ((complete ? header_end : bufferstreamGetLength(&ls->in_stream)) > kHttpServerMaxHeaderBytes)
     {
         LOGE("HttpServer: request header exceeded maximum size");
         return false;
@@ -2328,7 +2328,7 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
                 while (! bufferstreamIsEmpty(&ls->in_stream))
                 {
-                    sbuf_t *leftover = bufferstreamIdealRead(&ls->in_stream);
+                    sbuf_t *leftover = bufferstreamTakeChunk(&ls->in_stream);
                     if (! httpserverTransportFeedHttp2Input(t, l, ls, leftover))
                     {
                         return false;
@@ -2428,7 +2428,7 @@ bool httpserverTransportDrainHttp1RequestBody(tunnel_t *t, line_t *l, httpserver
 
     while (ls->h1_body_remaining > 0)
     {
-        size_t available = bufferstreamGetBufLen(&ls->in_stream);
+        size_t available = bufferstreamGetLength(&ls->in_stream);
         if (available == 0)
         {
             return true;

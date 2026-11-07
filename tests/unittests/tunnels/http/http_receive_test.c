@@ -82,7 +82,7 @@ static void caseFifoAndEmpty(buffer_pool_t *pool)
     previous_recycled = recycled;
     require(httpReceiveAdmit(&receive, pool, makeBuffer(4U << 20, 0, 0)) == kHttpReceiveEmpty,
             "empty nested input used a queue slot");
-    require(recycled == previous_recycled + 1 && bufferqueueGetBufCount(&receive.pending) == 2,
+    require(recycled == previous_recycled + 1 && bufferqueueGetEntryCount(&receive.pending) == 2,
             "empty nested input was retained");
 
     while ((slice = httpReceiveNext(&receive, pool)) != NULL)
@@ -119,7 +119,7 @@ static void caseByteLimitAndPoppedReservation(buffer_pool_t *pool)
     checkBody(slice, 1);
     size_t received = sbufGetLength(slice);
     bufferpoolReuseBuffer(pool, slice);
-    require(bufferqueueGetBufCount(&receive.pending) == 0 && receive.active != NULL,
+    require(bufferqueueGetEntryCount(&receive.pending) == 0 && receive.active != NULL,
             "nested input was not moved into the active position");
     checkUsage(&receive, kHttpReceiveNestedBytes, charge);
     require(httpReceiveAdmit(&receive, pool, rejected) == kHttpReceiveRejected,
@@ -161,7 +161,7 @@ static void caseChargeLimit(buffer_pool_t *pool)
     bufferpoolReuseBuffer(pool, extra);
     httpReceiveDestroy(&receive, pool);
     checkUsage(&receive, 0, 0);
-    require(receive.active == NULL && ! receive.draining && bufferqueueGetBufCount(&receive.pending) == 0,
+    require(receive.active == NULL && ! receive.draining && bufferqueueGetEntryCount(&receive.pending) == 0,
             "destroy retained active or queued input");
 }
 
@@ -180,7 +180,7 @@ static void caseManyFragments(buffer_pool_t *pool)
         require(httpReceiveAdmit(&receive, pool, input) == kHttpReceiveQueued,
                 "fitting fragment was rejected by count");
     }
-    require(charge < kHttpReceiveNestedCharge && bufferqueueGetBufCount(&receive.pending) == fragments,
+    require(charge < kHttpReceiveNestedCharge && bufferqueueGetEntryCount(&receive.pending) == fragments,
             "nested fragment queue did not preserve admitted entries");
     checkUsage(&receive, fragments, charge);
     size_t  received = 0;
@@ -203,7 +203,7 @@ static void caseSettle(buffer_pool_t *pool)
     bufferstreamPush(&stream, makeBuffer(4U << 20, 3, 0));
     require(bufferstreamGetCharge(&stream) > kHttpReceiveStreamCharge, "oversized allocation fixture is too small");
     require(httpReceiveSettle(&stream, kHttpReceiveStreamBytes), "small incomplete suffix was rejected");
-    require(bufferstreamGetBufLen(&stream) == 3 && bufferstreamGetCharge(&stream) <= kHttpReceiveStreamCharge,
+    require(bufferstreamGetLength(&stream) == 3 && bufferstreamGetCharge(&stream) <= kHttpReceiveStreamCharge,
             "small suffix retained an oversized allocation");
     sbuf_t *body = bufferstreamReadExact(&stream, 3);
     checkBody(body, 0);
@@ -213,7 +213,7 @@ static void caseSettle(buffer_pool_t *pool)
     for (size_t i = 0; i < fragments; ++i)
     {
         sbuf_t        *one  = makeBuffer(1, 0, 0);
-        const uint32_t skip = sbufGetMaximumWriteableSize(one) - 1;
+        const uint32_t skip = sbufGetWritableCapacity(one) - 1;
         sbufSetLength(one, skip);
         sbufShiftRight(one, skip);
         sbufSetLength(one, 1);
@@ -235,7 +235,7 @@ static void caseSettle(buffer_pool_t *pool)
     bufferstreamPush(&stream, makeBuffer(1, 1, 0));
     size_t previous_charge = bufferstreamGetCharge(&stream);
     require(! httpReceiveSettle(&stream, kHttpReceiveStreamBytes), "stream byte allowance plus one was accepted");
-    require(bufferstreamGetBufLen(&stream) == kHttpReceiveStreamBytes + 1 &&
+    require(bufferstreamGetLength(&stream) == kHttpReceiveStreamBytes + 1 &&
                 bufferstreamGetCharge(&stream) == previous_charge,
             "failed settlement changed retained input");
     require(httpReceiveSettle(&stream, kHttpReceiveStreamBytes + 1), "caller-specific byte allowance was ignored");

@@ -103,7 +103,7 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
         return false;
     }
 
-    size_t           ciphertext_capacity = sbufGetMaximumWriteableSize(out) - (size_t) (ciphertext - frame);
+    size_t           ciphertext_capacity = sbufGetWritableCapacity(out) - (size_t) (ciphertext - frame);
     wcrypto_status_t result              = realityclientEncryptAead(ts->algorithm,
                                                        ciphertext,
                                                        ciphertext_capacity,
@@ -129,13 +129,13 @@ static bool realityclientEncryptFrame(realityclient_tstate_t *ts, realityclient_
 static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const realityclient_lstate_t *ls,
                                              sbuf_t **frame_buffer, reality_v2_record_descriptor_t *descriptor)
 {
-    if (bufferstreamGetBufLen(stream) < kRealityClientTlsHeaderSize)
+    if (bufferstreamGetLength(stream) < kRealityClientTlsHeaderSize)
     {
         return kRealityFrameNeedMore;
     }
 
     uint8_t header[kRealityClientTlsHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
 
     uint32_t body_len = ((uint32_t) header[3] << 8) | (uint32_t) header[4];
     if (! realityV2ClassifyRecord(ls->tls_version, &ls->record_profile, header, descriptor))
@@ -144,7 +144,7 @@ static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const real
     }
 
     uint32_t frame_len = kRealityClientTlsHeaderSize + body_len;
-    if (bufferstreamGetBufLen(stream) < frame_len)
+    if (bufferstreamGetLength(stream) < frame_len)
     {
         return kRealityFrameNeedMore;
     }
@@ -155,13 +155,13 @@ static int realityclientTryReadCompleteFrame(buffer_stream_t *stream, const real
 
 static int realityclientTryReadCompleteTlsRecord(buffer_stream_t *stream, sbuf_t **record)
 {
-    if (bufferstreamGetBufLen(stream) < kRealityClientTlsHeaderSize)
+    if (bufferstreamGetLength(stream) < kRealityClientTlsHeaderSize)
     {
         return kRealityFrameNeedMore;
     }
 
     uint8_t header[kRealityClientTlsHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
     bool plausible_type = header[0] == 0x14 || header[0] == 0x15 || header[0] == 0x16 || header[0] == 0x17;
     if (! plausible_type || header[1] != kRealityClientTlsVersionMajor || header[2] != kRealityClientTlsVersionMinor)
     {
@@ -175,7 +175,7 @@ static int realityclientTryReadCompleteTlsRecord(buffer_stream_t *stream, sbuf_t
     }
 
     uint32_t record_len = kRealityClientTlsHeaderSize + body_len;
-    if (bufferstreamGetBufLen(stream) < record_len)
+    if (bufferstreamGetLength(stream) < record_len)
     {
         return kRealityFrameNeedMore;
     }
@@ -658,7 +658,7 @@ bool realityclientProcessDownstream(tunnel_t *t, line_t *l, sbuf_t *buf)
                                               descriptor.visible_prefix_len,
                                               aad,
                                               &aad_len);
-        size_t ciphertext_capacity      = sbufGetMaximumWriteableSize(frame_buffer) - (size_t) (ciphertext - frame);
+        size_t           ciphertext_capacity = sbufGetWritableCapacity(frame_buffer) - (size_t) (ciphertext - frame);
         wcrypto_status_t decrypt_result = aad_ok ? realityclientDecryptAead(ts->algorithm,
                                                                             ciphertext,
                                                                             ciphertext_capacity,

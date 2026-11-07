@@ -79,11 +79,11 @@ static void testFragmented(uint32_t algorithm)
         bufferstreamPush(&stream, bytes(sbufGetRawPtr(wire), split));
         sbuf_t *frame = NULL;
         twfRequire(encryptionReadFrame(&stream, kEncryptionHardMaxFramePayload, &frame) == kEncryptionFrameNeedMore &&
-                       frame == NULL && bufferstreamGetBufLen(&stream) == split,
+                       frame == NULL && bufferstreamGetLength(&stream) == split,
                    "incomplete record consumed bytes or published a frame");
         bufferstreamPush(&stream, bytes((const uint8_t *) sbufGetRawPtr(wire) + split, length - split));
         twfRequire(encryptionReadFrame(&stream, kEncryptionHardMaxFramePayload, &frame) == kEncryptionFrameReady &&
-                       bufferstreamGetBufLen(&stream) == 0,
+                       bufferstreamGetLength(&stream) == 0,
                    "completed fragmented record was not extracted exactly");
         expectPlaintext(algorithm, frame, payload, sizeof(payload));
         bufferstreamDestroy(&stream);
@@ -111,7 +111,7 @@ static void testCoalesced(uint32_t algorithm)
                    "coalesced record boundary was lost");
         expectPlaintext(algorithm, frame, payloads[i], (uint32_t) strlen(payloads[i]));
     }
-    twfRequire(bufferstreamGetBufLen(&stream) == 0, "coalesced input retained trailing bytes");
+    twfRequire(bufferstreamGetLength(&stream) == 0, "coalesced input retained trailing bytes");
     bufferstreamDestroy(&stream);
 }
 
@@ -134,7 +134,7 @@ static void testLimitsAndGrowth(uint32_t algorithm)
     }
 
     sbuf_t        *buffer      = twfTrackAcquired(sbufCreateWithPadding(64, kEncryptionFramePrefixSize));
-    const uint32_t full_length = sbufGetMaximumWriteableSize(buffer);
+    const uint32_t full_length = sbufGetWritableCapacity(buffer);
     twfRequire(full_length <= sizeof(payload), "growth fixture exceeds the record limit");
     sbufSetLength(buffer, full_length);
     sbufWrite(buffer, payload, full_length);
@@ -163,7 +163,7 @@ static void testInvalidHeaders(void)
         sbuf_t  *frame    = sentinel;
         uint32_t limit    = i == 5 ? kEncryptionHardMaxFramePayload : 32;
         twfRequire(encryptionReadFrame(&stream, limit, &frame) == kEncryptionFrameInvalid && frame == sentinel &&
-                       bufferstreamGetBufLen(&stream) == sizeof(headers[i]),
+                       bufferstreamGetLength(&stream) == sizeof(headers[i]),
                    "invalid header consumed bytes, changed output, or waited for its body");
         bufferpoolReuseBuffer(env.pool, sentinel);
         bufferstreamDestroy(&stream);

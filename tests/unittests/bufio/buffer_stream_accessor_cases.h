@@ -120,7 +120,7 @@ static void testBufferStreamSettleRetained(void)
     }
     require(at == ARRAY_SIZE(fragments), "settlement changed the exact-limit entry count");
     require(bufferstreamSettleRetained(&stream, original_charge), "charge-pressure retention settlement failed");
-    require(bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetBufLen(&stream) == ARRAY_SIZE(fragments),
+    require(bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetLength(&stream) == ARRAY_SIZE(fragments),
             "charge pressure did not combine tiny fragments");
     read = bufferstreamFullRead(&stream);
     requirePatternRange(read, 0, ARRAY_SIZE(fragments), 0x50, "charge-pressure settlement changed FIFO bytes");
@@ -142,11 +142,11 @@ static void testBufferStreamSettleChargeAndPadding(void)
     sbufShiftRight(suffix, 2 * kTestLargeBufferSize - 20);
     bufferstreamPush(&stream, suffix);
     bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 0, 0, 0));
-    require(bufferstreamGetEntryCount(&stream) == 3 && bufferstreamGetBufLen(&stream) == 20,
+    require(bufferstreamGetEntryCount(&stream) == 3 && bufferstreamGetLength(&stream) == 20,
             "charge-pressure setup lost the consumed suffix or empty entries");
     const size_t original_charge = bufferstreamGetCharge(&stream);
     require(bufferstreamSettleRetained(&stream, 0), "charge-pressure retention settlement failed");
-    require(bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetBufLen(&stream) == 20 &&
+    require(bufferstreamGetEntryCount(&stream) == 1 && bufferstreamGetLength(&stream) == 20 &&
                 bufferstreamGetCharge(&stream) < original_charge,
             "charge pressure did not release oversized and empty allocations");
     sbuf_t *compacted = *bs_doublequeue_t_front(&stream.q);

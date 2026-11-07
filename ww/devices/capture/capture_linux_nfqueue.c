@@ -833,7 +833,7 @@ static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const str
         return kNetfilterPacketDiscarded;
     }
 
-    sbufSetLength(buff, (uint32_t) copied_len);
+    sbufSetLength(buff, copied_len);
 
     netfilter_packet_view_t         packet_view;
     netfilter_packet_parse_result_t parse_result = captureLinuxNetfilterParsePacket(message, copied_len, &packet_view);
@@ -867,8 +867,8 @@ static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const str
 netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id)
 {
     assert(packet_id != NULL);
-    assert(sbufGetMaximumWriteableSize(buff) >= kNetfilterReadBufferSize);
-    if (UNLIKELY(sbufGetMaximumWriteableSize(buff) < kNetfilterReadBufferSize))
+    assert(sbufGetWritableCapacity(buff) >= kNetfilterReadBufferSize);
+    if (UNLIKELY(sbufGetWritableCapacity(buff) < kNetfilterReadBufferSize))
     {
         errno = EMSGSIZE;
         return kNetfilterPacketError;
@@ -919,7 +919,7 @@ netfilter_packet_result_t netfilterReceiveBatch(int netfilter_socket, netfilter_
     for (uint16_t i = 0; i < capacity; ++i)
     {
         assert(records[i].buffer != NULL);
-        assert(sbufGetMaximumWriteableSize(records[i].buffer) >= kNetfilterReadBufferSize);
+        assert(sbufGetWritableCapacity(records[i].buffer) >= kNetfilterReadBufferSize);
         netfilter_batch_slot_t *slot    = &workspace->slots[i];
         struct mmsghdr         *message = &workspace->messages[i];
         slot->address                   = (struct sockaddr_nl) {0};

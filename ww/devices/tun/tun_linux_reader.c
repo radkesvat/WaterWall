@@ -154,7 +154,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
                                                      &work->plan,
                                                      work->next_payload_offset,
                                                      sbufGetMutablePtr(output),
-                                                     sbufGetMaximumWriteableSize(output),
+                                                     sbufGetWritableCapacity(output),
                                                      &built_length) ||
                      built_length != segment_length))
         {
@@ -438,7 +438,7 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
         if (nread == 0)
             return false;
         bytes += (uint32_t) nread;
-        sbufSetLength(reader->scratch, (uint32_t) nread);
+        sbufSetLength(reader->scratch, nread);
         if (tdev->checksum_offload_enabled)
         {
             if (nread < kTunVirtioHeaderSize)

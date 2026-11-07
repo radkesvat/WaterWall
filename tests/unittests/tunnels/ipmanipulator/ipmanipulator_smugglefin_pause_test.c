@@ -237,7 +237,7 @@ void ipmanipulatorDownStreamPayloadAfterSmuggleFin(tunnel_t *t, line_t *l, sbuf_
     lineReuseBuffer(l, buf);
 }
 
-sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
+sbuf_t *clonePacketWithLength(line_t *l, const sbuf_t *buf, uint32_t new_len)
 {
     buffer_pool_t *pool  = lineGetBufferPool(l);
     sbuf_t        *clone = NULL;

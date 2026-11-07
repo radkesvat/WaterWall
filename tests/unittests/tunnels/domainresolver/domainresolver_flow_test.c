@@ -111,7 +111,7 @@ static void onPause(tunnel_t *t, line_t *l)
     initiating_source_paused    = true;
     domainresolver_lstate_t *ls = lineGetState(l, resolver);
     if (ls->pending_source_hold)
-        twfRequire(bufferqueueGetBufCount(&ls->pending) != 0 && bufferqueueGetCharge(&ls->pending) != 0,
+        twfRequire(bufferqueueGetEntryCount(&ls->pending) != 0 && bufferqueueGetCharge(&ls->pending) != 0,
                    "source Pause preceded FIFO/accounting publication");
     if (pressure_only && pressure_action == 1)
     {
@@ -136,7 +136,7 @@ static void onResume(tunnel_t *t, line_t *l)
     if (! isInitiatingSource(t))
         return;
     domainresolver_lstate_t *ls = lineGetState(l, resolver);
-    twfRequire(initiating_source_paused && ! ls->pending_source_hold && bufferqueueGetBufCount(&ls->pending) == 0 &&
+    twfRequire(initiating_source_paused && ! ls->pending_source_hold && bufferqueueGetEntryCount(&ls->pending) == 0 &&
                    bufferqueueGetCharge(&ls->pending) == 0 && ! ls->next_paused,
                "source Resume preceded empty writable FIFO");
     initiating_source_paused = false;
@@ -307,7 +307,7 @@ static void run(bool close_now, bool literal)
         twfRequire(held_resume_count == 1 && ! initiating_source_paused,
                    "completed FIFO failed to release source pressure");
         domainresolver_lstate_t *ls = lineGetState(line, resolver);
-        twfRequire(bufferqueueGetCharge(&ls->pending) == 0 && bufferqueueGetBufCount(&ls->pending) == 0,
+        twfRequire(bufferqueueGetCharge(&ls->pending) == 0 && bufferqueueGetEntryCount(&ls->pending) == 0,
                    "DNS drain leaked charge");
         requireBypassed(line);
         twfRequire(prepare_destroy_count == 1, "resolver did not destroy prepare state exactly once before bypass");
@@ -530,7 +530,7 @@ static void runBudget(bool overflow, bool resolve_first)
     tunnelUpStreamPayload(resolver, line, buf);
     twfRequire(lineIsAlive(line), "valid payload above 1 MiB was refused");
     domainresolver_lstate_t *ls = lineGetState(line, resolver);
-    twfRequire(bufferqueueGetCharge(&ls->pending) == limit && bufferqueueGetBufLen(&ls->pending) == length,
+    twfRequire(bufferqueueGetCharge(&ls->pending) == limit && bufferqueueGetLength(&ls->pending) == length,
                "DNS pending budget lost buffer ownership or charge");
 
     if (resolve_first)

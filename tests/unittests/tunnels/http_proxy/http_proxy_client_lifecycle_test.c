@@ -516,7 +516,7 @@ static void combinedPressure(void)
         require(pauses[0] == 1 && resumes[0] == 0 && source_paused && writes == 1,
                 "external notifications released CONNECT's local hold or repeated its Pause");
         sendText(true, "HTTP/1.1 200 OK\r\n\r\nreply");
-        require(ls->accepted && ! bufferqueueGetBufCount(&ls->pending[0]) && strstr(sent, "\r\n\r\noldnew") &&
+        require(ls->accepted && ! bufferqueueGetEntryCount(&ls->pending[0]) && strstr(sent, "\r\n\r\noldnew") &&
                     ! stringCompare(received, "reply"),
                 "combined pressure gated admitted CONNECT backlog or changed FIFO");
         if (! external_first)
@@ -983,7 +983,7 @@ static void limitsAndTimers(void)
     require(admitted > 1024 && admitted < limits.bytes, "small-buffer charge boundary fixture");
     for (size_t i = 0; i < admitted; ++i)
         sendText(false, "x");
-    require(lineIsAlive(line) && bufferqueueGetBufCount(&ls->pending[0]) == admitted &&
+    require(lineIsAlive(line) && bufferqueueGetEntryCount(&ls->pending[0]) == admitted &&
                 bufferbudgetGetUsage(&ls->budgets[0]).charge == admitted * charge,
             "small-buffer retention was capped before its charge budget");
     sendText(false, "x");

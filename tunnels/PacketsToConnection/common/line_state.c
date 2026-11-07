@@ -42,7 +42,7 @@ static void ptcReleasePauseQueue(ptc_lstate_t *ls, buffer_pool_t *pool)
 {
     size_t index = ptcFrontPauseAckIndexOf(ls);
 
-    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pause_queue) > 0)
     {
         sbuf_t     *buf = bufferqueuePopFront(&ls->pause_queue);
         sbuf_ack_t *ack = ptcPauseAckRecordAt(ls, index);

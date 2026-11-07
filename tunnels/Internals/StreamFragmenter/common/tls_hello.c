@@ -125,7 +125,7 @@ bool streamfragmenterTlsRewrite(const sbuf_t *original, uint64_t selected_cuts,
     uint8_t       *dest          = sbufGetMutablePtr(output);
     const uint32_t length        = sbufGetLength(original);
     const uint32_t target_length = streamfragmenterTlsRewriteLength(original, selected_cuts, settings);
-    if (target_length > sbufGetMaximumWriteableSize(output))
+    if (target_length > sbufGetWritableCapacity(output))
         return false;
 
     uint32_t position = 0, written = 0, handshake = 0;

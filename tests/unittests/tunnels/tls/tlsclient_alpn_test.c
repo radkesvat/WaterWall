@@ -885,7 +885,7 @@ static void testChromeReference(void)
     FILE *capture = fopen(TLSCLIENT_CHROME_REFERENCE_FILE, "rb");
     require(capture != NULL, "failed to open the captured Chrome ClientHello");
     sbuf_t *hello  = bufferpoolGetLargeBuffer(env.pool);
-    size_t  length = fread(sbufGetMutablePtr(hello), 1, sbufGetMaximumWriteableSize(hello), capture);
+    size_t  length = fread(sbufGetMutablePtr(hello), 1, sbufGetWritableCapacity(hello), capture);
     require(length > 0 && fgetc(capture) == EOF && ! ferror(capture),
             "failed to read the complete captured Chrome ClientHello");
     require(fclose(capture) == 0, "failed to close the captured Chrome ClientHello");
@@ -1108,7 +1108,7 @@ static sbuf_t *createGenerateRequest(buffer_pool_t *pool, const char *sni, size_
 
     sbuf_t      *request = bufferpoolGetLargeBuffer(pool);
     const size_t length  = sizeof(kPrefix) - 1U + sni_len;
-    require(length <= sbufGetMaximumWriteableSize(request), "ClientHello API test request exceeds its buffer");
+    require(length <= sbufGetWritableCapacity(request), "ClientHello API test request exceeds its buffer");
 
     memoryCopy(sbufGetMutablePtr(request), kPrefix, sizeof(kPrefix) - 1U);
     memoryCopy(sbufGetMutablePtr(request) + sizeof(kPrefix) - 1U, sni, sni_len);

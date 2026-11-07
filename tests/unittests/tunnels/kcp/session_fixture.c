@@ -984,7 +984,7 @@ static void caseRetainedReceive(bool fec, unsigned direction)
     else
         closeApp(ep);
     pump(1800);
-    require(bufferqueueGetBufLen(&retained) == 512U * 1024,
+    require(bufferqueueGetLength(&retained) == 512U * 1024,
             "graceful close lost data retained behind a blocked receiver");
     require((direction ? ep->app_finishes : ep->service_finishes) == 1,
             "retained receive did not finish exactly once after all data");

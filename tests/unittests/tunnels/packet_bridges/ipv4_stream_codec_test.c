@@ -52,7 +52,7 @@ static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *d
     while (off < len)
     {
         sbuf_t  *b   = bufferpoolGetSmallBuffer(pool);
-        uint32_t cap = sbufGetMaximumWriteableSize(b);
+        uint32_t cap = sbufGetWritableCapacity(b);
         uint32_t n   = len - off;
         if (n > chunk)
         {
@@ -66,7 +66,7 @@ static void pushBytes(buffer_stream_t *bs, buffer_pool_t *pool, const uint8_t *d
         {
             sbufSetLength(b, cap - n);
             sbufShiftRight(b, cap - n);
-            require(sbufGetMaximumWriteableSize(b) == n, "fragment fixture retained spare capacity");
+            require(sbufGetWritableCapacity(b) == n, "fragment fixture retained spare capacity");
         }
         sbufSetLength(b, n);
         memoryCopy(sbufGetMutablePtr(b), data + off, n);
@@ -114,7 +114,7 @@ static void testSinglePacket(buffer_stream_t *bs, buffer_pool_t *pool)
         bufferpoolReuseBuffer(pool, p);
     }
     require(! ipv4streamTryReadPacket(bs, &p), "single: stream should be empty now");
-    require(bufferstreamGetBufLen(bs) == 0, "single: leftover bytes");
+    require(bufferstreamGetLength(bs) == 0, "single: leftover bytes");
 }
 
 static void testTwoConcatenated(buffer_stream_t *bs, buffer_pool_t *pool)
@@ -188,7 +188,7 @@ static void testGarbagePrefixRecovers(buffer_stream_t *bs, buffer_pool_t *pool)
             bufferpoolReuseBuffer(pool, p);
     }
     require(got, "garbage-prefix: valid packet was not recovered after garbage");
-    require(bufferstreamGetBufLen(bs) < (size_t) IP_HLEN, "garbage-prefix: parser did not drain");
+    require(bufferstreamGetLength(bs) < (size_t) IP_HLEN, "garbage-prefix: parser did not drain");
 }
 
 // Feeds adversarial patterns and asserts the parser always terminates, never returns a bogus
@@ -203,19 +203,19 @@ static void testAdversarialNoCrash(buffer_stream_t *bs, buffer_pool_t *pool)
     memorySet(garbage, 0x40, sizeof(garbage));
     pushBytes(bs, pool, garbage, sizeof(garbage), 64);
     drainCount(bs, pool);
-    require(bufferstreamGetBufLen(bs) < (size_t) IP_HLEN, "adversarial 0x40: did not drain");
+    require(bufferstreamGetLength(bs) < (size_t) IP_HLEN, "adversarial 0x40: did not drain");
 
     // Pattern 2: all 0xFF -> version 15, non-IPv4 everywhere.
     memorySet(garbage, 0xFF, sizeof(garbage));
     pushBytes(bs, pool, garbage, sizeof(garbage), 7);
     drainCount(bs, pool);
-    require(bufferstreamGetBufLen(bs) < (size_t) IP_HLEN, "adversarial 0xFF: did not drain");
+    require(bufferstreamGetLength(bs) < (size_t) IP_HLEN, "adversarial 0xFF: did not drain");
 
     // Pattern 3: all 0x60 -> version 6 (IPv6), must be dropped entirely.
     memorySet(garbage, 0x60, sizeof(garbage));
     pushBytes(bs, pool, garbage, sizeof(garbage), 100);
     drainCount(bs, pool);
-    require(bufferstreamGetBufLen(bs) < (size_t) IP_HLEN, "adversarial 0x60 (ipv6): did not drain");
+    require(bufferstreamGetLength(bs) < (size_t) IP_HLEN, "adversarial 0x60 (ipv6): did not drain");
 
     // Drain whatever residue is left so the stream is clean for the next test.
     bufferstreamEmpty(bs);
@@ -239,7 +239,7 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
     pushBytes(bs, pool, head, IP_HLEN, 0);
     sbuf_t *p = NULL;
     require(! ipv4streamTryReadPacket(bs, &p), "worst-case: must wait for claimed size");
-    require(bufferstreamGetBufLen(bs) == (size_t) IP_HLEN, "worst-case: must keep buffered head");
+    require(bufferstreamGetLength(bs) == (size_t) IP_HLEN, "worst-case: must keep buffered head");
 
     // Provide the remaining claimed bytes: the parser forwards the garbage-sized packet (size 1000)
     // exactly as the size field demanded. This is acceptable per the contract.
@@ -250,7 +250,7 @@ static void testLooksValidWorstCase(buffer_stream_t *bs, buffer_pool_t *pool)
     require(p != NULL && sbufGetLength(p) == kWorstCasePacketLength, "worst-case: forwarded wrong size");
     if (p)
         bufferpoolReuseBuffer(pool, p);
-    require(bufferstreamGetBufLen(bs) == 0, "worst-case: stream should be drained");
+    require(bufferstreamGetLength(bs) == 0, "worst-case: stream should be drained");
 }
 
 // Bounded pseudo-random fuzz: many rounds of random bytes (in random fragment sizes). Each round
@@ -378,14 +378,14 @@ static void testFrameBoundaries(buffer_stream_t *bs, buffer_pool_t *pool)
             require(ipv4streamIsForwardablePacket(packet), "boundary: complete packet not forwardable");
             bufferpoolReuseBuffer(pool, packet);
         }
-        require(bufferstreamGetBufLen(bs) == 0, "boundary: unexpected remainder");
+        require(bufferstreamGetLength(bs) == 0, "boundary: unexpected remainder");
     }
 
     buildIpv4(raw, sizeof(raw), 253, 0);
     pushBytes(bs, pool, raw, sizeof(raw), 19);
     sbuf_t *packet = NULL;
     require(! ipv4streamTryReadPacket(bs, &packet), "boundary: oversized frame was accepted");
-    require(bufferstreamGetBufLen(bs) < IP_HLEN, "boundary: oversized header did not resynchronize");
+    require(bufferstreamGetLength(bs) < IP_HLEN, "boundary: oversized header did not resynchronize");
     bufferstreamEmpty(bs);
 }
 
@@ -401,7 +401,7 @@ static void testResyncWindowBoundaries(buffer_stream_t *bs, buffer_pool_t *pool)
         pushBytes(bs, pool, raw, offset + IP_HLEN - 1, 11);
         sbuf_t *packet = NULL;
         require(! ipv4streamTryReadPacket(bs, &packet), "window: partial candidate must wait");
-        require(bufferstreamGetBufLen(bs) == IP_HLEN - 1, "window: incomplete header was discarded");
+        require(bufferstreamGetLength(bs) == IP_HLEN - 1, "window: incomplete header was discarded");
         pushBytes(bs, pool, raw + offset + IP_HLEN - 1, 40 - IP_HLEN + 1, 3);
         require(ipv4streamTryReadPacket(bs, &packet), "window: candidate was not recovered");
         if (packet != NULL)
@@ -410,7 +410,7 @@ static void testResyncWindowBoundaries(buffer_stream_t *bs, buffer_pool_t *pool)
                     "window: recovered bytes differ");
             bufferpoolReuseBuffer(pool, packet);
         }
-        require(bufferstreamGetBufLen(bs) == 0, "window: unexpected remainder");
+        require(bufferstreamGetLength(bs) == 0, "window: unexpected remainder");
     }
 }
 

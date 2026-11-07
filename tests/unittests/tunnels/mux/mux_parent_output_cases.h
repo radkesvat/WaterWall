@@ -1234,7 +1234,7 @@ static void caseParentAdmissionArithmeticAndDirect(void)
     sbuf_t *buf      = makePatternPayload(&f, 0);
     sbuf_t *original = buf;
     twfRequire(! muxParentOutputEnqueue(&output, &buf, SIZE_MAX) && original == buf &&
-                   bufferqueueGetBufCount(&output.pending) == 0,
+                   bufferqueueGetEntryCount(&output.pending) == 0,
                "overflowing admission changed ownership");
     lineReuseBuffer(f.parent_l, buf);
     bufferqueueDestroy(&output.pending);
@@ -1569,8 +1569,8 @@ static void caseSpliceManyIncompleteFragments(bool splice_input, bool complete, 
                        (kept || splicestreamCharge(parent->parent_state->read_stream) == 0),
                    "available DATA fragments left or remained in the parent parser");
         twfRequire(pqDeliveredChildBytes == (paused_child ? 0 : n), "available bytes did not stream immediately");
-        twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == (queued ? 1U : 0U) &&
-                       bufferqueueGetBufLen(&child->pending_child_data) == (queued ? n : 0),
+        twfRequire(bufferqueueGetEntryCount(&child->pending_child_data) == (queued ? 1U : 0U) &&
+                       bufferqueueGetLength(&child->pending_child_data) == (queued ? n : 0),
                    "paused child did not retain its frame as one entry");
         if (queued && splice_input)
         {
@@ -1679,8 +1679,8 @@ static void casePausedSplitFramesRetainWholeEntries(bool splice_input)
         twfRequire(child->child_has_payload_activity, "kept bytes did not refresh the paused child's idle timeout");
 #endif
     }
-    const size_t retained = bufferqueueGetBufLen(&child->pending_child_data);
-    twfRequire(retained == payload && bufferqueueGetBufCount(&child->pending_child_data) == kSplitFrames,
+    const size_t retained = bufferqueueGetLength(&child->pending_child_data);
+    twfRequire(retained == payload && bufferqueueGetEntryCount(&child->pending_child_data) == kSplitFrames,
                "split frames were not retained as one entry per frame");
     twfRequire(bufferqueueGetCharge(&child->pending_child_data) * 100U <= retained * 101U &&
                    bufferbudgetGetUsage(&parent->parent_state->child_queue_budget).charge ==
@@ -1956,7 +1956,7 @@ static void caseAccountedSpliceLimitRefusal(void)
     const size_t limit                  = sbufGetQueueCharge(buf) - 1;
     twfRequire(! muxParentOutputEnqueue(&output, &buf, limit), "exceeded charge limit admitted a pipe");
     int available = -1;
-    twfRequire(buf == original && output.charge == 0 && bufferqueueGetBufCount(&output.pending) == 0 &&
+    twfRequire(buf == original && output.charge == 0 && bufferqueueGetEntryCount(&output.pending) == 0 &&
                    ioctl(fd, FIONREAD, &available) == 0 && available == 32,
                "failed parent admission changed candidate ownership, body, or resource counters");
     lineReuseBuffer(f.child_l, buf);
@@ -2033,7 +2033,7 @@ static void caseChildPauseWithoutQueuedData(void)
     muxserverTunnelDownStreamPause(f.mux, f.child_l);
 #endif
     frame_view_t frames[2];
-    twfRequire(child->paused && child->flow_paused_sent && bufferqueueGetBufCount(&child->pending_child_data) == 0 &&
+    twfRequire(child->paused && child->flow_paused_sent && bufferqueueGetEntryCount(&child->pending_child_data) == 0 &&
                    parseFrames(f.capture, f.trace.capture_len, frames, 2) == 1 &&
                    frames[0].flags == kMuxFlagFlowPause && frames[0].cid == kTestChildCid,
                "child Pause waited for buffered data or sent duplicate FlowPause");
@@ -2213,7 +2213,7 @@ static void caseFirstDataFrame(bool splice_input, unsigned pause_mode)
     uint8_t empty[kMuxFrameLength];
     writeFrameHeader(empty, 0, kMuxFlagData, kTestChildCid);
     pqFirstFrameInput(&f, empty, sizeof(empty), splice_input);
-    twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 0,
+    twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetEntryCount(&child->pending_child_data) == 0,
                "empty first DATA produced a callback or queue entry");
 
     uint8_t wire[kMuxFrameLength + 32];
@@ -2228,13 +2228,13 @@ static void caseFirstDataFrame(bool splice_input, unsigned pause_mode)
         if (pause_mode == 1 && offset == 12)
             muxserverTunnelDownStreamResume(f.mux, f.child_l);
         if (offset < sizeof(wire))
-            twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 0,
+            twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetEntryCount(&child->pending_child_data) == 0,
                        "first DATA frame escaped before its final byte");
     }
     if (pause_mode == 2)
     {
-        twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1 &&
-                       bufferqueueGetBufLen(&child->pending_child_data) == 32,
+        twfRequire(pqChildDeliveries(&f) == 0 && bufferqueueGetEntryCount(&child->pending_child_data) == 1 &&
+                       bufferqueueGetLength(&child->pending_child_data) == 32,
                    "paused first DATA frame was delivered or split into queue entries");
         muxserverTunnelDownStreamResume(f.mux, f.child_l);
     }

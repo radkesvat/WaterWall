@@ -31,9 +31,9 @@ static inline void threadsafegenericpoolReuseItem(threadsafe_generic_pool_t *poo
     mutexUnlock(&(pool->mutex));
 }
 
-static inline uint32_t threadsafegenericpoolGetItemSize(threadsafe_generic_pool_t *pool)
+static inline size_t threadsafegenericpoolGetItemSize(threadsafe_generic_pool_t *pool)
 {
-    uint32_t item_size;
+    size_t item_size;
 
     mutexLock(&(pool->mutex));
     item_size = genericpoolGetItemSize(pool->inner_pool);
@@ -42,14 +42,15 @@ static inline uint32_t threadsafegenericpoolGetItemSize(threadsafe_generic_pool_
     return item_size;
 }
 
-static inline void threadsafegenericpoolSetItemSize(threadsafe_generic_pool_t *pool, uint32_t item_size)
+static inline void threadsafegenericpoolSetItemSize(threadsafe_generic_pool_t *pool, size_t item_size)
 {
     mutexLock(&(pool->mutex));
     genericpoolSetItemSize(pool->inner_pool, item_size);
     mutexUnlock(&(pool->mutex));
 }
 
-/* All wrapper constructors return NULL for invalid inner-pool arguments/geometry
+/* Item sizes use size_t and retain the UINT32_MAX byte limit.
+ * All wrapper constructors return NULL for invalid inner-pool arguments/geometry
  * or failed mutex initialization. Heap allocation failure terminates the process.
  * Callers must check before publication. */
 threadsafe_generic_pool_t *threadsafegenericpoolCreate(master_pool_t *mp, PoolItemCreateHandle create_h,
@@ -59,10 +60,10 @@ threadsafe_generic_pool_t *threadsafegenericpoolCreateWithCapacity(master_pool_t
                                                                    PoolItemCreateHandle  create_h,
                                                                    PoolItemDestroyHandle destroy_h);
 
-threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size);
+threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocator(master_pool_t *mp, size_t item_size);
 
 threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp,
-                                                                                      uint32_t       item_size,
+                                                                                      size_t         item_size,
                                                                                       uint32_t       pool_width);
 
 void threadsafegenericpoolDestroy(threadsafe_generic_pool_t *pool);

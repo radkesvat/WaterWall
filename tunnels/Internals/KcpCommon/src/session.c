@@ -319,7 +319,7 @@ static void emitOutput(tou_session_t *s)
         touSessionAbort(s, kTouCapacityFailure);
         return;
     }
-    sbufSetLength(buffer, (uint32_t) packet.size);
+    sbufSetLength(buffer, packet.size);
     memoryCopyLarge(sbufGetMutablePtr(buffer), packet.bytes, packet.size);
     memoryFree(packet.bytes);
     s->callbacks.emit(s->user, buffer);
@@ -510,18 +510,16 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
         }
         /* Small records must not pin a large allocation in the next node's queue.
          * Preserve the former receive buffer's onward prepend headroom. */
-        sbuf_t *buffer =
-            bufferpoolGetBestFit(s->config.pool, (uint32_t) peek, bufferpoolGetLargeBufferPadding(s->config.pool));
-        const int count =
-            ikcp_recv(s->kcp, (char *) sbufGetMutablePtr(buffer), (int) sbufGetMaximumWriteableSize(buffer));
+        sbuf_t   *buffer = bufferpoolGetBestFit(s->config.pool, peek, bufferpoolGetLargeBufferPadding(s->config.pool));
+        const int count  = ikcp_recv(s->kcp, (char *) sbufGetMutablePtr(buffer), (int) sbufGetWritableCapacity(buffer));
         if (count <= 0)
         {
             bufferpoolReuseBuffer(s->config.pool, buffer);
             touSessionAbort(s, kTouProtocolFailure);
             return;
         }
-        sbufSetLength(buffer, (uint32_t) count);
-        const uint8_t flag = ((const uint8_t *) sbufGetRawPtr(buffer))[0];
+        sbufSetLength(buffer, count);
+        const uint8_t flag = (sbufGetRawPtr(buffer))[0];
         sbufShiftRight(buffer, 1);
         if (flag == kTouFrameData)
         {

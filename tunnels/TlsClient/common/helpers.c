@@ -67,7 +67,7 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
         *out = buf;
         return true;
     }
-    buf         = sbufReserveSpace(buf, (uint32_t) pending);
+    buf = sbufReserveSpace(buf, pending);
 
     size_t offset = sbufGetLength(buf);
     while (offset < pending)
@@ -87,7 +87,7 @@ bool tlsclientDrainBioToBuffer(buffer_pool_t *pool, BIO *bio, sbuf_t **out)
         return false;
     }
 
-    sbufSetLength(buf, (uint32_t) pending);
+    sbufSetLength(buf, pending);
     *out = buf;
     return true;
 }
@@ -118,8 +118,7 @@ static bool tlsclientRawRecordIsComplete(const sbuf_t *record)
     }
 
     size_t record_len = 0;
-    return tlsclientRecordHeader((const uint8_t *) sbufGetRawPtr(record), &record_len) &&
-           record_len == sbufGetLength(record);
+    return tlsclientRecordHeader(sbufGetRawPtr(record), &record_len) && record_len == sbufGetLength(record);
 }
 
 bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, bool *invalid)
@@ -128,13 +127,13 @@ bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, boo
     *record  = NULL;
     *invalid = false;
 
-    if (bufferstreamGetBufLen(&ls->takeover_stream) < kTlsClientRecordHeaderSize)
+    if (bufferstreamGetLength(&ls->takeover_stream) < kTlsClientRecordHeaderSize)
     {
         return false;
     }
 
     uint8_t header[kTlsClientRecordHeaderSize];
-    bufferstreamViewBytesAt(&ls->takeover_stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(&ls->takeover_stream, 0, header, sizeof(header));
 
     size_t record_len = 0;
     if (! tlsclientRecordHeader(header, &record_len))
@@ -143,7 +142,7 @@ bool tlsclientTakeoverTryReadRecord(tlsclient_lstate_t *ls, sbuf_t **record, boo
         return false;
     }
 
-    if (bufferstreamGetBufLen(&ls->takeover_stream) < record_len)
+    if (bufferstreamGetLength(&ls->takeover_stream) < record_len)
     {
         return false;
     }
@@ -744,7 +743,7 @@ tlsclient_post_handshake_result_t tlsclientTunnelConsumePostHandshakeRecord(tunn
     }
 
     sbuf_t *discard_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
-    int     avail       = (int) sbufGetMaximumWriteableSize(discard_buf);
+    int     avail       = (int) sbufGetWritableCapacity(discard_buf);
 
     while (true)
     {

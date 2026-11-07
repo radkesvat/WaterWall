@@ -205,7 +205,7 @@ static sbuf_t *speedtestserverAllocBuffer(line_t *l, uint32_t len)
         buf = sbufCreateWithPadding(len, bufferpoolGetLargeBufferPadding(pool));
     }
 
-    assert(sbufGetMaximumWriteableSize(buf) >= len);
+    assert(sbufGetWritableCapacity(buf) >= len);
     sbufSetLength(buf, len);
     return buf;
 }

@@ -6,7 +6,7 @@ static sbuf_t *encodeFrame(line_t *line, vmessserver_lstate_t *ls, const uint8_t
     buffer_pool_t *pool     = lineGetBufferPool(line);
     size_t         prefix   = ls->response_sent ? 0 : VMESS_RESPONSE_HEADER_SIZE;
     size_t         capacity = prefix + size + 18 + 16 + 63;
-    sbuf_t        *frame    = bufferpoolGetBestFit(pool, (uint32_t) capacity, bufferpoolGetLargeBufferPadding(pool));
+    sbuf_t        *frame    = bufferpoolGetBestFit(pool, capacity, bufferpoolGetLargeBufferPadding(pool));
     size_t         written  = 0;
     *status                 = vmessBodySeal(
         &ls->output_crypto, data, size, eof, sbufGetMutablePtr(frame) + prefix, capacity - prefix, &written);
@@ -17,7 +17,7 @@ static sbuf_t *encodeFrame(line_t *line, vmessserver_lstate_t *ls, const uint8_t
     }
     if (prefix)
         memoryCopy(sbufGetMutablePtr(frame), ls->response_header, prefix);
-    sbufSetLength(frame, (uint32_t) (prefix + written));
+    sbufSetLength(frame, (prefix + written));
     ls->response_sent        = true;
     vmessserver_tstate_t *ts = tunnelGetState(ls->tunnel);
     if (! ls->output_crypto.raw)
@@ -59,7 +59,7 @@ bool vmessserverDrainResponse(tunnel_t *t, line_t *line, bool admitted)
     buffer_pool_t *pool       = lineGetBufferPool(line);
     ls->response_dispatching  = true;
     const bool tcp            = ls->request.command == kVmessCmdTcp;
-    size_t     admitted_count = admitted ? bufferqueueGetBufCount(&ls->pending_down) : 0;
+    size_t     admitted_count = admitted ? bufferqueueGetEntryCount(&ls->pending_down) : 0;
     while (tcp || ls->finish_pending || admitted_count != 0 || ! ls->response_paused)
     {
         sbuf_t *out = bufferqueuePopFrontReserved(&ls->pending_down, &ls->response_reservation);
@@ -99,7 +99,7 @@ bool vmessserverDrainResponse(tunnel_t *t, line_t *line, bool admitted)
                 lineUnref(line);
                 return false;
             }
-            sbufShiftRight(out, (uint32_t) take);
+            sbufShiftRight(out, take);
             available -= take;
             bufferbudgetReservationSetBytes(&ls->response_reservation, available);
             tunnelPrevDownStreamPayload(t, line, frame);
@@ -150,7 +150,7 @@ bool vmessserverForwardResponse(tunnel_t *t, line_t *line, sbuf_t *buf)
         lineReuseBuffer(line, buf);
         return true;
     }
-    bool   older             = bufferqueueGetBufCount(&ls->pending_down) != 0;
+    bool   older             = bufferqueueGetEntryCount(&ls->pending_down) != 0;
     size_t application_bytes = sbufGetLength(buf);
     if (ls->packetaddr)
     {

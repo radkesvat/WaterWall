@@ -20,10 +20,10 @@
 
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 
-sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer);
-sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer);
+sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer);
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer);
 
-sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buffer)
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer)
 {
     // The duplicate helper acquires from its own translation unit, bypassing
     // GNU --wrap on the individual pool getters. Record the new ownership here.
@@ -304,7 +304,7 @@ static sbuf_t *makeInnerPacket(line_t *line, uint16_t length)
 {
     twfRequire(length >= IP_HLEN, "test inner packet is too short");
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= length, "test inner packet does not fit its buffer");
+    twfRequire(sbufGetWritableCapacity(buf) >= length, "test inner packet does not fit its buffer");
     sbufSetLength(buf, length);
     memoryZero(sbufGetMutablePtr(buf), length);
 
@@ -327,7 +327,7 @@ static sbuf_t *makeInnerPacket(line_t *line, uint16_t length)
 static sbuf_t *bufferFromCapture(line_t *line, const captured_packet_t *packet)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= packet->length, "captured Ping packet does not fit its buffer");
+    twfRequire(sbufGetWritableCapacity(buf) >= packet->length, "captured Ping packet does not fit its buffer");
     sbufSetLength(buf, packet->length);
     memoryCopy(sbufGetMutablePtr(buf), packet->bytes, packet->length);
     return buf;

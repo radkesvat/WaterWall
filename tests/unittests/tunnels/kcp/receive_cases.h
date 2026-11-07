@@ -68,7 +68,7 @@ static void caseReceiveMessages(bool server)
                     closeApp(ep);
             }
             sbuf_t  *probe    = bufferpoolGetLargeBuffer(getCurrentWorkerBufferPool());
-            uint32_t capacity = sbufGetMaximumWriteableSize(probe);
+            uint32_t capacity = sbufGetWritableCapacity(probe);
             bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), probe);
             uint32_t       remaining = kind == kReceiveOversized || kind == kReceiveExactCapacity
                                            ? capacity + (kind == kReceiveOversized)

@@ -44,16 +44,15 @@ void vmessserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 return;
             }
             buffer_pool_t *pool = lineGetBufferPool(l);
-            sbuf_t        *wrapped =
-                bufferpoolGetBestFit(pool, (uint32_t) (prefix + length), bufferpoolGetLargeBufferPadding(pool));
+            sbuf_t *wrapped     = bufferpoolGetBestFit(pool, (prefix + length), bufferpoolGetLargeBufferPadding(pool));
             size_t           written = 0;
             wcrypto_status_t encoded = vmessPacketAddrEncode(&address, sbufGetMutablePtr(wrapped), prefix, &written);
             assert(encoded == kWCryptoOk && written == prefix);
             discard encoded;
             /* UDP is ordinary, but use the representation helper so all accepted
              * buffers settle through the same ownership path. */
-            sbufReadRangeToMemory(buf, sbufGetMutablePtr(wrapped) + prefix, (uint32_t) length);
-            sbufSetLength(wrapped, (uint32_t) (prefix + length));
+            sbufReadRangeToMemory(buf, sbufGetMutablePtr(wrapped) + prefix, length);
+            sbufSetLength(wrapped, (prefix + length));
             lineReuseBuffer(l, buf);
             buf = wrapped;
         }

@@ -387,8 +387,8 @@ static void compactTranscriptCase(void)
     }
     twfRequire(allocation_bytes <= 32768, "8201 tiny input bytes retained more than 32 KiB of transcript buffers");
     uint8_t actual[sizeof(expected)];
-    bufferstreamViewBytesAt(&ls->fallback_probe, 0, actual, sizeof(actual));
-    twfRequire(bufferstreamGetBufLen(&ls->fallback_probe) == sizeof(expected) &&
+    bufferstreamCopyBytesAt(&ls->fallback_probe, 0, actual, sizeof(actual));
+    twfRequire(bufferstreamGetLength(&ls->fallback_probe) == sizeof(expected) &&
                    memcmp(actual, expected, sizeof(actual)) == 0,
                "compaction changed the original bytes");
     teardown(&f);

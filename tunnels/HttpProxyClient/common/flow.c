@@ -16,7 +16,7 @@ static bool updatePressure(tunnel_t *t, line_t *l, bool repeat)
     if (ls->prev_finished || (! ts->connect && ls->accepted && ls->body.kind == kHpsBodyDone) || ! hpcAllowed(t, l))
         return true;
     bool local = ! ls->header_sent || (ts->connect && ! ls->accepted) || ls->up_busy ||
-                 bufferqueueGetBufCount(&ls->pending[0]) != 0;
+                 bufferqueueGetEntryCount(&ls->pending[0]) != 0;
     bool paused = local || ls->next_paused;
     if (paused == ls->source_paused && (! repeat || local))
         return true;
@@ -60,7 +60,7 @@ bool hpcDrainUpload(tunnel_t *t, line_t *l)
         return true;
     /* Bound this independent dispatch. Later reentry stays in the same FIFO and
      * resumes on the existing owner-loop timer. */
-    size_t count = bufferqueueGetBufCount(&ls->pending[0]);
+    size_t count = bufferqueueGetEntryCount(&ls->pending[0]);
     ls->up_busy  = true;
     while (count-- && hpcAllowed(t, l))
     {
@@ -77,7 +77,7 @@ bool hpcDrainResponse(tunnel_t *t, line_t *l)
     hpc_lstate_t *ls = lineGetState(l, t);
     if (ls->down_busy || ls->prev_finished || ! hpcAllowed(t, l))
         return true;
-    size_t count  = bufferqueueGetBufCount(&ls->pending[1]);
+    size_t count  = bufferqueueGetEntryCount(&ls->pending[1]);
     ls->down_busy = true;
     while (count-- && hpcAllowed(t, l))
     {

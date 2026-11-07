@@ -42,7 +42,7 @@ static inline void sbufSpliceConsumeBody(sbuf_t *buf, size_t bytes)
 {
     assert(sbufIsSplice(buf));
     assert(bytes <= sbufGetLength(buf) - sbufGetResidentPrefixLength(buf));
-    sbufConsume(buf, bytes);
+    sbufReduceLength(buf, bytes);
     buf->capacity -= bytes;
 }
 
@@ -52,15 +52,15 @@ static inline void sbufSpliceConsumeBody(sbuf_t *buf, size_t bytes)
  * owns only the returned buffer; a replaced splice wrapper is recycled through
  * pool. No callbacks occur. Allocation follows bufferpoolGetBestFit's fail-fast
  * contract; invalid splice contents are fatal invariants. */
-sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
+WW_MUST_USE sbuf_t *sbufEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
 
 /** Checked counterpart of sbufEnsureOrdinary(). Returns NULL for unrepresentable
  * destination geometry, leaving buf unchanged and caller-owned. Ordinary input
  * returns unchanged. Successful conversion consumes and recycles the splice
  * source. Allocation otherwise follows the pool's fail-fast contract. */
-sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
+WW_MUST_USE sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
 
-/** Return buf unchanged when it has at least need bytes of left capacity;
+/** Return buf unchanged when it has at least need bytes of current headroom;
  * otherwise move its complete payload into storage with at least both need and
  * the pool's large-buffer padding. The caller exclusively owns buf and retains
  * only the returned buffer; a replaced source is recycled through pool.
@@ -69,7 +69,7 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf);
  * Payload bytes are preserved, not their resident/private-pipe split. The caller
  * establishes representable replacement geometry and owns the pool's worker
  * context. No callbacks occur. Allocation follows the pool's fail-fast contract. */
-sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need);
+WW_MUST_USE sbuf_t *sbufEnsureHeadroom(buffer_pool_t *pool, sbuf_t *buf, uint16_t need);
 
 /**
  * Replace an ordinary destination payload with the complete resident contents
@@ -99,8 +99,8 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes);
  * size and padding is required onward headroom, also when destination is NULL.
  * Both ordinary and splice sources are accepted.
  * Source range and destination geometry are preconditions. No callbacks occur. */
-sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *destination, size_t bytes, size_t final_size,
-                        uint16_t padding);
+WW_MUST_USE sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *destination, size_t bytes,
+                                    size_t final_size, uint16_t padding);
 
 /** Consume exactly bytes into sufficient resident memory. Source remains
  * caller-owned. */

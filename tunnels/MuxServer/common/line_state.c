@@ -102,8 +102,8 @@ void muxserverLinestateDestroy(tunnel_t *t, muxserver_lstate_t *ls)
             LOGF("MuxServer: child line state unexpectedly owns parent-only state");
             abortProgramNow(1);
         }
-        if (bufferqueueGetCharge(&ls->pending_child_data) != 0 || bufferqueueGetBufLen(&ls->pending_child_data) != 0 ||
-            bufferqueueGetBufCount(&ls->pending_child_data) != 0)
+        if (bufferqueueGetCharge(&ls->pending_child_data) != 0 || bufferqueueGetLength(&ls->pending_child_data) != 0 ||
+            bufferqueueGetEntryCount(&ls->pending_child_data) != 0)
         {
             LOGF("MuxServer: Trying to destroy child line state with retained queued data");
             abortProgramNow(1);

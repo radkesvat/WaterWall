@@ -152,7 +152,7 @@ static void sourcePause(tunnel_t *t, line_t *l)
     }
     if (reenter_source_pause)
     {
-        twfRequire(bufferqueueGetBufCount(&ls->pending_up) == 1, "source Pause preceded older input admission");
+        twfRequire(bufferqueueGetEntryCount(&ls->pending_up) == 1, "source Pause preceded older input admission");
         tunnelUpStreamPayload(node, l, bytes(l, "D", 1));
         tunnelDownStreamResume(node, transport);
         twfRequire(source_resumes == 0, "transport Resume released the local protocol hold");
@@ -167,7 +167,7 @@ static void sourceResume(tunnel_t *t, line_t *l)
     socksLstate *ls = lineGetState(l, node);
     if (tunnelIsActiveForLine(node, l))
         twfRequire(! ls->source_pause_sent && ! ls->next_paused && ! ls->draining_up &&
-                       bufferqueueGetBufCount(&ls->pending_up) == 0 &&
+                       bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
                        (! udp_case || ls->phase == kSocks5ClientPhaseEstablished),
                    "source resumed before protocol backlog/transport hold cleared");
 #endif
@@ -282,7 +282,7 @@ static void repeatedSignals(void)
     if (tunnelIsActiveForLine(node, application))
     {
         socksLstate *ls = lineGetState(application, node);
-        if (ls->draining_up || bufferqueueGetBufCount(&ls->pending_up) != 0)
+        if (ls->draining_up || bufferqueueGetEntryCount(&ls->pending_up) != 0)
             expected = 0;
     }
 #endif
@@ -522,14 +522,14 @@ static void pendingBoundary(bool entries)
         sbufSetLength(buf, length);
         tunnelUpStreamPayload(node, application, buf);
     }
-    twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_up) == count,
+    twfRequire(lineIsAlive(application) && bufferqueueGetEntryCount(&ls->pending_up) == count,
                "SOCKS refused exact pending boundary");
 #ifdef SOCKS_EST_SERVER
     const size_t expected_bytes = entries ? count : byte_limit;
 #else
     const size_t expected_bytes = entries ? 0 : byte_limit;
 #endif
-    twfRequire(bufferqueueGetBufLen(&ls->pending_up) == expected_bytes, "SOCKS pending byte accounting changed");
+    twfRequire(bufferqueueGetLength(&ls->pending_up) == expected_bytes, "SOCKS pending byte accounting changed");
     tunnelUpStreamPayload(node, application, bytes(application, "X", 1));
     twfRequire(! lineIsAlive(application), "SOCKS overflow left borrowed owner alive");
     twfRequireLineStateZeroed(application, node, "SOCKS overflow left protocol state alive");

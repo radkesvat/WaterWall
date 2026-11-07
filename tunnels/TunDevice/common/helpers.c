@@ -24,7 +24,7 @@ static void logPacket(sbuf_t *buf)
     discard buf;
 
 #if LOG_PACKET_INFO
-    struct ip_hdr *iphdr = (struct ip_hdr *) sbufGetRawPtr(buf);
+    const struct ip_hdr *iphdr = (const struct ip_hdr *) sbufGetRawPtr(buf);
 
     if (IPH_V(iphdr) == 4)
     {

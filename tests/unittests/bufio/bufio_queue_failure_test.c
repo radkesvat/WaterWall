@@ -177,7 +177,7 @@ static bool testQueueGeometryRejection(void)
     const size_t excessive_entries = (size_t) PTRDIFF_MAX / sizeof(sbuf_t *);
     const bool   rejected          = ! bufferqueueReserveExtra(&queue, excessive_entries) &&
                           ! bufferqueueReserveExtra(&queue, SIZE_MAX) && queue.q.cbuf == NULL &&
-                          bufferqueueGetBufCount(&queue) == 0;
+                          bufferqueueGetEntryCount(&queue) == 0;
     const bool accepted = bufferqueueInit(&queue, 2) && ww_sbuffer_queue_t_capacity(&queue.q) >= 2;
     bufferqueueDestroy(&queue);
     return TEST_CHECK(rejected && accepted, "queue geometry refusal changed storage or rejected valid capacity");

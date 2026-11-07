@@ -243,7 +243,7 @@ static inline bool readDecryptedData(tunnel_t *t, line_t *l, tlsclient_lstate_t 
     {
         sbuf_t *data_buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));
 
-        int avail = (int) sbufGetMaximumWriteableSize(data_buf);
+        int avail = (int) sbufGetWritableCapacity(data_buf);
         n         = SSL_read(ls->ssl, sbufGetMutablePtr(data_buf), avail);
 
         if (n > 0)

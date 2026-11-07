@@ -66,7 +66,7 @@ static void end(reader_fixture_t *fixture)
 static sbuf_t *append(reader_fixture_t *fixture, const uint8_t *bytes, size_t length)
 {
     sbuf_t *input = bufferpoolGetSmallBuffer(pool);
-    require(length <= sbufGetMaximumWriteableSize(input), "test input exceeded small pool capacity");
+    require(length <= sbufGetWritableCapacity(input), "test input exceeded small pool capacity");
     sbufSetLength(input, (uint32_t) length);
     if (length != 0)
         sbufWrite(input, bytes, (uint32_t) length);

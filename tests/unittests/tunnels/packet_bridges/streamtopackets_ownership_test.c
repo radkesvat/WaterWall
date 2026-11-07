@@ -327,7 +327,7 @@ static void feedPacket(line_t *stream_line, uint32_t src, uint16_t src_port, uin
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(stream_line));
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= kTestPacketLength, "the test buffer is too small");
+    twfRequire(sbufGetWritableCapacity(buf) >= kTestPacketLength, "the test buffer is too small");
     sbufSetLength(buf, kTestPacketLength);
     buildIpv4(sbufGetMutablePtr(buf), src, src_port, dst, dst_port);
 
@@ -343,7 +343,7 @@ static void feedHeartbeat(line_t *stream_line, uint8_t fill_byte)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(stream_line));
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= kHeartbeatPacketSize, "the test buffer is too small");
+    twfRequire(sbufGetWritableCapacity(buf) >= kHeartbeatPacketSize, "the test buffer is too small");
     sbufSetLength(buf, kHeartbeatPacketSize);
 
     uint8_t *raw = sbufGetMutablePtr(buf);
@@ -383,7 +383,7 @@ static void feedReturnPacket(uint32_t src, uint16_t src_port, uint32_t dst, uint
     const wid_t    previous    = tosSetCurrentWorker(wid);
     sbuf_t        *buf         = bufferpoolGetSmallBuffer(lineGetBufferPool(packet_line));
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= kTestPacketLength, "the test buffer is too small");
+    twfRequire(sbufGetWritableCapacity(buf) >= kTestPacketLength, "the test buffer is too small");
     sbufSetLength(buf, kTestPacketLength);
     buildIpv4(sbufGetMutablePtr(buf), src, src_port, dst, dst_port);
 

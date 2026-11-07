@@ -118,7 +118,7 @@ static inline bool awqIsBlocked(const adapter_write_queue_t *q)
 static inline size_t awqGetQueuedBytes(adapter_write_queue_t *q)
 {
     assert(q != NULL);
-    return bufferqueueGetBufLen(&q->queue);
+    return bufferqueueGetLength(&q->queue);
 }
 
 static inline buffer_budget_cost_t awqGetUsage(const adapter_write_queue_t *q)

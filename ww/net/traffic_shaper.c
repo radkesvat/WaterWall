@@ -290,7 +290,7 @@ traffic_shaper_submit_t trafficshaperSubmit(traffic_shaper_t *shaper, sbuf_t *bu
 static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
 {
     assert(shaper->candidate == NULL);
-    sbuf_t *source = (sbuf_t *) bufferqueueFront(&shaper->queue);
+    const sbuf_t *source = bufferqueueFront(&shaper->queue);
     assert(source != NULL && bytes <= sbufGetLength(source));
     if (bytes == sbufGetLength(source))
     {
@@ -331,15 +331,15 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
         }
     }
     if (destination == NULL)
-        destination = bufferpoolGetBestFit(pool, (uint32_t) bytes, padding);
+        destination = bufferpoolGetBestFit(pool, bytes, padding);
     buffer_budget_cost_t before = trafficshaperCost(shaper, source);
-    source                      = bufferqueuePopFront(&shaper->queue);
-    shaper->candidate = sbufMoveRangeTo(pool, source, destination, (uint32_t) bytes, (uint32_t) bytes, padding);
-    buffer_budget_cost_t after  = trafficshaperCost(shaper, source);
+    sbuf_t              *owned_source = bufferqueuePopFront(&shaper->queue);
+    shaper->candidate                 = sbufMoveRangeTo(pool, owned_source, destination, bytes, bytes, padding);
+    buffer_budget_cost_t after        = trafficshaperCost(shaper, owned_source);
     buffer_budget_cost_t output = trafficshaperCost(shaper, shaper->candidate);
     assert(after.bytes + output.bytes == before.bytes && after.charge <= before.charge);
     assert(output.charge <= extra.charge);
-    bufferqueuePushFront(&shaper->queue, source);
+    bufferqueuePushFront(&shaper->queue, owned_source);
     trafficshaperRelease(shaper,
                          (buffer_budget_cost_t) {0, extra.charge - output.charge + before.charge - after.charge});
     return true;
@@ -363,7 +363,7 @@ void trafficshaperDrain(traffic_shaper_t *shaper)
     if (shaper->externally_paused)
         return;
 
-    sbuf_t *head   = shaper->candidate != NULL ? shaper->candidate : (sbuf_t *) bufferqueueFront(&shaper->queue);
+    const sbuf_t            *head    = shaper->candidate != NULL ? shaper->candidate : bufferqueueFront(&shaper->queue);
     size_t  length = sbufGetLength(head);
     traffic_shaper_preview_t preview = shaper->ops->preview(shaper->context, length, true);
     if (preview.reject)
@@ -401,7 +401,7 @@ void trafficshaperDrain(traffic_shaper_t *shaper)
             return;
         }
     }
-    bool remaining = bufferqueueGetBufCount(&shaper->queue) != 0;
+    bool remaining = bufferqueueGetEntryCount(&shaper->queue) != 0;
     /* Establish the next asynchronous obligation before a charge-at-handoff
      * commit. Its callback cannot execute within this owner-worker callback. */
     if ((remaining || shaper->locally_paused) && ! trafficshaperSchedule(shaper, shaper->yield_ms))

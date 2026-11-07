@@ -513,7 +513,7 @@ static void flowSourcePause(tunnel_t *t, line_t *l)
     if (flow_pressure_action == 1)
     {
         flow_pressure_action = 0;
-        twfRequire(bufferqueueGetBufCount(&main_ls->pending_up) == 1,
+        twfRequire(bufferqueueGetEntryCount(&main_ls->pending_up) == 1,
                    "protocol Pause preceded older payload admission");
         connectionfisherclientTunnelUpStreamPayload(active_flow->fisher, l, flowPayload("B"));
         connectionfisherclientTunnelDownStreamResume(active_flow->fisher, active_flow->selected_child);
@@ -530,7 +530,8 @@ static void flowSourceResume(tunnel_t *t, line_t *l)
     discard t;
     ++flow_resumes;
     connectionfisherclient_lstate_t *main_ls = lineGetState(l, active_flow->fisher);
-    twfRequire(! main_ls->prev_pause_sent && ! main_ls->pumping_up && bufferqueueGetBufCount(&main_ls->pending_up) == 0,
+    twfRequire(! main_ls->prev_pause_sent && ! main_ls->pumping_up &&
+                   bufferqueueGetEntryCount(&main_ls->pending_up) == 0,
                "Fisher source Resume preceded independent backlog settlement");
     if (flow_pressure_action == 3)
     {

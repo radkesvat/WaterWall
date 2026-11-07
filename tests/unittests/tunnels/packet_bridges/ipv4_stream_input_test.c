@@ -264,7 +264,7 @@ static void testLargeBatch(uint32_t bytes)
     fixtureSetup();
     receive(makeInput(0, 0, bytes));
     twfRequireEqualU32(f.delivered, bytes / kPacketBytes, "large valid delivery was discarded or truncated");
-    twfRequire(bufferstreamGetBufLen(&parserState()->read_stream) == 0, "complete delivery retained bytes");
+    twfRequire(bufferstreamGetLength(&parserState()->read_stream) == 0, "complete delivery retained bytes");
     twfRequire(! parserState()->read_input.draining && lineIsAlive(f.stream_line), "complete batch left a drain/close");
     twfRequireNoLeakedBuffers();
     fixtureTeardown();
@@ -277,7 +277,7 @@ static void testThresholdWithPartial(void)
     receive(makeInput(0, 0, IP_HLEN));
     twfRequire(f.delivered == 0, "partial packet was delivered");
     receive(makeInput(0, IP_HLEN, 128U * 1024U));
-    twfRequire(f.delivered == 2048 && bufferstreamGetBufLen(&parserState()->read_stream) == IP_HLEN,
+    twfRequire(f.delivered == 2048 && bufferstreamGetLength(&parserState()->read_stream) == IP_HLEN,
                "combined threshold delivery lost complete packets or its tail");
     receive(makeInput(2048, IP_HLEN, kPacketBytes - IP_HLEN));
     twfRequireEqualU32(f.delivered, 2049, "threshold tail did not complete");
@@ -289,7 +289,7 @@ static void testLargeTail(void)
     twfSetCase("a tiny incomplete suffix releases a large delivery allocation");
     fixtureSetup();
     receive(makeInput(0, 0, 1024U * 1024U + 3));
-    twfRequire(f.delivered == 16384 && bufferstreamGetBufLen(&parserState()->read_stream) == 3,
+    twfRequire(f.delivered == 16384 && bufferstreamGetLength(&parserState()->read_stream) == 3,
                "large delivery lost packets or incomplete suffix");
     buffer_pool_fit_t fit;
     twfRequire(bufferpoolQueryBestFit(f.env.pool, 3, bufferpoolGetLargeBufferPadding(f.env.pool), &fit),

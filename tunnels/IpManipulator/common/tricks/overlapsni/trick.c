@@ -853,7 +853,7 @@ static void overlapsnitrickSendOutputs(tunnel_t *t, line_t *l, overlapsnitrick_p
 static void overlapsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const sni_match_t *match,
                                            uint32_t real_sni_payload_offset, uint32_t generated_payload_len)
 {
-    const uint8_t *packet   = (const uint8_t *) sbufGetRawPtr((sbuf_t *) combined_packet);
+    const uint8_t *packet   = sbufGetRawPtr(combined_packet);
     size_t         copy_len = min((size_t) match->sni_name_len, (size_t) 255U);
     char           sni_name[256];
 
@@ -895,7 +895,7 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     }
 
     if (! overlapsnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
+            sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
     {
         overlapsnitrickRecycleCapturedPacket(held_packet);
         overlapsnitrickSendNormalNow(t, l, current_buf);
@@ -945,8 +945,7 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     }
 
     sni_match_t match = {0};
-    if (! parseClientHelloSni(
-            (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match) ||
+    if (! parseClientHelloSni(sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match) ||
         match.sni_name_offset < held_info.headers_len)
     {
         reuseBuffer(generated_hello);
@@ -973,8 +972,8 @@ static bool overlapsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_
     }
 
     overlapsnitrick_packet_sequence_t sequence = {0};
-    const uint8_t *combined_payload  = (const uint8_t *) sbufGetRawPtr(combined_packet) + held_info.headers_len;
-    const uint8_t *generated_payload = (const uint8_t *) sbufGetRawPtr(generated_hello);
+    const uint8_t                    *combined_payload  = sbufGetRawPtr(combined_packet) + held_info.headers_len;
+    const uint8_t                    *generated_payload = sbufGetRawPtr(generated_hello);
 
     if (! overlapsnitrickBuildPacketSequence(t,
                                              held_packet->line,
@@ -1053,7 +1052,7 @@ bool overlapsnitrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint64_t                          now_ms      = getTickMS();
     ipmanipulator_captured_packet_t   held_packet = {0};
 
-    if (! overlapsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! overlapsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }
@@ -1127,7 +1126,7 @@ bool overlapsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     overlapsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                          now_ms = getTickMS();
 
-    if (! overlapsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! overlapsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }

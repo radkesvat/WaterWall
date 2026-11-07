@@ -916,7 +916,7 @@ static void testTls12RecordTrackerFailures(void)
 static sbuf_t *createPooledBuffer(buffer_pool_t *pool, const uint8_t *data, size_t len)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(pool);
-    require(len <= sbufGetMaximumWriteableSize(buf), "partial-state test buffer is too large");
+    require(len <= sbufGetWritableCapacity(buf), "partial-state test buffer is too large");
     sbufSetLength(buf, (uint32_t) len);
     memoryCopy(sbufGetMutablePtr(buf), data, len);
     return buf;
@@ -970,7 +970,7 @@ static void testLinestateDestroyClearsPartialTlsState(void)
                 realityserverTls12RecordTrackerFeed(&ls->server_record_tracker, record, 2),
             "partial TLS record-header accumulation failed");
     require(ls->client_record_tracker.record_header_length == 3 &&
-                ls->server_record_tracker.record_header_length == 2 && bufferstreamGetBufLen(&ls->read_stream) != 0,
+                ls->server_record_tracker.record_header_length == 2 && bufferstreamGetLength(&ls->read_stream) != 0,
             "line state did not retain all intended partial parser/tracker data");
     memorySet(ls->session_id, 0xa7, sizeof(ls->session_id));
     memorySet(ls->c2s_key, 0xb8, sizeof(ls->c2s_key));

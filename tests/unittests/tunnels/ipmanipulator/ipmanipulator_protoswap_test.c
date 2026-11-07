@@ -625,7 +625,7 @@ static void testCorruptionAndPendingRequests(void)
 
 static sbuf_t *fragmentPacket(const sbuf_t *whole, uint32_t start, uint32_t count, bool more)
 {
-    const struct ip_hdr *original = sbufGetRawPtr(whole);
+    const struct ip_hdr *original = (const struct ip_hdr *) sbufGetRawPtr(whole);
     uint16_t             header   = IPH_HL_BYTES(original);
     sbuf_t              *fragment = sbufCreate(header + count);
     sbufSetLength(fragment, header + count);

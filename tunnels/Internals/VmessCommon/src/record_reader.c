@@ -119,7 +119,7 @@ vmess_record_result_t vmessRecordReaderRead(vmess_record_reader_t *reader, vmess
         result.status = status != kWCryptoOk ? kVmessRecordBodyError : kVmessRecordEof;
         return result;
     }
-    sbufSetLength(body, (uint32_t) plaintext_length);
+    sbufSetLength(body, plaintext_length);
     result.status  = kVmessRecordPayload;
     result.payload = body;
     return result;

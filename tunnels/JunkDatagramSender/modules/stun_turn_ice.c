@@ -49,7 +49,7 @@ typedef struct junkdatagramsender_stun_peer_s
 
 static uint32_t junkdatagramsenderStunWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint32_t limit = sbufGetMaximumWriteableSize(buf);
+    uint32_t limit = sbufGetWritableCapacity(buf);
     if (args != NULL && args->max_packet_size > 0 && args->max_packet_size < limit)
     {
         limit = args->max_packet_size;

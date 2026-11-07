@@ -85,7 +85,7 @@ static sbuf_t *clientMakeBytes(line_t *l, const uint8_t *bytes, uint32_t length)
     buffer_pool_t *pool = lineGetBufferPool(l);
     sbuf_t        *buf =
         length <= bufferpoolGetSmallBufferSize(pool) ? bufferpoolGetSmallBuffer(pool) : bufferpoolGetLargeBuffer(pool);
-    requireClient(length <= sbufGetMaximumWriteableSize(buf), "client lifecycle buffer is too small");
+    requireClient(length <= sbufGetWritableCapacity(buf), "client lifecycle buffer is too small");
     sbufSetLength(buf, length);
     if (length > 0)
     {
@@ -318,7 +318,7 @@ static void clientQueueRecordWithDelayAndFill(client_delay_fixture_t *fixture, u
                   "invalid client lifecycle record length");
     tlsclient_lstate_t *ls  = lineGetState(fixture->line, fixture->tls);
     sbuf_t             *buf = bufferpoolGetLargeBuffer(fixture->pool);
-    requireClient(body_length + kTlsRecordShapingRecordHeaderSize <= sbufGetMaximumWriteableSize(buf),
+    requireClient(body_length + kTlsRecordShapingRecordHeaderSize <= sbufGetWritableCapacity(buf),
                   "client lifecycle record exceeds its buffer");
 
     uint8_t *bytes = sbufGetMutablePtr(buf);

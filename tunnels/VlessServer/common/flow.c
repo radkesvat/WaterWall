@@ -8,7 +8,7 @@ void vlessserverTryBypassTcp(tunnel_t *t, line_t *l)
     if (ls->line_kind != kVlessServerLineKindClient ||
         (ls->phase != kVlessServerPhaseTcpConnecting && ls->phase != kVlessServerPhaseTcpEstablished) ||
         ! ls->response_sent || ls->input_dispatching || ls->branch_initializing || ls->response_dispatching ||
-        bufferqueueGetBufCount(&ls->pending_up) != 0 || bufferqueueGetBufCount(&ls->pending_down) != 0)
+        bufferqueueGetEntryCount(&ls->pending_up) != 0 || bufferqueueGetEntryCount(&ls->pending_down) != 0)
         return;
 
     assert(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
@@ -61,7 +61,7 @@ bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
                     return false;
                 }
                 sbufReadRangeToMemory(out, sbufGetMutablePtr(first) + kVlessServerResponseLen, body_len);
-                sbufSetLength(first, (uint32_t) total);
+                sbufSetLength(first, total);
                 lineReuseBuffer(l, out);
                 out = first;
             }
@@ -91,7 +91,7 @@ bool vlessserverDrainResponse(tunnel_t *t, line_t *l, bool admitted)
 bool vlessserverForwardResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     vlessserver_lstate_t *ls        = lineGetState(l, t);
-    bool                  has_older = bufferqueueGetBufCount(&ls->pending_down) != 0;
+    bool                  has_older = bufferqueueGetEntryCount(&ls->pending_down) != 0;
     if (ls->response_sent && ! ls->response_dispatching && ! has_older)
     {
         return lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, buf);

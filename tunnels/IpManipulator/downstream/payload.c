@@ -21,7 +21,7 @@ void ipmanipulatorDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
         {
-            const struct ip_hdr *ip = sbufGetRawPtr(buf);
+            const struct ip_hdr *ip = (const struct ip_hdr *) sbufGetRawPtr(buf);
             if (IPH_V(ip) == 4 && ((IPH_PROTO(ip) == IPPROTO_TCP && state->trick_proto_swap_tcp_number != -1) ||
                                    (IPH_PROTO(ip) == IPPROTO_UDP && state->trick_proto_swap_udp_number != -1)))
             {

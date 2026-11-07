@@ -77,8 +77,8 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
     }
     /* Append only into existing ordinary tail space, without moving older bytes
      * or changing its allocation charge. */
-    sbuf_t *tail = bufferqueueGetBufCount(&s->pending) != 0 ? *ww_sbuffer_queue_t_back(&s->pending.q) : s->head;
-    if (tail != NULL && ! sbufIsSplice(tail) && ! sbufIsSplice(input) && length <= sbufGetTailCapacity(tail))
+    sbuf_t *tail = bufferqueueGetEntryCount(&s->pending) != 0 ? *ww_sbuffer_queue_t_back(&s->pending.q) : s->head;
+    if (tail != NULL && ! sbufIsSplice(tail) && ! sbufIsSplice(input) && length <= sbufGetTailroom(tail))
     {
         sbufMoveTo(tail, input, length);
         if (tail != s->head)
@@ -87,7 +87,7 @@ bool splicestreamPush(splice_stream_t *s, sbuf_t *input)
     }
     else
     {
-        if (s->head == NULL && bufferqueueGetBufCount(&s->pending) == 0)
+        if (s->head == NULL && bufferqueueGetEntryCount(&s->pending) == 0)
         {
             s->head        = input;
             s->head_charge = cost;
@@ -141,7 +141,7 @@ bool splicestreamCompact(splice_stream_t *s)
 
     // Reserve all destination storage before consuming any source. The active
     // head stores the result, so no FIFO allocation or callback is needed.
-    sbuf_t *combined = bufferpoolGetBestFit(s->pool, (uint32_t) bytes, fit.left_padding);
+    sbuf_t *combined = bufferpoolGetBestFit(s->pool, bytes, fit.left_padding);
     while (streamHead(s) != NULL)
     {
         sbuf_t *source = streamDetachHead(s);
@@ -250,7 +250,7 @@ sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *s, sbuf_t *dest, uint32_t by
 void splicestreamMoveFrameToOrdinary(splice_stream_t *s, sbuf_t *dest, uint32_t bytes)
 {
     streamAssertFrame(s, dest, bytes);
-    if (UNLIKELY(sbufIsSplice(dest) || bytes > sbufGetMaximumWriteableSize(dest)))
+    if (UNLIKELY(sbufIsSplice(dest) || bytes > sbufGetWritableCapacity(dest)))
     {
         LOGF("SpliceStream: insufficient ordinary destination");
         abortProgramNow(1);
@@ -275,7 +275,7 @@ static void streamDiscardPipe(splice_stream_t *s, sbuf_t *source, uint32_t bytes
         const ssize_t result = splice(metadata.pipefd[0], NULL, s->discard_fd, NULL, bytes, SPLICE_F_NONBLOCK);
         if (result > 0)
         {
-            sbufSpliceConsumeBody(source, (uint32_t) result);
+            sbufSpliceConsumeBody(source, (size_t) result);
             bytes -= (uint32_t) result;
             continue;
         }

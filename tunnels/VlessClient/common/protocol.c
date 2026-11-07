@@ -95,10 +95,10 @@ bool vlessclientSendInitialRequest(tunnel_t *t, line_t *l, vlessclient_lstate_t 
     }
     if (! reuse_body)
     {
-        sbufSetLength(buf, (uint32_t) off);
+        sbufSetLength(buf, off);
         if (body != NULL)
         {
-            buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
+            buf = sbufMoveRangeTo(pool, body, buf, body_len, total, padding);
             lineReuseBuffer(l, body);
         }
     }
@@ -116,7 +116,7 @@ void vlessclientWrapUdpPayload(line_t *l, sbuf_t **buf_io)
     sbuf_t  *buf     = *buf_io;
     uint32_t payload = sbufGetLength(buf);
     assert(payload <= kVlessClientUdpMaxPacket);
-    buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kVlessClientUdpHeaderLen);
+    buf = sbufEnsureHeadroom(lineGetBufferPool(l), buf, kVlessClientUdpHeaderLen);
     sbufShiftLeft(buf, kVlessClientUdpHeaderLen);
     uint16_t length = htobe16((uint16_t) payload);
     memoryCopy(sbufGetMutablePtr(buf), &length, sizeof(length));

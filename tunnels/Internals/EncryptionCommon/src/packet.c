@@ -81,7 +81,7 @@ encryption_packet_result_t encryptionEncodePacket(const uint8_t key[32], sbuf_t 
     const bool     udp_zero = view.protocol == IPPROTO_UDP && ! sbufGetRecalculateChecksum(*buf) &&
                           original[view.transport_offset + 6] == 0 && original[view.transport_offset + 7] == 0;
 
-    *buf = sbufReserveSpace(*buf, (uint32_t) view.ip_total_length + kEncryptionPacketTagSize);
+    *buf = sbufReserveSpace(*buf, view.ip_total_length + kEncryptionPacketTagSize);
     sbufShiftLeft(*buf, kEncryptionPacketNonceSize);
     uint8_t *packet = sbufGetMutablePtr(*buf);
     memmove(packet, packet + kEncryptionPacketNonceSize, view.payload_offset);
@@ -93,7 +93,7 @@ encryption_packet_result_t encryptionEncodePacket(const uint8_t key[32], sbuf_t 
     const uint8_t          ad[]   = {view.protocol};
     const wcrypto_status_t status = wCryptoXChaCha20Poly1305Encrypt(
         payload,
-        sbufGetMaximumWriteableSize(*buf) - view.payload_offset - kEncryptionPacketNonceSize,
+        sbufGetWritableCapacity(*buf) - view.payload_offset - kEncryptionPacketNonceSize,
         payload,
         view.payload_length,
         ad,
@@ -123,15 +123,15 @@ encryption_packet_result_t encryptionDecodePacket(const uint8_t key[32], sbuf_t 
     uint8_t               *nonce   = packet + view.payload_offset;
     uint8_t               *payload = nonce + kEncryptionPacketNonceSize;
     const uint8_t          ad[]    = {view.protocol};
-    const wcrypto_status_t status  = wCryptoXChaCha20Poly1305Decrypt(
-        payload,
-        sbufGetMaximumWriteableSize(buf) - view.payload_offset - kEncryptionPacketNonceSize,
-        payload,
-        view.payload_length - kEncryptionPacketNonceSize,
-        ad,
-        sizeof(ad),
-        nonce,
-        key);
+    const wcrypto_status_t status =
+        wCryptoXChaCha20Poly1305Decrypt(payload,
+                                        sbufGetWritableCapacity(buf) - view.payload_offset - kEncryptionPacketNonceSize,
+                                        payload,
+                                        view.payload_length - kEncryptionPacketNonceSize,
+                                        ad,
+                                        sizeof(ad),
+                                        nonce,
+                                        key);
     if (status != kWCryptoOk)
         return status == kWCryptoAuthenticationFailed ? kEncryptionPacketAuthentication : kEncryptionPacketCryptoFailed;
     memmove(packet + kEncryptionPacketNonceSize, packet, view.payload_offset);

@@ -189,7 +189,7 @@ static uint32_t frame(uint8_t *out, const void *body, uint32_t len)
 static void requireUdpRetention(void)
 {
     vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
-    twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 0 &&
+    twfRequire(lineIsAlive(f.line) && bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
                    bufferreaderCharge(&ls->reader) <= kVlessServerMaxInputCharge,
                "UDP retained fragmented input beyond its storage compaction thresholds");
 }
@@ -1134,7 +1134,7 @@ static void testUdpEmptyFrames(void)
                    "empty frames disrupted nonempty UDP boundaries or order");
         vlessserver_lstate_t *ls = lineGetState(f.line, f.t);
         twfRequire(bufferreaderLength(&ls->reader) == 0 && bufferreaderHeaderLength(&ls->reader) == 0 &&
-                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetBufCount(&ls->pending_up) == 0,
+                       bufferreaderEntryCount(&ls->reader) == 0 && bufferqueueGetEntryCount(&ls->pending_up) == 0,
                    "empty frames retained parser bytes or buffers");
 
         tunnelDownStreamFin(f.t, f.remotes[0]);

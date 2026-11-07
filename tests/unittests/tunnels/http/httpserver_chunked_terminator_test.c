@@ -122,11 +122,11 @@ static void caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes(void)
     twfRequire(ls->h1_request_finished, "HttpServer did not complete the chunked request");
     twfRequire(lineIsAlive(fixture.line), "HttpServer closed a single-mode line at request body end");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "HttpServer reflected request body end into Finish");
-    twfRequire(bufferstreamGetBufLen(&ls->in_stream) == 0, "HttpServer retained chunk trailer bytes");
+    twfRequire(bufferstreamGetLength(&ls->in_stream) == 0, "HttpServer retained chunk trailer bytes");
 
     fixtureFeed(&fixture, "x");
 
-    twfRequire(bufferstreamGetBufLen(&ls->in_stream) == 0, "HttpServer buffered bytes after request completion");
+    twfRequire(bufferstreamGetLength(&ls->in_stream) == 0, "HttpServer buffered bytes after request completion");
     twfRequireEqualU32(fixture.trace.next_payload, 1, "HttpServer forwarded trailing request bytes");
 
     fixtureTeardown(&fixture);
@@ -187,7 +187,7 @@ static void caseHeaderLimitExcludesDeliveredBody(unsigned mode)
     if (accepted)
     {
         twfRequire(ls->h1_headers_parsed, "valid coalesced HTTP headers were not parsed");
-        twfRequire(bufferstreamGetBufLen(&ls->in_stream) == length - header_length,
+        twfRequire(bufferstreamGetLength(&ls->in_stream) == length - header_length,
                    "header parsing lost or consumed the following body");
         twfRequire(bufferstreamViewByteAt(&ls->in_stream, length - header_length - 1) == 'b',
                    "header parsing changed the trailing body");

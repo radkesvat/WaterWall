@@ -405,12 +405,12 @@ static void casePendingBudgetAllowsOneReadOfHeadroom(uint32_t pool_size)
     lineRef(fixture.line);
     ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
     twfRequire(lineIsAlive(fixture.line) && ls->write_paused, "CTP rejected the delivery before Pause could act");
-    twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == headroom, "CTP lost the delivered payload");
+    twfRequire(bufferqueueGetLength(&ls->pending_queue) == headroom, "CTP lost the delivered payload");
     lineUnref(fixture.line);
     buf = bufferpoolGetBestFit(fixture.env.pool, ts->max_pending_bytes, 0);
     sbufSetLength(buf, ts->max_pending_bytes);
     ctpTunnelUpStreamPayload(fixture.ctp, fixture.line, buf);
-    twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == (size_t) ts->max_pending_bytes + headroom,
+    twfRequire(bufferqueueGetLength(&ls->pending_queue) == (size_t) ts->max_pending_bytes + headroom,
                "CTP did not admit the exact headroom boundary");
     buf = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufSetLength(buf, 1);
@@ -462,7 +462,7 @@ static void caseStopOrdering(bool node_first)
     {
         ctpTunnelOnWorkerStop(fixture.ctp, 0, wwLifecycleProcessShutdown());
         twfRequire(ls->tcp_pcb == NULL && ls->tunnel == fixture.ctp, "node drain lost borrowed state");
-        twfRequire(bufferqueueGetBufLen(&ls->pending_queue) == 19, "node drain released source-owned pending lifetime");
+        twfRequire(bufferqueueGetLength(&ls->pending_queue) == 19, "node drain released source-owned pending lifetime");
         twfRequireEqualU32(ctpTcpPcbUsed(), baseline, "node drain retained PCB");
         twfRequire(lineIsAlive(fixture.line), "node drain destroyed borrowed line");
     }
@@ -546,12 +546,12 @@ static void caseScaledSendCapacity(unsigned mode)
     twfRequire(tcp_output_calls == (admitted != 0 ? 1U : 0U), "CTP did not output the successful prefix exactly once");
     if (mode == 0)
         twfRequire(result == kCtpFlushProgressed && ! ls->write_blocked && ! ls->write_poll_armed &&
-                       bufferqueueGetBufCount(&ls->pending_queue) == 0 && tcp_write_calls == 3,
+                       bufferqueueGetEntryCount(&ls->pending_queue) == 0 && tcp_write_calls == 3,
                    "CTP stopped solely at the 16-bit write boundary");
     else
     {
         twfRequire(result == kCtpFlushRetryable && ls->write_blocked && ls->write_poll_armed &&
-                       bufferqueueGetBufCount(&ls->pending_queue) == 2,
+                       bufferqueueGetEntryCount(&ls->pending_queue) == 2,
                    "CTP lost a blocked FIFO entry");
         const sbuf_t *suffix = bufferqueueFront(&ls->pending_queue);
         twfRequire(sbufGetLength(suffix) == length - admitted, "CTP retained copied bytes or lost its suffix");
@@ -562,7 +562,7 @@ static void caseScaledSendCapacity(unsigned mode)
             pcb->snd_buf = 2U * 1024U * 1024U;
         twfRequire(ctpFlushPendingLocked(ls) == kCtpFlushProgressed, "CTP retry did not drain available capacity");
         requireQueuedBytes(pcb, length + later);
-        twfRequire(! ls->write_blocked && ! ls->write_poll_armed && bufferqueueGetBufCount(&ls->pending_queue) == 0,
+        twfRequire(! ls->write_blocked && ! ls->write_poll_armed && bufferqueueGetEntryCount(&ls->pending_queue) == 0,
                    "CTP retry retained pressure or queued storage");
     }
     leaveEngine();

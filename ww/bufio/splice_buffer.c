@@ -70,7 +70,7 @@ sbuf_t *sbufTryEnsureOrdinary(buffer_pool_t *pool, sbuf_t *buf)
     return ordinary;
 }
 
-sbuf_t *sbufEnsureLeftCapacity(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
+sbuf_t *sbufEnsureHeadroom(buffer_pool_t *pool, sbuf_t *buf, uint16_t need)
 {
     assert(pool != NULL && buf != NULL);
     if (sbufGetHeadroom(buf) >= need)
@@ -120,7 +120,7 @@ sbuf_t *sbufSpliceMaterializeToBuffer(sbuf_t *buf, sbuf_t *dest, buffer_pool_t *
         abortProgramNow(1);
     }
     dest->data = dest->head + source_headroom;
-    if (UNLIKELY(sbufGetLength(buf) > sbufGetMaximumWriteableSize(dest)))
+    if (UNLIKELY(sbufGetLength(buf) > sbufGetWritableCapacity(dest)))
     {
         LOGF("sbufSpliceMaterializeToBuffer: destination too small "
              "(capacity=%zu, left headroom=%zu, payload=%zu)",
@@ -169,7 +169,7 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes)
     const size_t source_length   = sbufGetLength(buf);
     const size_t source_headroom = sbufGetHeadroom(buf);
     if (UNLIKELY(source_headroom > sbufGetInitialHeadroom(buf) || source_headroom > sbufGetTotalCapacity(buf) ||
-                 source_length > sbufGetMaximumWriteableSize(buf)))
+                 source_length > sbufGetWritableCapacity(buf)))
     {
         LOGF("sbufSpliceReadToBuffer: invalid source cursor or logical capacity");
         abortProgramNow(1);
@@ -187,8 +187,8 @@ sbuf_t *sbufSpliceReadToBuffer(sbuf_t *buf, sbuf_t *dest, size_t bytes)
 
     const size_t dest_length   = sbufGetLength(dest);
     const size_t dest_headroom = sbufGetHeadroom(dest);
-    if (UNLIKELY(dest_headroom > sbufGetTotalCapacity(dest) || dest_length > sbufGetMaximumWriteableSize(dest) ||
-                 bytes > sbufGetMaximumWriteableSize(dest) - dest_length))
+    if (UNLIKELY(dest_headroom > sbufGetTotalCapacity(dest) || dest_length > sbufGetWritableCapacity(dest) ||
+                 bytes > sbufGetWritableCapacity(dest) - dest_length))
     {
         LOGF("sbufSpliceReadToBuffer: destination has insufficient append space "
              "(requested=%zu, length=%zu, cursor=%zu, capacity=%zu)",

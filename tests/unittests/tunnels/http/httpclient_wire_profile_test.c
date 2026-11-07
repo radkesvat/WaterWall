@@ -156,7 +156,7 @@ static sbuf_t *payload(fixture_t *f, uint32_t length, bool no_tail)
     sbuf_t *buf = bufferpoolGetBestFit(f->env.pool, length, kHttpClientRequiredPaddingLeft);
     if (no_tail)
     {
-        uint32_t skip = sbufGetMaximumWriteableSize(buf) - length;
+        uint32_t skip = sbufGetWritableCapacity(buf) - length;
         sbufSetLength(buf, skip);
         sbufShiftRight(buf, skip);
     }
@@ -189,7 +189,7 @@ static void capture(tunnel_t *next, line_t *line, sbuf_t *buf)
         twfRequire(bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge - 192,
                    "readiness replay did not release exactly the dispatched buffer's charge");
         httpclientTunnelUpStreamPayload(f->http, f->line, chargedPayload(192, "nested!"));
-        twfRequire(lineIsAlive(line) && f->writes == 1 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
+        twfRequire(lineIsAlive(line) && f->writes == 1 && bufferqueueGetEntryCount(&ls->pending_up) == 2 &&
                        bufferbudgetGetUsage(&ls->pending_up_budget).charge == kHttpClientPendingMaxCharge,
                    "nested readiness input overtook the backlog or failed to use released capacity");
     }
@@ -449,13 +449,13 @@ static void casePendingLimits(unsigned mode, bool charge_limit)
         charge_limit ? chargedPayload(kHttpClientPendingMaxCharge, "") : payload(&f, kHttpClientPendingMaxBytes, false);
     size_t charge = sbufGetQueueCharge(first);
     httpclientTunnelUpStreamPayload(f.http, f.line, first);
-    twfRequire(lineIsAlive(f.line) && f.writes == 0 && bufferqueueGetBufCount(&ls->pending_up) == 1,
+    twfRequire(lineIsAlive(f.line) && f.writes == 0 && bufferqueueGetEntryCount(&ls->pending_up) == 1,
                "readiness queue rejected its inclusive limit or sent before ready");
     buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->pending_up_budget);
     twfRequire(used.bytes == (charge_limit ? 0 : kHttpClientPendingMaxBytes) && used.charge == charge,
                "readiness queue did not account its retained input");
     twfRequire(httpclientTransportFlushPendingUp(f.http, f.carrier, ls) && f.writes == 0 &&
-                   bufferqueueGetBufCount(&ls->pending_up) == 1 &&
+                   bufferqueueGetEntryCount(&ls->pending_up) == 1 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).charge == charge,
                "not-ready flush changed or uncharged the backlog");
     httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, charge_limit ? "" : "x"));
@@ -503,7 +503,7 @@ static void casePendingWebSocketReplay(bool finish)
                            "nested WebSocket input overtook older readiness data");
             offset += f.lengths[i];
         }
-        twfRequire(! ls->pending_up_draining && bufferqueueGetBufCount(&ls->pending_up) == 0,
+        twfRequire(! ls->pending_up_draining && bufferqueueGetEntryCount(&ls->pending_up) == 0,
                    "completed replay kept its draining guard or backlog");
         bufferbudgetAssertEmpty(&ls->pending_up_budget);
     }
@@ -518,7 +518,7 @@ static void casePendingManyBuffers(void)
     for (unsigned i = 0; i < 32; ++i)
         httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, ""));
     httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
-    twfRequire(lineIsAlive(f.line) && bufferqueueGetBufCount(&ls->pending_up) == 32 &&
+    twfRequire(lineIsAlive(f.line) && bufferqueueGetEntryCount(&ls->pending_up) == 32 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).bytes == 0 &&
                    bufferbudgetGetUsage(&ls->pending_up_budget).charge != 0,
                "empty queued buffers were uncharged or rejected by count");
@@ -1127,7 +1127,8 @@ static void caseHttp2FinishBeforeWebSocketReady(void)
     httpclientTunnelUpStreamPayload(f.http, f.line, textPayload(&f, "queued"));
     finishApplication(&f);
     httpclient_lstate_t *ls = lineGetState(f.carrier, f.http);
-    twfRequire(lineIsAlive(f.carrier) && bufferqueueGetBufCount(&ls->pending_up) == 1 && ls->close_drain_timer != NULL,
+    twfRequire(lineIsAlive(f.carrier) && bufferqueueGetEntryCount(&ls->pending_up) == 1 &&
+                   ls->close_drain_timer != NULL,
                "application Finish discarded an upload waiting for WebSocket readiness");
     advanceClock(&f, ls->close_drain_deadline_ms * 1000 + 1000);
     requireCarrierClosed(&f, 1);

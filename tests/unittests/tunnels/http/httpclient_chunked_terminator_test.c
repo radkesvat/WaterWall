@@ -100,11 +100,11 @@ static void caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes(void)
     twfRequire(lineIsAlive(fixture.line), "HttpClient closed a single-mode line at response body end");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "HttpClient finished the transport at response body end");
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "HttpClient reflected response body end into Finish");
-    twfRequire(bufferstreamGetBufLen(&ls->in_stream) == 0, "HttpClient retained chunk trailer bytes");
+    twfRequire(bufferstreamGetLength(&ls->in_stream) == 0, "HttpClient retained chunk trailer bytes");
 
     fixtureFeed(&fixture, "x");
 
-    twfRequire(bufferstreamGetBufLen(&ls->in_stream) == 0, "HttpClient buffered bytes after response completion");
+    twfRequire(bufferstreamGetLength(&ls->in_stream) == 0, "HttpClient buffered bytes after response completion");
     twfRequireEqualU32(fixture.trace.prev_payload, 1, "HttpClient forwarded trailing response bytes");
 
     fixtureTeardown(&fixture);
@@ -133,7 +133,7 @@ static void caseHeaderLimitExcludesDeliveredBody(unsigned mode)
     if (accepted)
     {
         twfRequire(ls->h1_headers_parsed, "valid coalesced HTTP headers were not parsed");
-        twfRequire(bufferstreamGetBufLen(&ls->in_stream) == length - header_length,
+        twfRequire(bufferstreamGetLength(&ls->in_stream) == length - header_length,
                    "header parsing lost or consumed the following body");
         twfRequire(bufferstreamViewByteAt(&ls->in_stream, length - header_length - 1) == 'b',
                    "header parsing changed the trailing body");

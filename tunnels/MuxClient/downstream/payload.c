@@ -12,7 +12,7 @@ static bool handleCloseFrame(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, 
 // Paused children retain Data, and later Data queues behind already retained bytes.
 static bool childRetainsData(muxclient_lstate_t *child_ls)
 {
-    return child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0;
+    return child_ls->paused || bufferqueueGetEntryCount(&child_ls->pending_child_data) != 0;
 }
 
 static bool processFrameForChild(tunnel_t *t, line_t *parent_l, mux_frame_t *frame, sbuf_t *frame_buffer,

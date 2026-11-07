@@ -140,8 +140,8 @@ static void openReady(est_fixture_t *f, const char *first)
                "valid startup did not become ready");
     twfRequire(gateState(f)->gate.phase == kNextInitGateOpen && f->init_count == 1,
                "startup did not initialize next exactly once");
-    twfRequire(bufferqueueGetBufCount(&gateState(f)->gate.pending) == 0 &&
-                   bufferqueueGetBufLen(&gateState(f)->gate.pending) == 0 &&
+    twfRequire(bufferqueueGetEntryCount(&gateState(f)->gate.pending) == 0 &&
+                   bufferqueueGetLength(&gateState(f)->gate.pending) == 0 &&
                    bufferqueueGetCharge(&gateState(f)->gate.pending) == 0,
                "completed startup retained queued buffers or accounting");
     twfRequire(twfLineRefCount(f->line) == refs, "startup leaked a line reference");
@@ -238,7 +238,7 @@ static void boundaryInit(est_fixture_t *f, line_t *l)
                "startup refusal consumed or changed caller buffer");
     twfRequire(twfRecycleCount() == recycled && lineIsAlive(l) && stillMine(f->node, l),
                "startup refusal recycled a buffer or chose the node's close policy");
-    twfRequire(bufferqueueGetBufLen(&gateState(f)->gate.pending) == (charge_boundary ? 0U : 3U) &&
+    twfRequire(bufferqueueGetLength(&gateState(f)->gate.pending) == (charge_boundary ? 0U : 3U) &&
                    bufferqueueGetCharge(&gateState(f)->gate.pending) == charge,
                "refusal changed previously admitted queue cost");
     lineReuseBuffer(l, rejected);
@@ -247,7 +247,7 @@ static void boundaryInit(est_fixture_t *f, line_t *l)
 static void refillBoundary(est_fixture_t *f, line_t *l)
 {
     discard l;
-    twfRequire(bufferqueueGetBufLen(&gateState(f)->gate.pending) == 0 &&
+    twfRequire(bufferqueueGetLength(&gateState(f)->gate.pending) == 0 &&
                    bufferqueueGetCharge(&gateState(f)->gate.pending) == 0,
                "handed-off input remained charged during reentry");
     f->on_up = NULL;

@@ -271,7 +271,7 @@ static sbuf_t *makeUdpPacket(test_env_t *env, uint16_t packet_len)
 
 static void requireValidIpv4HeaderChecksum(const sbuf_t *buf)
 {
-    sbuf_t *copy = sbufDuplicate((sbuf_t *) buf);
+    sbuf_t *copy = sbufDuplicate(buf);
     require(copy != NULL, "failed to duplicate packet for IPv4 checksum verification");
 
     const struct ip_hdr *original = (const struct ip_hdr *) sbufGetRawPtr(buf);
@@ -289,7 +289,7 @@ static void requireTcpChecksumMatchesRealProtocol(const sbuf_t *buf)
     const struct tcp_hdr *tcp    = (const struct tcp_hdr *) (packet + IPH_HL_BYTES(ip));
     uint16_t              actual = tcp->chksum;
 
-    sbuf_t *copy = sbufDuplicate((sbuf_t *) buf);
+    sbuf_t *copy = sbufDuplicate(buf);
     require(copy != NULL, "failed to duplicate packet for TCP checksum verification");
     struct ip_hdr *copy_ip = (struct ip_hdr *) sbufGetMutablePtr(copy);
     if (IPH_PROTO(copy_ip) != IPPROTO_TCP)
@@ -342,7 +342,7 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
     line_t receiver = {.alive = true, .wid = 0, .refc = 1, .active_tunnels_mask = UINT64_MAX};
     ipmanipulatorUpStreamPayload(encoder, env->line, makeTcpPacket(env, 97));
     require(captured_count == 1, "encoder did not emit one packet");
-    const struct ip_hdr *wire_ip = sbufGetRawPtr(captured[0]);
+    const struct ip_hdr *wire_ip = (const struct ip_hdr *) sbufGetRawPtr(captured[0]);
     require(IPH_PROTO(wire_ip) == 50 && wire_ip->src.addr == PP_HTONL(0xc000020a) &&
                 wire_ip->dest.addr == PP_HTONL(0xc6336414),
             "first endpoint wire fields differ");
@@ -351,7 +351,7 @@ static void testAddressTranslationAcrossEndpoints(test_env_t *env)
     recycleCaptured(env);
     rewrite2->fnPayloadU(rewrite2, &receiver, wire);
     require(captured_count == 1, "decoder did not emit one packet");
-    const struct ip_hdr *native = sbufGetRawPtr(captured[0]);
+    const struct ip_hdr *native = (const struct ip_hdr *) sbufGetRawPtr(captured[0]);
     require(IPH_PROTO(native) == IPPROTO_TCP && native->src.addr == PP_HTONL(0xcb00711e) &&
                 native->dest.addr == PP_HTONL(0xc000020a),
             "second endpoint native fields differ");
@@ -466,7 +466,7 @@ static void testPendingRequestsAndDuplicateDirections(test_env_t *env)
                             "duplicate restored stale request under mapped ICMP protocol");
                     for (unsigned i = 0; i < captured_count; ++i)
                     {
-                        const struct ip_hdr *ip = sbufGetRawPtr(captured[i]);
+                        const struct ip_hdr *ip = (const struct ip_hdr *) sbufGetRawPtr(captured[i]);
                         require(IPH_PROTO(ip) == (mapped ? (udp ? IPPROTO_UDP : IPPROTO_TCP) : 1),
                                 "egress did not transition exactly once");
                         sbuf_t        *oracle    = sbufDuplicate(captured[i]);
@@ -790,7 +790,7 @@ static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
     recycleCaptured(env);
 
     sbuf_t  *exact_fit = sbufCreate(sizeof(struct ip_hdr) + sizeof(struct tcp_hdr));
-    uint32_t exact_len = sbufGetMaximumWriteableSize(exact_fit);
+    uint32_t exact_len = sbufGetWritableCapacity(exact_fit);
     require(exact_len >= sizeof(struct ip_hdr) + sizeof(struct tcp_hdr) && exact_len <= UINT16_MAX - 4U,
             "exact-fit buffer fixture has an unusable capacity");
     sbuf_t *source = makeTcpPacket(env, (uint16_t) exact_len);
@@ -798,14 +798,14 @@ static void testTrailerBoundaryAndExactFitGrowth(test_env_t *env)
     memoryCopy(sbufGetMutablePtr(exact_fit), sbufGetRawPtr(source), exact_len);
     lineReuseBuffer(env->line, source);
 
-    uint32_t old_capacity = sbufGetMaximumWriteableSize(exact_fit);
+    uint32_t old_capacity = sbufGetWritableCapacity(exact_fit);
     require(sbufGetLength(exact_fit) == old_capacity, "exact-fit fixture retained spare writable capacity");
     sbufSetRecalculateChecksum(exact_fit, true);
     require(portghosttrickApply(t, env->line, &exact_fit), "exact-fit portghost append was rejected");
     require(sbufGetRecalculateChecksum(exact_fit), "portghost growth lost an earlier checksum request");
     require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len + 4U,
             "exact-fit portghost append did not grow by its trailer length");
-    require(sbufGetMaximumWriteableSize(exact_fit) > old_capacity,
+    require(sbufGetWritableCapacity(exact_fit) > old_capacity,
             "exact-fit portghost append did not reserve a larger buffer");
     require(portghosttrickRestore(t, env->line, &exact_fit), "exact-fit portghost packet was not restorable");
     require(exact_fit != NULL && sbufGetLength(exact_fit) == exact_len,

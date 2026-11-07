@@ -245,7 +245,7 @@ static bool junkdatagramsenderDhcpBuildClientMessage(sbuf_t *buf, uint8_t dhcp_m
     junkdatagramsender_dhcp_writer_t writer = {
         .buf      = buf,
         .pos      = 0,
-        .capacity = sbufGetMaximumWriteableSize(buf),
+        .capacity = sbufGetWritableCapacity(buf),
     };
 
     if (client_mac == NULL || writer.capacity < kDhcpv4MinPacketSize)

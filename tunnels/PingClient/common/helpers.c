@@ -24,15 +24,15 @@ static void pingclientDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dire
     pingclient_tstate_t *state = tunnelGetState(t);
     if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kPingClientDropLogIntervalMs))
     {
-        LOGE("PingClient: dropping %s packet: %s (packet-bytes=%u, max-inner-bytes=%u, overhead-bytes=%u, "
-             "max-carrier-bytes=%u, headroom-bytes=%u, required-headroom-bytes=%u)",
+        LOGE("PingClient: dropping %s packet: %s (packet-bytes=%zu, max-inner-bytes=%u, overhead-bytes=%u, "
+             "max-carrier-bytes=%u, headroom-bytes=%zu, required-headroom-bytes=%u)",
              direction,
              reason,
-             (unsigned int) sbufGetLength(buf),
+             sbufGetLength(buf),
              (unsigned int) kPingWireMaxInnerPacketLength,
              (unsigned int) kPingWireEncapsulationOverhead,
              (unsigned int) kMaxAllowedPacketLength,
-             (unsigned int) sbufGetHeadroom(buf),
+             sbufGetHeadroom(buf),
              (unsigned int) kPingWireEncapsulationOverhead);
     }
     lineReuseBuffer(l, buf);
@@ -83,7 +83,7 @@ void pingclientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    const uint8_t *payload        = (const uint8_t *) sbufGetRawPtr(buf) + kPingWireEncapsulationOverhead;
+    const uint8_t *payload        = sbufGetRawPtr(buf) + kPingWireEncapsulationOverhead;
     const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - kPingWireEncapsulationOverhead);
     if (! pingwireOutstandingRecord(state->tracker,
                                     state->digest_key,

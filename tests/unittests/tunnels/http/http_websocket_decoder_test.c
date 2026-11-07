@@ -95,7 +95,7 @@ static void caseHeaderSplitsAndLengths(buffer_pool_t *pool, bool masked)
             pushBytes(&stream, header, (uint32_t) split);
             require(httpWebSocketDecoderStep(&state, &stream, masked, &out) == kHttpWebSocketNeedMore,
                     "partial WebSocket header did not wait");
-            require(out == NULL && ! state.active && bufferstreamGetBufLen(&stream) == split,
+            require(out == NULL && ! state.active && bufferstreamGetLength(&stream) == split,
                     "partial WebSocket header was consumed");
             pushBytes(&stream, header + split, (uint32_t) (header_size - split));
             if (lengths[index] != 0)
@@ -114,7 +114,7 @@ static void caseHeaderSplitsAndLengths(buffer_pool_t *pool, bool masked)
             }
             require(httpWebSocketDecoderStep(&state, &stream, masked, &out) == kHttpWebSocketNeedMore && out == NULL,
                     "empty stream produced an event");
-            require(! state.active && bufferstreamGetBufLen(&stream) == 0, "frame was not completely consumed");
+            require(! state.active && bufferstreamGetLength(&stream) == 0, "frame was not completely consumed");
             bufferstreamDestroy(&stream);
         }
     }
@@ -151,7 +151,7 @@ static void caseLargeDeclaration(buffer_pool_t *pool, bool masked, bool coalesce
                     "partial frame state was not published before output");
             bufferpoolReuseBuffer(pool, out);
         }
-        require(received == sent && bufferstreamGetBufLen(&stream) == 0 && bufferstreamGetCharge(&stream) == 0,
+        require(received == sent && bufferstreamGetLength(&stream) == 0 && bufferstreamGetCharge(&stream) == 0,
                 "decoder retained an incomplete data-frame body");
     }
     require(received == provided, "large frame lost application bytes");
@@ -204,7 +204,7 @@ static void caseControlAndCoalescedFrames(buffer_pool_t *pool, bool masked)
     sbuf_t *out = NULL;
     require(httpWebSocketDecoderStep(&state, &stream, masked, &out) == kHttpWebSocketNeedMore && out == NULL,
             "incomplete ping was delivered");
-    require(state.active && state.remaining == 125 && bufferstreamGetBufLen(&stream) == 124,
+    require(state.active && state.remaining == 125 && bufferstreamGetLength(&stream) == 124,
             "incomplete control frame body was consumed");
     pushBody(&stream, 124, 1, masked);
     require(httpWebSocketDecoderStep(&state, &stream, masked, &out) == kHttpWebSocketPing,

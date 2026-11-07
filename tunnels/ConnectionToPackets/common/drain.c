@@ -635,7 +635,7 @@ static uint8_t *ctpDrainTakeBytes(ctp_lstate_t *ls, uint32_t total, wid_t wid)
 
     uint32_t offset = 0;
 
-    while (bufferqueueGetBufCount(&ls->pending_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pending_queue) > 0)
     {
         sbuf_t        *buf = bufferqueuePopFront(&ls->pending_queue);
         const uint32_t len = sbufGetLength(buf);
@@ -661,7 +661,7 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
         return kCtpTcpDrainNotNeeded;
     }
 
-    const size_t queued = bufferqueueGetBufLen(&ls->pending_queue);
+    const size_t queued = bufferqueueGetLength(&ls->pending_queue);
 
     /*
      * A connected flow is adopted even with nothing queued. The FIN still has to

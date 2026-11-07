@@ -4,7 +4,7 @@ sbuf_t *hpcBuffer(line_t *l, size_t n)
 {
     assert(n <= kHpcDeliveryLimit);
     buffer_pool_t *pool = lineGetBufferPool(l);
-    return bufferpoolGetBestFit(pool, (uint32_t) n, bufferpoolGetLargeBufferPadding(pool));
+    return bufferpoolGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
 }
 static bool append(char *out, size_t cap, size_t *at, const char *s)
 {
@@ -130,7 +130,7 @@ bool hpcBuildRequest(tunnel_t *t, line_t *l)
     ADD("\r\n");
     ls->request = hpcBuffer(l, at);
     memoryCopy(sbufGetMutablePtr(ls->request), text, at);
-    sbufSetLength(ls->request, (uint32_t) at);
+    sbufSetLength(ls->request, at);
     addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
 done:
     memoryZero(text, (size_t) ts->max_header + 1);

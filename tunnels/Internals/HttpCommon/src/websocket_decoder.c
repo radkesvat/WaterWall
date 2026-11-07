@@ -13,14 +13,14 @@ http_websocket_result_t httpWebSocketDecoderStep(http_websocket_decoder_t *state
 
     for (;;)
     {
-        size_t available = bufferstreamGetBufLen(stream);
+        size_t available = bufferstreamGetLength(stream);
         if (! state->active)
         {
             if (available < 2)
                 return kHttpWebSocketNeedMore;
 
             uint8_t head[14];
-            bufferstreamViewBytesAt(stream, 0, head, 2);
+            bufferstreamCopyBytesAt(stream, 0, head, 2);
             const bool    fin    = (head[0] & 0x80U) != 0;
             const uint8_t opcode = head[0] & 0x0FU;
             const bool    masked = (head[1] & 0x80U) != 0;
@@ -34,7 +34,7 @@ http_websocket_result_t httpWebSocketDecoderStep(http_websocket_decoder_t *state
             {
                 if (available < 4)
                     return kHttpWebSocketNeedMore;
-                bufferstreamViewBytesAt(stream, 2, head + 2, 2);
+                bufferstreamCopyBytesAt(stream, 2, head + 2, 2);
                 length = ((uint64_t) head[2] << 8) | head[3];
                 header = 4;
             }
@@ -42,7 +42,7 @@ http_websocket_result_t httpWebSocketDecoderStep(http_websocket_decoder_t *state
             {
                 if (available < 10)
                     return kHttpWebSocketNeedMore;
-                bufferstreamViewBytesAt(stream, 2, head + 2, 8);
+                bufferstreamCopyBytesAt(stream, 2, head + 2, 8);
                 length = 0;
                 for (size_t i = 2; i < 10; ++i)
                     length = (length << 8) | head[i];
@@ -58,7 +58,7 @@ http_websocket_result_t httpWebSocketDecoderStep(http_websocket_decoder_t *state
                 .remaining = (uint32_t) length, .opcode = opcode, .active = true, .masked = masked};
             if (masked)
             {
-                bufferstreamViewBytesAt(stream, header, state->mask_key, 4);
+                bufferstreamCopyBytesAt(stream, header, state->mask_key, 4);
                 header += 4;
             }
             sbuf_t *framing = bufferstreamReadExact(stream, header);

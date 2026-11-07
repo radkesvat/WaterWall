@@ -137,7 +137,7 @@ static bool parseRecordLength(tlsrecordshaping_output_queue_t *queue, size_t *re
                               char error[kTlsRecordShapingErrorSize])
 {
     uint8_t header[kTlsRecordShapingRecordHeaderSize];
-    bufferstreamViewBytesAt(&queue->ciphertext_stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(&queue->ciphertext_stream, 0, header, sizeof(header));
     uint16_t body_length = ((uint16_t) header[3] << 8U) | header[4];
 
     if (header[0] != 0x17 || header[1] != 0x03 || header[2] != 0x03 || body_length == 0 ||
@@ -195,14 +195,14 @@ bool tlsrecordshapingOutputQueueFeed(tlsrecordshaping_output_queue_t *queue, sbu
     assert(queue != NULL && queue->initialized && ciphertext != NULL);
 
     bufferstreamPush(&queue->ciphertext_stream, ciphertext);
-    while (bufferstreamGetBufLen(&queue->ciphertext_stream) >= kTlsRecordShapingRecordHeaderSize)
+    while (bufferstreamGetLength(&queue->ciphertext_stream) >= kTlsRecordShapingRecordHeaderSize)
     {
         size_t record_length = 0;
         if (! parseRecordLength(queue, &record_length, error))
         {
             return false;
         }
-        if (bufferstreamGetBufLen(&queue->ciphertext_stream) < record_length)
+        if (bufferstreamGetLength(&queue->ciphertext_stream) < record_length)
         {
             return true;
         }
@@ -236,7 +236,7 @@ bool tlsrecordshapingOutputQueueFinishFeed(const tlsrecordshaping_output_queue_t
 {
     assert(queue != NULL && queue->initialized);
 
-    if (bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) != 0)
+    if (bufferstreamGetLength(&queue->ciphertext_stream) != 0)
     {
         return tlsrecordshapingSetError(error, "outgoing TLS write BIO ended with a partial record");
     }
@@ -320,5 +320,5 @@ bool tlsrecordshapingOutputQueueIsEmpty(const tlsrecordshaping_output_queue_t *q
     }
 
     return queue->output_count == 0 && queue->metadata_count == 0 && queue->pending_metadata_count == 0 &&
-           bufferstreamGetBufLen((buffer_stream_t *) &queue->ciphertext_stream) == 0;
+           bufferstreamGetLength(&queue->ciphertext_stream) == 0;
 }

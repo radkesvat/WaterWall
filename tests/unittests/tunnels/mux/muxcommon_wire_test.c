@@ -422,9 +422,9 @@ static void testSpliceMuxPaths(buffer_pool_t *pool)
         bufferqueueInitEmpty(&output.pending);
         require(muxEncodeSpliceBatch(pool, batch_input, kTestCid, false, &output, SIZE_MAX),
                 "large splice batch encoding failed");
-        require(bufferqueueGetBufCount(&output.pending) == 2, "large batch did not preserve frame boundaries");
+        require(bufferqueueGetEntryCount(&output.pending) == 2, "large batch did not preserve frame boundaries");
         uint32_t offset = 0;
-        while (bufferqueueGetBufCount(&output.pending) != 0)
+        while (bufferqueueGetEntryCount(&output.pending) != 0)
         {
             sbuf_t *encoded = muxParentOutputPop(&output);
             encoded         = sbufEnsureOrdinary(pool, encoded);
@@ -540,7 +540,7 @@ static void testBatchWithRetainedIncoming(buffer_pool_t *pool)
     require(splicestreamCharge(incoming) == before, "output batch changed incoming ownership");
     c_foreach(entry, ww_sbuffer_queue_t, output.pending.q)
         require(! sbufIsSplice(*entry.ref), "exhausted inventory did not select complete ordinary output");
-    while (bufferqueueGetBufCount(&output.pending) != 0)
+    while (bufferqueueGetEntryCount(&output.pending) != 0)
         bufferpoolReuseBuffer(pool, muxParentOutputPop(&output));
     require(output.charge == 0, "batch drain retained charge");
     muxParentOutputDestroy(&output, pool);
@@ -616,7 +616,7 @@ static void testQueuedSbufCharge(buffer_pool_t *pool)
     const size_t before = sbufGetAllocationCharge(padded);
     sbufSetLength(padded, 50);
     sbufShiftRight(padded, 17);
-    sbufConsume(padded, 10);
+    sbufReduceLength(padded, 10);
     sbufShiftLeft(padded, 8);
     require(sbufGetAllocationCharge(padded) == before, "cursor/length changes reduced allocation charge");
     sbufDestroy(padded);

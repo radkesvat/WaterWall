@@ -175,7 +175,7 @@ static sbuf_t *fallbackFinishMakePayload(buffer_pool_t *pool, const char *text)
     const uint32_t len = (uint32_t) stringLength(text);
     sbuf_t        *buf = bufferpoolGetLargeBuffer(pool);
 
-    twfRequire(sbufGetMaximumWriteableSize(buf) >= len, "test payload exceeded the pooled buffer");
+    twfRequire(sbufGetWritableCapacity(buf) >= len, "test payload exceeded the pooled buffer");
     sbufSetLength(buf, len);
     sbufWrite(buf, text, len);
     return buf;

@@ -1,6 +1,6 @@
 #include "ObfuscatorCommon/codec.h"
 
-static uint32_t obfuscatorGetSkipLength(sbuf_t *buf, uint32_t skip)
+static uint32_t obfuscatorGetSkipLength(const sbuf_t *buf, uint32_t skip)
 {
     if (skip == kObfuscatorSkipNone)
     {
@@ -14,7 +14,7 @@ static uint32_t obfuscatorGetSkipLength(sbuf_t *buf, uint32_t skip)
         return 0;
     }
 
-    struct ip_hdr *ipheader = (struct ip_hdr *) sbufGetRawPtr(buf);
+    const struct ip_hdr *ipheader = (const struct ip_hdr *) sbufGetRawPtr(buf);
 
     if (IPH_V(ipheader) != 4)
     {
@@ -40,7 +40,7 @@ static uint32_t obfuscatorGetSkipLength(sbuf_t *buf, uint32_t skip)
             return ip_header_length;
         }
 
-        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (((uint8_t *) sbufGetRawPtr(buf)) + ip_header_length);
+        const struct tcp_hdr *tcp_header        = (const struct tcp_hdr *) (sbufGetRawPtr(buf) + ip_header_length);
         uint32_t        tcp_header_length = TCPH_HDRLEN_BYTES(tcp_header);
 
         if (tcp_header_length < sizeof(struct tcp_hdr) || packet_length < ip_header_length + tcp_header_length)
@@ -92,7 +92,7 @@ sbuf_t *obfuscatorWrapRecord(buffer_pool_t *pool, sbuf_t *buf)
         bufferpoolReuseBuffer(pool, buf);
         return NULL;
     }
-    buf = sbufEnsureLeftCapacity(pool, buf, kObfuscatorTlsRecordHeaderSize);
+    buf = sbufEnsureHeadroom(pool, buf, kObfuscatorTlsRecordHeaderSize);
     sbufShiftLeft(buf, kObfuscatorTlsRecordHeaderSize);
     writeHeader(buf, length);
     return buf;
@@ -143,7 +143,7 @@ sbuf_t *obfuscatorEncodeStream(buffer_pool_t *pool, sbuf_t *buf, uint32_t skip, 
         out->data += n;
     }
     out->data = start;
-    sbufSetLength(out, (uint32_t) total);
+    sbufSetLength(out, total);
     bufferpoolReuseBuffer(pool, buf);
     return out;
 }
@@ -153,7 +153,7 @@ obfuscator_decode_result_t obfuscatorDecodeStream(buffer_pool_t *pool, buffer_st
 {
     assert(! sbufIsSplice(buf));
     *out                 = NULL;
-    const uint64_t total = (uint64_t) bufferstreamGetBufLen(stream) + sbufGetLength(buf);
+    const uint64_t total = (uint64_t) bufferstreamGetLength(stream) + sbufGetLength(buf);
     if (total > kObfuscatorMaxBufferedStreamBytes)
     {
         bufferpoolReuseBuffer(pool, buf);
@@ -165,10 +165,10 @@ obfuscator_decode_result_t obfuscatorDecodeStream(buffer_pool_t *pool, buffer_st
         return kObfuscatorDecodeIncomplete;
     }
     bufferstreamPush(stream, buf);
-    while (bufferstreamGetBufLen(stream) >= kObfuscatorTlsRecordHeaderSize)
+    while (bufferstreamGetLength(stream) >= kObfuscatorTlsRecordHeaderSize)
     {
         uint8_t header[kObfuscatorTlsRecordHeaderSize];
-        bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
+        bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
         if (header[0] != 23 || header[1] != 3 || header[2] != 3)
         {
             if (*out)
@@ -179,13 +179,13 @@ obfuscator_decode_result_t obfuscatorDecodeStream(buffer_pool_t *pool, buffer_st
             return kObfuscatorDecodeInvalid;
         }
         const uint32_t length = ((uint32_t) header[3] << 8) | header[4];
-        if (bufferstreamGetBufLen(stream) < length + kObfuscatorTlsRecordHeaderSize)
+        if (bufferstreamGetLength(stream) < length + kObfuscatorTlsRecordHeaderSize)
             break;
         if (*out == NULL)
         {
-            const size_t buffered = bufferstreamGetBufLen(stream);
+            const size_t buffered = bufferstreamGetLength(stream);
             assert(buffered <= kObfuscatorMaxBufferedStreamBytes);
-            *out = bufferpoolGetBestFit(pool, (uint32_t) buffered, bufferpoolGetLargeBufferPadding(pool));
+            *out = bufferpoolGetBestFit(pool, buffered, bufferpoolGetLargeBufferPadding(pool));
         }
         sbuf_t *record = bufferstreamReadExact(stream, length + kObfuscatorTlsRecordHeaderSize);
         sbufShiftRight(record, kObfuscatorTlsRecordHeaderSize);

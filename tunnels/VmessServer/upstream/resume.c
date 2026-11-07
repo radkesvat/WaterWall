@@ -32,7 +32,7 @@ void vmessserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (bufferqueueGetBufCount(&ls->pending_down) != 0 && ! vmessserverDrainResponse(t, l, false))
+    if (bufferqueueGetEntryCount(&ls->pending_down) != 0 && ! vmessserverDrainResponse(t, l, false))
     {
         return;
     }

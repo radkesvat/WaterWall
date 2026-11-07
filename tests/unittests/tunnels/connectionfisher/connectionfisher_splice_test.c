@@ -56,9 +56,9 @@ bool __wrap_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf)
     return ! fail_queue && __real_bufferqueueTryPushBack(queue, buf);
 }
 
-sbuf_t *__real_sbufDuplicate(sbuf_t *buf);
-sbuf_t *__wrap_sbufDuplicate(sbuf_t *buf);
-sbuf_t *__wrap_sbufDuplicate(sbuf_t *buf)
+sbuf_t *__real_sbufDuplicate(const sbuf_t *buf);
+sbuf_t *__wrap_sbufDuplicate(const sbuf_t *buf);
+sbuf_t *__wrap_sbufDuplicate(const sbuf_t *buf)
 {
     return twfTrackAcquired(__real_sbufDuplicate(buf));
 }
@@ -447,7 +447,7 @@ static void testPausedBacklog(void)
     upstream(input("Q", 1, WW_HAVE_SPLICE));
     handshake(input(MARKER, 5, WW_HAVE_SPLICE));
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
-    twfRequire(calls[0] == 0 && bufferqueueGetBufCount(&main_ls->pending_up) == 1 && child->read_stream.pool == NULL,
+    twfRequire(calls[0] == 0 && bufferqueueGetEntryCount(&main_ls->pending_up) == 1 && child->read_stream.pool == NULL,
                "selection drained through Pause or retained the parser");
     tunnelDownStreamResume(node, children[0]);
     twfRequire(lengths[0] == 1 && output[0][0] == 'Q' && pipe_calls[0] == (unsigned) WW_HAVE_SPLICE,

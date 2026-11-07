@@ -230,7 +230,7 @@ static void firstsnitrickStartDelayBarrier(tunnel_t *t, line_t *l, sbuf_t **pack
     if (count == 0 || packets == NULL || packets[count - 1U] == NULL ||
         ! ipmanipulatorFlowTableIsReady(&state->first_sni_table) ||
         ! firstsnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(packets[count - 1U]), sbufGetLength(packets[count - 1U]), &info))
+            sbufGetRawPtr(packets[count - 1U]), sbufGetLength(packets[count - 1U]), &info))
     {
         firstsnitrickSendOrderedNow(t, ordered_outputs, ordered_outputs_count);
         firstsnitrickSendPreparedBatchNow(t, l, packets, count);
@@ -377,7 +377,7 @@ static bool setTcpSequenceRandom(uint8_t *packet, uint32_t packet_length)
 static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sni_match_t *match)
 {
     ipmanipulator_tstate_t *state  = tunnelGetState(t);
-    const uint8_t          *source = (const uint8_t *) sbufGetRawPtr(buf);
+    const uint8_t          *source = sbufGetRawPtr(buf);
 
     if (match->has_tls13_psk_binder &&
         ((match->sni_name_len != state->trick_first_sni_value_len) ||
@@ -521,12 +521,12 @@ static void prepareFirstSniPacketForSend(tunnel_t *t, sbuf_t *packet)
 static void firstsnitrickSendCraftedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     firstsnitrick_tcp_packet_info_t before = {0};
-    discard firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &before);
+    discard                         firstsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &before);
 
     prepareFirstSniPacketForSend(t, buf);
 
     firstsnitrick_tcp_packet_info_t after = {0};
-    if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &after))
+    if (firstsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &after))
     {
         ipmanipulator_tstate_t *state = tunnelGetState(t);
 
@@ -552,7 +552,7 @@ static void firstsnitrickSendCraftedPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void firstsnitrickSendOriginalPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     firstsnitrick_tcp_packet_info_t info = {0};
-    if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (firstsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         LOGD("IpManipulator: first-sni forwarding original packet ip-len=%u payload=%u seq=%u %u:%u -> %u:%u",
              (unsigned int) info.ip_total_len,
@@ -708,7 +708,7 @@ static bool firstsnitrickHandleClientHello(tunnel_t *t, line_t *l, sbuf_t *buf, 
     sni_match_t             match         = {0};
     uint32_t                tail_delay_ms = firstsnitrickGetTailDelayMs(state);
 
-    if (! parseClientHelloSni((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &match))
+    if (! parseClientHelloSni(sbufGetRawPtr(buf), sbufGetLength(buf), &match))
     {
         return false;
     }
@@ -835,7 +835,7 @@ bool firstsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     firstsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                        now_ms = getTickMS();
 
-    if (firstsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info) &&
+    if (firstsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info) &&
         firstsnitrickMaybeDelayFlowPacket(t, l, buf, &info, now_ms))
     {
         return true;

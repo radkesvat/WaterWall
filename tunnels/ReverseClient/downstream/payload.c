@@ -141,7 +141,7 @@ void reverseclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (! lineCallWithRefWithBuf(pair->d, tunnelPrevDownStreamPayload, t, buf))
             return;
     }
-    while (bufferqueueGetBufCount(&pair->activation_pending) != 0)
+    while (bufferqueueGetEntryCount(&pair->activation_pending) != 0)
     {
         buf = bufferqueuePopFront(&pair->activation_pending);
         if (! lineCallWithRefWithBuf(pair->d, tunnelPrevDownStreamPayload, t, buf))

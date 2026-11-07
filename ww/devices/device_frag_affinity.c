@@ -446,7 +446,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
         const uint32_t need = 20U + (uint32_t) view->offset + view->payload_len;
         const uint16_t padding =
             table->shared ? table->shared_padding : bufferpoolGetLargeBufferPadding(table->release_pool);
-        if (! entry->assembly || need > sbufGetMaximumWriteableSize(entry->assembly))
+        if (! entry->assembly || need > sbufGetWritableCapacity(entry->assembly))
         {
             buffer_pool_fit_t fit = {0};
             size_t            capacity;
@@ -460,7 +460,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
             sbuf_t *grown = table->shared ? sbufCreateWithPadding(need, padding)
                                           : bufferpoolGetBestFit(table->release_pool, need, padding);
             if (UNLIKELY(sbufGetAllocationCharge(grown) != fit.allocation_charge ||
-                         sbufGetMaximumWriteableSize(grown) < need || sbufGetHeadroom(grown) < padding))
+                         sbufGetWritableCapacity(grown) < need || sbufGetHeadroom(grown) < padding))
             {
                 LOGF("Device fragment assembly: best-fit allocation geometry changed");
                 abortProgramNow(1);
@@ -473,7 +473,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
                 {
                     device_frag_range_t r = entry->ranges[i];
                     memoryCopy(sbufGetMutablePtr(grown) + 20 + r.begin,
-                               (const uint8_t *) sbufGetRawPtr(entry->assembly) + 20 + r.begin,
+                               sbufGetRawPtr(entry->assembly) + 20 + r.begin,
                                r.end - r.begin);
                 }
                 table->retained_bytes -= sbufGetAllocationCharge(entry->assembly);
@@ -487,7 +487,7 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
             memoryCopy(bytes, sbufGetRawPtr(buf), 20);
             candidate.wid_known = true;
         }
-        memoryCopy(bytes + 20 + view->offset, (const uint8_t *) sbufGetRawPtr(buf) + 20, view->payload_len);
+        memoryCopy(bytes + 20 + view->offset, sbufGetRawPtr(buf) + 20, view->payload_len);
         ++candidate.fragments;
         *entry = candidate;
         deviceFragRecycle(table, buf);

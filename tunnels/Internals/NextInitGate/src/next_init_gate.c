@@ -48,7 +48,7 @@ next_init_gate_input_t nextinitgateSubmit(next_init_gate_t *gate, sbuf_t **buf)
 
     buffer_budget_t available = {
         .limits = gate->limits,
-        .used   = {.bytes = bufferqueueGetBufLen(&gate->pending), .charge = bufferqueueGetCharge(&gate->pending)},
+        .used   = {.bytes = bufferqueueGetLength(&gate->pending), .charge = bufferqueueGetCharge(&gate->pending)},
     };
     buffer_budget_cost_t cost;
     if (! bufferbudgetTryGetCost(*buf, &cost) || ! bufferbudgetTryAcquire(&available, cost) ||

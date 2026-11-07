@@ -36,7 +36,7 @@ void keepaliveserverSendNormalFrameDownstream(tunnel_t *t, line_t *l, sbuf_t *bu
     if (ls->write_draining)
     {
         const size_t pending =
-            bufferqueueGetBufLen(&ls->write_reentry) + (ls->write_active != NULL ? sbufGetLength(ls->write_active) : 0);
+            bufferqueueGetLength(&ls->write_reentry) + (ls->write_active != NULL ? sbufGetLength(ls->write_active) : 0);
         const size_t active_charge = ls->write_active != NULL ? sbufGetQueueCharge(ls->write_active) : 0;
         const size_t queued_charge = bufferqueueGetCharge(&ls->write_reentry);
         if (pending > kKeepAliveServerMaxReentryBytes || length > kKeepAliveServerMaxReentryBytes - pending ||

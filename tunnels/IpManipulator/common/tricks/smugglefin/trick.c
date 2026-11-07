@@ -722,7 +722,7 @@ bool smugglefintrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      * A pause belongs to one parseable TCP flow. Unparseable packets and every
      * unrelated flow continue normally instead of being held behind it.
      */
-    if (! smugglefintrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! smugglefintrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }
@@ -912,7 +912,7 @@ bool smugglefintrickDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
      * Unparseable packets cannot belong to a known paused 4-tuple, so they pass
      * through. This prevents one malformed packet from stalling any flow.
      */
-    if (! smugglefintrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! smugglefintrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }

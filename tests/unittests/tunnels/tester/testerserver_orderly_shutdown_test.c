@@ -160,7 +160,7 @@ static void requireVerdictLeftNothingBehind(testerserver_fixture_t *fixture)
     twfRequireEqualU32(fixture->trace.next_payload, 0, "a failed verdict must not forward upstream");
 
     testerserver_lstate_t *ls = lineGetState(fixture->line, fixture->tester);
-    twfRequireEqualU32(bufferqueueGetBufCount(&ls->response_queue), 0, "a failed verdict must not queue a response");
+    twfRequireEqualU32(bufferqueueGetEntryCount(&ls->response_queue), 0, "a failed verdict must not queue a response");
     twfRequire(! ls->response_ready, "a failed verdict must not mark the request verified");
 }
 
@@ -378,7 +378,7 @@ static void casePacketResponseScheduleRefusalKeepsStateForWorkerStop(void)
     twfRequire(ls->terminal_failure, "schedule refusal did not publish a terminal packet verdict");
     twfRequire(! ls->response_send_scheduled, "rejected response remained marked as scheduled");
     twfRequireEqualU32(
-        bufferqueueGetBufCount(&ls->response_queue), 1, "schedule refusal settled owner-worker queue state early");
+        bufferqueueGetEntryCount(&ls->response_queue), 1, "schedule refusal settled owner-worker queue state early");
     twfRequireEqualU32(line_task_submissions, 1, "initial response used the wrong number of task submissions");
 
     /* Resume or another payload root may arrive before the coordinator closes
@@ -393,7 +393,7 @@ static void casePacketResponseScheduleRefusalKeepsStateForWorkerStop(void)
     twfRequireEqualU32(
         twfRecycleCount() - recycles_before, 1, "terminal packet verdict did not discard a later payload once");
     twfRequireEqualU32(
-        bufferqueueGetBufCount(&ls->response_queue), 1, "terminal packet verdict retained a later response");
+        bufferqueueGetEntryCount(&ls->response_queue), 1, "terminal packet verdict retained a later response");
     twfRequireEqualU32(line_task_submissions, 1, "late packet payload restarted response scheduling");
 
     fixtureTeardown(&fixture);

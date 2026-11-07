@@ -463,7 +463,7 @@ static sbuf_t *serverMakeBytes(server_delay_fixture_t *fixture, const uint8_t *b
 {
     sbuf_t *buf = length <= bufferpoolGetSmallBufferSize(fixture->pool) ? bufferpoolGetSmallBuffer(fixture->pool)
                                                                         : bufferpoolGetLargeBuffer(fixture->pool);
-    requireServer(length <= sbufGetMaximumWriteableSize(buf), "server lifecycle buffer is too small");
+    requireServer(length <= sbufGetWritableCapacity(buf), "server lifecycle buffer is too small");
     sbufSetLength(buf, length);
     if (length > 0)
     {
@@ -476,7 +476,7 @@ static sbuf_t *serverDrainBio(server_delay_fixture_t *fixture, BIO *bio)
 {
     size_t  pending = BIO_ctrl_pending(bio);
     sbuf_t *buf     = bufferpoolGetLargeBuffer(fixture->pool);
-    requireServer(pending > 0 && pending <= sbufGetMaximumWriteableSize(buf),
+    requireServer(pending > 0 && pending <= sbufGetWritableCapacity(buf),
                   "server lifecycle BIO output did not fit one large buffer");
 
     size_t length = 0;
@@ -496,7 +496,7 @@ static void serverQueueRecordWithDelay(server_delay_fixture_t *fixture, uint32_t
                   "invalid server lifecycle record length");
     tlsserver_lstate_t *ls  = lineGetState(fixture->line, fixture->tls);
     sbuf_t             *buf = bufferpoolGetLargeBuffer(fixture->pool);
-    requireServer(body_length + kTlsRecordShapingRecordHeaderSize <= sbufGetMaximumWriteableSize(buf),
+    requireServer(body_length + kTlsRecordShapingRecordHeaderSize <= sbufGetWritableCapacity(buf),
                   "server lifecycle record exceeds its buffer");
 
     uint8_t *bytes = sbufGetMutablePtr(buf);
@@ -873,7 +873,7 @@ static void testServerPeerCloseNotifyFinishes(bool shape_records, uint32_t delay
         requireServer(ls->downstream_finish_deferred && fixture.context.prev_finish == 0,
                       "late plaintext interrupted the already accepted peer-close drain");
         requireServer(tlsserverFlushPendingDownQueue(fixture.tls, fixture.line, ls) &&
-                          bufferqueueGetBufCount(&ls->pending_down) == 2,
+                          bufferqueueGetEntryCount(&ls->pending_down) == 2,
                       "peer-close drain started encrypting retained pre-handshake plaintext");
         tlsserverTunnelUpStreamResume(fixture.tls, fixture.line);
         requireServer(fixture.context.next_resume == 0, "peer close_notify reflected Resume to its finished backend");

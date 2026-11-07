@@ -218,7 +218,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             return;
         }
 
-        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+        struct tcp_hdr *tcp_header        = (struct tcp_hdr *) ((sbufGetMutablePtr(buf)) + iphdr_len);
         uint8_t         tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
 
         // Validate TCP header length
@@ -266,7 +266,7 @@ static void tcpbitchangetrickPayload(tunnel_t *t, line_t *l, sbuf_t **buf_ptr, b
             }
 
             buf        = *buf_ptr;
-            tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+            tcp_header = (struct tcp_hdr *) ((sbufGetMutablePtr(buf)) + iphdr_len);
             if (new_flags != original_flags)
             {
                 tcpbitchangeSetAllTcpFlags(tcp_header, new_flags);

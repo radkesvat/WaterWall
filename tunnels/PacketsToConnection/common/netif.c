@@ -355,7 +355,7 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         const uint32_t count = min((uint32_t) span->len, length - copied);
         if (count != 0)
         {
-            uint8_t *destination = (uint8_t *) sbufGetMutablePtr(buf) + copied;
+            uint8_t *destination = sbufGetMutablePtr(buf) + copied;
             if (count < 64)
                 memoryCopy(destination, span->payload, count);
             else

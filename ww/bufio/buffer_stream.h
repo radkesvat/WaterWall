@@ -30,7 +30,7 @@ struct buffer_stream_s
     buffer_pool_t   *pool;
     bs_doublequeue_t q;
     size_t           size;
-    uint16_t         use_left_padding; // Exact left-padding budget consumed by split exact-read allocations
+    uint16_t         split_headroom_budget; // Exact left-padding budget consumed by split exact-read allocations
 };
 
 typedef struct buffer_stream_s buffer_stream_t;
@@ -38,17 +38,17 @@ typedef struct buffer_stream_s buffer_stream_t;
 /**
  * Creates a new buffer stream.
  * @param pool The buffer pool.
- * @param use_left_padding Exact number of left-padding bytes that a split
+ * @param split_headroom_budget Exact number of left-padding bytes that a split
  *        exact-read allocation may consume. The caller's chain must guarantee
  *        this budget on the large tier; the small tier is used only when its
  *        configured padding also provides the complete budget.
  * @return A new buffer stream instance.
  */
-buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t use_left_padding);
+buffer_stream_t bufferstreamCreate(buffer_pool_t *pool, uint16_t split_headroom_budget);
 
 /** Initialize an empty stream without reserving deque storage. The pool and
  * exact-read padding contract match Create. Previous contents are not freed. */
-void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t use_left_padding);
+void bufferstreamInitEmpty(buffer_stream_t *self, buffer_pool_t *pool, uint16_t split_headroom_budget);
 
 /** O(n) sum of retained sbufGetAllocationCharge(), including empty entries.
  * Saturates at SIZE_MAX on overflow. Excludes deque/pool storage; this is not
@@ -61,7 +61,7 @@ size_t bufferstreamGetCharge(const buffer_stream_t *self);
  * compacts bytes in FIFO order into one best-fit buffer with full pool large-buffer
  * padding.
  * max_charge is a compaction threshold, not a hard admission limit. Logical-byte
- * limits remain with the caller. use_left_padding is not consumed by compaction.
+ * limits remain with the caller. split_headroom_budget is not consumed by compaction.
  * False means unrepresentable best-fit geometry; bytes and ownership are unchanged.
  */
 bool bufferstreamSettleRetained(buffer_stream_t *self, size_t max_charge);
@@ -75,7 +75,7 @@ static inline size_t bufferstreamGetEntryCount(const buffer_stream_t *self)
 
 /** Bytes in the first storage entry, or zero when absent/empty. This is not a
  * protocol boundary and does not skip retained empty entries. */
-static inline uint32_t bufferstreamGetHeadLength(const buffer_stream_t *self)
+static inline size_t bufferstreamGetHeadLength(const buffer_stream_t *self)
 {
     assert(self != NULL);
     return bs_doublequeue_t_is_empty(&self->q) ? 0 : sbufGetLength(*bs_doublequeue_t_front(&self->q));
@@ -113,7 +113,7 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf);
  * Reads exactly the next bytes, combining or splitting storage as needed.
  * Requires 0 < bytes <= buffered length. Neither allocation identity nor original
  * push boundaries are guaranteed. Split allocations use the configured
- * use_left_padding budget and a pool tier providing that complete budget.
+ * split_headroom_budget allowance and a pool tier providing that complete budget.
  * @param self The buffer stream.
  * @param bytes The number of bytes to read.
  * @return A pointer to the buffer containing the read data.
@@ -125,7 +125,7 @@ sbuf_t *bufferstreamReadExact(buffer_stream_t *self, size_t bytes);
  * Source length and destination append space are checked before consumption;
  * insufficient bytes or space terminate the program. Zero bytes is a no-op.
  * The destination must not be one of the stream's buffers. Its allocation,
- * cursor, and padding stay unchanged; use_left_padding is not consumed here.
+ * cursor, and padding stay unchanged; split_headroom_budget is not consumed here.
  * Fully consumed sources are recycled, and partial sources remain in the stream.
  * No destination allocation, growth, or intermediate merge is performed.
  */
@@ -148,36 +148,37 @@ sbuf_t *bufferstreamReadAtLeast(buffer_stream_t *self, size_t bytes);
  * @param self The buffer stream.
  * @return A pointer to the buffer containing the read data.
  */
-sbuf_t *bufferstreamIdealRead(buffer_stream_t *self);
+sbuf_t *bufferstreamTakeChunk(buffer_stream_t *self);
 
 /**
  * Views a byte at a valid position, independent of internal byte partitioning.
  *
  * The caller must provide a non-NULL stream and guarantee
- * `at < bufferstreamGetBufLen(self)`. Violating this precondition, or detecting
+ * `at < bufferstreamGetLength(self)`. Violating this precondition, or detecting
  * inconsistent internal size accounting, terminates the program in every build.
  *
  * @param self The non-NULL buffer stream.
  * @param at A valid byte position smaller than the stream length.
  * @return The byte at the specified position.
  */
-uint8_t bufferstreamViewByteAt(buffer_stream_t *self, size_t at);
+uint8_t bufferstreamViewByteAt(const buffer_stream_t *self, size_t at);
 
 /**
- * Views ordered bytes at a position, independent of internal byte partitioning.
+ * Copies ordered bytes into caller storage without consuming stream bytes.
+ * The range is independent of internal byte partitioning.
  * @param self The buffer stream.
- * @param at The position to start viewing the bytes.
- * @param buf The buffer to store the viewed bytes.
- * @param len The number of bytes to view.
+ * @param at The position to start copying the bytes.
+ * @param buf Caller-owned destination storage.
+ * @param len The positive number of bytes to copy.
  */
-void bufferstreamViewBytesAt(buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
+void bufferstreamCopyBytesAt(const buffer_stream_t *self, size_t at, uint8_t *buf, size_t len);
 
 /**
  * Gets the length of the buffer stream.
  * @param self The buffer stream.
  * @return The length of the buffer stream.
  */
-static inline size_t bufferstreamGetBufLen(buffer_stream_t *self)
+static inline size_t bufferstreamGetLength(const buffer_stream_t *self)
 {
     assert(self != NULL);
     return self->size;
@@ -191,7 +192,7 @@ static inline size_t bufferstreamGetBufLen(buffer_stream_t *self)
 static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
 {
     assert(self != NULL);
-    size_t bytes = bufferstreamGetBufLen(self);
+    size_t bytes = bufferstreamGetLength(self);
     if (bytes == 0)
     {
         return NULL;
@@ -204,16 +205,16 @@ static inline sbuf_t *bufferstreamFullRead(buffer_stream_t *self)
  * @param self The buffer stream.
  * @return true if empty, false otherwise.
  */
-static inline bool bufferstreamIsEmpty(buffer_stream_t *self)
+static inline bool bufferstreamIsEmpty(const buffer_stream_t *self)
 {
     assert(self != NULL);
     return self->size == 0;
 }
 
 /* Delimiter searches observe ordered bytes independently of internal chunk boundaries. */
-static inline bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_end)
+static inline bool bufferstreamFindCRLF(const buffer_stream_t *stream, size_t *line_end)
 {
-    if (bufferstreamGetBufLen(stream) < 2)
+    if (bufferstreamGetLength(stream) < 2)
     {
         return false;
     }
@@ -224,9 +225,9 @@ static inline bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_en
 
     c_foreach(qi, bs_doublequeue_t, stream->q)
     {
-        sbuf_t  *b      = *qi.ref;
-        size_t   b_size = sbufGetLength(b);
-        uint8_t *b_data = (uint8_t *) sbufGetRawPtr(b);
+        const sbuf_t  *b      = *qi.ref;
+        const size_t   b_size = sbufGetLength(b);
+        const uint8_t *b_data = sbufGetRawPtr(b);
 
         for (size_t i = 0; i < b_size; ++i)
         {
@@ -263,9 +264,9 @@ static inline bool bufferstreamFindCRLF(buffer_stream_t *stream, size_t *line_en
     return false;
 }
 
-static inline bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *header_end)
+static inline bool bufferstreamFindDoubleCRLF(const buffer_stream_t *stream, size_t *header_end)
 {
-    if (bufferstreamGetBufLen(stream) < 4)
+    if (bufferstreamGetLength(stream) < 4)
     {
         return false;
     }
@@ -276,9 +277,9 @@ static inline bool bufferstreamFindDoubleCRLF(buffer_stream_t *stream, size_t *h
 
     c_foreach(qi, bs_doublequeue_t, stream->q)
     {
-        sbuf_t  *b      = *qi.ref;
-        size_t   b_size = sbufGetLength(b);
-        uint8_t *b_data = (uint8_t *) sbufGetRawPtr(b);
+        const sbuf_t  *b      = *qi.ref;
+        const size_t   b_size = sbufGetLength(b);
+        const uint8_t *b_data = sbufGetRawPtr(b);
 
         for (size_t i = 0; i < b_size; ++i)
         {

@@ -257,11 +257,11 @@ static inline bool ipv4streamIpv4HeaderLooksValid(const uint8_t *header, uint16_
 // byte) is always guaranteed, so no data pattern can stall the parser.
 static void ipv4streamDropResyncBytes(buffer_stream_t *stream)
 {
-    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t buffered = bufferstreamGetLength(stream);
     const size_t window   = buffered < (size_t) kResyncScanWindow ? buffered : (size_t) kResyncScanWindow;
 
     uint8_t scan[kResyncScanWindow];
-    bufferstreamViewBytesAt(stream, 0, scan, window);
+    bufferstreamCopyBytesAt(stream, 0, scan, window);
 
     size_t found = 0; // offset 0 is the head we already rejected
     for (size_t i = 1; i + (size_t) IP_HLEN <= window; ++i)
@@ -308,7 +308,7 @@ bool ipv4streamTryReadPacket(buffer_stream_t *stream, sbuf_t **packet_out)
 
     while (true)
     {
-        const size_t buffered = bufferstreamGetBufLen(stream);
+        const size_t buffered = bufferstreamGetLength(stream);
 
         // Need a full minimum IPv4 header before any size field can be trusted.
         if (buffered < (size_t) IP_HLEN)
@@ -317,7 +317,7 @@ bool ipv4streamTryReadPacket(buffer_stream_t *stream, sbuf_t **packet_out)
         }
 
         uint8_t header[IP_HLEN];
-        bufferstreamViewBytesAt(stream, 0, header, IP_HLEN);
+        bufferstreamCopyBytesAt(stream, 0, header, IP_HLEN);
 
         uint16_t total_len;
         if (LIKELY(ipv4streamIpv4HeaderLooksValid(header, &total_len)))

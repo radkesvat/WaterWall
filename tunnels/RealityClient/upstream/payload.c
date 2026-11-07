@@ -13,7 +13,7 @@ void realityclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     if (ls->phase != kRealityClientPhaseRealityActive || ls->handoff_completion_in_progress ||
-        ls->upstream_send_in_progress || ls->pending_active != NULL || bufferqueueGetBufCount(&ls->pending_up) != 0)
+        ls->upstream_send_in_progress || ls->pending_active != NULL || bufferqueueGetEntryCount(&ls->pending_up) != 0)
     {
         if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_up, &buf)))
         {

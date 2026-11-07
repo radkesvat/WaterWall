@@ -235,7 +235,7 @@ static void testEmptyInitialInput(bool trojan, bool splice)
     node->fnPayloadU(node, line, input(bytes, 1, splice, 0));
     for (unsigned i = 0; i < 8; ++i)
         node->fnPayloadU(node, line, input("", 0, splice, 0));
-    twfRequire(bs_doublequeue_t_size(&ls->in_stream.q) == 1 && bufferstreamGetBufLen(&ls->in_stream) == 1,
+    twfRequire(bs_doublequeue_t_size(&ls->in_stream.q) == 1 && bufferstreamGetLength(&ls->in_stream) == 1,
                "empty fragmented input retained buffers");
     twfRequire(inits == 0 && payloads == 0, "empty fragmented input completed identity");
     node->fnPayloadU(node, line, input((const uint8_t *) bytes + 1, length - 1, splice, 0));

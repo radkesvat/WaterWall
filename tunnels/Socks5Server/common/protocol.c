@@ -148,7 +148,7 @@ bool socks5serverWrapUdpPayloadForClient(line_t *l, sbuf_t **buf_io, const addre
     }
     else
     {
-        sbufShiftLeft(buf, (uint32_t) header_len);
+        sbufShiftLeft(buf, header_len);
     }
 
     *buf_io = buf;

@@ -376,7 +376,7 @@ static uint8_t *ptcDrainTakeBytes(ptc_lstate_t *ls, uint32_t total)
     uint32_t offset = 0;
     size_t   index  = ptcFrontPauseAckIndexOf(ls);
 
-    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pause_queue) > 0)
     {
         sbuf_t        *buf = bufferqueuePopFront(&ls->pause_queue);
         const uint32_t len = sbufGetLength(buf);
@@ -412,7 +412,7 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
         return kPtcTcpDrainNotNeeded;
     }
 
-    const size_t queued = bufferqueueGetBufLen(&ls->pause_queue);
+    const size_t queued = bufferqueueGetLength(&ls->pause_queue);
     /* Unwritten bytes are a suffix of the bounded pending acknowledgement records. */
     assert(queued <= ls->pending_bytes && queued <= UINT32_MAX);
 

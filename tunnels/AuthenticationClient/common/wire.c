@@ -31,13 +31,13 @@ static bool authenticationclientValidateResponsePayload(sbuf_t *payload);
 static void authenticationclientWriteNetworkUI32(uint8_t *dest, uint32_t value)
 {
     uint32_t network_value = htonl(value);
-    sbufByteCopy(dest, &network_value, (uint32_t) sizeof(network_value));
+    sbufByteCopy(dest, &network_value, sizeof(network_value));
 }
 
 static uint32_t authenticationclientReadNetworkUI32(const uint8_t *src)
 {
     uint32_t network_value = 0;
-    sbufByteCopy(&network_value, src, (uint32_t) sizeof(network_value));
+    sbufByteCopy(&network_value, src, sizeof(network_value));
     return ntohl(network_value);
 }
 
@@ -283,12 +283,12 @@ static bool authenticationclientReadMessageHeader(authenticationclient_lstate_t 
 {
     uint8_t header[kAuthenticationClientMessageHeaderSize];
 
-    if (bufferstreamGetBufLen(&ls->read_stream) < kAuthenticationClientMessageHeaderSize)
+    if (bufferstreamGetLength(&ls->read_stream) < kAuthenticationClientMessageHeaderSize)
     {
         return false;
     }
 
-    bufferstreamViewBytesAt(&ls->read_stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(&ls->read_stream, 0, header, sizeof(header));
     *message_body_len = authenticationclientReadNetworkUI32(header);
     return true;
 }
@@ -360,7 +360,7 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
         }
 
         const size_t message_len = (size_t) kAuthenticationClientMessageHeaderSize + (size_t) message_body_len;
-        if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
+        if (bufferstreamGetLength(&ls->read_stream) < message_len)
         {
             ls->processing_responses = false;
             return true;
@@ -387,10 +387,10 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
 
         if (ts->verbose)
         {
-            LOGD("AuthenticationClient: processing response message body=%u frame-payload=%u config-revision=%" PRIu64
+            LOGD("AuthenticationClient: processing response message body=%u frame-payload=%zu config-revision=%" PRIu64
                  " stats-revision=%" PRIu64,
                  (unsigned int) message_body_len,
-                 (unsigned int) sbufGetLength(payload),
+                 sbufGetLength(payload),
                  config_revision,
                  stats_revision);
         }

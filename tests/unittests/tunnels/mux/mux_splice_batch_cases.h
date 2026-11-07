@@ -14,7 +14,7 @@ static void pqBatchSink(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     if (pqDeliveries == 0)
     {
-        twfRequire(bufferqueueGetBufCount(&pqOutput(pqFixture)->pending) == 1,
+        twfRequire(bufferqueueGetEntryCount(&pqOutput(pqFixture)->pending) == 1,
                    "first batch callback preceded complete FIFO publication");
         /* A real prefix may force complete ordinary fallback after partial splice progress. */
     }
@@ -93,10 +93,10 @@ static void caseSpliceBatch(unsigned mode)
     lineRef(f.child_l);
     pqSend(f.mux, f.child_l, pqLargeSplice(&f));
     if (mode == 0)
-        twfRequire(pqDeliveries == 0 && bufferqueueGetBufCount(&pqOutput(&f)->pending) == 2,
+        twfRequire(pqDeliveries == 0 && bufferqueueGetEntryCount(&pqOutput(&f)->pending) == 2,
                    "paused batch was not fully retained");
     if (mode == 1)
-        twfRequire(pqDeliveries == 1 && bufferqueueGetBufCount(&pqOutput(&f)->pending) == 1,
+        twfRequire(pqDeliveries == 1 && bufferqueueGetEntryCount(&pqOutput(&f)->pending) == 1,
                    "Pause during first frame failed to preserve admitted remainder");
     if (mode <= 1)
         pqParentResume(&f);
@@ -176,7 +176,7 @@ static void caseSpliceBatchAdmission(unsigned mode)
     twfRequire(pqDeliveries == 0, "refused or paused batch emitted output");
     if (mode == 0)
     {
-        twfRequire(pqOutput(&f)->charge <= ordinary_cost && bufferqueueGetBufCount(&pqOutput(&f)->pending) == 2,
+        twfRequire(pqOutput(&f)->charge <= ordinary_cost && bufferqueueGetEntryCount(&pqOutput(&f)->pending) == 2,
                    "greedy pipe selection refused ordinary-fitting batch equality");
     }
     else

@@ -13,7 +13,7 @@ bool junkdatagramsenderGeneratePlaceholderPacket(sbuf_t *buf, const junkdatagram
         return false;
     }
 
-    uint32_t writable = sbufGetMaximumWriteableSize(buf);
+    uint32_t writable = sbufGetWritableCapacity(buf);
     if (writable == 0)
     {
         return false;

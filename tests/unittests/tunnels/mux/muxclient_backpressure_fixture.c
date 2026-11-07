@@ -116,7 +116,7 @@ bool mxbMuxClientChildHasNoParent(const mxb_fixture_t *fixture)
 size_t mxbMuxClientChildQueuedBytes(const mxb_fixture_t *fixture)
 {
     muxclient_lstate_t *child_ls = lineGetState(fixture->child, fixture->mux);
-    return bufferqueueGetBufLen(&child_ls->pending_child_data);
+    return bufferqueueGetLength(&child_ls->pending_child_data);
 }
 
 size_t mxbMuxClientChildQueueCharge(const mxb_fixture_t *fixture)

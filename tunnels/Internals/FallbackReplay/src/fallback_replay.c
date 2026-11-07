@@ -5,7 +5,7 @@
 
 static bool fallbackReplayBatchFits(fallback_replay_t *replay, buffer_pool_t *pool, size_t additional_bytes)
 {
-    const size_t pending_bytes = bufferqueueGetBufLen(&replay->pending);
+    const size_t pending_bytes = bufferqueueGetLength(&replay->pending);
     if (additional_bytes > replay->config->max_batch_bytes ||
         pending_bytes > replay->config->max_batch_bytes - additional_bytes)
         return false;
@@ -20,7 +20,7 @@ static bool fallbackReplayBatchFits(fallback_replay_t *replay, buffer_pool_t *po
 
 static void fallbackReplayDiscardPending(fallback_replay_t *replay, buffer_pool_t *pool)
 {
-    while (bufferqueueGetBufCount(&replay->pending) != 0)
+    while (bufferqueueGetEntryCount(&replay->pending) != 0)
         bufferpoolReuseBuffer(pool, bufferqueuePopFront(&replay->pending));
 }
 
@@ -41,7 +41,7 @@ static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *p
 
     const size_t extra = additional != NULL ? sbufGetLength(*additional) : 0;
     assert(fallbackReplayBatchFits(replay, pool, extra));
-    const uint32_t    total   = (uint32_t) (bufferqueueGetBufLen(&replay->pending) + extra);
+    const uint32_t    total   = (uint32_t) (bufferqueueGetLength(&replay->pending) + extra);
     const uint16_t    padding = bufferpoolGetLargeBufferPadding(pool);
     buffer_pool_fit_t fit;
     if (! bufferpoolQueryBestFit(pool, total, padding, &fit))
@@ -51,13 +51,13 @@ static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *p
     if (replay->pending.budget == budget)
         bufferbudgetRelease(
             &available,
-            (buffer_budget_cost_t) {bufferqueueGetBufLen(&replay->pending), bufferqueueGetCharge(&replay->pending)});
+            (buffer_budget_cost_t) {bufferqueueGetLength(&replay->pending), bufferqueueGetCharge(&replay->pending)});
     if (! bufferbudgetTryAcquire(&available, (buffer_budget_cost_t) {total, fit.allocation_charge}) ||
         ! bufferqueueReserveExtra(&replay->pending, 1))
         return false;
 
     sbuf_t *merged = bufferpoolGetBestFit(pool, total, padding);
-    while (bufferqueueGetBufCount(&replay->pending) != 0)
+    while (bufferqueueGetEntryCount(&replay->pending) != 0)
     {
         sbuf_t *part = bufferqueuePopFront(&replay->pending);
         merged       = sbufMoveRangeTo(pool, part, merged, sbufGetLength(part), total, padding);
@@ -81,13 +81,14 @@ static bool fallbackReplayTryCompact(fallback_replay_t *replay, buffer_pool_t *p
  * bounds. Keep the empty queue bound for subsequent reentrant admission. */
 static sbuf_t *fallbackReplayTakeBatch(fallback_replay_t *replay, buffer_pool_t *pool)
 {
-    if (bufferqueueGetBufCount(&replay->pending) == 0)
+    if (bufferqueueGetEntryCount(&replay->pending) == 0)
         return NULL;
     assert(fallbackReplayBatchFits(replay, pool, 0));
 
-    const uint32_t total   = (uint32_t) bufferqueueGetBufLen(&replay->pending);
+    const uint32_t total   = (uint32_t) bufferqueueGetLength(&replay->pending);
     const uint16_t padding = bufferpoolGetLargeBufferPadding(pool);
-    if (bufferqueueGetBufCount(&replay->pending) == 1 && sbufGetHeadroom(bufferqueueFront(&replay->pending)) >= padding)
+    if (bufferqueueGetEntryCount(&replay->pending) == 1 &&
+        sbufGetHeadroom(bufferqueueFront(&replay->pending)) >= padding)
     {
         return bufferqueuePopFront(&replay->pending);
     }
@@ -103,7 +104,7 @@ static sbuf_t *fallbackReplayTakeBatch(fallback_replay_t *replay, buffer_pool_t 
     if (merged == NULL)
         merged = bufferpoolGetBestFit(pool, total, padding);
 
-    while (bufferqueueGetBufCount(&replay->pending) != 0)
+    while (bufferqueueGetEntryCount(&replay->pending) != 0)
     {
         sbuf_t *part = bufferqueuePopFront(&replay->pending);
         merged       = sbufMoveRangeTo(pool, part, merged, sbufGetLength(part), total, padding);
@@ -117,7 +118,7 @@ static fallback_replay_result_e fallbackReplaySchedule(fallback_replay_t *replay
 {
     if (replay->branch == NULL || replay->closing)
         return kFallbackReplayGone;
-    if (replay->startup || replay->dispatching || replay->scheduled || bufferqueueGetBufCount(&replay->pending) == 0)
+    if (replay->startup || replay->dispatching || replay->scheduled || bufferqueueGetEntryCount(&replay->pending) == 0)
         return kFallbackReplayOk;
     if (replay->config->delay_ms == 0 && replay->config->zero_delay_mode == kFallbackReplayCallerDriven)
         return kFallbackReplayOk;
@@ -220,7 +221,7 @@ fallback_replay_result_e fallbackReplaySubmit(fallback_replay_t *replay, tunnel_
 
     if (replay->config->delay_ms == 0 && ! replay->startup &&
         (! replay->dispatching || replay->config->zero_delay_mode == kFallbackReplayInlineNested) &&
-        ! replay->scheduled && bufferqueueGetBufCount(&replay->pending) == 0)
+        ! replay->scheduled && bufferqueueGetEntryCount(&replay->pending) == 0)
         return fallbackReplayDispatch(replay, owner, line, payload, task);
 
     if (! fallbackReplayBatchFits(replay, lineGetBufferPool(line), sbufGetLength(payload)) ||

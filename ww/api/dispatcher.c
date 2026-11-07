@@ -299,10 +299,10 @@ static void executeJob(void *worker, void *arg1, void *arg2, void *arg3)
     else
     {
         buffer_pool_t *pool    = getCurrentWorkerBufferPool();
-        sbuf_t        *request = bufferpoolGetBestFit(pool, (uint32_t) job->request_size, 0);
+        sbuf_t        *request = bufferpoolGetBestFit(pool, job->request_size, 0);
         if (job->request_size != 0)
             memoryCopy(sbufGetMutablePtr(request), job->request, job->request_size);
-        sbufSetLength(request, (uint32_t) job->request_size);
+        sbufSetLength(request, job->request_size);
         api_result_t result    = job->operation->handler(job->target, request, &job->context);
         job->reply.status      = kNodeApiDispatchOk;
         job->reply.result_code = result.result_code;

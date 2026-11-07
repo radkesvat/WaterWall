@@ -43,7 +43,7 @@ static bool commitHello(tunnel_t *t, line_t *l)
 static bool growCandidate(tunnel_t *t, line_t *l, streamfragmenter_job_t *job, uint32_t needed)
 {
     assert(job != NULL && job->kind == kStreamFragmenterJobCandidate && needed <= kStreamFragmenterMaxWire);
-    uint32_t target = min(sbufGetMaximumWriteableSize(job->buf), (uint32_t) kStreamFragmenterMaxWire);
+    uint32_t target = min(sbufGetWritableCapacity(job->buf), (uint32_t) kStreamFragmenterMaxWire);
     if (needed <= target)
         return true;
     while (target < needed)

@@ -701,7 +701,7 @@ static void testUdpReplyReentry(void)
         if (lineIsAlive(line))
         {
             socks5server_lstate_t *ls = lineGetState(line, test.server);
-            twfRequire(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetBufCount(&ls->pending_up) == 0,
+            twfRequire(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetEntryCount(&ls->pending_up) == 0,
                        "UDP control retained unused TCP tail");
             socks5serverTunnelUpStreamFinish(test.server, line);
             lineDestroy(line);

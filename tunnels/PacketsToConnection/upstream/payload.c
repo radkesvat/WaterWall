@@ -294,7 +294,7 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    const uint8_t version = ((const uint8_t *) sbufGetRawPtr(buf))[0] >> 4U;
+    const uint8_t version = (sbufGetRawPtr(buf))[0] >> 4U;
 
     if (version == 4)
     {
@@ -318,7 +318,7 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (UNLIKELY((GET_BE16((const uint8_t *) sbufGetRawPtr(buf) + 6) & (IP_MF | IP_OFFMASK)) != 0))
+        if (UNLIKELY((GET_BE16(sbufGetRawPtr(buf) + 6) & (IP_MF | IP_OFFMASK)) != 0))
         {
             if (atomicIncU64Relaxed(&state->fragment_drops) == 0)
                 LOGW("PacketsToConnection: dropping unsupported IPv4 fragments; enable reassembly at packet "

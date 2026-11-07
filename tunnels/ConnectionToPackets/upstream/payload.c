@@ -17,8 +17,8 @@ static atomic_log_rate_limiter_t ctp_admission_log;
  */
 static const char *ctpRefusePendingPayload(const ctp_tstate_t *ts, ctp_lstate_t *ls, uint32_t len)
 {
-    const size_t queued  = bufferqueueGetBufLen(&ls->pending_queue);
-    const size_t entries = bufferqueueGetBufCount(&ls->pending_queue);
+    const size_t   queued  = bufferqueueGetLength(&ls->pending_queue);
+    const size_t   entries = bufferqueueGetEntryCount(&ls->pending_queue);
     const uint64_t maximum = (uint64_t) ts->max_pending_bytes + kCtpPendingDeliveryHeadroom;
 
     if (UNLIKELY(queued > maximum || (size_t) len > maximum - queued))

@@ -14,7 +14,7 @@
 size_t ptcFrontPauseAckIndexOf(const ptc_lstate_t *ls)
 {
     const size_t records = (size_t) sbuf_ack_queue_t_size(&ls->ack_queue);
-    const size_t paused  = bufferqueueGetBufCount((buffer_queue_t *) (uintptr_t) &ls->pause_queue);
+    const size_t paused  = bufferqueueGetEntryCount(&ls->pause_queue);
 
     assert(paused <= records);
     return records - paused;
@@ -103,7 +103,7 @@ void ptcPauseQueuePushBack(ptc_lstate_t *ls, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    assert(ptcFrontPauseAckIndexOf(ls) + bufferqueueGetBufCount(&ls->pause_queue) ==
+    assert(ptcFrontPauseAckIndexOf(ls) + bufferqueueGetEntryCount(&ls->pause_queue) ==
            (size_t) sbuf_ack_queue_t_size(&ls->ack_queue));
     sbuf_ack_queue_t_back_mut(&ls->ack_queue)->buf = buf;
 }
@@ -130,7 +130,7 @@ ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
         return kPtcFlushTerminal;
     }
 
-    while (bufferqueueGetBufCount(&ls->pause_queue) > 0)
+    while (bufferqueueGetEntryCount(&ls->pause_queue) > 0)
     {
         /* Read before the pop: the pop is what shifts the suffix by one. */
         sbuf_ack_t *ack       = ptcPauseAckRecordAt(ls, ptcFrontPauseAckIndexOf(ls));
@@ -192,7 +192,7 @@ ptc_flush_result_t ptcFlushWriteQueue(ptc_lstate_t *ls)
     }
 
     const ptc_tstate_t *state = tunnelGetState(ls->tunnel);
-    if (bufferqueueGetBufCount(&ls->pause_queue) == 0 && ls->pending_bytes <= state->max_pending_bytes)
+    if (bufferqueueGetEntryCount(&ls->pause_queue) == 0 && ls->pending_bytes <= state->max_pending_bytes)
     {
         ls->write_paused = false;
         if (ls->write_poll_armed)

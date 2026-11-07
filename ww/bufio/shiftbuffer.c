@@ -379,7 +379,7 @@ bool sbufDuplicateTo(const sbuf_t *b, sbuf_t *dest)
     return true;
 }
 
-sbuf_t *sbufDuplicate(sbuf_t *b)
+sbuf_t *sbufDuplicate(const sbuf_t *b)
 {
     sbuf_t *newbuf = sbufCreateWithPadding(sbufGetTotalCapacityNoPadding(b), b->initial_headroom);
 
@@ -416,8 +416,8 @@ sbuf_t *sbufMoveTo(sbuf_t *restrict dest, sbuf_t *restrict source, const size_t 
     size_t dest_length = sbufGetLength(dest);
 
     assert(bytes <= sbufGetLength(source));
-    assert(dest_length <= sbufGetMaximumWriteableSize(dest));
-    assert(bytes <= sbufGetMaximumWriteableSize(dest) - dest_length);
+    assert(dest_length <= sbufGetWritableCapacity(dest));
+    assert(bytes <= sbufGetWritableCapacity(dest) - dest_length);
 
     memoryCopyLarge(sbufGetMutablePtr(dest) + dest_length, sbufGetRawPtr(source), bytes);
     sbufSetLength(dest, dest_length + bytes);

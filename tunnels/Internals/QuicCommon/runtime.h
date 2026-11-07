@@ -46,11 +46,11 @@ struct quic_context
 
 static inline size_t quicApplicationEntries(quic_context_t *context)
 {
-    return bufferqueueGetBufCount(&context->application) + (context->active_application != NULL);
+    return bufferqueueGetEntryCount(&context->application) + (context->active_application != NULL);
 }
 static inline size_t quicInputEntries(quic_context_t *context)
 {
-    return bufferqueueGetBufCount(&context->input) + (context->active_input != NULL) + context->carrier_allocations;
+    return bufferqueueGetEntryCount(&context->input) + (context->active_input != NULL) + context->carrier_allocations;
 }
 quic_context_t *quicGetContext(tunnel_t *t, line_t *l);
 bool            quicEnter(quic_context_t *context);

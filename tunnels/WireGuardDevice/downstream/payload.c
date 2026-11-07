@@ -131,16 +131,16 @@ sbuf_t *wireguarddeviceDecryptTransportPayload(buffer_pool_t *pool, const uint8_
     const uint32_t plaintext_len = ciphertext_len - WIREGUARD_AUTHTAG_LEN;
     sbuf_t        *buf           = bufferpoolGetBestFit(pool, plaintext_len, bufferpoolGetLargeBufferPadding(pool));
 
-    if (UNLIKELY(sbufGetMaximumWriteableSize(buf) < plaintext_len))
+    if (UNLIKELY(sbufGetWritableCapacity(buf) < plaintext_len))
     {
-        LOGF("WireGuardDevice: best-fit decryption buffer has %u writable bytes for a %u-byte plaintext",
-             (unsigned int) sbufGetMaximumWriteableSize(buf),
+        LOGF("WireGuardDevice: best-fit decryption buffer has %zu writable bytes for a %u-byte plaintext",
+             sbufGetWritableCapacity(buf),
              (unsigned int) plaintext_len);
         abortProgramNow(1);
     }
 
     if (UNLIKELY(! wireguardDecryptPacket(
-            sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf), ciphertext, ciphertext_len, nonce, keypair)))
+            sbufGetMutablePtr(buf), sbufGetWritableCapacity(buf), ciphertext, ciphertext_len, nonce, keypair)))
     {
         bufferpoolReuseBuffer(pool, buf);
         return NULL;

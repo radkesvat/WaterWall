@@ -4,7 +4,7 @@
  * shown below.
  * Cases: testAllocationPageTouches, testRoundsUpToCacheLines,
  * testPaddingIsAlignedAndAdded, testSpliceCapacityAndPadding, testUnrepresentableRequestsAreRejected,
- * testFullAllocationMustFitInSizeT; the driver lists the remaining cases
+ * testFullAllocationMustFitInSizeT, testGenericPoolItemSize; the driver lists the remaining cases
  * Checks: Assertion labels include: a zero-capacity request was rejected; a one-byte request was
  * rejected; a sub-line request was rejected
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -438,6 +438,64 @@ static void testPoolRoundsRepresentableBufferSizes(void)
     masterpoolDestroy(splice_master);
 }
 
+static void testGenericPoolItemSize(void)
+{
+    master_pool_t *master = masterpoolCreateWithCapacity(8);
+    require(master != NULL, "failed to create generic-pool master");
+    const size_t item_size = 37;
+    for (unsigned variant = 0; variant < 3; ++variant)
+    {
+        generic_pool_t *pool = variant == 0 ? genericpoolCreateWithDefaultAllocator(master, item_size)
+                               : variant == 1
+                                   ? genericpoolCreateWithDefaultAllocatorAndCapacity(master, item_size, 2)
+                                   : genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master, item_size, 2);
+        require(pool != NULL && genericpoolGetItemSize(pool) == item_size,
+                "generic pool changed the requested item size");
+        uint8_t *item = genericpoolGetItem(pool);
+        memorySet(item, 0xA5, item_size);
+        require(item[item_size - 1] == 0xA5, "generic pool did not provide the full item");
+        if (variant == 2)
+            require((uintptr_t) item % kCpuLineCacheSize == 0, "aligned generic item lost cache-line alignment");
+        genericpoolReuseItem(pool, item);
+        genericpoolDestroy(pool);
+        masterpoolMakeEmpty(master);
+    }
+    for (unsigned variant = 0; variant < 2; ++variant)
+    {
+        threadsafe_generic_pool_t *pool =
+            variant == 0 ? threadsafegenericpoolCreateWithDefaultAllocator(master, item_size)
+                         : threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(master, item_size, 2);
+        require(pool != NULL && threadsafegenericpoolGetItemSize(pool) == item_size,
+                "thread-safe pool changed the requested item size");
+        uint8_t *item = threadsafegenericpoolGetItem(pool);
+        memorySet(item, 0x5A, item_size);
+        require(item[item_size - 1] == 0x5A, "thread-safe pool did not provide the full item");
+        threadsafegenericpoolReuseItem(pool, item);
+        threadsafegenericpoolDestroy(pool);
+        masterpoolMakeEmpty(master);
+    }
+
+#if SIZE_MAX > UINT32_MAX
+    /* Constructors must inspect the complete size_t request before installing
+     * callbacks or allocating items; none of these requests needs huge storage. */
+    const size_t                      requests[]     = {(size_t) UINT32_MAX + 1, (size_t) UINT32_MAX + 17, SIZE_MAX};
+    const MasterPoolItemCreateHandle  create_before  = master->create_item_handle;
+    const MasterPoolItemDestroyHandle destroy_before = master->destroy_item_handle;
+    for (size_t i = 0; i < ARRAY_SIZE(requests); ++i)
+    {
+        require(genericpoolCreateWithDefaultAllocator(master, requests[i]) == NULL &&
+                    genericpoolCreateWithDefaultAllocatorAndCapacity(master, requests[i], 2) == NULL &&
+                    genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master, requests[i], 2) == NULL &&
+                    threadsafegenericpoolCreateWithDefaultAllocator(master, requests[i]) == NULL &&
+                    threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(master, requests[i], 2) == NULL,
+                "generic pool narrowed an unrepresentable item size before checking it");
+        require(master->create_item_handle == create_before && master->destroy_item_handle == destroy_before,
+                "rejected generic item size replaced the master callbacks");
+    }
+#endif
+    masterpoolDestroy(master);
+}
+
 int main(void)
 {
     testCaseSet("sbuf_capacity_test");
@@ -450,6 +508,7 @@ int main(void)
     testCreateRejectsUnrepresentableRequest();
     testPoolRoundsRepresentableBufferSizes();
     testPoolRejectsUnrepresentableBufferSizes();
+    testGenericPoolItemSize();
     puts("sbuf capacity boundary tests passed");
     return 0;
 }

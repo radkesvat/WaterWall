@@ -38,7 +38,7 @@ static pump_step_result_t processPendingInput(tunnel_t *t, line_t *l, trojanserv
             return kPumpStepRecheck;
         return kPumpStepFallThrough;
     }
-    if (ls->branch == kTrojanServerBranchTrojan && bufferqueueGetBufCount(&ls->pending_up) != 0)
+    if (ls->branch == kTrojanServerBranchTrojan && bufferqueueGetEntryCount(&ls->pending_up) != 0)
     {
         tunnelNextUpStreamPayload(t, l, bufferqueuePopFront(&ls->pending_up));
         return kPumpStepRecheck;
@@ -118,7 +118,7 @@ void trojanserverPump(tunnel_t *t, line_t *l)
             /* Setup input and deferred startup notifications are settled. */
             assert(ls->next_initialized && ! ls->branch_initializing);
             assert(bufferreaderLength(&ls->reader) == 0 && bufferreaderEntryCount(&ls->reader) == 0);
-            assert(bufferqueueGetBufCount(&ls->pending_up) == 0);
+            assert(bufferqueueGetEntryCount(&ls->pending_up) == 0);
             assert(ls->prev_paused == ls->next_pause_sent);
             trojanserverLinestateDestroy(ls);
             tunnelBypassLine(t, l);

@@ -412,10 +412,10 @@ static void caseParentProbeDiscoveryAndPause(void)
     twfRequire(state->awaiting_pong && f.trace.next_payload == before_ping + 1, "due probe was not handed onward");
     muxclientTunnelDownStreamPause(f.mux, parent->l);
     healthSend(&f, child);
-    const size_t queued = bufferqueueGetBufCount(&state->output.pending);
+    const size_t queued = bufferqueueGetEntryCount(&state->output.pending);
     healthTick(f.mux);
     twfRequire(state->awaiting_pong && f.trace.next_payload == before_ping + 1 &&
-                   bufferqueueGetBufCount(&state->output.pending) == queued && queued != 0,
+                   bufferqueueGetEntryCount(&state->output.pending) == queued && queued != 0,
                "paused parent duplicated its outstanding probe or drained application output");
     const uint32_t active_token = state->ping_token;
     healthTime(&f, 22999);
@@ -526,7 +526,7 @@ static void caseIdleParentTimeoutWhilePaused(void)
     healthStartPing(&f, parent);
     muxclientTunnelDownStreamPause(f.mux, parent_l);
     fixtureFinishChild(&f, child);
-    twfRequire(lineIsAlive(parent_l) && bufferqueueGetBufCount(&parent->parent_state->output.pending) != 0,
+    twfRequire(lineIsAlive(parent_l) && bufferqueueGetEntryCount(&parent->parent_state->output.pending) != 0,
                "idle timeout fixture lost its paused final output");
     healthTime(&f, 10999);
     healthTick(f.mux);

@@ -431,11 +431,11 @@ static void testAdmission(void)
     inject_large_decode        = true;
     const uint8_t  coalesced[] = {0, 1, 'A', 0, 1, 'B'};
     sbuf_t        *older       = ordinary(coalesced, sizeof(coalesced));
-    const uint32_t unused      = sbufGetTailCapacity(older);
+    const uint32_t unused      = sbufGetTailroom(older);
     sbufSetLength(older, unused + sizeof(coalesced));
     sbufShiftRight(older, unused);
     memoryCopy(sbufGetMutablePtr(older), coalesced, sizeof(coalesced));
-    twfRequire(sbufGetTailCapacity(older) == 0, "fixture must require compaction instead of tail merging");
+    twfRequire(sbufGetTailroom(older) == 0, "fixture must require compaction instead of tail merging");
     decode(node, line, older);
     twfRequire(lineIsAlive(line) && plain_calls == 3 && plain_length == 3 && memcmp(plain, "ABN", 3) == 0,
                "nested charge settlement lost FIFO order or closed the carrier");

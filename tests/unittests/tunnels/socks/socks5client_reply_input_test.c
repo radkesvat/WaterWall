@@ -445,12 +445,12 @@ static void     fillBacklog(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     memoryFree(data);
     socks5client_lstate_t *ls = lineGetState(control, client);
-    twfRequire(lineIsAlive(application) && bufferqueueGetBufCount(&ls->pending_down) == nested_entries &&
-                   bufferqueueGetBufLen(&ls->pending_down) == nested_entries * nested_bytes,
+    twfRequire(lineIsAlive(application) && bufferqueueGetEntryCount(&ls->pending_down) == nested_entries &&
+                   bufferqueueGetLength(&ls->pending_down) == nested_entries * nested_bytes,
                "exact downstream backlog bound refused");
     for (unsigned i = 0; i < 2000; ++i)
         deliver(NULL, 0);
-    twfRequire(bufferqueueGetBufCount(&ls->pending_down) == nested_entries, "empty TCP consumed retained entries");
+    twfRequire(bufferqueueGetEntryCount(&ls->pending_down) == nested_entries, "empty TCP consumed retained entries");
     if (overflow_backlog)
     {
         sbuf_t *extra = nested_entries > 1 ? twfTrackAcquired(sbufCreateWithPadding(kSocks5ClientMaxPendingCharge, 300))
@@ -479,7 +479,7 @@ static void boundaries(void)
             twfRequire(! lineIsAlive(application) && finishes == 1, "downstream overflow did not settle once");
         else
             twfRequire(lineIsAlive(application) && down_length == nested_entries * nested_bytes &&
-                           bufferqueueGetBufCount(
+                           bufferqueueGetEntryCount(
                                &((socks5client_lstate_t *) lineGetState(control, client))->pending_down) == 0,
                        "bounded nested backlog did not drain through advisory Pause");
         teardown();
@@ -706,7 +706,7 @@ static void spliceReentry(void)
     deliverSplice(tail, sizeof(tail), 3);
     socks5client_lstate_t *ls = lineGetState(control, client);
     twfRequire(expected_down == NULL && down_length == 2 && memoryEqual(downstream, "AB", 2) && read_pauses == 1 &&
-                   bufferqueueGetBufCount(&ls->pending_down) == 0 && max_body_depth == 1,
+                   bufferqueueGetEntryCount(&ls->pending_down) == 0 && max_body_depth == 1,
                "nested splice response lost FIFO, representation or advisory drain");
     tunnelUpStreamResume(client, application);
     twfRequire(down_length == 2 && read_resumes == 1, "splice response Resume repeated payload");

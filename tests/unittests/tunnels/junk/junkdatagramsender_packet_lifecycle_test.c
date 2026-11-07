@@ -41,10 +41,10 @@ static junk_fixture_t *g_fixture;
 /* Duplication allocates through getters in buffer_pool.c itself, which GNU
  * --wrap cannot intercept from within that same translation unit. Keep those
  * scheduled copies in the existing acquisition/settlement ledger too. */
-sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buf);
-sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buf);
+sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buf);
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buf);
 
-sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, sbuf_t *buf)
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buf)
 {
     return twfTrackAcquired(__real_sbufDuplicateByPool(pool, buf));
 }

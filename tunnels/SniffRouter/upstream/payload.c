@@ -39,10 +39,10 @@ static bool queueDatagram(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, sbuf
     const size_t bytes  = sbufGetLength(*buf);
     const size_t charge = sbufGetQueueCharge(*buf);
     if (bytes > kSniffRouterMaxReplayBytes ||
-        bufferqueueGetBufLen(&ls->datagrams) > kSniffRouterMaxReplayBytes - bytes ||
+        bufferqueueGetLength(&ls->datagrams) > kSniffRouterMaxReplayBytes - bytes ||
         charge > kSniffRouterMaxDatagramCharge ||
         bufferqueueGetCharge(&ls->datagrams) > kSniffRouterMaxDatagramCharge - charge ||
-        bufferqueueGetBufCount(&ls->datagrams) >= kSniffRouterMaxDatagrams)
+        bufferqueueGetEntryCount(&ls->datagrams) >= kSniffRouterMaxDatagrams)
     {
         LOGE("SniffRouter: pending datagrams exceeded their retention limit, closing this line");
         lineReuseBuffer(l, *buf);
@@ -176,7 +176,7 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     else
         bufferPendingPayload(l, ls, buf);
 
-    const uint8_t *p = (const uint8_t *) sbufGetRawPtr(ls->pending);
+    const uint8_t *p = sbufGetRawPtr(ls->pending);
     uint32_t       n = sbufGetLength(ls->pending);
 
     sniffrouter_match_t match = sniffrouterClassify(ts, p, n);

@@ -80,7 +80,7 @@ static ssize_t h2DataReadCallback(nghttp2_session *session, int32_t stream_id, u
 
     if (to_copy > 0)
     {
-        memoryCopy(buf, (const uint8_t *) sbufGetRawPtr(item->payload) + item->offset, to_copy);
+        memoryCopy(buf, sbufGetRawPtr(item->payload) + item->offset, to_copy);
         item->offset += to_copy;
         queue->pending_bytes -= to_copy;
     }

@@ -150,9 +150,9 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     {
         buf = reuse != NULL ? reuse->sbuf : ptcAcquireReceiveBuffer(pool, length);
     }
-    else if (sbufGetMaximumWriteableSize(buf) < length)
+    else if (sbufGetWritableCapacity(buf) < length)
     {
-        const uint32_t capacity = sbufGetMaximumWriteableSize(buf);
+        const uint32_t capacity = sbufGetWritableCapacity(buf);
         const uint32_t growth   = max(length, min((uint32_t) TCP_WND, capacity * 2U));
         sbuf_t        *grown    = ptcAcquireReceiveBuffer(pool, growth);
         if (pending < 64)
@@ -164,7 +164,7 @@ err_t lwipThreadPtcTcpRecvCallback(void *arg, struct tcp_pcb *tpcb, struct pbuf 
     }
     if (reuse == NULL)
     {
-        pbufLargeCopyToPtr(p, (uint8_t *) sbufGetMutablePtr(buf) + pending);
+        pbufLargeCopyToPtr(p, sbufGetMutablePtr(buf) + pending);
         sbufSetLength(buf, length);
     }
     ls->rx_delivery = buf;

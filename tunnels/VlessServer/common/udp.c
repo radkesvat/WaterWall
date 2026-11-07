@@ -153,7 +153,7 @@ bool vlessserverWrapUdpPayload(line_t *l, sbuf_t **buf_io)
         return false;
     }
 
-    buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kVlessServerUdpHeaderLen);
+    buf = sbufEnsureHeadroom(lineGetBufferPool(l), buf, kVlessServerUdpHeaderLen);
     sbufShiftLeft(buf, kVlessServerUdpHeaderLen);
 
     *buf_io = buf;

@@ -145,9 +145,9 @@ static api_result_t vmessclientStatsApi(tunnel_t *t, sbuf_t *message, const node
         ! bufferpoolQueryBestFit(pool, used, 0, &fit) ||
         fit.allocation_charge > context->working_memory_allowance - kStatsWorkingMemory)
         return (api_result_t) {.result_code = kApiResultError};
-    sbuf_t *result = bufferpoolGetBestFit(pool, (uint32_t) used, 0);
+    sbuf_t *result = bufferpoolGetBestFit(pool, used, 0);
     memoryCopy(sbufGetMutablePtr(result), text, used);
-    sbufSetLength(result, (uint32_t) used);
+    sbufSetLength(result, used);
     return (api_result_t) {.result_code = kApiResultOk, .buffer = result};
 }
 

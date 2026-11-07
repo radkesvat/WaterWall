@@ -9,13 +9,13 @@
 static void authenticationserverWriteNetworkUI32(uint8_t *dest, uint32_t value)
 {
     uint32_t network_value = htonl(value);
-    sbufByteCopy(dest, &network_value, (uint32_t) sizeof(network_value));
+    sbufByteCopy(dest, &network_value, sizeof(network_value));
 }
 
 static uint32_t authenticationserverReadNetworkUI32(const uint8_t *src)
 {
     uint32_t network_value = 0;
-    sbufByteCopy(&network_value, src, (uint32_t) sizeof(network_value));
+    sbufByteCopy(&network_value, src, sizeof(network_value));
     return ntohl(network_value);
 }
 
@@ -225,19 +225,19 @@ static bool authenticationserverReadMessageHeader(authenticationserver_lstate_t 
 {
     uint8_t header[kAuthenticationServerMessageHeaderSize];
 
-    if (bufferstreamGetBufLen(&ls->read_stream) < kAuthenticationServerMessageHeaderSize)
+    if (bufferstreamGetLength(&ls->read_stream) < kAuthenticationServerMessageHeaderSize)
     {
         return false;
     }
 
-    bufferstreamViewBytesAt(&ls->read_stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(&ls->read_stream, 0, header, sizeof(header));
     *message_body_len = authenticationserverReadNetworkUI32(header);
     return true;
 }
 
 bool authenticationserverInputTokenValid(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input)
 {
-    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t buffered = bufferstreamGetLength(stream);
     const size_t incoming = input == NULL ? 0 : sbufGetLength(input);
     if (buffered < kAuthenticationServerRequestEnvelopeHeaderSize &&
         incoming < kAuthenticationServerRequestEnvelopeHeaderSize - buffered)
@@ -245,7 +245,7 @@ bool authenticationserverInputTokenValid(tunnel_t *t, buffer_stream_t *stream, c
     uint8_t      header[kAuthenticationServerRequestEnvelopeHeaderSize];
     const size_t prefix = min(buffered, sizeof(header));
     if (prefix != 0)
-        bufferstreamViewBytesAt(stream, 0, header, prefix);
+        bufferstreamCopyBytesAt(stream, 0, header, prefix);
     if (prefix < sizeof(header))
         memoryCopy(header + prefix, sbufGetRawPtr(input), sizeof(header) - prefix);
     authenticationserver_tstate_t *ts = tunnelGetState(t);
@@ -261,7 +261,7 @@ bool authenticationserverInputTokenValid(tunnel_t *t, buffer_stream_t *stream, c
  * Incomplete headers and all unvalidated envelopes share the small allowance. */
 bool authenticationserverInputAllowance(tunnel_t *t, buffer_stream_t *stream, const sbuf_t *input, bool *ordinary_out)
 {
-    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t buffered = bufferstreamGetLength(stream);
     const size_t incoming = input == NULL ? 0 : sbufGetLength(input);
     const size_t maximum  = kAuthenticationServerMaxMessagePayload + kAuthenticationServerRequestEnvelopeHeaderSize +
                            kAuthenticationStreamReentryHeadroom;
@@ -280,13 +280,11 @@ bool authenticationserverInputAllowance(tunnel_t *t, buffer_stream_t *stream, co
         uint8_t      header[kAuthenticationServerRequestEnvelopeHeaderSize];
         const size_t from_stream = offset < buffered ? min(sizeof(header), buffered - offset) : 0;
         if (from_stream != 0)
-            bufferstreamViewBytesAt(stream, offset, header, from_stream);
+            bufferstreamCopyBytesAt(stream, offset, header, from_stream);
         if (from_stream < sizeof(header))
         {
             const size_t input_offset = offset + from_stream - buffered;
-            memoryCopy(header + from_stream,
-                       (const uint8_t *) sbufGetRawPtr(input) + input_offset,
-                       sizeof(header) - from_stream);
+            memoryCopy(header + from_stream, sbufGetRawPtr(input) + input_offset, sizeof(header) - from_stream);
         }
         const uint32_t body = authenticationserverReadNetworkUI32(header);
         if (body < kAuthenticationServerSessionTokenSize ||
@@ -338,11 +336,11 @@ static bool authenticationserverAppendResponseFrame(line_t *l, sbuf_t **message,
     }
 
     const uint32_t needed = message_len + frame_len;
-    if (sbufGetMaximumWriteableSize(*message) < needed)
+    if (sbufGetWritableCapacity(*message) < needed)
     {
         const uint32_t maximum =
             kAuthenticationServerMaxResponsePayload + kAuthenticationServerResponseEnvelopeHeaderSize;
-        uint32_t capacity = sbufGetMaximumWriteableSize(*message);
+        uint32_t capacity = sbufGetWritableCapacity(*message);
         while (capacity < needed)
             capacity = capacity > maximum / 2U ? maximum : capacity * 2U;
         *message = sbufReserveSpace(*message, capacity);
@@ -426,8 +424,8 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationServer: building response for request message payload=%u session=%s",
-             (unsigned int) sbufGetLength(payload),
+        LOGD("AuthenticationServer: building response for request message payload=%zu session=%s",
+             sbufGetLength(payload),
              session != NULL && session->client_name != NULL ? session->client_name : "none");
     }
 
@@ -499,10 +497,10 @@ static bool authenticationserverBuildResponseMessageLocked(tunnel_t *t, line_t *
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationServer: processed %u request frame(s); response bytes=%u config-revision=%" PRIu64
+        LOGD("AuthenticationServer: processed %u request frame(s); response bytes=%zu config-revision=%" PRIu64
              " stats-revision=%" PRIu64,
              (unsigned int) count,
-             (unsigned int) sbufGetLength(response),
+             sbufGetLength(response),
              ts->store.config_revision,
              ts->store.stats_revision);
     }
@@ -564,7 +562,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
     {
         if (ls->reject_further_input)
         {
-            if (bufferstreamGetBufLen(&ls->read_stream) != 0)
+            if (bufferstreamGetLength(&ls->read_stream) != 0)
             {
                 authenticationserverCloseLine(t, l, ls, "input after rejected authentication");
                 return false;
@@ -592,7 +590,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         }
 
         const size_t message_len = (size_t) kAuthenticationServerMessageHeaderSize + (size_t) message_body_len;
-        if (bufferstreamGetBufLen(&ls->read_stream) < kAuthenticationServerRequestEnvelopeHeaderSize)
+        if (bufferstreamGetLength(&ls->read_stream) < kAuthenticationServerRequestEnvelopeHeaderSize)
         {
             ls->processing_requests = false;
             return true;
@@ -603,7 +601,7 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
             authenticationserverCloseLine(t, l, ls, "unauthenticated message payload size exceeds limit");
             return false;
         }
-        if (bufferstreamGetBufLen(&ls->read_stream) < message_len)
+        if (bufferstreamGetLength(&ls->read_stream) < message_len)
         {
             ls->processing_requests = false;
             return true;
@@ -618,9 +616,9 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
 
         if (ts->verbose)
         {
-            LOGD("AuthenticationServer: processing request message body=%u frame-payload=%u",
+            LOGD("AuthenticationServer: processing request message body=%u frame-payload=%zu",
                  (unsigned int) message_body_len,
-                 (unsigned int) sbufGetLength(payload));
+                 sbufGetLength(payload));
         }
 
         sbuf_t *response = NULL;

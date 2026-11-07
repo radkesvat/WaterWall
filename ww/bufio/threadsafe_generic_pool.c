@@ -39,13 +39,13 @@ threadsafe_generic_pool_t *threadsafegenericpoolCreateWithCapacity(master_pool_t
     return allocateThreadSafeGenericPool(genericpoolCreateWithCapacity(mp, pool_width, create_h, destroy_h));
 }
 
-threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size)
+threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocator(master_pool_t *mp, size_t item_size)
 {
     return allocateThreadSafeGenericPool(genericpoolCreateWithDefaultAllocator(mp, item_size));
 }
 
 threadsafe_generic_pool_t *threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp,
-                                                                                      uint32_t       item_size,
+                                                                                      size_t         item_size,
                                                                                       uint32_t       pool_width)
 {
     return allocateThreadSafeGenericPool(genericpoolCreateWithDefaultAllocatorAndCapacity(mp, item_size, pool_width));

@@ -47,7 +47,7 @@ void testerserverTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf
     bufferstreamPush(&ls->read_stream, buf);
     bool request_progressed = false;
 
-    if (bufferstreamGetBufLen(&ls->read_stream) > testerserverGetRemainingBytes(t, ls->request_rx_index))
+    if (bufferstreamGetLength(&ls->read_stream) > testerserverGetRemainingBytes(t, ls->request_rx_index))
     {
         testerserverFail(t, l, "buffered request exceeds remaining expected bytes");
         return;
@@ -56,7 +56,7 @@ void testerserverTunnelUpStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sbuf
     const uint8_t chunk_count = testerserverGetChunkCount(t);
 
     while (ls->request_rx_index < chunk_count &&
-           bufferstreamGetBufLen(&ls->read_stream) >= testerserverGetChunkSize(t, ls->request_rx_index))
+           bufferstreamGetLength(&ls->read_stream) >= testerserverGetChunkSize(t, ls->request_rx_index))
     {
         uint32_t bad_offset = 0;
         uint8_t  expected   = 0;

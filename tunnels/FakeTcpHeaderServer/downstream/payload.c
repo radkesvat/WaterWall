@@ -17,13 +17,13 @@ void faketcpheaderserverDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kFakeTcpHeaderServerDropLogIntervalMs))
         {
-            LOGE("FakeTcpHeaderServer: dropping outgoing native packet: %s (packet-bytes=%u, max-native-bytes=%u, "
-                 "overhead-bytes=%u, headroom-bytes=%u)",
+            LOGE("FakeTcpHeaderServer: dropping outgoing native packet: %s (packet-bytes=%zu, max-native-bytes=%u, "
+                 "overhead-bytes=%u, headroom-bytes=%zu)",
                  faketcpheaderWireResultName(result),
-                 (unsigned int) sbufGetLength(buf),
+                 sbufGetLength(buf),
                  (unsigned int) faketcpheaderWireMaxNativeLength(&state->wire),
                  (unsigned int) faketcpheaderWireOverhead(&state->wire),
-                 (unsigned int) sbufGetHeadroom(buf));
+                 sbufGetHeadroom(buf));
         }
         lineReuseBuffer(l, buf);
         return;

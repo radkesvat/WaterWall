@@ -69,7 +69,7 @@ bool splicestreamSettleCharge(splice_stream_t *stream, size_t max_charge);
  * Resident-only body ranges return ordinary storage, including real prefixes
  * of splice wrappers; pipe bytes outside the requested range do not select splice.
  */
-sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes);
+WW_MUST_USE sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes);
 
 /* Move exactly bytes available body bytes with the same ownership, destination
  * and representation rules as MoveFrame. A complete cached header is required,
@@ -78,7 +78,8 @@ sbuf_t *splicestreamMoveFrame(splice_stream_t *stream, sbuf_t *destination, uint
  * tracks the declared body length and marks only its final chunk complete.
  * Length continues to include the cached header until that final chunk.
  */
-sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes, bool finish_frame);
+WW_MUST_USE sbuf_t *splicestreamMoveFrameChunk(splice_stream_t *stream, sbuf_t *destination, uint32_t bytes,
+                                               bool finish_frame);
 
 /* Same caller preconditions, into caller-owned sufficient empty ordinary storage.
  * Destination representation/space is checked fatally before consumption;

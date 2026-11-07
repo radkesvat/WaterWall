@@ -25,7 +25,7 @@ static void pqCheckQueueCharges(void)
     buffer_budget_t           *budget = &parent->parent_state->child_queue_budget;
     const buffer_budget_cost_t usage  = bufferbudgetGetUsage(budget);
     twfRequire(child->pending_child_data.budget == budget && sibling->pending_child_data.budget == budget &&
-                   usage.bytes == bufferqueueGetBufLen(queues[0]) + bufferqueueGetBufLen(queues[1]),
+                   usage.bytes == bufferqueueGetLength(queues[0]) + bufferqueueGetLength(queues[1]),
                "attached queues lost their shared budget binding or usage");
     twfRequire(bufferqueueGetCharge(&child->pending_child_data) == charges[0] &&
                    bufferqueueGetCharge(&sibling->pending_child_data) == charges[1] &&

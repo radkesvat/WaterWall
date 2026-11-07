@@ -529,7 +529,7 @@ static bool junkdatagramsenderMdnsBuildServiceAnnouncement(sbuf_t *buf, uint32_t
 
 bool junkdatagramsenderMdnsGenerate(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint32_t write_limit = sbufGetMaximumWriteableSize(buf);
+    uint32_t write_limit = sbufGetWritableCapacity(buf);
     if (args != NULL && args->max_packet_size > 0 && args->max_packet_size < write_limit)
     {
         write_limit = args->max_packet_size;

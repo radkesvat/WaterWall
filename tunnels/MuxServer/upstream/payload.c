@@ -102,7 +102,7 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
 // Paused children retain Data, and later Data queues behind already retained bytes.
 static bool childRetainsData(muxserver_lstate_t *child_ls)
 {
-    return child_ls->paused || bufferqueueGetBufCount(&child_ls->pending_child_data) != 0;
+    return child_ls->paused || bufferqueueGetEntryCount(&child_ls->pending_child_data) != 0;
 }
 
 /* The protocol above judges a client's first bytes as one payload, and a carrier read boundary

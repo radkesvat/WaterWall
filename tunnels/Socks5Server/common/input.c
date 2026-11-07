@@ -26,13 +26,13 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
     {
         if (ls->phase == kSocks5ServerPhaseWaitMethod)
         {
-            if (bufferstreamGetBufLen(&ls->in_stream) < 2)
+            if (bufferstreamGetLength(&ls->in_stream) < 2)
             {
                 return true;
             }
 
             uint8_t head[2];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, head, sizeof(head));
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, head, sizeof(head));
             if (head[0] != kSocks5Version)
             {
                 socks5serverCloseControlLineBidirectional(t, l);
@@ -40,7 +40,7 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             }
 
             size_t total = (size_t) 2 + head[1];
-            if (bufferstreamGetBufLen(&ls->in_stream) < total)
+            if (bufferstreamGetLength(&ls->in_stream) < total)
             {
                 return true;
             }
@@ -89,13 +89,13 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
 
         if (ls->phase == kSocks5ServerPhaseWaitAuth)
         {
-            if (bufferstreamGetBufLen(&ls->in_stream) < 2)
+            if (bufferstreamGetLength(&ls->in_stream) < 2)
             {
                 return true;
             }
 
             uint8_t head[2];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, head, sizeof(head));
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, head, sizeof(head));
             if (head[0] != kSocks5AuthVersion)
             {
                 socks5serverLogAuthRejected(t, l, NULL, 0, "invalid username-password auth version");
@@ -104,14 +104,14 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
             }
 
             size_t required = (size_t) 2 + head[1] + 1;
-            if (bufferstreamGetBufLen(&ls->in_stream) < required)
+            if (bufferstreamGetLength(&ls->in_stream) < required)
             {
                 return true;
             }
 
             uint8_t plen = bufferstreamViewByteAt(&ls->in_stream, 2 + head[1]);
             required += plen;
-            if (bufferstreamGetBufLen(&ls->in_stream) < required)
+            if (bufferstreamGetLength(&ls->in_stream) < required)
             {
                 return true;
             }
@@ -142,25 +142,25 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
 
         if (ls->phase == kSocks5ServerPhaseWaitRequest)
         {
-            if (bufferstreamGetBufLen(&ls->in_stream) < 4)
+            if (bufferstreamGetLength(&ls->in_stream) < 4)
             {
                 return true;
             }
 
             uint8_t head[4];
-            bufferstreamViewBytesAt(&ls->in_stream, 0, head, sizeof(head));
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, head, sizeof(head));
             if (head[0] != kSocks5Version || head[2] != 0)
             {
                 return socks5serverSendReplyAndClose(t, l, kSocks5ReplyGeneralFailure);
             }
 
             uint8_t           request_buf[sizeof(head) + 1 + 16 + 2 + UINT8_MAX] = {0};
-            size_t            available = bufferstreamGetBufLen(&ls->in_stream);
+            size_t            available = bufferstreamGetLength(&ls->in_stream);
             size_t            copy_len  = min((size_t) sizeof(request_buf), available);
             address_context_t target    = {0};
             size_t            consumed  = 0;
 
-            bufferstreamViewBytesAt(&ls->in_stream, 0, request_buf, copy_len);
+            bufferstreamCopyBytesAt(&ls->in_stream, 0, request_buf, copy_len);
             socks_address_result_t parse_res =
                 socks5serverParseAddressBytes(request_buf + 3, copy_len - 3, &target, &consumed);
             if (parse_res == kSocksAddressNeedMore)

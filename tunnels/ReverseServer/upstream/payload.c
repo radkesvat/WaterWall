@@ -7,7 +7,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
 {
     buffer_pool_t *pool = lineGetBufferPool(d);
     /* The 2 MiB pending budget plus at most 1024 handshake bytes fits padded storage on every target. */
-    const uint32_t length = ts->handshake_length + (uint32_t) bufferqueueGetBufLen(&dls->pending);
+    const uint32_t length = ts->handshake_length + (uint32_t) bufferqueueGetLength(&dls->pending);
     if (! pipeTo(t, d, target))
         return false;
 
@@ -16,7 +16,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
     uint8_t   *bytes         = sbufGetMutablePtr(replay);
     memoryCopy(bytes, ts->handshake_bytes, ts->handshake_length);
     size_t offset = ts->handshake_length;
-    while (bufferqueueGetBufCount(&dls->pending) != 0)
+    while (bufferqueueGetEntryCount(&dls->pending) != 0)
     {
         sbuf_t        *body  = bufferqueuePopFront(&dls->pending);
         const uint32_t count = sbufGetLength(body);

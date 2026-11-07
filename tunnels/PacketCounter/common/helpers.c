@@ -278,7 +278,7 @@ void packetcounterHandlePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (sbufGetLength(buf) >= sizeof(struct ip_hdr))
     {
-        const uint8_t *raw = (const uint8_t *) sbufGetRawPtr(buf);
+        const uint8_t *raw = sbufGetRawPtr(buf);
         if ((raw[0] >> 4U) == 4U)
         {
             const struct ip_hdr *ipheader = (const struct ip_hdr *) raw;

@@ -261,7 +261,7 @@ bool socks5clientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
     }
     else
     {
-        sbufShiftLeft(buf, (uint32_t) header_len);
+        sbufShiftLeft(buf, header_len);
     }
 
     *buf_io = buf;

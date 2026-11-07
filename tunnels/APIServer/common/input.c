@@ -48,7 +48,7 @@ static void consumeInput(apiserver_lstate_t *ls, size_t amount)
 {
     api_input_t *input = ls->input_head;
     memorySecureZero(sbufGetMutablePtr(input->buffer), amount);
-    sbufShiftRight(input->buffer, (uint32_t) amount);
+    sbufShiftRight(input->buffer, amount);
     if (sbufGetLength(input->buffer) == 0)
     {
         ls->input_head = input->next;

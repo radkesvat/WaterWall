@@ -34,7 +34,7 @@ typedef enum headerserver_header_parse_result_e
 
 static bool headerserverReadHeaderPort(headerserver_lstate_t *ls, line_t *l, uint16_t *port_out)
 {
-    if (bufferstreamGetBufLen(&ls->read_stream) < kHeaderServerHeaderSize)
+    if (bufferstreamGetLength(&ls->read_stream) < kHeaderServerHeaderSize)
     {
         return false;
     }
@@ -51,7 +51,7 @@ static bool headerserverReadHeaderPort(headerserver_lstate_t *ls, line_t *l, uin
 
 static bool headerserverStreamPrefixCanMatch(buffer_stream_t *stream, const uint8_t *expected, size_t expected_len)
 {
-    size_t available   = bufferstreamGetBufLen(stream);
+    size_t available   = bufferstreamGetLength(stream);
     size_t compare_len = available < expected_len ? available : expected_len;
 
     for (size_t i = 0; i < compare_len; ++i)
@@ -141,7 +141,7 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV1(header
 
     if (! bufferstreamFindCRLF(stream, &line_end))
     {
-        if (bufferstreamGetBufLen(stream) > kHeaderServerProxyProtocolV1MaxHeaderSize)
+        if (bufferstreamGetLength(stream) > kHeaderServerProxyProtocolV1MaxHeaderSize)
         {
             LOGE("HeaderServer: PROXY protocol v1 header is longer than %u bytes",
                  (unsigned int) kHeaderServerProxyProtocolV1MaxHeaderSize);
@@ -160,7 +160,7 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV1(header
     }
 
     char line[kHeaderServerProxyProtocolV1MaxHeaderSize + 1U];
-    bufferstreamViewBytesAt(stream, 0, (uint8_t *) line, line_end);
+    bufferstreamCopyBytesAt(stream, 0, (uint8_t *) line, line_end);
     line[line_end] = '\0';
 
     char  *tokens[6];
@@ -210,7 +210,7 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV1(header
 static headerserver_header_parse_result_t headerserverReadProxyProtocolV2(headerserver_lstate_t *ls, line_t *l)
 {
     buffer_stream_t *stream    = &ls->read_stream;
-    size_t           available = bufferstreamGetBufLen(stream);
+    size_t           available = bufferstreamGetLength(stream);
 
     if (available < kHeaderServerProxyProtocolV2BaseHeaderSize)
     {
@@ -218,7 +218,7 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV2(header
     }
 
     uint8_t header[kHeaderServerProxyProtocolV2BaseHeaderSize];
-    bufferstreamViewBytesAt(stream, 0, header, sizeof(header));
+    bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
 
     // The dispatcher already matched the complete signature before selecting v2.
     assert(memoryCompare(header, kHeaderServerProxyProtocolV2Signature, kHeaderServerProxyProtocolV2SignatureSize) ==
@@ -260,7 +260,7 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV2(header
     }
 
     uint8_t address_block[kHeaderServerProxyProtocolV2Ipv4AddressSize];
-    bufferstreamViewBytesAt(stream, kHeaderServerProxyProtocolV2BaseHeaderSize, address_block, sizeof(address_block));
+    bufferstreamCopyBytesAt(stream, kHeaderServerProxyProtocolV2BaseHeaderSize, address_block, sizeof(address_block));
 
     ip_addr_t src_ip = {0};
     src_ip.type      = IPADDR_TYPE_V4;
@@ -319,7 +319,7 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
     }
 
     case kHeaderServerOverrideModeHeaderProtocol: {
-        if (bufferstreamGetBufLen(&ls->read_stream) < kHeaderServerProtocolHeaderSize)
+        if (bufferstreamGetLength(&ls->read_stream) < kHeaderServerProtocolHeaderSize)
         {
             return kHeaderServerHeaderParseNeedMore;
         }

@@ -35,7 +35,7 @@ static bool deliver(tunnel_t *t, line_t *l, sbuf_t *b)
 }
 static void consume(hpc_lstate_t *ls, size_t n)
 {
-    sbufShiftRight(ls->active, (uint32_t) n);
+    sbufShiftRight(ls->active, n);
     bufferbudgetReservationSetBytes(&ls->active_cost, sbufGetLength(ls->active));
 }
 static sbuf_t *detach(hpc_lstate_t *ls)
@@ -176,7 +176,7 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             }
             sbuf_t *out = hpcBuffer(l, used);
             memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(ls->active), used);
-            sbufSetLength(out, (uint32_t) used);
+            sbufSetLength(out, used);
             consume(ls, used);
             if (! deliver(t, l, out))
                 return false;
@@ -231,7 +231,7 @@ void httpproxyclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b)
         ls->header_started = true;
         ls->header_at      = ls->progress_at;
     }
-    if (ls->down_busy || bufferqueueGetBufCount(&ls->pending[1]))
+    if (ls->down_busy || bufferqueueGetEntryCount(&ls->pending[1]))
     {
         if (! hpcQueue(t, l, b, 1))
             return;

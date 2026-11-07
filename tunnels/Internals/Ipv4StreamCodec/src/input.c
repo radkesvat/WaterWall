@@ -36,8 +36,8 @@ ipv4stream_input_result_t ipv4streamInputAdmit(ipv4stream_input_t *input, buffer
     if (input->draining)
         return bufferqueueTryPushBack(&input->pending, &buf) ? kIpv4StreamInputQueued : kIpv4StreamInputRejected;
 
-    assert(bufferqueueGetBufCount(&input->pending) == 0 && input->active.budget == NULL);
-    if (bufferstreamGetBufLen(stream) > UINT32_MAX - sbufGetLength(buf))
+    assert(bufferqueueGetEntryCount(&input->pending) == 0 && input->active.budget == NULL);
+    if (bufferstreamGetLength(stream) > UINT32_MAX - sbufGetLength(buf))
         return kIpv4StreamInputRejected;
     input->draining = true;
     bufferstreamPush(stream, buf);
@@ -47,7 +47,7 @@ ipv4stream_input_result_t ipv4streamInputAdmit(ipv4stream_input_t *input, buffer
 bool ipv4streamInputAdvance(ipv4stream_input_t *input, buffer_stream_t *stream)
 {
     assert(input->draining);
-    assert(bufferstreamGetBufLen(stream) < kMaxAllowedPacketLength);
+    assert(bufferstreamGetLength(stream) < kMaxAllowedPacketLength);
     const bool settled = bufferstreamSettleRetained(stream, kIpv4StreamIncompleteCharge);
     assert(settled);
     discard settled;

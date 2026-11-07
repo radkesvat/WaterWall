@@ -416,7 +416,7 @@ static void caseQuiescenceDropsPayload(bool parent_input, bool paused)
                "quiesced payload refreshed idle or flow-control state");
     twfRequire(bufferqueueGetCharge(&child->pending_child_data) == 0 &&
                    bufferbudgetGetUsage(&child->parent->parent_state->child_queue_budget).charge == 0 &&
-                   bufferqueueGetBufCount(&child->pending_child_data) == 0,
+                   bufferqueueGetEntryCount(&child->pending_child_data) == 0,
                "quiesced payload retained child buffers or charge");
     twfRequire(child->parent->children_count == 1 && splicestreamLength(child->parent->parent_state->read_stream) == 0,
                "quiesced payload admitted another child or retained input bytes");

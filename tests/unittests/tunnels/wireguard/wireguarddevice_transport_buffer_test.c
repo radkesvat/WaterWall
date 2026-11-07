@@ -87,7 +87,7 @@ static void testPlaintextRoundtrip(buffer_pool_t *pool, wireguard_keypair_t *key
     sbuf_t *buf = wireguarddeviceDecryptTransportPayload(pool, ct, ciphertext_len, nonce, keypair);
     require(buf != NULL, label);
     require(sbufGetLength(buf) == plaintext_len, "decrypted length mismatch");
-    require(sbufGetMaximumWriteableSize(buf) >= plaintext_len, "buffer writable capacity is too small");
+    require(sbufGetWritableCapacity(buf) >= plaintext_len, "buffer writable capacity is too small");
     require(sbufGetInitialHeadroom(buf) >= bufferpoolGetLargeBufferPadding(pool),
             "decryption buffer lacks the worker pool's required left padding");
     require(memcmp(sbufGetRawPtr(buf), pt, plaintext_len) == 0, "decrypted content mismatch");

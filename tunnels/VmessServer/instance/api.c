@@ -12,8 +12,8 @@ static api_result_t vmessserverStatsResult(const node_api_call_context_t *contex
         context->working_memory_allowance < 4608 || ! bufferpoolQueryBestFit(pool, length, 0, &fit) ||
         fit.allocation_charge > context->working_memory_allowance - 4608)
         return (api_result_t) {.result_code = kApiResultError};
-    sbuf_t *out = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
-    sbufSetLength(out, (uint32_t) length);
+    sbuf_t *out = bufferpoolGetBestFit(pool, length, 0);
+    sbufSetLength(out, length);
     memoryCopy(sbufGetMutablePtr(out), text, length);
     return (api_result_t) {.result_code = code, .buffer = out};
 }

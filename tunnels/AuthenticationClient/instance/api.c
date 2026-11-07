@@ -136,8 +136,8 @@ static api_result_t resultBody(const node_api_call_context_t *context, enum api_
     if (length > context->max_response_body_size || ! bufferpoolQueryBestFit(pool, length, 0, &fit) ||
         fit.allocation_charge > context->working_memory_allowance)
         return (api_result_t) {.result_code = kApiResultError};
-    sbuf_t *buffer = bufferpoolGetBestFit(pool, (uint32_t) length, 0);
-    sbufSetLength(buffer, (uint32_t) length);
+    sbuf_t *buffer = bufferpoolGetBestFit(pool, length, 0);
+    sbufSetLength(buffer, length);
     memoryCopy(sbufGetMutablePtr(buffer), text, length);
     return (api_result_t) {.result_code = code, .buffer = buffer};
 }

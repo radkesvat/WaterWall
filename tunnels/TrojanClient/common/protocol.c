@@ -99,10 +99,10 @@ bool trojanclientSendInitialRequest(tunnel_t *t, line_t *l, trojanclient_lstate_
     }
     if (! reuse_body)
     {
-        sbufSetLength(buf, (uint32_t) off);
+        sbufSetLength(buf, off);
         if (body != NULL)
         {
-            buf = sbufMoveRangeTo(pool, body, buf, body_len, (uint32_t) total, padding);
+            buf = sbufMoveRangeTo(pool, body, buf, body_len, total, padding);
             lineReuseBuffer(l, body);
         }
     }
@@ -138,7 +138,7 @@ bool trojanclientWrapUdpPayload(line_t *l, sbuf_t **buf_io, const address_contex
 
     if (sbufGetHeadroom(buf) < header_len)
     {
-        buf = sbufEnsureLeftCapacity(lineGetBufferPool(l), buf, kTrojanClientUdpHeaderMaxLen);
+        buf = sbufEnsureHeadroom(lineGetBufferPool(l), buf, kTrojanClientUdpHeaderMaxLen);
     }
     sbufShiftLeft(buf, header_len);
 

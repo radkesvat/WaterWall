@@ -34,7 +34,7 @@ typedef void (*PoolItemDestroyHandle)(pool_item_t *item);
     uint32_t              len;                                                                                         \
     uint32_t              cap;                                                                                         \
     uint32_t              free_threshold;                                                                              \
-    uint32_t              item_size;                                                                                   \
+    size_t                item_size;                                                                                   \
     PoolItemCreateHandle  create_item_handle;                                                                          \
     PoolItemDestroyHandle destroy_item_handle;                                                                         \
     master_pool_t        *mp;                                                                                          \
@@ -165,7 +165,7 @@ static inline size_t genericpoolGetInUse(const generic_pool_t *pool)
  * @param pool The generic pool to get the item size from.
  * @return The item size of the pool.
  */
-static inline uint32_t genericpoolGetItemSize(generic_pool_t *pool)
+static inline size_t genericpoolGetItemSize(const generic_pool_t *pool)
 {
     return pool->item_size;
 }
@@ -173,10 +173,11 @@ static inline uint32_t genericpoolGetItemSize(generic_pool_t *pool)
 /**
  * Sets the item size of the pool.
  * @param pool The generic pool to set the item size for.
- * @param item_size The item size to set.
+ * @param item_size The item size in bytes; requires item_size <= UINT32_MAX.
  */
-static inline void genericpoolSetItemSize(generic_pool_t *pool, uint32_t item_size)
+static inline void genericpoolSetItemSize(generic_pool_t *pool, size_t item_size)
 {
+    assert(item_size <= UINT32_MAX);
     pool->item_size = item_size;
 }
 
@@ -213,29 +214,29 @@ generic_pool_t *genericpoolCreateWithMasterPoolCallbacks(master_pool_t *mp, uint
 /**
  * Creates a generic pool with a default allocator.
  * @param mp The master pool.
- * @param item_size The size of each item in the pool.
+ * @param item_size The size of each item in bytes, at most UINT32_MAX.
  * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
-generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, uint32_t item_size);
+generic_pool_t *genericpoolCreateWithDefaultAllocator(master_pool_t *mp, size_t item_size);
 
 /**
  * Creates a generic pool with a default allocator and a specified capacity.
  * @param mp The master pool.
- * @param item_size The size of each item in the pool.
+ * @param item_size The size of each item in bytes, at most UINT32_MAX.
  * @param pool_width The width of the pool.
  * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
-generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+generic_pool_t *genericpoolCreateWithDefaultAllocatorAndCapacity(master_pool_t *mp, size_t item_size,
                                                                  uint32_t pool_width);
 
 /**
  * Creates a generic pool with a cache-line aligned default allocator and a specified capacity.
  * @param mp The master pool.
- * @param item_size The size of each item in the pool.
+ * @param item_size The size of each item in bytes, at most UINT32_MAX.
  * @param pool_width The width of the pool.
  * @return A pointer to the created generic pool, or NULL for invalid arguments or geometry.
  */
-generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, uint32_t item_size,
+generic_pool_t *genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master_pool_t *mp, size_t item_size,
                                                                              uint32_t pool_width);
 
 /**

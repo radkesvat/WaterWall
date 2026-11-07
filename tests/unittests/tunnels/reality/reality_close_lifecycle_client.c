@@ -357,7 +357,7 @@ static void clientNextHandoffPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         requireClient(
             ls->pending_active != NULL && sbufGetLength(ls->pending_active) == 16384 &&
                 ls->pending_reservation.budget == &ls->pending_budget && ls->pending_reservation.cost.bytes == 16384 &&
-                bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetBufLen(&ls->pending_up) &&
+                bufferbudgetGetUsage(&ls->pending_budget).bytes == 16384 + bufferqueueGetLength(&ls->pending_up) &&
                 bufferbudgetGetUsage(&ls->pending_budget).charge ==
                     ls->pending_reservation.cost.charge + bufferqueueGetCharge(&ls->pending_up),
             "active plaintext consumption was not published before reentrant wire output");
@@ -677,7 +677,7 @@ static void clientPeerFatal(tunnel_t *t, line_t *l)
 static sbuf_t *clientBufferFromBytes(client_lifecycle_fixture_t *fixture, const uint8_t *data, uint32_t len)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(fixture->pool);
-    requireClient(len <= sbufGetMaximumWriteableSize(buf), "client parser fixture buffer is too small");
+    requireClient(len <= sbufGetWritableCapacity(buf), "client parser fixture buffer is too small");
     buf = sbufReserveSpace(buf, len);
     sbufSetLength(buf, len);
     memoryCopy(sbufGetMutablePtr(buf), data, len);
@@ -703,7 +703,7 @@ static sbuf_t *buildClientInboundRecord(client_lifecycle_fixture_t *fixture, uin
 
     uint32_t frame_len = kRealityV2TlsRecordHeaderSize + layout.wire_body_len;
     sbuf_t  *buf       = bufferpoolGetSmallBuffer(fixture->pool);
-    requireClient(frame_len <= sbufGetMaximumWriteableSize(buf), "client inbound record is too large");
+    requireClient(frame_len <= sbufGetWritableCapacity(buf), "client inbound record is too large");
     buf = sbufReserveSpace(buf, frame_len);
     sbufSetLength(buf, frame_len);
     uint8_t *frame          = sbufGetMutablePtr(buf);
@@ -891,7 +891,7 @@ static sbuf_t *clientDrainTlsServerWire(client_lifecycle_fixture_t *fixture, con
     sbuf_t *flight = (uint32_t) wire_len <= bufferpoolGetSmallBufferSize(fixture->pool)
                          ? bufferpoolGetSmallBuffer(fixture->pool)
                          : bufferpoolGetLargeBuffer(fixture->pool);
-    requireClient((uint32_t) wire_len <= sbufGetMaximumWriteableSize(flight),
+    requireClient((uint32_t) wire_len <= sbufGetWritableCapacity(flight),
                   "client TLS server flight exceeds its pooled buffer");
     flight = sbufReserveSpace(flight, (uint32_t) wire_len);
     sbufSetLength(flight, (uint32_t) wire_len);
@@ -991,7 +991,7 @@ static sbuf_t *clientJoinRecords(client_lifecycle_fixture_t *fixture, sbuf_t *fi
     uint32_t second_len   = sbufGetLength(second);
     uint32_t combined_len = first_len + second_len;
     sbuf_t  *combined     = bufferpoolGetSmallBuffer(fixture->pool);
-    requireClient(combined_len <= sbufGetMaximumWriteableSize(combined),
+    requireClient(combined_len <= sbufGetWritableCapacity(combined),
                   "client coalesced handoff fixture exceeds its buffer");
     combined = sbufReserveSpace(combined, combined_len);
     sbufSetLength(combined, combined_len);
@@ -1183,7 +1183,7 @@ static void testClientHandoffRequestAndQueue(void)
         "client sent a duplicate handoff request");
 
     realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
-    requireClient(bufferqueueGetBufCount(&ls->pending_up) == 1 && strcmp(fixture.context.events, "R") == 0,
+    requireClient(bufferqueueGetEntryCount(&ls->pending_up) == 1 && strcmp(fixture.context.events, "R") == 0,
                   "client released application data before ACK");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
@@ -1209,7 +1209,7 @@ static void testClientConfirmEstAndFlushOrdering(void)
     fixture.next->fnPayloadU = clientNextHandoffPayload;
 
     realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
-    requireClient(bufferqueueGetBufCount(&ls->pending_up) == 1,
+    requireClient(bufferqueueGetEntryCount(&ls->pending_up) == 1,
                   "client did not queue application during ACK completion");
 
     fixture.context.expected_control_kind = kRealityV2RecordKindHandoffConfirm;
@@ -1226,7 +1226,7 @@ static void testClientConfirmEstAndFlushOrdering(void)
     ls                                 = lineGetState(fixture.line, fixture.reality);
     ls->handoff_completion_in_progress = false;
     requireClient(strcmp(fixture.context.events, "ECQ") == 0 && ls->c2s_send_seq == 3 &&
-                      bufferqueueGetBufCount(&ls->pending_up) == 0,
+                      bufferqueueGetEntryCount(&ls->pending_up) == 0,
                   "client did not preserve Est -> CONFIRM -> queued-application order");
 
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
@@ -1258,12 +1258,12 @@ static void testClientNestedAckIsDeferredDuringCoverConsume(void)
     ls = lineGetState(fixture.line, fixture.reality);
     requireClient(ls->phase == kRealityClientPhaseTls13AwaitAck && ls->handoff_cover_consume_in_progress &&
                       ! ls->handoff_ack_authenticated && ! ls->handoff_confirm_sent && ls->s2c_recv_seq == 0 &&
-                      ls->c2s_send_seq == 1 && bufferstreamGetBufLen(&ls->handoff_stream) == ack_len &&
+                      ls->c2s_send_seq == 1 && bufferstreamGetLength(&ls->handoff_stream) == ack_len &&
                       fixture.context.events_len == 0,
                   "nested ACK completed takeover or advanced state before cover consume returned");
 
     ls->handoff_cover_consume_in_progress = false;
-    requireClient(bufferstreamGetBufLen(&ls->handoff_stream) == ack_len,
+    requireClient(bufferstreamGetLength(&ls->handoff_stream) == ack_len,
                   "clearing the cover-consume guard lost the deferred ACK");
     realityclientHandleUpstreamFinish(fixture.reality, fixture.line);
     requireClient(strcmp(fixture.context.events, "U") == 0,
@@ -1403,7 +1403,7 @@ static void testClientAckCoalescedApplicationCompletesHandoff(void)
 
     realityclientTunnelUpStreamPayload(fixture.reality, fixture.line, clientOneBytePayload(&fixture));
     realityclient_lstate_t *ls = lineGetState(fixture.line, fixture.reality);
-    requireClient(bufferqueueGetBufCount(&ls->pending_up) == 1,
+    requireClient(bufferqueueGetEntryCount(&ls->pending_up) == 1,
                   "client ACK transition fixture did not queue local application data");
 
     const uint8_t server_application = 0x5a;
@@ -1422,7 +1422,7 @@ static void testClientAckCoalescedApplicationCompletesHandoff(void)
     requireClient(strcmp(fixture.context.events, "CQA") == 0 && ls->phase == kRealityClientPhaseRealityActive &&
                       ls->handoff_ack_authenticated && ls->handoff_confirm_sent && ls->downstream_est_sent &&
                       ! ls->handoff_completion_in_progress && ls->c2s_send_seq == 3 && ls->s2c_recv_seq == 2 &&
-                      bufferqueueGetBufCount(&ls->pending_up) == 0 && bufferstreamIsEmpty(&ls->handoff_stream) &&
+                      bufferqueueGetEntryCount(&ls->pending_up) == 0 && bufferstreamIsEmpty(&ls->handoff_stream) &&
                       bufferstreamIsEmpty(&ls->read_stream),
                   "encrypted ACK did not preserve CONFIRM -> queued-up -> coalesced-down ordering");
     requireClient(tls_ls->resources_released && tls_ls->takeover_phase == 2U && tls_ls->ssl == NULL &&
@@ -1537,7 +1537,7 @@ static void testClientEarlyPlaintextBounds(void)
         {
             realityclientTunnelUpStreamPayload(
                 fixture.reality, fixture.line, clientRepeatedPayload(&fixture, kRealityClientPendingBytes));
-            requireClient(bufferqueueGetBufLen(&ls->pending_up) == kRealityClientPendingBytes,
+            requireClient(bufferqueueGetLength(&ls->pending_up) == kRealityClientPendingBytes,
                           "Reality exact early byte limit was refused");
         }
         requireClient(fixture.context.events_len == 0, "Reality sent early plaintext before TLS completion");
@@ -1592,7 +1592,7 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     realityclientTunnelDownStreamEst(fixture.reality, fixture.line);
     realityclientTunnelDownStreamPause(fixture.reality, fixture.line);
     realityclientTunnelDownStreamPause(fixture.reality, fixture.line);
-    requireClient(strcmp(fixture.context.events, "E") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2 &&
+    requireClient(strcmp(fixture.context.events, "E") == 0 && bufferqueueGetEntryCount(&ls->pending_up) == 2 &&
                       fixture.context.source_pause_count == 1 && fixture.context.source_resume_count == 0 &&
                       ls->plaintext_producer_paused && ls->next_paused,
                   "Reality lost its plaintext hold during repeated or reentrant consumer pressure");
@@ -1602,7 +1602,7 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
     fixture.context.expected_control_kind = kRealityV2RecordKindHandoffRequest;
     realityclientHandshakeReady(fixture.reality, fixture.line);
     requireClient(ls->phase == kRealityClientPhaseTls13AwaitAck && ls->session_keys_ready &&
-                      strcmp(fixture.context.events, "ER") == 0 && bufferqueueGetBufCount(&ls->pending_up) == 2,
+                      strcmp(fixture.context.events, "ER") == 0 && bufferqueueGetEntryCount(&ls->pending_up) == 2,
                   "Reality completion hook failed to bind TLS or released pre-ACK plaintext");
     fixture.context.expected_control_kind          = kRealityV2RecordKindHandoffConfirm;
     fixture.context.advance_kind_after_confirm     = true;
@@ -1646,7 +1646,7 @@ static void testClientCompletionDrainsThroughAdvisoryPause(unsigned mode)
                       "Reality failed to preserve the remaining pressure reason after authenticated FIFO completion");
         requireClient(ls->phase == kRealityClientPhaseRealityActive && strcmp(fixture.context.events, "ERCQQQQ") == 0 &&
                           fixture.context.received_application_length == sizeof(expected) &&
-                          bufferqueueGetBufCount(&ls->pending_up) == 0 && ls->pending_active == NULL,
+                          bufferqueueGetEntryCount(&ls->pending_up) == 0 && ls->pending_active == NULL,
                       "Reality ACK failed to drain through advisory Pause in FIFO order");
         realityclientTunnelDownStreamResume(fixture.reality, fixture.line);
         if (mode == 3)
@@ -1920,7 +1920,7 @@ static void runClientSizingCase(uint16_t tls_version, const reality_v2_record_pr
     memorySet(ls->c2s_iv, 0x53, sizeof(ls->c2s_iv));
 
     sbuf_t *input = bufferpoolGetLargeBuffer(pool);
-    requireClient(input_len <= sbufGetMaximumWriteableSize(input), "client sizing input does not fit the test buffer");
+    requireClient(input_len <= sbufGetWritableCapacity(input), "client sizing input does not fit the test buffer");
     input = sbufReserveSpace(input, input_len);
     sbufSetLength(input, input_len);
     uint8_t *input_bytes    = sbufGetMutablePtr(input);

@@ -49,7 +49,7 @@ static inline sbuf_t *muxPrepareQueuedPayload(buffer_pool_t *pool, sbuf_t *buf)
         return buf;
 
     sbuf_t *retained = bufferpoolGetBestFit(pool, fit.payload_capacity, fit.left_padding);
-    assert(length <= sbufGetMaximumWriteableSize(retained));
+    assert(length <= sbufGetWritableCapacity(retained));
     memoryCopyLarge(sbufGetMutablePtr(retained), sbufGetRawPtr(buf), length);
     sbufSetLength(retained, length);
     bufferpoolReuseBuffer(pool, buf);

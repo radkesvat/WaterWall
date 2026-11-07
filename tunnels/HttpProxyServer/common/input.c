@@ -82,7 +82,7 @@ static sbuf_t *hpsMakeBuffer(hps_session_t *s, size_t n)
     /* Callers admit at most 1 MiB of working data plus 2 MiB of delivery headroom. */
     assert(n <= (size_t) hpsSettings(s)->max_pending + kHpsDeliveryHeadroomBytes);
     buffer_pool_t *pool = lineGetBufferPool(s->client);
-    return bufferpoolGetBestFit(pool, (uint32_t) n, bufferpoolGetLargeBufferPadding(pool));
+    return bufferpoolGetBestFit(pool, n, bufferpoolGetLargeBufferPadding(pool));
 }
 
 bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned char *data, size_t n)
@@ -92,7 +92,7 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
         return false;
     sbuf_t *old    = dir->input;
     size_t  length = old ? sbufGetLength(old) : 0;
-    if (! old || sbufGetMaximumWriteableSize(old) < length + n)
+    if (! old || sbufGetWritableCapacity(old) < length + n)
     {
         sbuf_t *b = hpsMakeBuffer(s, MIN_SIZE(hpsSettings(s)->max_pending, MAX_SIZE(4096, (length + n) * 2)));
         if (! allocationFits(s, old, b))
@@ -106,7 +106,7 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
         dir->input = old = b;
     }
     memoryCopy(sbufGetMutablePtr(old) + length, data, n);
-    sbufSetLength(old, (uint32_t) (length + n));
+    sbufSetLength(old, (length + n));
     return true;
 }
 
@@ -117,7 +117,7 @@ static void hpsConsumeInput(hps_session_t *s, hps_direction_t d, size_t n)
     if (n == sbufGetLength(b))
         hpsDiscardBuffer(s, &dir->input);
     else
-        sbufShiftRight(b, (uint32_t) n);
+        sbufShiftRight(b, n);
 }
 
 bool hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_t n)
@@ -133,7 +133,7 @@ bool hpsQueueOutput(hps_session_t *s, hps_direction_t d, const char *data, size_
         return false;
     }
     memoryCopy(sbufGetMutablePtr(b), data, n);
-    sbufSetLength(b, (uint32_t) n);
+    sbufSetLength(b, n);
     dir->output = b;
     return true;
 }
@@ -218,7 +218,7 @@ hps_step_t hpsProcessBody(hps_session_t *s, hps_direction_t d)
     {
         out = hpsMakeBuffer(s, used);
         memoryCopy(sbufGetMutablePtr(out), sbufGetRawPtr(dir->input), used);
-        sbufSetLength(out, (uint32_t) used);
+        sbufSetLength(out, used);
     }
     hpsConsumeInput(s, d, used);
     s->progress_at = hpsNowMs(s);
@@ -291,7 +291,7 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
             hpsFail(s, 503);
             return;
         }
-        sbufSpliceReadToBuffer(buf, ordinary, (uint32_t) length);
+        sbufSpliceReadToBuffer(buf, ordinary, length);
         lineReuseBuffer(l, buf);
         buf = ordinary;
     }
@@ -337,7 +337,7 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         size_t n = min((size_t) sbufGetLength(dir->incoming), room);
         if (! n || ! hpsAppendInput(s, d, sbufGetRawPtr(dir->incoming), n))
             break;
-        sbufShiftRight(dir->incoming, (uint32_t) n);
+        sbufShiftRight(dir->incoming, n);
         hpsPump(s);
     }
     buf           = dir->incoming;
@@ -368,8 +368,8 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         else
         {
             if (older)
-                sbufMoveTo(remainder, dir->deferred, (uint32_t) older);
-            sbufMoveTo(remainder, buf, (uint32_t) length);
+                sbufMoveTo(remainder, dir->deferred, older);
+            sbufMoveTo(remainder, buf, length);
             lineReuseBuffer(l, buf);
             hpsDiscardBuffer(s, &dir->deferred);
             dir->deferred = remainder;

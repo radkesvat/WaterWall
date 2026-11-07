@@ -192,7 +192,7 @@ static sbuf_t *faultUsageAck(sbuf_t *b)
     memoryCopy(text + at, addition, extra);
     length += (uint32_t) extra;
     b = sbufReserveSpace(b, 29 + length);
-    require(sbufGetMaximumWriteableSize(b) >= 29 + length, "ACK fault buffer capacity");
+    require(sbufGetWritableCapacity(b) >= 29 + length, "ACK fault buffer capacity");
     uint32_t number = htonl(25 + length);
     memoryCopy(sbufGetMutablePtr(b), &number, 4);
     number = htonl(length);

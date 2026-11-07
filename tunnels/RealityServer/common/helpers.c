@@ -180,7 +180,7 @@ static bool realityserverEncryptFrame(realityserver_tstate_t *ts, realityserver_
         return false;
     }
 
-    size_t           ciphertext_capacity = sbufGetMaximumWriteableSize(out) - (size_t) (ciphertext - frame);
+    size_t           ciphertext_capacity = sbufGetWritableCapacity(out) - (size_t) (ciphertext - frame);
     wcrypto_status_t result              = realityserverEncryptAead(ts->algorithm,
                                                        ciphertext,
                                                        ciphertext_capacity,
@@ -292,12 +292,12 @@ bool realityserverSendHandoffAckAtBoundary(tunnel_t *t, line_t *l)
 
 static int realityserverTryReadTlsRecord(buffer_stream_t *stream, sbuf_t **record)
 {
-    size_t  available_length                    = bufferstreamGetBufLen(stream);
+    size_t  available_length                    = bufferstreamGetLength(stream);
     uint8_t header[kRealityServerTlsHeaderSize] = {0};
     size_t  prefix_length                       = min(available_length, sizeof(header));
     if (prefix_length > 0)
     {
-        bufferstreamViewBytesAt(stream, 0, header, prefix_length);
+        bufferstreamCopyBytesAt(stream, 0, header, prefix_length);
     }
 
     enum realityserver_tls_record_prefix_e prefix_result = realityserverClassifyTlsRecordPrefix(header, prefix_length);
@@ -407,7 +407,7 @@ static bool realityserverDecryptFrame(realityserver_tstate_t *ts, realityserver_
                                           descriptor.visible_prefix_len,
                                           aad,
                                           &aad_len);
-    size_t           ciphertext_capacity = sbufGetMaximumWriteableSize(frame_buffer) - (size_t) (ciphertext - frame);
+    size_t           ciphertext_capacity = sbufGetWritableCapacity(frame_buffer) - (size_t) (ciphertext - frame);
     wcrypto_status_t decrypt_result      = aad_ok ? realityserverDecryptAead(ts->algorithm,
                                                                         ciphertext,
                                                                         ciphertext_capacity,

@@ -440,7 +440,7 @@ static void caseWaitingBoundary(uint32_t large, uint32_t length, bool append, bo
         if (complete_tail)
         {
             twfRequire(upload_ls->h1_request_finished, "pairing did not complete the short waiting body");
-            twfRequire(bufferstreamGetBufLen(&upload_ls->in_stream) == 0 &&
+            twfRequire(bufferstreamGetLength(&upload_ls->in_stream) == 0 &&
                            bufferstreamGetCharge(&upload_ls->in_stream) == 0,
                        "pairing retained a large suffix beyond the completed request");
         }
@@ -528,7 +528,7 @@ static void casePairedLargeChunk(bool coalesced, bool nested_pair)
         httpserverTunnelUpStreamPayload(fixture.http, upload, body);
         offset += length;
         twfRequireEqualU32(waiting_bytes, initial + offset, "paired split waited for the whole declared chunk");
-        twfRequire(bufferstreamGetBufLen(&ls->in_stream) <= kHttpReceiveStreamBytes &&
+        twfRequire(bufferstreamGetLength(&ls->in_stream) <= kHttpReceiveStreamBytes &&
                        bufferstreamGetCharge(&ls->in_stream) <= kHttpReceiveStreamCharge,
                    "paired split retained unbounded chunk input");
     }

@@ -397,7 +397,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     requireEqualCharge(bufferqueueGetCharge(&large_ls->pending_child_data),
                        2U * entry_charge,
                        "the largest child did not retain its two allocation charges");
-    twfRequire(bufferqueueGetBufLen(&large_ls->pending_child_data) < kTriggerQueue,
+    twfRequire(bufferqueueGetLength(&large_ls->pending_child_data) < kTriggerQueue,
                "the largest-charge child must have less logical payload than the trigger");
     twfRequire(muxserverQueueChildPayload(fixture.mux,
                                           fixture.parent_l,
@@ -419,7 +419,7 @@ static void caseParentBufferLimitClosesActualLargestQueue(void)
     requireEqualCharge(bufferqueueGetCharge(&trigger_ls->pending_child_data),
                        entry_charge,
                        "the surviving trigger child has the wrong retained charge");
-    twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&trigger_ls->pending_child_data),
+    twfRequireEqualU32((uint32_t) bufferqueueGetLength(&trigger_ls->pending_child_data),
                        kTriggerQueue,
                        "shedding changed the surviving trigger child's logical payload");
     twfRequireEqualText(
@@ -538,7 +538,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
                "attached owned child queue was not bound to its parent");
     const buffer_budget_cost_t attached = bufferbudgetGetUsage(child_ls->pending_child_data.budget);
     requireEqualCharge(attached.bytes, kFirst + kSecond, "attached parent budget lost logical bytes");
-    requireEqualCharge(bufferqueueGetBufCount(&child_ls->pending_child_data), 2, "attached child queue lost entries");
+    requireEqualCharge(bufferqueueGetEntryCount(&child_ls->pending_child_data), 2, "attached child queue lost entries");
     muxserverTunnelUpStreamFinish(fixture.mux, fixture.parent_l);
 
     muxserver_detached_registry_t *registry = &ts->worker_states[0].detached_registry;
@@ -560,7 +560,7 @@ static void caseParentLossRegistersAndDrainsOwnedChild(void)
     requireEqualCharge(detached.charge, 2U * entry_charge, "detached owned registry charge is wrong");
     requireEqualCharge(detached.bytes, attached.bytes, "detachment changed retained logical bytes");
     requireEqualCharge(
-        bufferqueueGetBufCount(&child_ls->pending_child_data), 2, "detachment changed retained entry count");
+        bufferqueueGetEntryCount(&child_ls->pending_child_data), 2, "detachment changed retained entry count");
     requireLiveChildResources(&fixture, 1, "attached-to-detached transfer released the live slot or timer");
     twfRequireEqualU32(fixture.trace.next_payload, 0, "parent loss forced Payload through child Pause");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "parent loss finished a blocked owned child early");
@@ -907,13 +907,13 @@ static void pauseServerChildAfterFirstPayload(tunnel_t *next, line_t *child_l, s
     twfRequire(child->pending_child_data.budget == &registry->queue_budget && child->detached_registered,
                "detached ownership was not published before Payload");
     requireEqualCharge(retained.bytes,
-                       bufferqueueGetBufLen(&child->pending_child_data),
+                       bufferqueueGetLength(&child->pending_child_data),
                        "detached budget retained popped bytes during Payload");
     requireEqualCharge(retained.charge,
                        bufferqueueGetCharge(&child->pending_child_data),
                        "detached budget retained popped charge during Payload");
     requireEqualCharge(
-        bufferqueueGetBufCount(&child->pending_child_data), 1, "detached queue retained popped entry during Payload");
+        bufferqueueGetEntryCount(&child->pending_child_data), 1, "detached queue retained popped entry during Payload");
     twfNextPayload(next, child_l, buf);
     if (g_reentrant_pause_mux != NULL)
     {

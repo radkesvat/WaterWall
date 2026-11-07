@@ -341,7 +341,7 @@ static sbuf_t *packetgeneratorAllocPacketBuffer(line_t *l, uint16_t packet_len)
         buf = sbufCreateWithPadding(packet_len, bufferpoolGetLargeBufferPadding(pool));
     }
 
-    if (sbufGetMaximumWriteableSize(buf) < packet_len)
+    if (sbufGetWritableCapacity(buf) < packet_len)
     {
         buf = sbufReserveSpace(buf, packet_len);
     }

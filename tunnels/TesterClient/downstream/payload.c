@@ -59,11 +59,11 @@ static void testerclientTunnelDownStreamPayloadStateless(tunnel_t *t, line_t *l,
     if (! testerclientVerifyChunk(
             t, l, buf, chunk_index, kTesterClientDirectionResponse, &bad_offset, &expected, &actual))
     {
-        LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+        LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%zu expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
              (unsigned int) lineGetWID(l),
              (unsigned int) chunk_index,
-             (unsigned int) sbufGetLength(buf),
+             sbufGetLength(buf),
              (unsigned int) testerclientGetChunkSize(t, chunk_index),
              (unsigned int) bad_offset,
              (unsigned int) expected,
@@ -149,11 +149,11 @@ void testerclientTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sb
         if (! testerclientVerifyChunk(
                 t, l, buf, ls->response_rx_index, kTesterClientDirectionResponse, &bad_offset, &expected, &actual))
         {
-            LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+            LOGE("TesterClient: worker %u packet response chunk %u mismatch (size=%zu expected_size=%u bad_offset=%u "
                  "expected=0x%02x actual=0x%02x)",
                  (unsigned int) lineGetWID(l),
                  (unsigned int) ls->response_rx_index,
-                 (unsigned int) sbufGetLength(buf),
+                 sbufGetLength(buf),
                  (unsigned int) testerclientGetChunkSize(t, ls->response_rx_index),
                  (unsigned int) bad_offset,
                  (unsigned int) expected,
@@ -190,7 +190,7 @@ void testerclientTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sb
 
     bufferstreamPush(&ls->read_stream, buf);
 
-    if (bufferstreamGetBufLen(&ls->read_stream) > testerclientGetRemainingBytes(t, ls->response_rx_index))
+    if (bufferstreamGetLength(&ls->read_stream) > testerclientGetRemainingBytes(t, ls->response_rx_index))
     {
         testerclientFail(t, l, "buffered response exceeds remaining expected bytes");
         return;
@@ -199,7 +199,7 @@ void testerclientTunnelDownStreamPayloadAfterAffinity(tunnel_t *t, line_t *l, sb
     const uint8_t chunk_count = testerclientGetChunkCount(t);
 
     while (ls->response_rx_index < chunk_count &&
-           bufferstreamGetBufLen(&ls->read_stream) >= testerclientGetChunkSize(t, ls->response_rx_index))
+           bufferstreamGetLength(&ls->read_stream) >= testerclientGetChunkSize(t, ls->response_rx_index))
     {
         uint32_t bad_offset = 0;
         uint8_t  expected   = 0;

@@ -171,7 +171,7 @@ static fallback_replay_result_e initialized(replay_fixture_t *fixture)
 
 static void requireMoved(buffer_queue_t *transcript)
 {
-    twfRequire(bufferqueueGetBufCount(transcript) == 0 && bufferqueueGetBufLen(transcript) == 0 &&
+    twfRequire(bufferqueueGetEntryCount(transcript) == 0 && bufferqueueGetLength(transcript) == 0 &&
                    bufferqueueGetCharge(transcript) == 0 && transcript->budget == NULL,
                "Begin did not consume and unbind its source transcript");
     bufferqueueDestroy(transcript);
@@ -199,7 +199,7 @@ static void caseTranscriptBudgetTransfer(unsigned binding)
     twfRequire(begin(&fixture, &transcript) == kFallbackReplayOk, "exact-limit transcript was refused");
     requireMoved(&transcript);
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
-    twfRequire(usage.bytes == 7 && usage.charge == charge && bufferqueueGetBufCount(&state->replay.pending) == 2,
+    twfRequire(usage.bytes == 7 && usage.charge == charge && bufferqueueGetEntryCount(&state->replay.pending) == 2,
                "moved transcript accounting changed");
     bufferbudgetAssertEmpty(&state->original_budget);
     twfRequireEqualU32(fixture.branch.payload_calls, 0, "Begin delivered before branch Init");
@@ -277,7 +277,8 @@ static void caseSubmitRefusal(unsigned limit, bool zero_delay)
                    kFallbackReplayRefused,
                "over-limit retained input was accepted");
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
-    twfRequire(usage.bytes == 4 && usage.charge == first_charge && bufferqueueGetBufCount(&state->replay.pending) == 1,
+    twfRequire(usage.bytes == 4 && usage.charge == first_charge &&
+                   bufferqueueGetEntryCount(&state->replay.pending) == 1,
                "refusal changed earlier retained input accounting");
     twfRequire(! g_fallback_finish_task.pending, "input scheduled before Init completed");
     teardown(&fixture);
@@ -320,7 +321,7 @@ static void caseCompactTranscript(bool bound, bool shared_budget, bool refuse)
         return;
     }
     twfRequire(usage.bytes == 7 + other.bytes && usage.charge == fit.allocation_charge + other.charge &&
-                   bufferqueueGetBufCount(&state->replay.pending) == 1,
+                   bufferqueueGetEntryCount(&state->replay.pending) == 1,
                "compaction lost shared budget accounting");
     twfRequire(sbufGetHeadroom(bufferqueueFront(&state->replay.pending)) >=
                    bufferpoolGetLargeBufferPadding(fixture.env.pool),
@@ -363,7 +364,7 @@ static void caseCompactSubmit(bool compact_first)
                "compaction changed the existing deadline");
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(&state->budget);
     twfRequire(usage.bytes == 7 && usage.charge == fit.allocation_charge &&
-                   bufferqueueGetBufCount(&state->replay.pending) == 1,
+                   bufferqueueGetEntryCount(&state->replay.pending) == 1,
                "compaction did not replace retained allocations");
     fallbackFinishDriveDelayedTask();
     twfRequireEqualText((const char *) fixture.branch.received, "one-two", "submit compaction changed FIFO");

@@ -51,7 +51,7 @@ typedef struct junkdatagramsender_sip_identity_s
 
 static uint32_t junkdatagramsenderSipWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint32_t limit = sbufGetMaximumWriteableSize(buf);
+    uint32_t limit = sbufGetWritableCapacity(buf);
     if (args != NULL && args->max_packet_size > 0 && args->max_packet_size < limit)
     {
         limit = args->max_packet_size;
@@ -627,7 +627,7 @@ static bool junkdatagramsenderSipGenerateRequest(sbuf_t *buf, uint32_t write_lim
         return false;
     }
 
-    sbufSetLength(buf, (uint32_t) written);
+    sbufSetLength(buf, written);
     return true;
 }
 
@@ -760,7 +760,7 @@ static bool junkdatagramsenderSipGenerateResponse(sbuf_t *buf, uint32_t write_li
         return false;
     }
 
-    sbufSetLength(buf, (uint32_t) written);
+    sbufSetLength(buf, written);
     return true;
 }
 

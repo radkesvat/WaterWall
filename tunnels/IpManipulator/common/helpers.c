@@ -882,8 +882,7 @@ static bool ipmanipulatorPrestartSlotContainsSeq(const ipmanipulator_tls_prestar
         ipmanipulator_tcp_packet_info_t        info  = {0};
 
         if (entry->buf != NULL &&
-            ipmanipulatorParseTcpPacketInfo(
-                (const uint8_t *) sbufGetRawPtr(entry->buf), sbufGetLength(entry->buf), &info) &&
+            ipmanipulatorParseTcpPacketInfo(sbufGetRawPtr(entry->buf), sbufGetLength(entry->buf), &info) &&
             info.seq == seq)
         {
             return true;
@@ -983,7 +982,7 @@ static bool ipmanipulatorAppendPacketToCaptureSlot(ipmanipulator_tls_capture_slo
 
     if (old_prefix_len > 0)
     {
-        memoryCopy(prefix, (const uint8_t *) sbufGetRawPtr(slot->assembled_packet) + slot->headers_len, old_prefix_len);
+        memoryCopy(prefix, sbufGetRawPtr(slot->assembled_packet) + slot->headers_len, old_prefix_len);
     }
     if (old_prefix_len < prefix_len)
     {
@@ -1068,7 +1067,7 @@ static bool ipmanipulatorCaptureSlotHasExactRetransmission(const ipmanipulator_t
 
         if (captured->buf == NULL ||
             ! ipmanipulatorParseTcpPacketInfo(
-                (const uint8_t *) sbufGetRawPtr(captured->buf), sbufGetLength(captured->buf), &captured_info) ||
+                sbufGetRawPtr(captured->buf), sbufGetLength(captured->buf), &captured_info) ||
             captured_info.seq != info->seq || captured_info.tcp_payload_len != info->tcp_payload_len)
         {
             continue;
@@ -1114,8 +1113,7 @@ static void ipmanipulatorDrainPrestartPacketsIntoCaptureSlot(tunnel_t           
             ipmanipulator_tcp_packet_info_t  info  = {0};
 
             if (entry->buf == NULL ||
-                ! ipmanipulatorParseTcpPacketInfo(
-                    (const uint8_t *) sbufGetRawPtr(entry->buf), sbufGetLength(entry->buf), &info) ||
+                ! ipmanipulatorParseTcpPacketInfo(sbufGetRawPtr(entry->buf), sbufGetLength(entry->buf), &info) ||
                 info.seq != capture_slot->next_seq)
             {
                 continue;
@@ -2185,7 +2183,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
     ipmanipulatorResetCapturedSlot(out_slot);
 
-    if (! ipmanipulatorParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! ipmanipulatorParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return kIpManipulatorTlsCaptureStatusMiss;
     }
@@ -2414,7 +2412,7 @@ ipmanipulator_tls_capture_status_e ipmanipulatorCaptureTlsClientHelloForOwner(
 
     ipmanipulator_tls_clienthello_start_t        start = {0};
     ipmanipulator_tls_clienthello_start_status_e start_status =
-        ipmanipulatorInspectTlsClientHelloStart((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &start);
+        ipmanipulatorInspectTlsClientHelloStart(sbufGetRawPtr(buf), sbufGetLength(buf), &start);
 
     if (start_status == kIpManipulatorTlsClientHelloStartComplete)
     {
@@ -2791,7 +2789,7 @@ void ipmanipulatorDestroyTlsCaptureState(tunnel_t *t)
     state->tls_prestart_slots_count = 0;
 }
 
-sbuf_t *clonePacketWithLength(line_t *l, sbuf_t *buf, uint32_t new_len)
+sbuf_t *clonePacketWithLength(line_t *l, const sbuf_t *buf, uint32_t new_len)
 {
     sbuf_t *clone = bufferpoolGetBestFit(lineGetBufferPool(l), new_len, sbufGetInitialHeadroom(buf));
 

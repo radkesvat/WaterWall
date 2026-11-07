@@ -100,7 +100,7 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     sbufSetLength(large, kSoftIpLimiterMaxReentryBytes);
     softiplimiterTunnelUpStreamPayload(f->node, l, large);
     softiplimiter_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufLen(&ls->gate.pending) == kSoftIpLimiterMaxReentryBytes,
+    twfRequire(bufferqueueGetLength(&ls->gate.pending) == kSoftIpLimiterMaxReentryBytes,
                "SoftIpLimiter rejected exact transient reentry byte limit");
     softiplimiterTunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }

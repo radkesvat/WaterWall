@@ -164,7 +164,7 @@ static void testBufferReaderQueueTransfer(buffer_pool_t *pool)
             const char    *expected       = restore ? "HEADbodytail" : "bodytail";
             require(bufferreaderMoveToQueue(&reader, &destination, restore != 0) && bufferreaderLength(&reader) == 0 &&
                         bufferreaderHeaderLength(&reader) == 0 && bufferreaderCharge(&reader) == 0 &&
-                        bufferreaderEntryCount(&reader) == 0 && bufferqueueGetBufLen(&destination) == expected_bytes,
+                        bufferreaderEntryCount(&reader) == 0 && bufferqueueGetLength(&destination) == expected_bytes,
                     "queue transfer lost bytes or left multiple input owners");
             buffer_budget_t budget;
             bufferbudgetInit(&budget, (buffer_budget_cost_t) {expected_bytes, bufferqueueGetCharge(&destination)});

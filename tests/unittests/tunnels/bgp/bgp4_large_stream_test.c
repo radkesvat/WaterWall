@@ -1044,7 +1044,7 @@ static void fixtureFillAdmission(bgp_fixture_t *f)
             sbufSetLength(b, length);
             fixtureSubmit(f, b);
             twfRequire(lineIsAlive(f->line) &&
-                           bufferqueueGetBufLen(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) ==
+                           bufferqueueGetLength(&((bgp_stream_t *) lineGetState(f->line, f->t))->output) ==
                                kBgpPendingBytes,
                        "exact encoded byte boundary refused");
         }

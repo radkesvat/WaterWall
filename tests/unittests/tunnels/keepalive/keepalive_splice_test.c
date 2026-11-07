@@ -228,7 +228,7 @@ static void captureWire(tunnel_t *t, line_t *l, sbuf_t *buf)
             sbufSetLength(pending, reentryBytes);
             memoryZero(sbufGetMutablePtr(pending), sbufGetLength(pending));
             encode(node, l, pending);
-            twfRequire(bufferqueueGetBufLen(&ls->write_reentry) == reentryBytes,
+            twfRequire(bufferqueueGetLength(&ls->write_reentry) == reentryBytes,
                        "encoder refused exact reentry byte limit");
         }
         else

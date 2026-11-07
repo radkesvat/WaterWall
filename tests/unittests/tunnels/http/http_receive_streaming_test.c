@@ -256,7 +256,7 @@ static void startBody(void)
 static void requireBounded(void)
 {
     twfRequire(state()->tunnel == f.http, "valid receive input closed the HTTP state");
-    twfRequire(bufferstreamGetBufLen(&state()->in_stream) <= kHttpReceiveStreamBytes,
+    twfRequire(bufferstreamGetLength(&state()->in_stream) <= kHttpReceiveStreamBytes,
                "HTTP retained too many undecoded bytes");
     twfRequire(bufferstreamGetCharge(&state()->in_stream) <= kHttpReceiveStreamCharge,
                "HTTP retained too much input allocation charge");

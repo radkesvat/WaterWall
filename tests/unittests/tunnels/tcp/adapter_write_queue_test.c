@@ -31,7 +31,7 @@ static void requireUsage(adapter_write_queue_t *q, size_t bytes, size_t charge, 
 {
     const buffer_budget_cost_t usage = awqGetUsage(q);
     twfRequire(usage.bytes == bytes && usage.charge == charge &&
-                   bufferqueueGetBufCount(&q->queue) + (q->active.budget != NULL) == entries,
+                   bufferqueueGetEntryCount(&q->queue) + (q->active.budget != NULL) == entries,
                "retained accounting or owned buffer count differs");
 }
 

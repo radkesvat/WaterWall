@@ -91,9 +91,9 @@ static bool httpChunkTailByte(http_chunk_decoder_t *decoder, uint8_t byte)
 static void httpChunkConsumeMetadata(http_chunk_decoder_t *decoder, buffer_stream_t *stream)
 {
     uint8_t      bytes[256];
-    const size_t count = min(bufferstreamGetBufLen(stream), sizeof(bytes));
+    const size_t count = min(bufferstreamGetLength(stream), sizeof(bytes));
     assert(count != 0);
-    bufferstreamViewBytesAt(stream, 0, bytes, count);
+    bufferstreamCopyBytesAt(stream, 0, bytes, count);
 
     const http_chunk_phase_t phase    = decoder->phase;
     size_t                   consumed = 0;
@@ -135,7 +135,7 @@ http_chunk_result_t httpChunkDecoderStep(http_chunk_decoder_t *decoder, buffer_s
         if (decoder->phase == kHttpChunkInvalid)
             return kHttpChunkError;
 
-        const size_t available = bufferstreamGetBufLen(stream);
+        const size_t available = bufferstreamGetLength(stream);
         if (available == 0)
             return kHttpChunkNeedMore;
         if (decoder->phase == kHttpChunkBody)

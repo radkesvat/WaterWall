@@ -143,7 +143,8 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
 bool socks5clientForwardUdpApplicationPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)
 {
     buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
-    if (ls->phase == kSocks5ClientPhaseEstablished && ! ls->draining_up && bufferqueueGetBufCount(&ls->pending_up) == 0)
+    if (ls->phase == kSocks5ClientPhaseEstablished && ! ls->draining_up &&
+        bufferqueueGetEntryCount(&ls->pending_up) == 0)
         return socks5clientForwardUdpPayloadToRelay(t, l, ls, buf);
     return socks5clientQueuePayload(t, l, buf) && socks5clientDrainPending(t, l);
 }
@@ -191,7 +192,7 @@ bool socks5clientHandleUdpRelayPayload(tunnel_t *t, line_t *l, socks5client_lsta
     }
 
     addresscontextReset(&source);
-    sbufShiftRight(buf, (uint32_t) (3 + addr_len));
+    sbufShiftRight(buf, (3 + addr_len));
     return lineCallWithRefWithBuf(application_l, tunnelPrevDownStreamPayload, t, buf);
 }
 

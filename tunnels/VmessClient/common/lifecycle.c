@@ -45,13 +45,13 @@ static sbuf_t *termination(line_t *l, vmessclient_lstate_t *ls)
     uint32_t         ordinal = ls->output_crypto.counter;
     size_t           length  = 0;
     wcrypto_status_t status  = vmessBodySeal(
-        &ls->output_crypto, NULL, 0, true, sbufGetMutablePtr(frame), sbufGetMaximumWriteableSize(frame), &length);
+        &ls->output_crypto, NULL, 0, true, sbufGetMutablePtr(frame), sbufGetWritableCapacity(frame), &length);
     if (status != kWCryptoOk || length == 0)
     {
         lineReuseBuffer(l, frame);
         return NULL;
     }
-    sbufSetLength(frame, (uint32_t) length);
+    sbufSetLength(frame, length);
     atomicAddU64Explicit(&ts->stats.tx_wire_bytes, length, memory_order_relaxed);
     if (! ls->output_crypto.raw)
         atomicIncU64Relaxed(&ts->stats.tx_records);

@@ -21,7 +21,7 @@ static inline sbuf_t *authenticationStreamCopyExact(buffer_stream_t *stream, uin
 
 static inline sbuf_t *authenticationStreamReadExact(buffer_stream_t *stream, uint32_t bytes)
 {
-    assert(bytes != 0 && bytes <= bufferstreamGetBufLen(stream));
+    assert(bytes != 0 && bytes <= bufferstreamGetLength(stream));
     if (bufferstreamGetHeadLength(stream) >= bytes)
         return bufferstreamReadExact(stream, bytes);
     return authenticationStreamCopyExact(stream, bytes);
@@ -33,7 +33,7 @@ static inline sbuf_t *authenticationStreamReadExact(buffer_stream_t *stream, uin
 static inline bool authenticationStreamPushNestedBounded(buffer_stream_t *stream, sbuf_t *input, size_t limit,
                                                          size_t charge_limit)
 {
-    const size_t buffered = bufferstreamGetBufLen(stream);
+    const size_t buffered = bufferstreamGetLength(stream);
     const size_t incoming = sbufGetLength(input);
     if (buffered > limit || incoming > limit - buffered)
         return false;
@@ -66,7 +66,7 @@ static inline bool authenticationStreamPushNested(buffer_stream_t *stream, sbuf_
 static inline void authenticationStreamCompactIncompleteBounded(buffer_stream_t *stream, uint32_t max_message,
                                                                 size_t charge_limit)
 {
-    const size_t bytes = bufferstreamGetBufLen(stream);
+    const size_t bytes = bufferstreamGetLength(stream);
     assert(bytes < max_message);
     discard max_message;
     if (bytes != 0 && bufferstreamGetCharge(stream) > charge_limit)

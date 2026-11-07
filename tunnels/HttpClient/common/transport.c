@@ -478,7 +478,7 @@ static void httpclientMaskWebSocketPayload(sbuf_t *payload, const uint8_t mask_k
 {
     assert(payload != NULL && mask_key != NULL);
 
-    uint8_t *ptr = (uint8_t *) sbufGetMutablePtr(payload);
+    uint8_t *ptr = sbufGetMutablePtr(payload);
     uint32_t len = sbufGetLength(payload);
     for (uint32_t i = 0; i < len; ++i)
     {
@@ -1113,20 +1113,20 @@ static bool httpclientSendHttp1ChunkedInput(tunnel_t *t, line_t *l, httpclient_l
         sbuf_t  *framed;
 
         if (body_len == sbufGetLength(payload) && sbufGetHeadroom(payload) >= (uint32_t) prefix_len &&
-            sbufGetMaximumWriteableSize(payload) - body_len >= 2)
+            sbufGetWritableCapacity(payload) - body_len >= 2)
         {
             /* Preserve the original allocation when the complete chunk fits. */
             framed  = payload;
             payload = NULL;
-            sbufShiftLeft(framed, (uint32_t) prefix_len);
+            sbufShiftLeft(framed, prefix_len);
             sbufSetLength(framed, framed_len);
-            sbufWrite(framed, chunk_prefix, (uint32_t) prefix_len);
+            sbufWrite(framed, chunk_prefix, prefix_len);
         }
         else
         {
             framed = bufferpoolGetBestFit(pool, framed_len, bufferpoolGetLargeBufferPadding(pool));
             sbufSetLength(framed, framed_len);
-            sbufWrite(framed, chunk_prefix, (uint32_t) prefix_len);
+            sbufWrite(framed, chunk_prefix, prefix_len);
             memoryCopyLarge(sbufGetMutablePtr(framed) + prefix_len, sbufGetRawPtr(payload), body_len);
             sbufShiftRight(payload, body_len);
             if (sbufGetLength(payload) == 0)
@@ -1176,7 +1176,7 @@ bool httpclientTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         size_t charge = sbufGetAllocationCharge(payload);
         if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
 
-            bufferqueueGetBufLen(&ls->pending_up) > kHttpClientHttp1NestedMaxBytes - bytes ||
+            bufferqueueGetLength(&ls->pending_up) > kHttpClientHttp1NestedMaxBytes - bytes ||
             bufferqueueGetCharge(&ls->pending_up) > kHttpClientHttp1NestedMaxCharge - charge)
         {
             lineReuseBuffer(l, payload);
@@ -2067,8 +2067,8 @@ bool httpclientTransportSendWebSocketData(tunnel_t *t, line_t *l, httpclient_lst
 
     if (sbufGetHeadroom(payload) >= header_len)
     {
-        sbufShiftLeft(payload, (uint32_t) header_len);
-        sbufWrite(payload, header, (uint32_t) header_len);
+        sbufShiftLeft(payload, header_len);
+        sbufWrite(payload, header, header_len);
         return httpclientSendRawUp(t, l, ls, payload);
     }
 
@@ -2266,7 +2266,7 @@ bool httpclientTransportFlushPendingUp(tunnel_t *t, line_t *l, httpclient_lstate
         return true;
 
     ls->pending_up_draining = true;
-    while (bufferqueueGetBufCount(&ls->pending_up) > 0)
+    while (bufferqueueGetEntryCount(&ls->pending_up) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending_up);
 
@@ -2307,7 +2307,7 @@ static bool httpclientTransportDrainRawDown(tunnel_t *t, line_t *l, httpclient_l
 {
     while (! bufferstreamIsEmpty(&ls->in_stream))
     {
-        sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
+        sbuf_t *buf = bufferstreamTakeChunk(&ls->in_stream);
 
         if (ls->prev_finished)
         {
@@ -2340,7 +2340,7 @@ bool httpclientTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpclient_l
         {
             return false;
         }
-        while (bufferqueueGetBufCount(&ls->pending_up) > 0)
+        while (bufferqueueGetEntryCount(&ls->pending_up) > 0)
         {
             if (! httpclientSendRawUp(t, l, ls, bufferqueuePopFront(&ls->pending_up)))
             {
@@ -2371,7 +2371,7 @@ bool httpclientTransportQueueRawInput(tunnel_t *t, line_t *l, sbuf_t *buf, bool 
     }
     size_t charge = sbufGetAllocationCharge(buf);
 
-    size_t pending_bytes  = upstream ? bufferqueueGetBufLen(&ls->pending_up) : bufferstreamGetBufLen(&ls->in_stream);
+    size_t pending_bytes  = upstream ? bufferqueueGetLength(&ls->pending_up) : bufferstreamGetLength(&ls->in_stream);
     size_t pending_charge = upstream ? bufferqueueGetCharge(&ls->pending_up) : bufferstreamGetCharge(&ls->in_stream);
     if (bytes > kHttpClientHttp1NestedMaxBytes || charge > kHttpClientHttp1NestedMaxCharge ||
         pending_bytes > kHttpClientHttp1NestedMaxBytes - bytes ||
@@ -2469,7 +2469,7 @@ static bool httpclientTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpcl
 bool httpclientTransportFeedHttp2Input(tunnel_t *t, line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
 {
     uint32_t       len = sbufGetLength(buf);
-    const uint8_t *ptr = (const uint8_t *) sbufGetRawPtr(buf);
+    const uint8_t *ptr = sbufGetRawPtr(buf);
 
     while (len > 0)
     {
@@ -2519,7 +2519,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
     {
         size_t     header_end = 0;
         const bool complete   = bufferstreamFindDoubleCRLF(&ls->in_stream, &header_end);
-        if ((complete ? header_end : bufferstreamGetBufLen(&ls->in_stream)) > kHttpClientMaxHeaderBytes)
+        if ((complete ? header_end : bufferstreamGetLength(&ls->in_stream)) > kHttpClientMaxHeaderBytes)
         {
             LOGE("HttpClient: response header exceeded maximum size");
             return false;
@@ -2668,7 +2668,7 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 
                 while (! bufferstreamIsEmpty(&ls->in_stream))
                 {
-                    sbuf_t *leftover = bufferstreamIdealRead(&ls->in_stream);
+                    sbuf_t *leftover = bufferstreamTakeChunk(&ls->in_stream);
                     if (! httpclientTransportFeedHttp2Input(t, l, ls, leftover))
                     {
                         return false;
@@ -2794,7 +2794,7 @@ bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate
     {
         while (! bufferstreamIsEmpty(&ls->in_stream))
         {
-            sbuf_t *buf = bufferstreamIdealRead(&ls->in_stream);
+            sbuf_t *buf = bufferstreamTakeChunk(&ls->in_stream);
             if (! httpclientForwardDownstreamPayload(t, l, ls, buf))
             {
                 return false;
@@ -2805,7 +2805,7 @@ bool httpclientTransportDrainHttp1Body(tunnel_t *t, line_t *l, httpclient_lstate
 
     while (ls->h1_body_remaining > 0)
     {
-        size_t available = bufferstreamGetBufLen(&ls->in_stream);
+        size_t available = bufferstreamGetLength(&ls->in_stream);
         if (available == 0)
         {
             return true;

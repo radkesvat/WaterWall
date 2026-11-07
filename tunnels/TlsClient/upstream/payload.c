@@ -33,7 +33,7 @@ static bool tlsclientWritePlaintextChunk(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         return false;
     }
-    sbufShiftRight(buf, (uint32_t) n);
+    sbufShiftRight(buf, n);
     if (buf == ls->pending_plaintext)
         bufferbudgetReservationSetBytes(&ls->pending_reservation, sbufGetLength(buf));
     return tlsclientFlushSslOutput(t, l, ls);
@@ -83,7 +83,7 @@ bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l)
         ls = lineGetState(l, t);
     }
     ls->plaintext_write_in_progress = false;
-    if (ls->pending_plaintext == NULL && bufferqueueGetBufCount(&ls->bq) == 0)
+    if (ls->pending_plaintext == NULL && bufferqueueGetEntryCount(&ls->bq) == 0)
     {
         ls->plaintext_producer_paused = false;
     }
@@ -107,7 +107,7 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     if (! ls->handshake_completed || ls->plaintext_write_in_progress || ls->pending_plaintext != NULL ||
-        bufferqueueGetBufCount(&ls->bq) != 0)
+        bufferqueueGetEntryCount(&ls->bq) != 0)
     {
         if (LIKELY(tlsclientQueuePlaintext(t, l, buf)))
         {

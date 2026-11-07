@@ -16,7 +16,7 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     const size_t handshake_bytes =
         ls->phase == kConnectionFisherServerPhaseWaitPing ? kConnectionFisherServerHandshakeLength : 0;
     const size_t retained_bytes =
-        ls->init_payload_bytes + bufferqueueGetBufLen(&ls->pending_up) + bufferstreamGetBufLen(&ls->in_stream);
+        ls->init_payload_bytes + bufferqueueGetLength(&ls->pending_up) + bufferstreamGetLength(&ls->in_stream);
     const size_t retained_charge =
         ls->init_payload_charge + bufferqueueGetCharge(&ls->pending_up) + bufferstreamGetCharge(&ls->in_stream);
     if (UNLIKELY(sbufGetLength(buf) > kConnectionFisherServerMaxPendingBytes + handshake_bytes - retained_bytes ||

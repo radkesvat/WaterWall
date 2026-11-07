@@ -106,7 +106,7 @@ bool reverseserverReconcileSource(tunnel_t *t, line_t *line)
     if (ls->paired)
     {
         reverseserver_lstate_t *peer = lineGetState(user ? ls->d : ls->u, t);
-        paused = ls->replaying || bufferqueueGetBufCount(&ls->pending) != 0 || peer->output_paused;
+        paused = ls->replaying || bufferqueueGetEntryCount(&ls->pending) != 0 || peer->output_paused;
     }
     if (paused == ls->source_paused)
         return true;
@@ -183,7 +183,7 @@ void reverseserverDrainPair(tunnel_t *t, line_t *u)
     while (lineIsAlive(u) && lineIsAlive(d))
     {
         bool progress = false;
-        if (bufferqueueGetBufCount(&uls->pending) != 0 && ! dls->output_paused)
+        if (bufferqueueGetEntryCount(&uls->pending) != 0 && ! dls->output_paused)
         {
             sbuf_t *buf = bufferqueuePopFront(&uls->pending);
             tunnelPrevDownStreamPayload(t, d, buf);
@@ -191,7 +191,7 @@ void reverseserverDrainPair(tunnel_t *t, line_t *u)
         }
         if (! lineIsAlive(u) || ! lineIsAlive(d))
             break;
-        if (bufferqueueGetBufCount(&dls->pending) != 0 && ! uls->output_paused)
+        if (bufferqueueGetEntryCount(&dls->pending) != 0 && ! uls->output_paused)
         {
             sbuf_t *buf = bufferqueuePopFront(&dls->pending);
             tunnelNextUpStreamPayload(t, u, buf);
@@ -255,7 +255,7 @@ void reverseserverPair(tunnel_t *t, line_t *u, line_t *d)
 bool reverseserverQueuePairedPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     reverseserver_lstate_t *ls = lineGetState(line, t);
-    if (! ls->replaying && bufferqueueGetBufCount(&ls->pending) == 0)
+    if (! ls->replaying && bufferqueueGetEntryCount(&ls->pending) == 0)
         return false;
     if (! reverseserverRetainPayload(t, line, buf))
         return true;

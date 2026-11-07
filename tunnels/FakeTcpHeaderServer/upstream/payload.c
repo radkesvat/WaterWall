@@ -13,9 +13,9 @@ void faketcpheaderserverUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&state->drop_log_limiter, kFakeTcpHeaderServerDropLogIntervalMs))
         {
-            LOGE("FakeTcpHeaderServer: dropping incoming carrier: %s (packet-bytes=%u, max-carrier-bytes=%u)",
+            LOGE("FakeTcpHeaderServer: dropping incoming carrier: %s (packet-bytes=%zu, max-carrier-bytes=%u)",
                  faketcpheaderWireResultName(result),
-                 (unsigned int) sbufGetLength(buf),
+                 sbufGetLength(buf),
                  (unsigned int) kFakeTcpHeaderWireMaxCarrierLength);
         }
         lineReuseBuffer(l, buf);

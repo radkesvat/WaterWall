@@ -136,7 +136,7 @@ static bool junkdatagramsenderDnsBuildQuery(sbuf_t *buf, uint16_t id, const char
     junkdatagramsender_dns_writer_t writer = {
         .buf      = buf,
         .pos      = 0,
-        .capacity = sbufGetMaximumWriteableSize(buf),
+        .capacity = sbufGetWritableCapacity(buf),
     };
 
     uint16_t flags   = recursion_desired ? kDnsFlagRecursionDesired : 0;

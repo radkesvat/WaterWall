@@ -400,10 +400,10 @@ static void caseCoalescedDataStream(bool paused, bool empty_only)
     if (paused)
     {
         twfRequire(fixture.trace.next_payload == 0, "DATA crossed child Pause");
-        twfRequire(bufferqueueGetBufLen(&child_ls->pending_child_data) == payload_bytes,
+        twfRequire(bufferqueueGetLength(&child_ls->pending_child_data) == payload_bytes,
                    "paused child changed stream bytes");
-        twfRequire(empty_only ? bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
-                              : bufferqueueGetBufCount(&child_ls->pending_child_data) > 0,
+        twfRequire(empty_only ? bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0
+                              : bufferqueueGetEntryCount(&child_ls->pending_child_data) > 0,
                    "empty DATA retained a queue entry or nonempty DATA was lost");
         twfRequire(empty_only ? bufferqueueGetCharge(&child_ls->pending_child_data) == 0
                               : bufferqueueGetCharge(&child_ls->pending_child_data) > 0,
@@ -416,7 +416,7 @@ static void caseCoalescedDataStream(bool paused, bool empty_only)
     else
         for (uint32_t i = 0; i < payload_bytes; ++i)
             twfRequire(fixture.capture[i] == (i < 3 ? 0xA1 : 0xA3), "coalescing changed stream order or bytes");
-    twfRequire(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0 &&
+    twfRequire(bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0 &&
                    bufferqueueGetCharge(&child_ls->pending_child_data) == 0 &&
                    bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge == 0,
                "drain retained child entries or allocation charges");
@@ -457,10 +457,10 @@ static void caseParsedTinyFrameUsesAllocationCharge(uint32_t payload_length, con
 
     sendParsedTinyServerData(&fixture, payload_length);
 
-    twfRequireEqualU32((uint32_t) bufferqueueGetBufCount(&child_ls->pending_child_data),
+    twfRequireEqualU32((uint32_t) bufferqueueGetEntryCount(&child_ls->pending_child_data),
                        1,
                        "the first tiny Data frame was not retained exactly once");
-    twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
+    twfRequireEqualU32((uint32_t) bufferqueueGetLength(&child_ls->pending_child_data),
                        payload_length,
                        "tiny Data changed logical queue length semantics");
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
@@ -776,7 +776,7 @@ static void casePeerCloseDropsLateFramesAndKeepsSiblingProgress(void)
     twfRequire(child_ls->parent == parent_ls, "same-batch Close removed the blocked server cid from routing");
     twfRequire(! child_ls->child_flow.peer_flow_paused && ! child_ls->child_flow.parent_write_paused,
                "late server flow-control frames changed terminal child source state");
-    twfRequireEqualU32((uint32_t) bufferqueueGetBufLen(&child_ls->pending_child_data),
+    twfRequireEqualU32((uint32_t) bufferqueueGetLength(&child_ls->pending_child_data),
                        kFirst,
                        "late server Data changed the terminal child's retained FIFO");
     const sbuf_t *retained = bufferqueueFront(&child_ls->pending_child_data);
@@ -1050,7 +1050,7 @@ static void casePooledRetainedFrames(bool separate)
         }
     }
     twfRequire(lineIsAlive(fixture.child_l) && child->l != NULL, "pooled queue closed a valid child");
-    twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 48, "pooled queue lost frames");
+    twfRequire(bufferqueueGetEntryCount(&child->pending_child_data) == 48, "pooled queue lost frames");
     twfRequire(bufferqueueGetCharge(&child->pending_child_data) < 48 * (MEDIUM_BUFFER_SIZE_RAM_HIGH + 512),
                "paused queue did not replace large receive allocations with pooled storage");
     twfRequire(pooled_frame_count == 0, "pooled queue crossed Pause");
@@ -1119,12 +1119,12 @@ static void caseFragmentedPausedFrameKeepsCarrierRemainder(void)
     sbufSetLength(first, first_bytes);
     sbufSetLength(second, frame_bytes - first_bytes + trailing);
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, first);
-    twfRequire(bufferqueueGetBufCount(&child->pending_child_data) == 0 &&
+    twfRequire(bufferqueueGetEntryCount(&child->pending_child_data) == 0 &&
                    splicestreamBodyBytes(parent->parent_state->read_stream) == first_bytes - kMuxFrameLength,
                "incomplete DATA body left the parser for the paused child queue");
     muxserverTunnelUpStreamPayload(fixture.mux, fixture.parent_l, second);
-    twfRequire(fixture.trace.next_payload == 0 && bufferqueueGetBufCount(&child->pending_child_data) == 1 &&
-                   bufferqueueGetBufLen(&child->pending_child_data) == 4097,
+    twfRequire(fixture.trace.next_payload == 0 && bufferqueueGetEntryCount(&child->pending_child_data) == 1 &&
+                   bufferqueueGetLength(&child->pending_child_data) == 4097,
                "completed frame crossed Pause or was not retained as one entry");
     twfRequire(splicestreamBodyBytes(parent->parent_state->read_stream) == 10000,
                "incomplete DATA for the paused child left the parser");

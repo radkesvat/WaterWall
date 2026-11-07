@@ -216,7 +216,7 @@ bool vmessserverDeliverDecoded(tunnel_t *t, line_t *line, sbuf_t *payload)
                    address.address,
                    address.address_type == kVmessAtypIpv4 ? 4 : 16);
         addresscontextSetIpPort(&target, &ip, address.port);
-        sbufShiftRight(payload, (uint32_t) prefix);
+        sbufShiftRight(payload, prefix);
     }
     else
         addresscontextCopy(&target, &ls->udp_target);

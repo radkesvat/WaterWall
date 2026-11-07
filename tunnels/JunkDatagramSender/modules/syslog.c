@@ -27,7 +27,7 @@ typedef struct junkdatagramsender_syslog_event_s
 
 static uint32_t junkdatagramsenderSyslogWriteLimit(sbuf_t *buf, const junkdatagramsender_module_args_t *args)
 {
-    uint32_t limit = sbufGetMaximumWriteableSize(buf);
+    uint32_t limit = sbufGetWritableCapacity(buf);
     if (args != NULL && args->max_packet_size > 0 && args->max_packet_size < limit)
     {
         limit = args->max_packet_size;
@@ -189,7 +189,7 @@ static bool junkdatagramsenderSyslogBuildRfc3164(sbuf_t *buf, uint32_t write_lim
         return false;
     }
 
-    sbufSetLength(buf, (uint32_t) written);
+    sbufSetLength(buf, written);
     return true;
 }
 
@@ -235,7 +235,7 @@ static bool junkdatagramsenderSyslogBuildRfc5424(sbuf_t *buf, uint32_t write_lim
         return false;
     }
 
-    sbufSetLength(buf, (uint32_t) written);
+    sbufSetLength(buf, written);
     return true;
 }
 

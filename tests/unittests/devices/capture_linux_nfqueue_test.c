@@ -370,7 +370,7 @@ static void testExposePayloadView(void)
     sbuf_t                   *buf = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
 
     fillPayload(payload, sizeof(payload));
-    nfqueueBuilderInit(&builder, sbufGetMutablePtr(buf), sbufGetMaximumWriteableSize(buf));
+    nfqueueBuilderInit(&builder, sbufGetMutablePtr(buf), sbufGetWritableCapacity(buf));
     nfqueueBuilderAppendPacketHeader(&builder);
     nfqueueBuilderAppendPayload(&builder, payload, (uint16_t) sizeof(payload));
 

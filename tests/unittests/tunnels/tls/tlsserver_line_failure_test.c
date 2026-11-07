@@ -252,8 +252,8 @@ static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
         tlsserverTunnelDownStreamPayload(fixture.tls, l, buf);
     }
     twfRequire(fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0 &&
-                   bufferqueueGetBufLen(&ls->pending_down) == (size_t) count * length &&
-                   bufferqueueGetBufCount(&ls->pending_down) == count,
+                   bufferqueueGetLength(&ls->pending_down) == (size_t) count * length &&
+                   bufferqueueGetEntryCount(&ls->pending_down) == count,
                "pending plaintext was refused before its byte or charge limit");
     const buffer_budget_cost_t limits = bufferbudgetGetLimits(&ls->pending_down_budget);
     if (dimension != 0)
@@ -269,8 +269,8 @@ static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
         twfRequire(sbufGetQueueCharge(buf) == remaining, "filler did not reach exact pending charge limit");
         tlsserverTunnelDownStreamPayload(fixture.tls, l, buf);
         twfRequire(fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0 &&
-                       bufferqueueGetBufLen(&ls->pending_down) == (size_t) (count + 1) * length &&
-                       bufferqueueGetBufCount(&ls->pending_down) == count + 1 &&
+                       bufferqueueGetLength(&ls->pending_down) == (size_t) (count + 1) * length &&
+                       bufferqueueGetEntryCount(&ls->pending_down) == count + 1 &&
                        bufferbudgetGetUsage(&ls->pending_down_budget).charge == limits.charge,
                    "exact pending plaintext charge limit was refused or altered");
     }

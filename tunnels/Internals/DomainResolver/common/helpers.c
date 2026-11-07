@@ -36,7 +36,7 @@ bool domainresolverDrainPending(tunnel_t *t, line_t *l)
         return true;
     lineRef(l);
     ls->draining = true;
-    while (lineIsAlive(l) && ! ls->next_paused && bufferqueueGetBufCount(&ls->pending) != 0)
+    while (lineIsAlive(l) && ! ls->next_paused && bufferqueueGetEntryCount(&ls->pending) != 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&ls->pending);
         tunnelNextUpStreamPayload(t, l, buf);
@@ -45,11 +45,11 @@ bool domainresolverDrainPending(tunnel_t *t, line_t *l)
     if (alive)
     {
         ls->draining = false;
-        if (bufferqueueGetBufCount(&ls->pending) == 0)
+        if (bufferqueueGetEntryCount(&ls->pending) == 0)
             ls->pending_source_hold = false;
         alive = domainresolverUpdateSourcePressure(t, l);
         if (alive && tunnelIsActiveForLine(t, l) && ! ls->init_dispatching && ! ls->draining &&
-            ! ls->pending_source_hold && bufferqueueGetBufCount(&ls->pending) == 0 &&
+            ! ls->pending_source_hold && bufferqueueGetEntryCount(&ls->pending) == 0 &&
             ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
         {
             /* Next consumed its prepare state during Init. Only matched

@@ -62,7 +62,7 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    struct tcp_hdr *tcp_header = (struct tcp_hdr *) (((uint8_t *) sbufGetMutablePtr(buf)) + iphdr_len);
+    struct tcp_hdr *tcp_header        = (struct tcp_hdr *) ((sbufGetMutablePtr(buf)) + iphdr_len);
     uint8_t         tcp_hdr_len_words = TCPH_HDRLEN(tcp_header);
     if (tcp_hdr_len_words < 5 || tcp_hdr_len_words > 15)
     {
@@ -82,7 +82,7 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return false;
     }
 
-    if (! isTlsClientHello((uint8_t *) sbufGetMutablePtr(buf), iphdr_len, tcphdr_len, ip_total_len))
+    if (! isTlsClientHello(sbufGetMutablePtr(buf), iphdr_len, tcphdr_len, ip_total_len))
     {
         return false;
     }
@@ -179,7 +179,7 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         IPH_OFFSET_SET(fhdr, lwip_htons(flags_offset));
 
         uint8_t *data_src = sbufGetMutablePtr(buf) + iphdr_len + this_offset;
-        uint8_t *data_dst = (uint8_t *) sbufGetMutablePtr(craft_buf) + iphdr_len;
+        uint8_t *data_dst = sbufGetMutablePtr(craft_buf) + iphdr_len;
         memoryCopy(data_dst, data_src, this_len);
     }
 

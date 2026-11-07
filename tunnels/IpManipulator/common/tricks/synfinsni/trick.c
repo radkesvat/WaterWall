@@ -90,11 +90,11 @@ static void synfinsnitrickFinalizePacketChecksum(sbuf_t *packet_buf, uint16_t ip
 
 static sbuf_t *synfinsnitrickDuplicateStandalonePacket(const sbuf_t *source)
 {
-    uint32_t packet_len = sbufGetLength((sbuf_t *) source);
-    sbuf_t  *copy       = sbufCreateWithPadding(packet_len, sbufGetInitialHeadroom((sbuf_t *) source));
+    size_t  packet_len = sbufGetLength(source);
+    sbuf_t *copy       = sbufCreateWithPadding(packet_len, sbufGetInitialHeadroom(source));
 
     sbufSetLength(copy, packet_len);
-    memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr((sbuf_t *) source), packet_len);
+    memoryCopyLarge(sbufGetMutablePtr(copy), sbufGetRawPtr(source), packet_len);
     return copy;
 }
 
@@ -725,7 +725,7 @@ static sbuf_t *synfinsnitrickBuildFakeSynPacket(line_t *l, const sbuf_t *syn_pac
                                                 uint16_t ip_identification, uint32_t *syn_seq_out)
 {
     synfinsnitrick_tcp_packet_info_t        syn_template_info = {0};
-    sbuf_t                                 *source_template   = NULL;
+    const sbuf_t                           *source_template   = NULL;
     const synfinsnitrick_tcp_packet_info_t *source_info       = NULL;
 
     if (l == NULL || held_packet == NULL || held_packet->buf == NULL || held_info == NULL || state == NULL)
@@ -734,12 +734,11 @@ static sbuf_t *synfinsnitrickBuildFakeSynPacket(line_t *l, const sbuf_t *syn_pac
     }
 
     if (syn_packet_template != NULL &&
-        synfinsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr((sbuf_t *) syn_packet_template),
-                                         sbufGetLength((sbuf_t *) syn_packet_template),
-                                         &syn_template_info) &&
+        synfinsnitrickParseTcpPacketInfo(
+            sbufGetRawPtr(syn_packet_template), sbufGetLength(syn_packet_template), &syn_template_info) &&
         synfinsnitrickIsPureSyn(&syn_template_info))
     {
-        source_template = (sbuf_t *) syn_packet_template;
+        source_template = syn_packet_template;
         source_info     = &syn_template_info;
     }
     else
@@ -1159,7 +1158,7 @@ static void synfinsnitrickSendOutputs(tunnel_t *t, line_t *l, synfinsnitrick_pac
 static void synfinsnitrickLogRejectedFlow(const sbuf_t *combined_packet, const sni_match_t *match,
                                           uint32_t real_sni_payload_offset, uint32_t generated_payload_len)
 {
-    const uint8_t *packet   = (const uint8_t *) sbufGetRawPtr((sbuf_t *) combined_packet);
+    const uint8_t *packet   = sbufGetRawPtr(combined_packet);
     size_t         copy_len = min((size_t) match->sni_name_len, (size_t) 255U);
     char           sni_name[256];
 
@@ -1202,7 +1201,7 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
     }
 
     if (! synfinsnitrickParseTcpPacketInfo(
-            (const uint8_t *) sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
+            sbufGetRawPtr(held_packet->buf), sbufGetLength(held_packet->buf), &held_info))
     {
         synfinsnitrickRecycleCapturedPacket(held_packet);
         synfinsnitrickSendNormalNow(t, l, current_buf);
@@ -1252,8 +1251,7 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
     }
 
     sni_match_t match = {0};
-    if (! parseClientHelloSni(
-            (const uint8_t *) sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match) ||
+    if (! parseClientHelloSni(sbufGetRawPtr(combined_packet), sbufGetLength(combined_packet), &match) ||
         match.sni_name_offset < held_info.headers_len)
     {
         reuseBuffer(generated_hello);
@@ -1284,8 +1282,8 @@ static bool synfinsnitrickHandleHeldPair(tunnel_t *t, line_t *l, ipmanipulator_c
     uint32_t packet_y_payload_len = generated_payload_len + additional_payload_len;
 
     synfinsnitrick_packet_sequence_t sequence = {0};
-    const uint8_t *combined_payload  = (const uint8_t *) sbufGetRawPtr(combined_packet) + held_info.headers_len;
-    const uint8_t *generated_payload = (const uint8_t *) sbufGetRawPtr(generated_hello);
+    const uint8_t                   *combined_payload  = sbufGetRawPtr(combined_packet) + held_info.headers_len;
+    const uint8_t                   *generated_payload = sbufGetRawPtr(generated_hello);
 
     if (! synfinsnitrickBuildPacketSequence(t,
                                             held_packet->line,
@@ -1352,7 +1350,7 @@ bool synfinsnitrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     synfinsnitrick_tcp_packet_info_t info   = {0};
     uint64_t                         now_ms = getTickMS();
 
-    if (! synfinsnitrickParseTcpPacketInfo((const uint8_t *) sbufGetRawPtr(buf), sbufGetLength(buf), &info))
+    if (! synfinsnitrickParseTcpPacketInfo(sbufGetRawPtr(buf), sbufGetLength(buf), &info))
     {
         return false;
     }

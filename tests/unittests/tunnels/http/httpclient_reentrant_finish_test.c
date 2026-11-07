@@ -31,9 +31,9 @@ enum
     kHttp1FinalChunkSize = sizeof("0\r\n\r\n") - 1
 };
 
-uint32_t __wrap_bufferpoolGetLargeBufferSize(buffer_pool_t *pool);
+uint32_t __wrap_bufferpoolGetLargeBufferSize(const buffer_pool_t *pool);
 
-uint32_t __wrap_bufferpoolGetLargeBufferSize(buffer_pool_t *pool)
+uint32_t __wrap_bufferpoolGetLargeBufferSize(const buffer_pool_t *pool)
 {
     discard pool;
     return kForcedSendChunkSize;

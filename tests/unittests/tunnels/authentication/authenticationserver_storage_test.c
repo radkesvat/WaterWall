@@ -1401,7 +1401,8 @@ static void testRejectedCredentialWiping(tunnel_t *server, line_t *line, buffer_
             api_result_t result = cases[i].handler(server, input, &context);
             twfRequire(result.result_code == kApiResultError && result.buffer != NULL,
                        "malformed credential request did not return an API error");
-            cJSON       *response = cJSON_ParseWithLength(sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
+            cJSON *response =
+                cJSON_ParseWithLength((const char *) sbufGetRawPtr(result.buffer), sbufGetLength(result.buffer));
             const cJSON *code =
                 cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(response, "error"), "code");
             twfRequire(cJSON_IsString(code) && strcmp(code->valuestring, "invalid_request") == 0,

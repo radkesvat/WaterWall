@@ -143,7 +143,7 @@ static void freePool(pool_fixture_t *fixture)
 static sbuf_t *makeBuffer(buffer_pool_t *pool, const uint8_t *bytes, uint32_t length, bool best_fit)
 {
     sbuf_t *buffer = best_fit ? bufferpoolGetBestFit(pool, length, kPadding) : bufferpoolGetLargeBuffer(pool);
-    if (length > sbufGetMaximumWriteableSize(buffer))
+    if (length > sbufGetWritableCapacity(buffer))
     {
         fatal("frozen input does not fit its selected buffer");
     }
@@ -249,7 +249,7 @@ static result_t runStreamCase(const geometry_t *geometry, workload_t workload, u
             uint32_t offset = 0;
             while (! bufferstreamIsEmpty(&stream))
             {
-                sbuf_t        *output = bufferstreamIdealRead(&stream);
+                sbuf_t        *output = bufferstreamTakeChunk(&stream);
                 const uint32_t length = sbufGetLength(output);
                 if (length > record_size - offset)
                 {
@@ -359,7 +359,7 @@ static void runPair(const geometry_t *geometry, workload_t workload, uint32_t pa
 static sbuf_t *offsetBuffer(buffer_pool_t *pool, const uint8_t *bytes, uint32_t length, uint32_t offset)
 {
     sbuf_t *buffer = bufferpoolGetLargeBuffer(pool);
-    if (offset + length > sbufGetMaximumWriteableSize(buffer))
+    if (offset + length > sbufGetWritableCapacity(buffer))
     {
         fatal("copy-crossover offset does not fit");
     }

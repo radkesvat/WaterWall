@@ -47,14 +47,13 @@ static sbuf_t *tlsclientGenerateClientHelloForWorker(tunnel_t *instance, wid_t w
     sbuf_t *hello = NULL;
     if (created_ok)
     {
-        created_ok = tlsclientCreateClientHelloFromContext(
-            ts->threadlocal_ssl_contexts[wid],
-            sni,
-            ech_payload != NULL ? (const uint8_t *) sbufGetRawPtr(ech_payload) : NULL,
-            ech_payload != NULL ? sbufGetLength(ech_payload) : 0,
-            ts->alpn_wire,
-            ts->alpn_wire_len,
-            &hello);
+        created_ok = tlsclientCreateClientHelloFromContext(ts->threadlocal_ssl_contexts[wid],
+                                                           sni,
+                                                           ech_payload != NULL ? sbufGetRawPtr(ech_payload) : NULL,
+                                                           ech_payload != NULL ? sbufGetLength(ech_payload) : 0,
+                                                           ts->alpn_wire,
+                                                           ts->alpn_wire_len,
+                                                           &hello);
     }
 
     if (ech_payload != NULL)
@@ -115,7 +114,7 @@ api_result_t tlsclientTunnelApi(tunnel_t *instance, sbuf_t *message)
 
     const wid_t    wid     = worker->wid;
     buffer_pool_t *pool    = getWorkerBufferPool(wid);
-    const uint8_t *msg_ptr = (const uint8_t *) sbufGetRawPtr(message);
+    const uint8_t *msg_ptr = sbufGetRawPtr(message);
     uint32_t       msg_len = sbufGetLength(message);
 
     if (msg_len <= prefix_len || memoryCompare(msg_ptr, kGenerateTlsHelloPrefix, prefix_len) != 0)

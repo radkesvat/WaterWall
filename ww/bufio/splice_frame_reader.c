@@ -1,13 +1,13 @@
 #include "splice_frame_reader.h"
 
-void spliceframereaderInit(splice_frame_reader_t *r, buffer_pool_t *pool, uint32_t header_size, size_t nested_bytes,
-                           size_t retained_charge, bool splice_output)
+void spliceframereaderInit(splice_frame_reader_t *r, buffer_pool_t *pool, uint32_t header_size,
+                           size_t nested_byte_limit, size_t retained_charge_limit, bool splice_output)
 {
     assert(header_size != 0 && (uint64_t) header_size + sizeof(splice_stream_t) <= SIZE_MAX);
-    *r = (splice_frame_reader_t) {.stream          = splicestreamCreate(pool, header_size),
-                                  .nested_bytes    = nested_bytes,
-                                  .retained_charge = retained_charge,
-                                  .splice_output   = splice_output};
+    *r = (splice_frame_reader_t) {.stream                = splicestreamCreate(pool, header_size),
+                                  .nested_byte_limit     = nested_byte_limit,
+                                  .retained_charge_limit = retained_charge_limit,
+                                  .splice_output         = splice_output};
 }
 
 void spliceframereaderDestroy(splice_frame_reader_t *r)
@@ -19,7 +19,7 @@ void spliceframereaderDestroy(splice_frame_reader_t *r)
 splice_frame_admit_t spliceframereaderAdmit(splice_frame_reader_t *r, sbuf_t *input)
 {
     assert(spliceframereaderIsAttached(r));
-    const uint32_t length = sbufGetLength(input);
+    const size_t length = sbufGetLength(input);
     if (length == 0)
     {
         bufferpoolReuseBuffer(splicestreamGetPool(r->stream), input);
@@ -28,7 +28,7 @@ splice_frame_admit_t spliceframereaderAdmit(splice_frame_reader_t *r, sbuf_t *in
     if (r->draining)
     {
         const size_t bytes = spliceframereaderLength(r);
-        if (bytes > r->nested_bytes || length > r->nested_bytes - bytes)
+        if (bytes > r->nested_byte_limit || length > r->nested_byte_limit - bytes)
         {
             bufferpoolReuseBuffer(splicestreamGetPool(r->stream), input);
             return kSpliceFrameByteLimit;
@@ -37,7 +37,8 @@ splice_frame_admit_t spliceframereaderAdmit(splice_frame_reader_t *r, sbuf_t *in
     if (! splicestreamPush(r->stream, input))
         return kSpliceFramePushFailed;
     if (r->draining)
-        return splicestreamSettleCharge(r->stream, r->retained_charge) ? kSpliceFrameQueued : kSpliceFrameChargeLimit;
+        return splicestreamSettleCharge(r->stream, r->retained_charge_limit) ? kSpliceFrameQueued
+                                                                             : kSpliceFrameChargeLimit;
     r->draining = true;
     return kSpliceFrameDrain;
 }
@@ -45,7 +46,7 @@ splice_frame_admit_t spliceframereaderAdmit(splice_frame_reader_t *r, sbuf_t *in
 bool spliceframereaderEndDrain(splice_frame_reader_t *r)
 {
     assert(r->draining);
-    if (! splicestreamSettleCharge(r->stream, r->retained_charge))
+    if (! splicestreamSettleCharge(r->stream, r->retained_charge_limit))
         return false;
     r->draining = false;
     return true;

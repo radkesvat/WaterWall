@@ -187,7 +187,7 @@ static bool admitDeferred(hps_session_t *s, hps_direction_t d)
     if (n == sbufGetLength(dir->deferred))
         hpsDiscardBuffer(s, &dir->deferred);
     else
-        sbufShiftRight(dir->deferred, (uint32_t) n);
+        sbufShiftRight(dir->deferred, n);
     s->progress_at = hpsNowMs(s);
     return true;
 }

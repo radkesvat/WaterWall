@@ -88,7 +88,7 @@ static void onPause(tunnel_t *t, line_t *line)
     twfRequire(t == neighbor && line == expected_line, "Pause used the wrong neighbor or line");
     ++pause_calls;
     adapter_lstate_t *ls = lineGetState(line, adapter);
-    twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 2, "Pause preceded incoming FIFO admission");
+    twfRequire(bufferqueueGetEntryCount(&ls->write_queue.queue) == 2, "Pause preceded incoming FIFO admission");
     twfRequire(ls->write_queue.pause_sent, "Pause latch was not published before callback");
     if (nested_payload)
     {
@@ -225,8 +225,8 @@ static void runPauseCase(bool splice_input, bool close_line)
     {
         twfRequire(! wioIsSpliceEnabled(io), "queued payload did not apply read preference");
         twfRequire(lineIsAlive(line) && twfLineRefCount(line) == 2, "surviving Pause leaked a line reference");
-        twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 3 &&
-                       bufferqueueGetBufLen(&ls->write_queue.queue) == kAwqPauseThreshold + 18,
+        twfRequire(bufferqueueGetEntryCount(&ls->write_queue.queue) == 3 &&
+                       bufferqueueGetLength(&ls->write_queue.queue) == kAwqPauseThreshold + 18,
                    "surviving Pause lost queue entries or bytes");
         sbuf_t *first = bufferqueuePopFront(&ls->write_queue.queue);
         twfRequire(sbufGetLength(first) == kAwqPauseThreshold + 1 && memoryEqual(sbufGetRawPtr(first), "Q", 1),
@@ -342,7 +342,7 @@ static void runCapacityCase(void)
             accepted_charge += charge;
             twfRequire(lineIsAlive(line), "capacity refused before hard ceiling");
             twfRequire(bufferqueueGetCharge(&ls->write_queue.queue) == accepted_charge, "incremental charge mismatch");
-            twfRequire(bufferqueueGetBufLen(&ls->write_queue.queue) == 0, "empty buffers acquired logical bytes");
+            twfRequire(bufferqueueGetLength(&ls->write_queue.queue) == 0, "empty buffers acquired logical bytes");
         }
         else
             twfRequire(! lineIsAlive(line), "capacity overflow did not settle line");
@@ -953,7 +953,7 @@ static void runQueuedWriteFailureCase(void)
 #endif
     twfRequire(fixture.resumes == 0, "failed FIFO write incorrectly resumed its producer");
     if (lineIsAlive(fixture.line))
-        twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 1, "failed write continued into queued suffix");
+        twfRequire(bufferqueueGetEntryCount(&ls->write_queue.queue) == 1, "failed write continued into queued suffix");
     for (unsigned i = 0; i < 8 && lineIsAlive(fixture.line); ++i)
         discard wloopProcessEvents(fixture.env.loop, 0);
     twfRequire(! lineIsAlive(fixture.line) && fixture.finishes == 1 && fixture.resumes == 0,
@@ -978,7 +978,7 @@ static void runDirectWriteFailureReentryCase(void)
     submit(fixture.line, first);
     twfRequire(lineIsAlive(fixture.line) && ! wioIsClosed(fixture.io) && observed_send_count == 1 &&
                    ls->write_queue.active.cost.charge == active_charge &&
-                   bufferqueueGetBufCount(&ls->write_queue.queue) == 0,
+                   bufferqueueGetEntryCount(&ls->write_queue.queue) == 0,
                "failed direct write did not preserve its reservation until asynchronous close");
 
     // A caller can submit another admitted buffer before the queued close event runs.
@@ -989,7 +989,7 @@ static void runDirectWriteFailureReentryCase(void)
     submit(fixture.line, second);
     twfRequire(lineIsAlive(fixture.line) && observed_send_count == 1 && ls->write_queue.blocked &&
                    ls->write_queue.active.cost.charge == active_charge &&
-                   bufferqueueGetBufCount(&ls->write_queue.queue) == 1 &&
+                   bufferqueueGetEntryCount(&ls->write_queue.queue) == 1 &&
                    bufferbudgetGetUsage(&ls->write_queue.budget).charge == active_charge + queued_charge &&
                    pause_calls == 0 && fixture.resumes == 0,
                "input following a failed direct write retried I/O or replaced the active reservation");
@@ -1036,7 +1036,7 @@ static void connectorReentrantEst(tunnel_t *t, line_t *line)
     connectorEst(t, line);
     adapter_lstate_t *ls = lineGetState(line, adapter);
     twfRequire(! ls->write_queue.blocked && ls->write_queue.pause_sent && ls->write_queue.active.cost.charge == 0 &&
-                   bufferqueueGetBufCount(&ls->write_queue.queue) == 0 && progress_fixture->resumes == 0,
+                   bufferqueueGetEntryCount(&ls->write_queue.queue) == 0 && progress_fixture->resumes == 0,
                "connect drain consumed its pending Resume before Est returned");
     if (close_during_est)
     {
@@ -1145,7 +1145,7 @@ static void runResolverPreEstCase(bool literal)
     if (! literal)
     {
         twfRequire(fixture.init_calls == 0 && fixture.est_calls == 0 && connector_dns_callback != NULL &&
-                       bufferqueueGetBufCount(&ls->write_queue.queue) == 0,
+                       bufferqueueGetEntryCount(&ls->write_queue.queue) == 0,
                    "DNS-pending payload reached a connector before adjacent Init");
         dns_resolved_addr_t answer = {.family = AF_INET, .addrlen = sizeof(struct sockaddr_in)};
         struct sockaddr_in *addr   = (struct sockaddr_in *) &answer.addr;
@@ -1157,14 +1157,15 @@ static void runResolverPreEstCase(bool literal)
         connector_dns_callback = NULL;
     }
     twfRequire(fixture.init_calls == 1 && fixture.est_calls == 0 && ls->write_queue.blocked &&
-                   bufferqueueGetBufCount(&ls->write_queue.queue) == 1 &&
+                   bufferqueueGetEntryCount(&ls->write_queue.queue) == 1 &&
                    bufferqueueGetCharge(&ls->write_queue.queue) > 0 && pause_calls == 1,
                "initialized connector did not admit DNS/literal payload before Est");
     sbuf_t *second = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufWrite(second, "B", 1);
     sbufSetLength(second, 1);
     tunnelUpStreamPayload(fixture.resolver, fixture.line, second);
-    twfRequire(bufferqueueGetBufCount(&ls->write_queue.queue) == 2, "admitted connecting payload was lost after Pause");
+    twfRequire(bufferqueueGetEntryCount(&ls->write_queue.queue) == 2,
+               "admitted connecting payload was lost after Pause");
     tcpconnectorOnOutBoundConnected(fixture.io);
     char received[2];
     twfRequire(recv(fixture.peer, received, sizeof(received), 0) == sizeof(received) &&

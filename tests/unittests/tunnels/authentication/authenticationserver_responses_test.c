@@ -492,7 +492,7 @@ static void testTinyRequestsAndBounds(void)
     tunnelUpStreamPause(server, line);
     for (unsigned i = 0; i < 1025; ++i)
         request(i + 1);
-    twfRequire(lineIsAlive(line) && bufferqueueGetBufCount(&ls->response_queue) == 1025 &&
+    twfRequire(lineIsAlive(line) && bufferqueueGetEntryCount(&ls->response_queue) == 1025 &&
                    bufferbudgetGetUsage(&ls->response_budget).charge <= kAuthenticationServerMaxResponseCharge,
                "small responses within charge allowance hit a buffer-count cap");
     teardown();

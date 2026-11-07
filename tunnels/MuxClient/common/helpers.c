@@ -66,7 +66,7 @@ void muxclientJoinConnection(muxclient_lstate_t *parent, muxclient_lstate_t *chi
         LOGF("MuxClient: failed to publish child CID index entry");
         abortProgramNow(1);
     }
-    assert(bufferqueueGetBufCount(&child->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child->pending_child_data) == 0);
     const bool attached =
         bufferqueueTryAttachBudget(&child->pending_child_data, &parent->parent_state->child_queue_budget);
     assert(attached); // A newly joining child owns an empty queue.
@@ -290,9 +290,9 @@ static void muxclientParentStatsLogTask(tunnel_t *t, line_t *parent_l)
          stats.child_write_paused,
          bufferbudgetGetUsage(&parent_ls->parent_state->child_queue_budget).charge,
          splicestreamCharge(parent_ls->parent_state->read_stream),
-         (size_t) bufferqueueGetBufLen(&output->pending),
+         (size_t) bufferqueueGetLength(&output->pending),
          output->charge,
-         (size_t) bufferqueueGetBufCount(&output->pending),
+         (size_t) bufferqueueGetEntryCount(&output->pending),
          boolToYesNo(output->transport_paused),
          boolToYesNo(output->sources_throttled),
          stats.parent_write_paused,
@@ -421,7 +421,7 @@ void muxclientCloseIdleExhaustedParentLine(tunnel_t *t, muxclient_tstate_t *ts, 
     parent_ls->selection_retired = true;
     muxclientDisarmKeepalive(parent_ls);
     mux_parent_output_t *output  = &parent_ls->parent_state->output;
-    if (output->pumping || output->notifying || bufferqueueGetBufCount(&output->pending) != 0)
+    if (output->pumping || output->notifying || bufferqueueGetEntryCount(&output->pending) != 0)
     {
         return;
     }
@@ -972,7 +972,7 @@ static bool muxclientHandleChildBufferAfterDrain(tunnel_t *t, line_t *parent_l, 
                                                  muxclient_lstate_t *parent_ls, line_t *child_l,
                                                  muxclient_lstate_t *child_ls)
 {
-    size_t pending_bytes = bufferqueueGetBufLen(&child_ls->pending_child_data);
+    size_t pending_bytes = bufferqueueGetLength(&child_ls->pending_child_data);
 
     if (child_ls->close_state == kMuxClientChildCloseOpen && ! child_ls->paused && child_ls->flow_paused_sent &&
         pending_bytes < ts->child_buffer_resume_threshold)
@@ -995,7 +995,7 @@ muxclient_child_drain_result_t muxclientDrainAttachedChild(tunnel_t *t, line_t *
     assert(child_ls->close_state != kMuxClientChildCloseParentGoneDraining);
 
     lineRef(parent_l);
-    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    while (! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
@@ -1037,7 +1037,7 @@ muxclient_child_drain_result_t muxclientDrainAttachedChild(tunnel_t *t, line_t *
     }
 
     const muxclient_child_drain_result_t result =
-        ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+        ! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0
             ? kMuxClientChildDrainReadyToFinish
             : kMuxClientChildDrainBlocked;
     lineUnref(parent_l);
@@ -1092,7 +1092,7 @@ muxclient_child_drain_result_t muxclientDrainDetachedChild(tunnel_t *t, line_t *
     assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
     assert(child_ls->parent == NULL);
 
-    while (! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) > 0)
+    while (! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) > 0)
     {
         sbuf_t *buf = bufferqueuePopFront(&child_ls->pending_child_data);
 
@@ -1109,7 +1109,7 @@ muxclient_child_drain_result_t muxclientDrainDetachedChild(tunnel_t *t, line_t *
         }
     }
 
-    return ! child_ls->paused && bufferqueueGetBufCount(&child_ls->pending_child_data) == 0
+    return ! child_ls->paused && bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0
                ? kMuxClientChildDrainReadyToFinish
                : kMuxClientChildDrainBlocked;
 }
@@ -1118,7 +1118,7 @@ void muxclientFinalizeDetachedChild(tunnel_t *t, line_t *child_l, muxclient_lsta
 {
     assert(child_ls->close_state == kMuxClientChildCloseParentGoneDraining);
     assert(! child_ls->paused);
-    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0);
 
     muxclientRemoveDetachedChild(tunnelGetState(t), child_l, child_ls);
     muxclientLinestateDestroy(child_ls);
@@ -1143,7 +1143,7 @@ bool muxclientFinalizeAttachedPeerClose(tunnel_t *t, line_t *parent_l, muxclient
     assert(child_ls->close_state == kMuxClientChildClosePeerDraining);
     assert(child_ls->parent == parent_ls);
     assert(! child_ls->paused);
-    assert(bufferqueueGetBufCount(&child_ls->pending_child_data) == 0);
+    assert(bufferqueueGetEntryCount(&child_ls->pending_child_data) == 0);
 
     lineRef(parent_l);
     muxclientLeaveConnection(child_ls);
@@ -1452,7 +1452,7 @@ void muxclientDrainParentOutput(tunnel_t *t, line_t *parent_l)
             break;
         parent = lineGetState(parent_l, t);
         output = &parent->parent_state->output;
-        if (output->transport_paused || ! bufferqueueGetBufCount(&output->pending))
+        if (output->transport_paused || ! bufferqueueGetEntryCount(&output->pending))
             break;
         /* A new snapshot requires FIFO progress; starting children finish in Init/Est. */
         sbuf_t *buf = muxParentOutputPop(output);
@@ -1495,9 +1495,9 @@ bool muxclientSendParentOutput(tunnel_t *t, line_t *parent_l, sbuf_t *buf, muxcl
         lineRef(writer_l);
     mux_parent_output_t *output = &parent->parent_state->output;
     assert((flag != kMuxFlagPing && flag != kMuxFlagPong) ||
-           (sbufGetLength(buf) == kMuxFrameLength && ((const uint8_t *) sbufGetRawPtr(buf))[3] == flag));
+           (sbufGetLength(buf) == kMuxFrameLength && (sbufGetRawPtr(buf))[3] == flag));
     const bool direct =
-        ! output->pumping && ! output->transport_paused && bufferqueueGetBufCount(&output->pending) == 0;
+        ! output->pumping && ! output->transport_paused && bufferqueueGetEntryCount(&output->pending) == 0;
     if (! direct)
     {
         buf = muxPrepareRetainedCandidate(pool, buf, false);

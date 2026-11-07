@@ -30,7 +30,7 @@ static void testOrdinaryLeftCapacity(void)
             memoryCopy(sbufGetMutablePtr(source), wire, length);
             uint32_t before[4], after[4];
             bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
-            sbuf_t *result = sbufEnsureLeftCapacity(fixture.pool, source, needs[i]);
+            sbuf_t *result = sbufEnsureHeadroom(fixture.pool, source, needs[i]);
             bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
             require(! sbufIsSplice(result) && sbufGetHeadroom(result) >= needs[i],
                     "ordinary left-capacity repair lost headroom or changed representation");
@@ -84,7 +84,7 @@ static void testSpliceLeftCapacity(void)
                 bufferpoolCachedTierCountsForTest(fixture.pool, &before[0], &before[1], &before[2], &before[3]);
                 streamProbe     = true;
                 streamReadBytes = streamSpliceBytes = 0;
-                sbuf_t *result                      = sbufEnsureLeftCapacity(fixture.pool, source, need);
+                sbuf_t *result                      = sbufEnsureHeadroom(fixture.pool, source, need);
                 streamProbe                         = false;
                 bufferpoolCachedTierCountsForTest(fixture.pool, &after[0], &after[1], &after[2], &after[3]);
                 require(sbufIsSplice(result) && sbufGetHeadroom(result) >= need && streamReadBytes == 0,
@@ -118,7 +118,7 @@ static void testLeftCapacityTransferFallback(void)
         streamProbe                             = true;
         streamTransferFault                     = faults[i];
         streamReadBytes = streamSpliceBytes = 0;
-        sbuf_t *result                      = sbufEnsureLeftCapacity(fixture.pool, source, 58);
+        sbuf_t *result                      = sbufEnsureHeadroom(fixture.pool, source, 58);
         streamProbe                         = false;
         streamTransferFault                 = 0;
         const bool fallback                 = faults[i] != 1;
@@ -155,7 +155,7 @@ static void testLeftCapacityDestinationRefusal(void)
             require(bufferpoolGetSpliceBuffer(fixture.pool) == NULL,
                     "left-capacity fixture did not exhaust destination pipes");
         }
-        sbuf_t *result = sbufEnsureLeftCapacity(fixture.pool, source, 58);
+        sbuf_t *result = sbufEnsureHeadroom(fixture.pool, source, 58);
         require(! sbufIsSplice(result) && sbufGetHeadroom(result) >= bufferpoolGetLargeBufferPadding(fixture.pool),
                 "unavailable or underpadded splice destination did not select full ordinary storage");
         sbuf_t *recycled = bufferpoolGetSpliceBuffer(fixture.pool);

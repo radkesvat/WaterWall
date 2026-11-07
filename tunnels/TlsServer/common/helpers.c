@@ -599,9 +599,9 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
         {
             if (ls->verbose)
             {
-                LOGD("TlsServer: worker %u flushing %u TLS bytes downstream",
+                LOGD("TlsServer: worker %u flushing %zu TLS bytes downstream",
                      (unsigned int) lineGetWID(l),
-                     (unsigned int) sbufGetLength(ssl_buf));
+                     sbufGetLength(ssl_buf));
             }
             if (shape_output)
             {
@@ -746,7 +746,7 @@ bool tlsserverEncryptAndSendApplicationData(tunnel_t *t, line_t *l, tlsserver_ls
 
 bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
 {
-    size_t pending_count = bufferqueueGetBufCount(&ls->pending_down);
+    size_t pending_count = bufferqueueGetEntryCount(&ls->pending_down);
     if (pending_count > 0 && ls->verbose)
     {
         LOGD("TlsServer: worker %u flushing %u queued downstream payload buffers after handshake",
@@ -754,7 +754,7 @@ bool tlsserverFlushPendingDownQueue(tunnel_t *t, line_t *l, tlsserver_lstate_t *
              (unsigned int) pending_count);
     }
 
-    while (bufferqueueGetBufCount(&ls->pending_down) > 0)
+    while (bufferqueueGetEntryCount(&ls->pending_down) > 0)
     {
         if (ls->upstream_finished || ls->downstream_finishing)
         {

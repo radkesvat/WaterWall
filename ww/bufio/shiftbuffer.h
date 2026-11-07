@@ -370,7 +370,7 @@ void sbufDestroySplice(sbuf_t *buf);
  * @param buf Source buffer to append.
  * @return sbuf_t* Destination buffer (may be reallocated).
  */
-sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
+WW_MUST_USE sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict buf);
 
 /**
  * @brief Move bytes from an ordinary source's head into an ordinary destination's tail.
@@ -411,7 +411,7 @@ sbuf_t *sbufSlice(sbuf_t *b, size_t bytes);
  * @param b Source buffer.
  * @return sbuf_t* New duplicated buffer.
  */
-sbuf_t *sbufDuplicate(sbuf_t *b);
+sbuf_t *sbufDuplicate(const sbuf_t *b);
 
 /**
  * @brief Copy an ordinary buffer's complete payload and cursor into a distinct ordinary destination.
@@ -441,7 +441,7 @@ static inline size_t sbufGetTotalCapacity(const sbuf_t *const b)
 /**
  * Gets total capacity excluding padding.
  */
-static inline size_t sbufGetTotalCapacityNoPadding(sbuf_t *const b)
+static inline size_t sbufGetTotalCapacityNoPadding(const sbuf_t *const b)
 {
     return b->capacity - (b->initial_headroom);
 }
@@ -465,11 +465,11 @@ static inline size_t sbufGetHeadroom(const sbuf_t *const b)
  * Gets the maximum total payload length that can be addressed from the current cursor.
  *
  * Important: this is not the spare growth available beyond the current payload length.
- * For ordinary-buffer append space, use sbufGetTailCapacity().
+ * For ordinary-buffer append space, use sbufGetTailroom().
  * These writable-storage guarantees apply to ordinary buffers. With
  * kSbufFlagSplice, the result is logical and does not describe physical storage.
  */
-static inline size_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
+static inline size_t sbufGetWritableCapacity(const sbuf_t *const b)
 {
     return (b->capacity - sbufGetHeadroom(b));
 }
@@ -478,7 +478,7 @@ static inline size_t sbufGetMaximumWriteableSize(const sbuf_t *const b)
  * Gets spare writable bytes after an ordinary buffer's current payload.
  * Requires valid ordinary-buffer geometry; splice capacity is not resident storage.
  */
-static inline size_t sbufGetTailCapacity(const sbuf_t *const b)
+static inline size_t sbufGetTailroom(const sbuf_t *const b)
 {
     assert(b != NULL && ! sbufIsSplice(b));
     assert(sbufGetHeadroom(b) <= b->capacity);
@@ -544,18 +544,22 @@ static inline size_t sbufGetLength(const sbuf_t *const b)
 }
 
 /**
- * Consumes specified bytes from the buffer.
+ * Reduces the payload length by bytes without moving data or copying bytes.
+ * For ordinary buffers this removes bytes from the logical tail. Splice body
+ * accounting requires sbufSpliceConsumeBody() to update logical capacity too.
  */
-static inline void sbufConsume(sbuf_t *const b, const size_t bytes)
+static inline void sbufReduceLength(sbuf_t *const b, const size_t bytes)
 {
     assert(bytes <= b->len);
     sbufSetLength(b, sbufGetLength(b) - bytes);
 }
 
 /**
- * Gets raw pointer to buffer data.
+ * Gets a borrowed read-only byte pointer to resident data. The pointer does not
+ * extend buffer lifetime or make a splice body resident. Reacquire after storage
+ * replacement; do not use after recycling or ownership transfer.
  */
-static inline const void *sbufGetRawPtr(const sbuf_t *const b)
+static inline const uint8_t *sbufGetRawPtr(const sbuf_t *const b)
 {
     return b->data;
 }
@@ -565,7 +569,7 @@ static inline const void *sbufGetRawPtr(const sbuf_t *const b)
  * With kSbufFlagSplice, only a prefix exposed within reserved left padding may
  * be written by a forwarding tunnel; see the flag's representation contract.
  */
-static inline unsigned char *sbufGetMutablePtr(const sbuf_t *const b)
+static inline uint8_t *sbufGetMutablePtr(sbuf_t *const b)
 {
     return b->data;
 }
@@ -609,9 +613,9 @@ static inline void sbufWriteZeros(sbuf_t *restrict const b, const size_t len)
  * both allocations remain caller-owned. Copies bytes only, preserving each
  * buffer's checksum request.
  */
-static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict const from, size_t length)
+static inline void sbufWriteBuf(sbuf_t *restrict const to, const sbuf_t *restrict const from, size_t length)
 {
-    assert(sbufGetMaximumWriteableSize(to) >= length);
+    assert(sbufGetWritableCapacity(to) >= length);
     memoryCopyLarge(sbufGetMutablePtr(to), sbufGetRawPtr(from), length);
 }
 
@@ -624,11 +628,11 @@ static inline void sbufWriteBuf(sbuf_t *restrict const to, sbuf_t *restrict cons
  * original padding available.
  * The caller owns only the returned buffer and must use that pointer afterward.
  */
-static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const size_t bytes)
+WW_MUST_USE static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const size_t bytes)
 {
     size_t current_length = sbufGetLength(b);
 
-    if (sbufGetMaximumWriteableSize(b) < bytes)
+    if (sbufGetWritableCapacity(b) < bytes)
     {
         size_t   needed_writable = max(current_length, bytes);
         sbuf_t  *bigger_buf      = sbufCreateWithPadding(needed_writable, b->initial_headroom);
@@ -650,7 +654,7 @@ static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restri
 {
     size_t root_length   = sbufGetLength(root);
     size_t append_length = sbufGetLength(buf);
-    assert(append_length <= sbufGetTailCapacity(root));
+    assert(append_length <= sbufGetTailroom(root));
     sbufSetLength(root, root_length + append_length);
     memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
 }
@@ -668,7 +672,7 @@ static inline void sbufWriteUI8(sbuf_t *const b, const uint8_t data)
  */
 static inline uint8_t sbufReadUI8(const sbuf_t *const b)
 {
-    return *(uint8_t *) sbufGetRawPtr(b);
+    return *sbufGetRawPtr(b);
 }
 
 // UnAligned
@@ -728,7 +732,7 @@ static inline void sbufWriteUnAlignedUI16(sbuf_t *const b, const uint16_t data)
  */
 static inline void sbufReadUI16(const sbuf_t *const b, uint16_t *const dest)
 {
-    *dest = *(uint16_t *) sbufGetRawPtr(b);
+    *dest = *(const uint16_t *) sbufGetRawPtr(b);
 }
 
 /**
@@ -736,7 +740,7 @@ static inline void sbufReadUI16(const sbuf_t *const b, uint16_t *const dest)
  */
 static inline void sbufReadUI64(const sbuf_t *const b, uint64_t *const dest)
 {
-    *dest = *(uint64_t *) sbufGetRawPtr(b);
+    *dest = *(const uint64_t *) sbufGetRawPtr(b);
 }
 
 /**

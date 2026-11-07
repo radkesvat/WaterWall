@@ -215,7 +215,7 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
 
     if (pcb != NULL && ls->connected)
     {
-        while (bufferqueueGetBufCount(&ls->pending_queue) > 0)
+        while (bufferqueueGetEntryCount(&ls->pending_queue) > 0)
         {
             sbuf_t        *buf       = bufferqueuePopFront(&ls->pending_queue);
             const uint32_t buf_len   = sbufGetLength(buf);
@@ -265,7 +265,7 @@ ctp_flush_result_t ctpFlushPendingLocked(ctp_lstate_t *ls)
         }
     }
 
-    ls->write_blocked = bufferqueueGetBufCount(&ls->pending_queue) > 0;
+    ls->write_blocked = bufferqueueGetEntryCount(&ls->pending_queue) > 0;
 
     /*
      * A queue that could not be emptied has to have something that will come

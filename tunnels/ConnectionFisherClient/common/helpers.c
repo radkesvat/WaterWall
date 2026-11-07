@@ -22,7 +22,7 @@ bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l)
 bool connectionfisherclientSyncMainSource(tunnel_t *t, line_t *main_l)
 {
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
-    bool                             paused  = main_ls->pumping_up || bufferqueueGetBufCount(&main_ls->pending_up) != 0;
+    bool paused = main_ls->pumping_up || bufferqueueGetEntryCount(&main_ls->pending_up) != 0;
     if (main_ls->selected_child != NULL)
     {
         connectionfisherclient_lstate_t *child_ls = lineGetState(main_ls->selected_child, t);
@@ -49,7 +49,7 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
            main_ls->selected_child == child_l)
     {
         connectionfisherclient_lstate_t *child_ls = lineGetState(child_l, t);
-        if (child_ls->next_paused || bufferqueueGetBufCount(&main_ls->pending_up) == 0)
+        if (child_ls->next_paused || bufferqueueGetEntryCount(&main_ls->pending_up) == 0)
             break;
         sbuf_t *buf = bufferqueuePopFront(&main_ls->pending_up);
         tunnelNextUpStreamPayload(t, child_l, buf);
@@ -59,7 +59,7 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
     if (alive)
     {
         main_ls->pumping_up = false;
-        if (bufferqueueGetBufCount(&main_ls->pending_up) == 0)
+        if (bufferqueueGetEntryCount(&main_ls->pending_up) == 0)
             bufferqueueDestroy(&main_ls->pending_up);
         alive = connectionfisherclientSyncMainSource(t, main_l) && lineIsAlive(child_l);
     }
@@ -405,7 +405,7 @@ void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *chil
         return;
     }
     const size_t limit = kConnectionFisherHandshakeLength + kConnectionFisherMaxPendingUpBytes;
-    if (sbufGetLength(buf) > limit - bufferstreamGetBufLen(&child_ls->read_stream))
+    if (sbufGetLength(buf) > limit - bufferstreamGetLength(&child_ls->read_stream))
     {
         lineReuseBuffer(child_l, buf);
         LOGW("ConnectionFisherClient: reply and coalesced application data exceeded the pending limit");
@@ -416,7 +416,7 @@ void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *chil
     buf = sbufEnsureOrdinary(lineGetBufferPool(child_l), buf);
     bufferstreamPush(&child_ls->read_stream, buf);
 
-    if (bufferstreamGetBufLen(&child_ls->read_stream) < kConnectionFisherHandshakeLength)
+    if (bufferstreamGetLength(&child_ls->read_stream) < kConnectionFisherHandshakeLength)
     {
         return;
     }

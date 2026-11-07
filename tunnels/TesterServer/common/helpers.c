@@ -684,11 +684,11 @@ void testerserverHandlePacketRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (! testerserverVerifyChunk(
             t, l, buf, ls->request_rx_index, kTesterServerDirectionRequest, &bad_offset, &expected, &actual))
     {
-        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%zu expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
              (unsigned int) lineGetWID(l),
              (unsigned int) ls->request_rx_index,
-             (unsigned int) sbufGetLength(buf),
+             sbufGetLength(buf),
              (unsigned int) testerserverGetChunkSize(t, ls->request_rx_index),
              (unsigned int) bad_offset,
              (unsigned int) expected,
@@ -771,11 +771,11 @@ void testerserverHandlePacketStatelessRequestPayload(tunnel_t *t, line_t *l, sbu
 
     if (! testerserverVerifyStatelessPacketChunk(t, l, buf, chunk_index, &bad_offset, &expected, &actual))
     {
-        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%u expected_size=%u bad_offset=%u "
+        LOGE("TesterServer: worker %u packet request chunk %u mismatch (size=%zu expected_size=%u bad_offset=%u "
              "expected=0x%02x actual=0x%02x)",
              (unsigned int) lineGetWID(l),
              (unsigned int) chunk_index,
-             (unsigned int) sbufGetLength(buf),
+             sbufGetLength(buf),
              (unsigned int) testerserverGetChunkSize(t, chunk_index),
              (unsigned int) bad_offset,
              (unsigned int) expected,
@@ -830,7 +830,7 @@ void testerserverScheduleResponseSend(tunnel_t *t, line_t *l, testerserver_lstat
 
     if (ts->packet_mode)
     {
-        if (ls->response_paused || bufferqueueGetBufCount(&ls->response_queue) == 0)
+        if (ls->response_paused || bufferqueueGetEntryCount(&ls->response_queue) == 0)
         {
             return;
         }
@@ -870,7 +870,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
 
     if (ts->packet_mode)
     {
-        while (! ls->response_paused && bufferqueueGetBufCount(&ls->response_queue) > 0)
+        while (! ls->response_paused && bufferqueueGetEntryCount(&ls->response_queue) > 0)
         {
             LineTaskFnWithBuf send_response =
                 ls->response_to_next ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload;
@@ -887,7 +887,7 @@ void testerserverResponseSendTask(tunnel_t *t, line_t *l)
         const uint8_t chunk_count = testerserverGetChunkCount(t);
 
         if (ls->request_rx_index == chunk_count && ls->response_tx_index == chunk_count &&
-            bufferqueueGetBufCount(&ls->response_queue) == 0)
+            bufferqueueGetEntryCount(&ls->response_queue) == 0)
         {
             ls->response_sent = true;
         }

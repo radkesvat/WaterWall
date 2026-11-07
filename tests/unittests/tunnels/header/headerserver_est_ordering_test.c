@@ -257,7 +257,7 @@ static void overflowReentryBytes(est_fixture_t *f, line_t *l)
     sbufSetLength(large, kHeaderServerMaxReentryBytes);
     tunnelUpStreamPayload(f->node, l, large);
     headerserver_lstate_t *ls = lineGetState(l, f->node);
-    twfRequire(bufferqueueGetBufLen(&ls->gate.pending) == kHeaderServerMaxReentryBytes,
+    twfRequire(bufferqueueGetLength(&ls->gate.pending) == kHeaderServerMaxReentryBytes,
                "HeaderServer rejected exact transient reentry byte limit");
     tunnelUpStreamPayload(f->node, l, estBytes(l, "X", 1));
 }

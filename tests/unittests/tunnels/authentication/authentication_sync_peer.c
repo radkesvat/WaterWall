@@ -41,7 +41,7 @@ uint32_t authTestPeerLineSize(void)
 void authTestPeerInputRetention(tunnel_t *server, line_t *line, size_t *bytes, size_t *charge, size_t *entries)
 {
     authenticationserver_lstate_t *ls = lineGetState(line, server);
-    *bytes                            = bufferstreamGetBufLen(&ls->read_stream);
+    *bytes                            = bufferstreamGetLength(&ls->read_stream);
     *charge                           = bufferstreamGetCharge(&ls->read_stream);
     *entries                          = bufferstreamGetEntryCount(&ls->read_stream);
 }
