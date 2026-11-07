@@ -190,7 +190,7 @@ static void runPauseCase(bool splice_input, bool close_line)
     linePreferOrdinaryReadDownstream(line);
 #endif
 #endif
-    sbuf_t *queued = bufferpoolGetLargeBuffer(env.pool);
+    sbuf_t *queued = twfTrackAcquired(sbufCreate(kAwqPauseThreshold + 1));
     sbufSetLength(queued, kAwqPauseThreshold + 1);
     memorySet(sbufGetMutablePtr(queued), 'Q', sbufGetLength(queued));
     queued                         = bufferqueuePushBack(&ls->write_queue.queue, queued);
@@ -429,7 +429,9 @@ static void runWriteCompletionCase(bool finish_queued)
 #endif
     for (unsigned i = 0; i < 2; ++i)
     {
-        sbuf_t *buf = bufferpoolGetLargeBuffer(env.pool);
+        // Preserve the pending Resume by crossing the independent retained-capacity watermark.
+        sbuf_t *buf =
+            i == 0 ? twfTrackAcquired(sbufCreate(kAwqPauseChargeThreshold)) : bufferpoolGetLargeBuffer(env.pool);
         sbufSetLength(buf, 1);
         sbufWrite(buf, i == 0 ? "A" : "B", 1);
         submit(line, buf);
@@ -1029,6 +1031,13 @@ static void connectorEst(tunnel_t *t, line_t *line)
     ++progress_fixture->est_calls;
 }
 
+static void resolverResume(tunnel_t *t, line_t *line)
+{
+    twfRequire(t == neighbor && line == progress_fixture->line && lineIsAlive(line),
+               "resolver resumed a dead/wrong line");
+    ++progress_fixture->resumes;
+}
+
 static bool close_during_est;
 
 static void connectorReentrantEst(tunnel_t *t, line_t *line)
@@ -1060,9 +1069,11 @@ static void runEstReentryCase(bool close_line)
     ls->write_queue.blocked = true;
     neighbor->fnEstD        = connectorReentrantEst;
     close_during_est        = close_line;
-    sbuf_t *buf             = bufferpoolGetLargeBuffer(fixture.env.pool);
-    sbufWrite(buf, "A", 1);
-    sbufSetLength(buf, 1);
+    // Capacity pressure leaves socket space for the nested two-byte write during Est.
+    const uint32_t body_bytes = 1;
+    sbuf_t        *buf        = twfTrackAcquired(sbufCreate(kAwqPauseChargeThreshold));
+    memorySet(sbufGetMutablePtr(buf), 'A', body_bytes);
+    sbufSetLength(buf, body_bytes);
     submit(fixture.line, buf);
     twfRequire(pause_calls == 1 && ls->write_queue.pause_sent, "connecting input did not establish a pending Pause");
     tcpconnectorOnOutBoundConnected(fixture.io);
@@ -1082,9 +1093,7 @@ static void runEstReentryCase(bool close_line)
         twfRequire(wioCheckWriteComplete(fixture.io) && fixture.resumes == 1 && pause_calls == 1,
                    "Est partial write did not release its producer once after draining");
     }
-    char         wire[3];
-    const size_t bytes = close_line ? 1 : sizeof(wire);
-    twfRequire(recv(fixture.peer, wire, bytes, MSG_DONTWAIT) == (ssize_t) bytes && memoryEqual(wire, "ABC", bytes),
+    twfRequire(progressReadPeer(&fixture, 0, body_bytes) == body_bytes + (close_line ? 0 : 2),
                "Est reentry changed the accepted FIFO bytes");
     progressTeardown(&fixture);
 }
@@ -1097,11 +1106,11 @@ static void runConnectingSmallPartialCase(void)
     adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
     ls->write_queue.blocked = true;
     neighbor->fnEstD        = connectorEst;
-    sbuf_t *buf             = twfTrackAcquired(sbufCreate(2));
+    sbuf_t *buf             = twfTrackAcquired(sbufCreate(128 * 1024));
     sbufWrite(buf, "AB", 2);
     sbufSetLength(buf, 2);
-    twfRequire(sbufGetQueueCharge(buf) < kAwqPauseThreshold,
-               "connecting small input exceeds the queued Pause threshold");
+    twfRequire(sbufGetQueueCharge(buf) < kAwqPauseChargeThreshold,
+               "ordinary read allocation exceeds the retained-capacity Pause threshold");
     submit(fixture.line, buf);
     twfRequire(pause_calls == 0 && ! ls->write_queue.pause_sent,
                "small connecting input unexpectedly paused its producer");
@@ -1120,6 +1129,49 @@ static void runConnectingSmallPartialCase(void)
     progressTeardown(&fixture);
 }
 
+static void runConnectingThresholdCase(bool reach_threshold)
+{
+    twfSetCase(reach_threshold ? "connecting FIFO pauses at exactly 4096 payload bytes"
+                               : "4095 connecting payload bytes drain without Pause or Resume");
+    tcp_progress_fixture_t fixture;
+    progressSetup(&fixture, false);
+    adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
+    ls->write_queue.blocked = true;
+    neighbor->fnEstD        = connectorEst;
+    sbuf_t *first           = twfTrackAcquired(sbufCreate(64 * 1024));
+    memorySet(sbufGetMutablePtr(first), 'A', 4095);
+    sbufSetLength(first, 4095);
+    submit(fixture.line, first);
+    twfRequire(pause_calls == 0 && ! ls->write_queue.pause_sent && ls->write_queue.blocked &&
+                   bufferqueueGetLength(&ls->write_queue.queue) == 4095,
+               "4095 connecting payload bytes paused before the payload watermark");
+    if (reach_threshold)
+    {
+        sbuf_t *last = twfTrackAcquired(sbufCreate(128 * 1024));
+        sbufWrite(last, "A", 1);
+        sbufSetLength(last, 1);
+        submit(fixture.line, last);
+        twfRequire(pause_calls == 1 && ls->write_queue.pause_sent &&
+                       bufferqueueGetLength(&ls->write_queue.queue) == 4096,
+                   "4096 connecting payload bytes did not latch exactly one Pause");
+    }
+    const size_t body_bytes = reach_threshold ? 4096 : 4095;
+    tcpconnectorOnOutBoundConnected(fixture.io);
+    size_t received = progressReadPeer(&fixture, 0, body_bytes);
+    for (unsigned i = 0; i < 32 && ! wioCheckWriteComplete(fixture.io); ++i)
+    {
+        discard wloopProcessEvents(fixture.env.loop, 0);
+        received = progressReadPeer(&fixture, received, body_bytes);
+    }
+    twfRequire(wioCheckWriteComplete(fixture.io) && received == body_bytes && fixture.est_calls == 1 &&
+                   pause_calls == (reach_threshold ? 1U : 0U) && fixture.resumes == (reach_threshold ? 1U : 0U),
+               "connecting FIFO changed bytes or emitted unmatched Pause/Resume on connection completion");
+    twfRequire(! ls->write_queue.blocked && ! ls->write_queue.pause_sent &&
+                   bufferbudgetGetUsage(&ls->write_queue.budget).charge == 0,
+               "connecting FIFO completion left retained accounting or a producer hold");
+    progressTeardown(&fixture);
+}
+
 static void runResolverPreEstCase(bool literal)
 {
     twfSetCase(literal ? "literal resolver path admits real connector payload before transport Est"
@@ -1129,6 +1181,7 @@ static void runResolverPreEstCase(bool literal)
     adapter_lstate_t *ls    = lineGetState(fixture.line, adapter);
     ls->write_queue.blocked = true; // Mock only the pending socket connect; writes and completion use production paths.
     neighbor->fnEstD        = connectorEst;
+    neighbor->fnResumeD     = resolverResume;
     address_context_t *dest = lineGetDestinationAddressContext(fixture.line);
     if (literal)
         addresscontextSetIpAddress(dest, "127.0.0.1");
@@ -1158,18 +1211,20 @@ static void runResolverPreEstCase(bool literal)
     }
     twfRequire(fixture.init_calls == 1 && fixture.est_calls == 0 && ls->write_queue.blocked &&
                    bufferqueueGetEntryCount(&ls->write_queue.queue) == 1 &&
-                   bufferqueueGetCharge(&ls->write_queue.queue) > 0 && pause_calls == 1,
+                   bufferqueueGetCharge(&ls->write_queue.queue) > 0 && ! ls->write_queue.pause_sent &&
+                   pause_calls == (literal ? 0U : 1U) && fixture.resumes == (literal ? 0U : 1U),
                "initialized connector did not admit DNS/literal payload before Est");
     sbuf_t *second = bufferpoolGetSmallBuffer(fixture.env.pool);
     sbufWrite(second, "B", 1);
     sbufSetLength(second, 1);
     tunnelUpStreamPayload(fixture.resolver, fixture.line, second);
     twfRequire(bufferqueueGetEntryCount(&ls->write_queue.queue) == 2,
-               "admitted connecting payload was lost after Pause");
+               "admitted connecting payload was lost before Est");
     tcpconnectorOnOutBoundConnected(fixture.io);
     char received[2];
     twfRequire(recv(fixture.peer, received, sizeof(received), 0) == sizeof(received) &&
-                   memoryEqual(received, "AB", 2) && fixture.est_calls == 1 && fixture.resumes == 1,
+                   memoryEqual(received, "AB", 2) && fixture.est_calls == 1 && fixture.resumes == (literal ? 0U : 1U) &&
+                   pause_calls == (literal ? 0U : 1U),
                "connect completion lost FIFO, Est or pressure release through resolver");
     twfRequire(! ls->write_queue.blocked && bufferqueueGetCharge(&ls->write_queue.queue) == 0 &&
                    ls->write_queue.active.cost.charge == 0,
@@ -1450,6 +1505,8 @@ int main(void)
     runEstReentryCase(false);
     runEstReentryCase(true);
     runConnectingSmallPartialCase();
+    runConnectingThresholdCase(false);
+    runConnectingThresholdCase(true);
     runLateInitCase();
     runResolverPreEstCase(false);
     runResolverPreEstCase(true);

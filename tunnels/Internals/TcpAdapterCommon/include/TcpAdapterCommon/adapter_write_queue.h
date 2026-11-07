@@ -6,7 +6,9 @@
 enum
 {
     kAwqMaxRetained    = 1U << 24,
-    kAwqPauseThreshold = 1U << 10
+    kAwqPauseThreshold = 1U << 12,
+    // Ordinary TCP read buffers retain 64–128 KiB even for a small payload.
+    kAwqPauseChargeThreshold = 1U << 20
 };
 
 typedef enum awq_admit_result_e
@@ -61,6 +63,8 @@ static inline void awqRefreshPending(adapter_write_queue_t *q, size_t pending)
  * caller owning that exact buffer with its active cost reserved for transfer to
  * WIO. Refusal recycles once. Paused empty inputs remain charged FIFO entries;
  * direct empty inputs undergo admission, then recycle without a socket write.
+ * Blocked input pauses at either the logical-byte or independent capacity-charge
+ * watermark, including the active WIO reservation in both totals.
  * QueuedPause has already published ownership, accounting and the Pause latch. */
 WW_MUST_USE awq_admit_result_t awqAdmit(adapter_write_queue_t *q, buffer_pool_t *pool, sbuf_t **buf);
 

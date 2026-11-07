@@ -36,7 +36,7 @@ awq_admit_result_t awqAdmit(adapter_write_queue_t *q, buffer_pool_t *pool, sbuf_
         }
         *buf                             = NULL;
         const buffer_budget_cost_t usage = awqGetUsage(q);
-        if ((usage.bytes >= kAwqPauseThreshold || usage.charge >= kAwqPauseThreshold) && awqTakePause(q))
+        if ((usage.bytes >= kAwqPauseThreshold || usage.charge >= kAwqPauseChargeThreshold) && awqTakePause(q))
             return kAwqQueuedPause;
         return kAwqQueued;
     }

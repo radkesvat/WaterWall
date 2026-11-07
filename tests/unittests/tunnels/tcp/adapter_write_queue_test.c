@@ -2,8 +2,8 @@
  * Covers: shared TCP adapter FIFO, active write accounting and notification latches.
  * Setup: worker pool fixture without lines or sockets; the scenario acts as WIO's
  * independent buffer owner and publishes explicit partial/completed byte counts.
- * Cases: direct/queued ownership, original charge through partial progress, exact
- * charge boundaries, empty inputs, deferred Resume, failed writes and terminal pops.
+ * Cases: direct/queued ownership, pooled startup input, logical-byte and capacity
+ * watermarks, active-write accounting, empty inputs, deferred Resume and terminal pops.
  * Checks: FIFO bytes/representation, exclusive buffer recycling, charge/entry
  * settlement and exactly one notification per actual Pause/Resume cycle.
  * Limits: socket callbacks, Est dispatch and close reentry belong to the adapter suites.
@@ -37,7 +37,7 @@ static void requireUsage(adapter_write_queue_t *q, size_t bytes, size_t charge, 
 
 static void completeOwned(adapter_write_queue_t *q, sbuf_t *buf, const char *expected, uint32_t bytes)
 {
-    char actual[8];
+    char actual[4096];
     twfRequire(buf != NULL && bytes <= sizeof(actual) && sbufGetLength(buf) == bytes,
                "drain returned the wrong payload length");
     sbufReadRangeToMemory(buf, actual, bytes);
@@ -109,35 +109,111 @@ static void testShortWriteAndResume(void)
     awqDestroy(&q);
 }
 
-static void testConnectingThresholds(void)
+static void testConnectingPoolBuffer(uint32_t capacity)
 {
-    twfSetCase("connecting queue threshold counts allocation charge and preserves empty entries");
+    twfSetCase("tiny connecting payload in a production-sized pooled buffer does not pause");
+    twfWorkerEnvSetup(&env, capacity, 0);
     adapter_write_queue_t q;
     awqInit(&q, true);
-    const uint32_t overhead = (uint32_t) (sizeof(sbuf_t) + kSbufAllocationAlignment);
-    sbuf_t        *buf      = ordinary(kAwqPauseThreshold - overhead - kCpuLineCacheSize, "A", 1);
-    const size_t   charge   = sbufGetQueueCharge(buf);
-    twfRequire(charge == kAwqPauseThreshold - kCpuLineCacheSize && awqAdmit(&q, env.pool, &buf) == kAwqQueued &&
-                   buf == NULL,
-               "below-threshold connecting queue notified Pause");
+    sbuf_t *buf = bufferpoolGetLargeBuffer(env.pool);
+    sbufWrite(buf, "A", 1);
+    sbufSetLength(buf, 1);
+    const size_t charge = sbufGetQueueCharge(buf);
+    twfRequire(sbufGetTotalCapacityNoPadding(buf) == capacity && charge > 4096,
+               "startup fixture did not retain a production-sized ordinary buffer");
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued && buf == NULL && ! q.pause_sent,
+               "tiny connecting payload paused solely for one ordinary read allocation");
+    requireUsage(&q, 1, charge, 1);
     buf = awqNextToWrite(&q, env.pool);
     twfRequire(awqAfterWrite(&q, 0, 1, 1) == kAwqWriteBlocked && ! q.pause_sent,
                "resumed connecting FIFO invented a Pause latch");
+    twfRequire(sbufGetLength(buf) == 1 && memoryEqual(sbufGetRawPtr(buf), "A", 1),
+               "connecting drain changed the admitted payload");
     bufferpoolReuseBuffer(env.pool, buf);
     awqRefreshPending(&q, 0);
     awqReleaseCompleted(&q);
     twfRequire(awqNextToWrite(&q, env.pool) == NULL && ! awqTakeResume(&q), "unpaused connecting FIFO emitted Resume");
+    requireUsage(&q, 0, 0, 0);
     awqDestroy(&q);
+    twfWorkerEnvTeardown(&env);
+}
 
+static void testConnectingByteThreshold(void)
+{
+    twfSetCase("connecting input pauses once at 4096 logical bytes and retains FIFO order");
+    adapter_write_queue_t q;
     awqInit(&q, true);
-    buf = ordinary(kAwqPauseThreshold - overhead, NULL, 0);
-    twfRequire(sbufGetQueueCharge(buf) == kAwqPauseThreshold && awqAdmit(&q, env.pool, &buf) == kAwqQueuedPause &&
-                   buf == NULL,
-               "exact charge threshold missed Pause or discarded empty ownership");
-    requireUsage(&q, 0, kAwqPauseThreshold, 1);
+    char prefix[4095];
+    memorySet(prefix, 'A', sizeof(prefix));
+    sbuf_t *buf = ordinary(sizeof(prefix), prefix, sizeof(prefix));
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued && buf == NULL && ! q.pause_sent,
+               "4095 logical connecting bytes paused before the watermark");
+    buf = ordinary(1, "B", 1);
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueuedPause && buf == NULL && q.pause_sent &&
+                   awqGetUsage(&q).bytes == 4096,
+               "4096 logical connecting bytes did not publish exactly one Pause");
+    buf = ordinary(1, "C", 1);
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued && buf == NULL && ! awqTakeResume(&q),
+               "continued admission repeated Pause or resumed a blocked writer");
+    completeOwned(&q, awqNextToWrite(&q, env.pool), prefix, sizeof(prefix));
+    completeOwned(&q, awqNextToWrite(&q, env.pool), "B", 1);
+    completeOwned(&q, awqNextToWrite(&q, env.pool), "C", 1);
+    twfRequire(awqNextToWrite(&q, env.pool) == NULL && awqTakeResume(&q) && ! awqTakeResume(&q),
+               "logical-byte pressure did not settle with one Resume");
+    requireUsage(&q, 0, 0, 0);
+    awqDestroy(&q);
+}
+
+static void testConnectingChargeThreshold(void)
+{
+    twfSetCase("empty connecting input pauses at the independent capacity watermark");
+    adapter_write_queue_t q;
+    awqInit(&q, true);
+    const uint32_t overhead = (uint32_t) (sizeof(sbuf_t) + kSbufAllocationAlignment);
+    sbuf_t        *buf      = ordinary(kAwqPauseChargeThreshold - 2U * overhead, NULL, 0);
+    twfRequire(sbufGetQueueCharge(buf) == kAwqPauseChargeThreshold - overhead &&
+                   awqAdmit(&q, env.pool, &buf) == kAwqQueued && buf == NULL && ! q.pause_sent,
+               "capacity below its independent watermark unexpectedly paused");
+    buf = ordinary(0, NULL, 0);
+    twfRequire(sbufGetQueueCharge(buf) == overhead && awqAdmit(&q, env.pool, &buf) == kAwqQueuedPause && buf == NULL,
+               "exact capacity watermark missed Pause or discarded empty ownership");
+    requireUsage(&q, 0, kAwqPauseChargeThreshold, 2);
     twfRequire(awqGetQueuedBytes(&q) == 0 && q.pause_sent, "empty entry acquired bytes or failed to publish Pause");
     twfRequire(awqNextToWrite(&q, env.pool) == NULL && awqTakeResume(&q) && ! awqTakeResume(&q),
                "empty-only drain failed to settle its notification");
+    requireUsage(&q, 0, 0, 0);
+    awqDestroy(&q);
+}
+
+static void testConnectingActiveBytes(void)
+{
+    twfSetCase("connecting watermark counts remaining WIO bytes together with queued payload");
+    adapter_write_queue_t q;
+    awqInit(&q, true);
+    char prefix[3000];
+    memorySet(prefix, 'A', sizeof(prefix));
+    sbuf_t *buf = ordinary(sizeof(prefix), prefix, sizeof(prefix));
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued, "small connecting prefix unexpectedly paused");
+    sbuf_t *active = awqNextToWrite(&q, env.pool);
+    twfRequire(awqAfterWrite(&q, 1000, sizeof(prefix), 2000) == kAwqWriteBlocked && ! q.pause_sent,
+               "partial connecting drain invented a Pause");
+    char suffix[2095];
+    memorySet(suffix, 'B', sizeof(suffix));
+    buf = ordinary(sizeof(suffix), suffix, sizeof(suffix));
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueued && ! q.pause_sent && awqGetUsage(&q).bytes == 4095,
+               "connecting pressure counted consumed WIO bytes");
+    buf = ordinary(1, "C", 1);
+    twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueuedPause && q.pause_sent && awqGetQueuedBytes(&q) == 2096 &&
+                   awqGetUsage(&q).bytes == 4096,
+               "connecting pressure omitted the remaining active WIO bytes");
+    bufferpoolReuseBuffer(env.pool, active);
+    awqRefreshPending(&q, 0);
+    awqReleaseCompleted(&q);
+    twfRequire(! awqTakeResume(&q), "active completion resumed before the queued suffix drained");
+    completeOwned(&q, awqNextToWrite(&q, env.pool), suffix, sizeof(suffix));
+    completeOwned(&q, awqNextToWrite(&q, env.pool), "C", 1);
+    twfRequire(awqNextToWrite(&q, env.pool) == NULL && awqTakeResume(&q) && ! awqTakeResume(&q),
+               "combined active/FIFO pressure did not settle with one Resume");
     requireUsage(&q, 0, 0, 0);
     awqDestroy(&q);
 }
@@ -147,7 +223,7 @@ static void testResumeAfterReentry(void)
     twfSetCase("drain preserves Pause latch across Est-like reentry and renewed socket pressure");
     adapter_write_queue_t q;
     awqInit(&q, true);
-    sbuf_t *buf = ordinary(kAwqPauseThreshold, "A", 1);
+    sbuf_t *buf = ordinary(kAwqPauseChargeThreshold, "A", 1);
     twfRequire(awqAdmit(&q, env.pool, &buf) == kAwqQueuedPause, "connecting fixture did not pause");
     completeOwned(&q, awqNextToWrite(&q, env.pool), "A", 1);
     twfRequire(awqNextToWrite(&q, env.pool) == NULL && ! awqIsBlocked(&q) && q.pause_sent,
@@ -274,10 +350,14 @@ static void testMixedRepresentations(void)
 
 int main(void)
 {
+    testConnectingPoolBuffer(64U * 1024U);
+    testConnectingPoolBuffer(128U * 1024U);
     twfWorkerEnvSetup(&env, 4096, 0);
     testDirectOwnership();
     testShortWriteAndResume();
-    testConnectingThresholds();
+    testConnectingByteThreshold();
+    testConnectingChargeThreshold();
+    testConnectingActiveBytes();
     testResumeAfterReentry();
     testHardLimitAndRefusal();
     testFailedWriteAndTerminalPop();
