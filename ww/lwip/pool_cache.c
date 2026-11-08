@@ -1,3 +1,4 @@
+#include "capacity_internal.h"
 #include "pool_cache_internal.h"
 
 #include "lwip/sys.h"
@@ -10,8 +11,9 @@ enum
     kCacheLimit  = 256
 };
 
-/* Free items carry the list metadata in their unused payload. Backing storage
- * stays in the original process-wide pools until shared runtime finalization. */
+/* Free items carry the list metadata in their unused payload. Cached items retain
+ * their backing allocation charge; after cache lists return, the shared allocator
+ * can reclaim fully free slabs. */
 typedef struct cached_item_s
 {
     struct cached_item_s *next;
@@ -74,6 +76,8 @@ static void returnList(const struct memp_desc *pool, cached_item_t *head)
 
 void *wwLwipPoolCacheMalloc(const struct memp_desc *pool)
 {
+    if (wwLwipCapacityRecoveryActive())
+        return wwLwipCapacityMallocRecovery(pool);
     const int index = cacheIndex(pool);
     if (index < 0)
         return wwLwipMempMallocShared(pool);
@@ -91,7 +95,7 @@ void *wwLwipPoolCacheMalloc(const struct memp_desc *pool)
 
     SYS_ARCH_DECL_PROTECT(protection);
     SYS_ARCH_PROTECT(protection);
-    if (*pool->tab == NULL)
+    if (! wwLwipCapacityHasFree(pool))
     {
         /* Registry lifetime is protected here. Atomic detach transfers only
          * free allocator storage; it never reads another engine's live objects.
@@ -104,7 +108,7 @@ void *wwLwipPoolCacheMalloc(const struct memp_desc *pool)
     if (item != NULL && cache != NULL)
     {
         cached_item_t *head = NULL;
-        for (unsigned i = 1; i < kCacheRefill && *pool->tab != NULL; ++i)
+        for (unsigned i = 1; i < kCacheRefill && wwLwipCapacityHasFree(pool); ++i)
             head = prepend(wwLwipMempMallocShared(pool), head);
         publish(cache, (unsigned) index, head);
     }
@@ -114,6 +118,11 @@ void *wwLwipPoolCacheMalloc(const struct memp_desc *pool)
 
 void wwLwipPoolCacheFree(const struct memp_desc *pool, void *item)
 {
+    if (wwLwipCapacityIsRecovery(item))
+    {
+        wwLwipCapacityFree(pool, item);
+        return;
+    }
     const int             index = cacheIndex(pool);
     ww_lwip_pool_cache_t *cache = wwLwipEnginePoolCache();
     if (index < 0 || cache == NULL)
@@ -136,13 +145,21 @@ void wwLwipPoolCacheFree(const struct memp_desc *pool, void *item)
 
 void wwLwipPoolCacheRegisterRxPool(const struct memp_desc *pool)
 {
+    wwLwipCapacityRegisterRxPool(pool);
 #if WW_LWIP_POOL_CACHE_ENABLED
     assert(pool->size >= sizeof(cached_item_t));
     const uintptr_t previous = atomicExchangeExplicit(&rx_pool, (uintptr_t) pool, memory_order_acq_rel);
     assert(previous == 0 || previous == (uintptr_t) pool);
     (void) previous;
-#else
-    (void) pool;
+#endif
+}
+
+void wwLwipPoolCacheReclaimAll(void)
+{
+#if WW_LWIP_POOL_CACHE_ENABLED
+    for (ww_lwip_pool_cache_t *cache = caches; cache != NULL; cache = cache->next)
+        for (unsigned i = 0; i < kWwLwipPoolCacheCount; ++i)
+            returnList(cachePool(i), take(cache, i));
 #endif
 }
 

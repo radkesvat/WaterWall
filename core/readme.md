@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -262,6 +262,13 @@ setting nobody chose. This applies to every field in the table, not only to
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
 | `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with 128 MiB socket ceilings and TCP autotuning maxima; also raises RAM-based TCP memory thresholds when `splice` is enabled. |
+| `tcp-stack-receive-budget` | integer | `33554432` (32 MiB) | Per-worker userspace TCP receive-window target. `0` disables adaptation; otherwise accepts whole byte counts from `65536` to `1073741824`. |
+| `lwip-memory-budget` | integer | `536870912` (512 MiB) | Process-wide byte ceiling for growable userspace stack pools and charged retained packet storage. Accepts whole numbers from `1048576` to the smaller of the platform's `SIZE_MAX` and `9223372036854775807`. |
+| `lwip-max-tcp-flows` | integer | `65536` | Process-wide maximum TCP connection-state objects, including handshakes and closing connections. |
+| `lwip-max-udp-flows` | integer | `65536` | Process-wide maximum UDP connection-state objects. |
+| `lwip-max-tcp-listeners` | integer | `1024` | Process-wide maximum userspace TCP listener objects. |
+| `lwip-max-tcp-segments` | integer | `1048576` | Process-wide maximum TCP segment objects used by send, retransmit and receive queues. |
+| `lwip-max-rx-wrappers` | integer | `262144` | Process-wide maximum wrappers retaining input packet storage. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -284,6 +291,13 @@ Recommended example:
     "mtu": 1500,
     "splice": true,
     "tcp-tune": true,
+    "tcp-stack-receive-budget": 33554432,
+    "lwip-memory-budget": 536870912,
+    "lwip-max-tcp-flows": 65536,
+    "lwip-max-udp-flows": 65536,
+    "lwip-max-tcp-listeners": 1024,
+    "lwip-max-tcp-segments": 1048576,
+    "lwip-max-rx-wrappers": 262144,
     "try-enabling-bbr": true,
     "libs-path": "libs/"
   }
@@ -388,6 +402,73 @@ does not persist them in `/etc/sysctl.conf`.
 RawSocket's separate tuning batch, controlled by `skip-sysctl`, tunes backlogs and
 other TCP parameters. The buffer and `tcp_mem` writes above belong exclusively to the core
 `tcp-tune` phase.
+
+### Userspace stack capacity (`lwip-*`)
+
+`ConnectionToPackets` and `PacketsToConnection` share these limits across every
+worker and node instance in the process. Configure them in `core.json` before
+startup; changes require restarting WaterWall. The five object limits accept
+whole numbers in `1..4294967295`; `0`, fractions, strings and other invalid values
+stop startup. TCP, UDP and listener defaults shown above are for the standard
+build; a custom build can supply different defaults. Explicit core settings take
+precedence. `ram-profile` does not change these limits.
+
+Pools acquire storage as demand grows. Setting a large object limit does not
+preallocate that number of objects, and setting a 512 MiB budget does not reserve
+512 MiB at startup. The memory budget charges allocated pool storage, its headers
+and alignment, storage held in worker caches, CTP packet-handoff storage in both
+directions, and PTC input buffers while their custom pbuf retains them. Application
+pending/ACK queues and receive staging after pbuf ownership ends have separate
+limits. Idle cached pool storage stays charged until reclaimed. TCP segments,
+payload blocks and packet buffers compete for the same budget.
+
+Within a byte budget `B`, the allocator keeps `R = min(1048576, floor(B / 16))`
+bytes of headroom for recovery traffic. Ordinary data and its caches can use at
+most `B - R`; only eligible validated TCP ACK/RST packets with no payload and
+TCP ACK/RST/keepalive output can use the separate recovery allocation path. This
+lets acknowledgements release queued send data when ordinary capacity is full.
+The headroom is inside the configured budget and is not preallocated memory or
+an additional allowance. Recovery traffic remains bounded and can also be
+refused when its own headroom is exhausted.
+
+The RX-wrapper limit `L` includes recovery slots: when `L > 1`,
+`min(256, max(1, floor(L / 16)))` slots are kept for recovery; `L = 1` has no
+reserved slot. With the default `262144`, ordinary admission can use `261888`
+wrappers and recovery can use `256`. CTP also keeps 1 MiB and 256 allocations
+inside its existing per-instance 16 MiB/4096-allocation handoff limit, leaving
+15 MiB/3840 for ordinary handoffs. Packet input and handoff try ordinary admission
+first and fall back to these reserves only for eligible recovery packets.
+SYN, FIN and application data remain subject to ordinary capacity.
+
+The byte budget and object limits apply together: raising the TCP flow limit
+cannot guarantee that the byte budget has room for those flows and their traffic.
+The budget is not a process RSS cap; other nodes, line state, unrelated buffers,
+allocator overhead and native kernel resources consume additional memory. Keep
+headroom for them and for the host or container's memory allowance. A configured
+capacity refusal remains recoverable through the affected protocol's admission,
+retry or backpressure path; actual heap allocation failure remains fatal.
+
+Size for simultaneous flows, not registered users. For example, 1,000 users with
+20 simultaneous TCP connections need at least 20,000 TCP states plus headroom
+for handshakes and connections still closing. Flow limits are shared rather than
+multiplied by `workers`. Segment and wrapper demand depends on traffic, packet
+sizes and queue pressure, so validate the intended workload before raising caps.
+Existing per-flow queue and handoff limits remain bounded independently.
+
+To inspect capacity, grant an APIServer client the `stack-stats` operation on a
+`ConnectionToPackets` or `PacketsToConnection` instance and send the JSON body
+`{}`. The read-only result describes the entire process: current and peak reserved
+bytes, retained input charges, recovery headroom and its current use/refusals,
+byte-budget refusals, per-pool limits, allocated and held objects, peak held
+objects, count/byte refusals, and source-port usage. Recovery bytes are included
+in the reported total reserved bytes, not added to them.
+`held` includes free objects reserved in worker caches; it is not a live-connection
+count. Byte totals and cumulative counters are decimal strings. The node
+references describe the operation and its API limits.
+
+`tcp-stack-receive-budget` remains a separate per-worker advertised-window target;
+it does not enlarge the allocator budget. `tcp-tune` controls native kernel
+settings. A `TunDevice -> PacketsToConnection` chain still uses these lwIP limits.
 
 ### `ram-profile`
 

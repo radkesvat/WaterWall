@@ -1,6 +1,8 @@
 #include "structure.h"
 
+#include "capacity.h"
 #include "loggers/network_logger.h"
+#include "recovery_packet.h"
 
 enum
 {
@@ -62,6 +64,10 @@ static void my_pbuf_free_custom(struct pbuf *p)
             sbufDestroy(custombuf->sbuf);
         }
     }
+    if (custombuf->recovery_allocation)
+        wwLwipCapacityReleaseExternalRecovery(custombuf->allocation_charge);
+    else
+        wwLwipCapacityReleaseExternal(custombuf->allocation_charge);
     LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
 }
 
@@ -135,6 +141,43 @@ static sbuf_t *ptcAcquireAlignedCopy(buffer_pool_t *pool, sbuf_t *src)
     return dst;
 }
 
+/* Only exhausted ordinary admission reaches this path. Compact control packets
+ * before retaining them so a large device scratch cannot spend recovery space.
+ * The allocation privilege ends here: tcp_sent may flush application data while
+ * processing an ACK, and that data must use ordinary capacity. */
+static my_custom_pbuf_t *ptcAcquireRecoveryInput(buffer_pool_t *pool, sbuf_t **packet, struct netif *inp,
+                                                 size_t *charge)
+{
+    sbuf_t      *source = *packet;
+    const size_t length = sbufGetLength(source);
+    if (! wwLwipPacketIsRecovery(sbufGetRawPtr(source), length, inp->ww_trusted_receive_checksums != 0))
+        return NULL;
+    size_t     capacity;
+    const bool representable =
+        sbufTryComputeCapacity(length, 0, &capacity) && sbufTryComputeQueueCharge(capacity, charge);
+    assert(representable);
+    discard representable;
+    if (! wwLwipCapacityTryReserveExternalRecovery(*charge))
+        return NULL;
+    my_custom_pbuf_t *wrapper =
+#ifdef PTC_RECEIVE_ADMISSION_TEST_HOOKS
+        ptc_receive_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
+#endif
+                                                                    wwLwipCapacityMallocRecovery(&memp_RX_POOL);
+    if (wrapper == NULL)
+    {
+        wwLwipCapacityReleaseExternalRecovery(*charge);
+        return NULL;
+    }
+    sbuf_t *compact = sbufCreateWithPadding(length, 0);
+    assert(sbufGetAllocationCharge(compact) == *charge);
+    sbufSetLength(compact, length);
+    memoryCopy(sbufGetMutablePtr(compact), sbufGetRawPtr(source), length);
+    bufferpoolReuseBuffer(pool, source);
+    *packet = compact;
+    return wrapper;
+}
+
 static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
 {
     // Runs on the packet line's event worker; record that identity with the
@@ -181,23 +224,29 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         ptc_receive_admission_test_hooks.fail_rx_wrapper_allocation ? NULL :
 #endif
                                                                     (my_custom_pbuf_t *) LWIP_MEMPOOL_ALLOC(RX_POOL);
-    if (custombuf == NULL)
+    size_t allocation_charge   = sbufGetAllocationCharge(buf);
+    bool   recovery_allocation = false;
+    if (custombuf == NULL || ! wwLwipCapacityTryReserveExternal(allocation_charge))
     {
-        // Shared by every worker, so the gate has to be atomic. A silent drop
-        // here used to be indistinguishable from a network loss.
-        if (atomicLogRateLimiterShouldLog(&rx_pool_exhaustion_log, kPtcRxPoolExhaustionLogIntervalMs))
+        if (custombuf != NULL)
+            LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
+        custombuf = ptcAcquireRecoveryInput(origin_pool, &buf, inp, &allocation_charge);
+        if (custombuf == NULL)
         {
-            LOGW("PacketsToConnection: dropping a packet, the zero-copy RX wrapper pool (%d) is exhausted",
-                 (int) WW_LWIP_RX_WRAPPER_POOL_SIZE);
+            if (atomicLogRateLimiterShouldLog(&rx_pool_exhaustion_log, kPtcRxPoolExhaustionLogIntervalMs))
+                LOGW("PacketsToConnection: dropping a packet, lwIP receive capacity exhausted; inspect stack-stats");
+            bufferpoolReuseBuffer(origin_pool, buf);
+            return;
         }
-        bufferpoolReuseBuffer(origin_pool, buf);
-        return;
+        recovery_allocation = true;
     }
 
     custombuf->p.custom_free_function = my_pbuf_free_custom;
     custombuf->sbuf                   = buf;
     custombuf->origin_pool            = origin_pool;
     custombuf->origin_wid             = origin_wid;
+    custombuf->allocation_charge      = allocation_charge;
+    custombuf->recovery_allocation    = recovery_allocation;
 
     /* The slow path above owns every valid misaligned cursor. */
     assert(((uintptr_t) sbufGetMutablePtr(buf) % MEM_ALIGNMENT) == 0);
@@ -206,8 +255,7 @@ static void ptcSubmitPacketToStack(sbuf_t *buf, struct netif *inp)
         PBUF_RAW, sbufGetLength(buf), PBUF_REF, &custombuf->p, sbufGetMutablePtr(buf), sbufGetLength(buf));
     if (p == NULL)
     {
-        bufferpoolReuseBuffer(origin_pool, buf);
-        LWIP_MEMPOOL_FREE(RX_POOL, custombuf);
+        my_pbuf_free_custom(&custombuf->p.pbuf);
         return;
     }
 

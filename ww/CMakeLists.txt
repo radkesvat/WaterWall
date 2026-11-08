@@ -176,6 +176,7 @@ add_library(ww STATIC
     # LWIP integration
     lwip/ww_lwip.c
     lwip/engine_runtime.c
+    lwip/capacity_api.c
     
     # Node builder
     node_builder/config_file.c
@@ -1281,20 +1282,17 @@ set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS}
     WW_LWIP_HAVE_ERRNO_H=$<IF:${HAVE_ERRNO_H},1,0>
 )
 
-# lwIP's pools are static arrays whose sizes are baked into ww_lwip *and* into
-# every tunnel that includes lwipopts.h, so these capacity knobs must be one
-# value for the whole build. Forwarding them through LWIP_DEFINITIONS, which
-# ww_lwip publishes PUBLIC and ww re-exports, is what guarantees that: a bare
-# -DWW_LWIP_MAX_TCP_FLOWS on one target would silently disagree with the rest.
-# lwipopts.h defaults each of them, so an unset cache entry changes nothing.
+# Flow/listener overrides select startup defaults for the runtime capacity budget.
+# Publish one value to the stack and all consumers; JSON may choose another limit.
+# Reassembly retains a separate finite datagram inventory.
 set(WW_LWIP_MAX_TCP_FLOWS "" CACHE STRING
-    "Concurrent lwIP TCP flows to size the global pools for (blank = lwipopts.h default)")
+    "Default runtime lwIP TCP PCB limit (blank = capacity.h default)")
 set(WW_LWIP_MAX_UDP_FLOWS "" CACHE STRING
-    "Concurrent lwIP UDP flows to size the global pools for (blank = lwipopts.h default)")
+    "Default runtime lwIP UDP PCB limit (blank = capacity.h default)")
 set(WW_LWIP_MAX_REASS_DATAGRAMS "" CACHE STRING
     "Simultaneously reassembling fragmented IP datagrams (blank = lwipopts.h default)")
 set(WW_LWIP_MAX_TCP_LISTENERS "" CACHE STRING
-    "Concurrent lwIP TCP listener PCBs, one per packet worker that sees TCP (blank = lwipopts.h default)")
+    "Default runtime lwIP TCP listener PCB limit (blank = capacity.h default)")
 
 # WW_LWIP_MAX_REASS_FRAGS_PER_DATAGRAM is deliberately not a cache variable: it
 # describes the fragment shape the budget assumes rather than a capacity a
@@ -1315,54 +1313,19 @@ foreach(ww_lwip_capacity_knob
     endif()
 endforeach()
 
-# lwIP stores every pool count in a u16_t. The preprocessor guards in lwipopts.h
-# and lwippools.h catch an overflow too, but only after configure and part of a build, so
-# the derived products are checked here where the mistake was made. The ratios
-# must track both headers.
-set(ww_lwip_tcp_flows "${WW_LWIP_MAX_TCP_FLOWS}")
-set(ww_lwip_udp_flows "${WW_LWIP_MAX_UDP_FLOWS}")
-set(ww_lwip_reass "${WW_LWIP_MAX_REASS_DATAGRAMS}")
-set(ww_lwip_listeners "${WW_LWIP_MAX_TCP_LISTENERS}")
-if(ww_lwip_tcp_flows STREQUAL "")
-    set(ww_lwip_tcp_flows 2048)
-endif()
-if(ww_lwip_udp_flows STREQUAL "")
-    set(ww_lwip_udp_flows 2048)
-endif()
-if(ww_lwip_reass STREQUAL "")
-    set(ww_lwip_reass 32)
-endif()
-if(ww_lwip_listeners STREQUAL "")
-    set(ww_lwip_listeners 320)
-endif()
-
-math(EXPR ww_lwip_tcp_seg "${ww_lwip_tcp_flows} * 16")
-math(EXPR ww_lwip_reass_pbufs "${ww_lwip_reass} * 16")
-math(EXPR ww_lwip_pbuf_pool "${ww_lwip_reass_pbufs} * 3")
-# Mirrors WW_LWIP_RX_WRAPPER_POOL_SIZE in lwipopts.h; the two must agree.
-math(EXPR ww_lwip_rx_wrappers "${ww_lwip_reass_pbufs} + ${ww_lwip_tcp_flows} + 256")
-# Largest malloc class count: four entries per rounded flow share, divisor 4.
-math(EXPR ww_lwip_heap_entries "4 * ((${ww_lwip_tcp_flows} + ${ww_lwip_udp_flows} + 3) / 4)")
-
-foreach(ww_lwip_derived
-        "WW_LWIP_MAX_TCP_FLOWS:MEMP_NUM_TCP_SEG:${ww_lwip_tcp_seg}"
-        "WW_LWIP_MAX_UDP_FLOWS:MEMP_NUM_UDP_PCB:${ww_lwip_udp_flows}"
-        "WW_LWIP_MAX_TCP_LISTENERS:MEMP_NUM_TCP_PCB_LISTEN:${ww_lwip_listeners}"
-        "WW_LWIP_MAX_TCP_FLOWS/WW_LWIP_MAX_UDP_FLOWS:LWIP_MALLOC_MEMPOOL:${ww_lwip_heap_entries}"
-        "WW_LWIP_MAX_REASS_DATAGRAMS:IP_REASS_MAX_PBUFS:${ww_lwip_reass_pbufs}"
-        "WW_LWIP_MAX_REASS_DATAGRAMS:PBUF_POOL_SIZE:${ww_lwip_pbuf_pool}"
-        "WW_LWIP_MAX_REASS_DATAGRAMS:WW_LWIP_RX_WRAPPER_POOL_SIZE:${ww_lwip_rx_wrappers}"
-        "WW_LWIP_MAX_TCP_FLOWS:WW_LWIP_RX_WRAPPER_POOL_SIZE:${ww_lwip_rx_wrappers}")
-    string(REPLACE ":" ";" ww_lwip_derived_parts "${ww_lwip_derived}")
-    list(GET ww_lwip_derived_parts 0 ww_lwip_derived_knob)
-    list(GET ww_lwip_derived_parts 1 ww_lwip_derived_name)
-    list(GET ww_lwip_derived_parts 2 ww_lwip_derived_value)
-    if(ww_lwip_derived_value GREATER 65535)
-        message(FATAL_ERROR
-            "${ww_lwip_derived_knob} makes ${ww_lwip_derived_name} ${ww_lwip_derived_value}, "
-            "which exceeds the 65535 lwIP's pool counters can index")
+# Object limits use wide counters. Fragment reassembly retains its upstream
+# 16-bit protocol counters and must still fit independently of flow capacity.
+foreach(ww_lwip_capacity_knob
+        WW_LWIP_MAX_TCP_FLOWS WW_LWIP_MAX_UDP_FLOWS WW_LWIP_MAX_TCP_LISTENERS)
+    if(NOT "${${ww_lwip_capacity_knob}}" STREQUAL "" AND
+       ${ww_lwip_capacity_knob} GREATER 4294967295)
+        message(FATAL_ERROR "${ww_lwip_capacity_knob} must fit uint32_t")
     endif()
 endforeach()
+if(NOT "${WW_LWIP_MAX_REASS_DATAGRAMS}" STREQUAL "" AND
+   WW_LWIP_MAX_REASS_DATAGRAMS GREATER 1365)
+    message(FATAL_ERROR "WW_LWIP_MAX_REASS_DATAGRAMS exceeds the bounded reassembly/pbuf geometry")
+endif()
 
 if(NOT APPLE)
     set(LWIP_DEFINITIONS ${LWIP_DEFINITIONS} LWIP_DONT_PROVIDE_BYTEORDER_FUNCTIONS=1)
@@ -1386,7 +1349,7 @@ target_include_directories(ww_packet_batch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ne
 target_link_libraries(ww_packet_batch PUBLIC waterwall_runtime_options waterwall_cpu_options)
 target_link_libraries(ww PUBLIC ww_packet_batch)
 
-add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c)
+add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c)
 target_link_libraries(ww_lwip PUBLIC ww_packet_batch)
 target_include_directories(ww_lwip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 # Source-local engine modules must not merge their private macro namespaces.
@@ -1395,7 +1358,7 @@ set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
 # Private small-capacity raw build for shared-limit and concurrency regression tests.
 if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(ww_lwip_engine_test STATIC EXCLUDE_FROM_ALL
-        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c
+        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c
         ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
     target_include_directories(ww_lwip_engine_test PUBLIC ${LWIP_INCLUDE_DIRS})
     target_include_directories(ww_lwip_engine_test PRIVATE
@@ -1403,6 +1366,7 @@ if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(ww_lwip_engine_test_definitions ${LWIP_DEFINITIONS})
     list(FILTER ww_lwip_engine_test_definitions EXCLUDE REGEX "^WW_LWIP_MAX_")
     target_compile_definitions(ww_lwip_engine_test PUBLIC ${ww_lwip_engine_test_definitions}
+        WW_LWIP_DYNAMIC_POOLS=0
         WW_LWIP_MAX_TCP_FLOWS=16 WW_LWIP_MAX_UDP_FLOWS=8
         WW_LWIP_MAX_TCP_LISTENERS=4 WW_LWIP_MAX_REASS_DATAGRAMS=2
         TCP_LOCAL_PORT_RANGE_START=49152 TCP_LOCAL_PORT_RANGE_END=49160

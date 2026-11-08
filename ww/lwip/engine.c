@@ -1,6 +1,7 @@
 /* Establish MSVC compatibility types before lwIP can define fallback types. */
 #include "wdef.h"
 
+#include "capacity_internal.h"
 #include "engine_internal.h"
 #include "packet_batch.h"
 #include "pool_cache_internal.h"
@@ -102,6 +103,7 @@ void wwLwipEngineSharedInit(void)
 {
     LWIP_ASSERT("exclusive shared bootstrap", ! shared_initialized && current_engine == NULL);
     sys_init();
+    wwLwipCapacityInitialize();
     wwLwipPortsInitialize();
     control_size = alignedSize(sizeof(ww_lwip_engine_t));
     for (unsigned i = 0; i < kWwLwipState_tcp_lists; ++i)
@@ -128,6 +130,7 @@ void wwLwipEngineSharedCleanup(void)
     {
         LWIP_ASSERT("shared pool fully returned", memp_pools[i]->stats->used == 0);
     }
+    wwLwipCapacityCleanup();
     wwLwipPortCleanup();
     wwLwipPortsFinalize();
     shared_initialized = false;

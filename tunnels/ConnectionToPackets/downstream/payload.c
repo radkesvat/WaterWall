@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "recovery_packet.h"
 
 /* Routing identity for one complete return packet; fragments are classified
  * only to reject them before transport parsing or worker handoff. */
@@ -31,6 +32,7 @@ typedef struct ctp_inject_msg_s
 
     ctp_handoff_budget_t *budget;
     size_t                charge;
+    bool                  recovery_reserved;
 
     tunnel_t      *tunnel;
     ctp_flow_key_t key;
@@ -56,11 +58,15 @@ _Static_assert(offsetof(ctp_inject_msg_t, data) % MEM_ALIGNMENT == 0,
 
 static void ctpInjectMessageDestroy(void *payload)
 {
-    ctp_inject_msg_t     *msg    = payload;
-    ctp_handoff_budget_t *budget = msg->budget;
-    const size_t          charge = msg->charge;
+    ctp_inject_msg_t     *msg               = payload;
+    ctp_handoff_budget_t *budget            = msg->budget;
+    const size_t          charge            = msg->charge;
+    const bool            recovery_reserved = msg->recovery_reserved;
     memoryFreeAligned(msg);
-    ctpHandoffRelease(budget, charge);
+    if (recovery_reserved)
+        ctpHandoffReleaseRecovery(budget, charge);
+    else
+        ctpHandoffRelease(budget, charge);
 }
 
 /*
@@ -281,7 +287,7 @@ static bool ctpBuildPacketView(tunnel_t *t, const uint8_t *packet, uint32_t pack
  * is padded up to its own alignment, and offsetof() is what the payload actually
  * starts at.
  */
-static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, uint32_t len)
+static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, uint32_t len, bool recovery_eligible)
 {
     // An IPv4 packet cannot exceed this, and pbuf_alloced_custom() takes a
     // u16_t length, so a larger value could never be injected anyway. Checking
@@ -293,16 +299,18 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, 
 
     const size_t size   = offsetof(ctp_inject_msg_t, data) + (size_t) len;
     const size_t charge = size + max((size_t) MEM_ALIGNMENT, sizeof(void *));
-    if (! ctpHandoffReserve(budget, charge, true))
+    bool         recovery_reserved;
+    if (! ctpHandoffReserveIngress(budget, charge, recovery_eligible, &recovery_reserved))
         return NULL;
     ctp_inject_msg_t *msg = memoryAllocateAligned(size, MEM_ALIGNMENT);
 
     assert(((uintptr_t) msg->data % MEM_ALIGNMENT) == 0);
 
-    msg->tunnel = NULL;
-    msg->budget = budget;
-    msg->charge = charge;
-    msg->len    = len;
+    msg->tunnel            = NULL;
+    msg->budget            = budget;
+    msg->charge            = charge;
+    msg->len               = len;
+    msg->recovery_reserved = recovery_reserved;
     return msg;
 }
 
@@ -314,7 +322,7 @@ static ctp_inject_msg_t *ctpAllocatePacketMessage(ctp_handoff_budget_t *budget, 
  */
 void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    const bool recalculate_checksum = packettunnelTakeChecksumRequest(buf);
+    bool recalculate_checksum = packettunnelTakeChecksumRequest(buf);
 
     if (UNLIKELY(! ctpLineIsPacketLine(t, l)))
     {
@@ -333,16 +341,37 @@ void ctpTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
+    /* Classify bounded control bytes before admission. The stack copy settles
+     * checksum-repair requests without allocating or trusting unaligned input.
+     * A FIN may retain out-of-order state and cannot use recovery headroom. */
+    _Alignas(MEM_ALIGNMENT) uint8_t recovery_packet[kWwLwipRecoveryPacketMax];
+    const uint32_t                  packet_length     = sbufGetLength(buf);
+    bool                            recovery_eligible = false;
+    const uint8_t                  *packet_bytes      = sbufGetRawPtr(buf);
+    if (packet_length <= sizeof(recovery_packet))
+    {
+        memoryCopy(recovery_packet, packet_bytes, packet_length);
+        if (! packettunnelFinalizeChecksumRequest(recalculate_checksum, recovery_packet, packet_length))
+        {
+            lineReuseBuffer(l, buf);
+            ctpPacketIngressGateLeave(t);
+            return;
+        }
+        packet_bytes         = recovery_packet;
+        recalculate_checksum = false;
+        recovery_eligible    = wwLwipPacketIsRecovery(recovery_packet, packet_length, false);
+    }
+
     /* Copy into the aligned injection allocation before any typed packet access. */
     ctp_tstate_t     *ts  = tunnelGetState(t);
-    ctp_inject_msg_t *msg = ctpAllocatePacketMessage(ts->handoff_budget, sbufGetLength(buf));
+    ctp_inject_msg_t *msg = ctpAllocatePacketMessage(ts->handoff_budget, packet_length, recovery_eligible);
     if (UNLIKELY(msg == NULL))
     {
         lineReuseBuffer(l, buf);
         ctpPacketIngressGateLeave(t);
         return;
     }
-    memoryCopy(msg->data, sbufGetRawPtr(buf), msg->len);
+    memoryCopy(msg->data, packet_bytes, msg->len);
 
     if (UNLIKELY(! packettunnelFinalizeChecksumRequest(recalculate_checksum, msg->data, msg->len)))
     {

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -144,7 +144,8 @@ input reassembly are separate responsibilities.
 
 Packet handoff copies in both directions share a per-instance limit of **16 MiB**
 (including message metadata and explicit alignment padding) and **4096 allocations**.
-Admission reserves both before allocation or copying. Output refusal returns lwIP
+Admission reserves both and the process-wide `lwip-memory-budget` before
+allocation or copying. Output refusal returns lwIP
 `ERR_MEM`; TCP retains its stack retry behavior and UDP follows its send-error/drop
 policy. Return input that exceeds the budget is dropped, allowing TCP retransmission;
 this never discards already accepted application stream bytes. Dispatch remains
@@ -329,50 +330,135 @@ queued without bound.
 
 ## Capacity
 
-All lwIP-using nodes share one global set of statically sized pools, configured in `ww/lwip/lwipopts.h` and
-`ww/lwip/lwippools.h`. Four CMake cache variables size them, each validated as a positive integer and forwarded to
-every target that includes `lwipopts.h` - the pools are static arrays whose sizes are baked into both `ww_lwip` and the
-tunnels, so they must be one value for the whole build:
+All `ConnectionToPackets` and `PacketsToConnection` instances share one growable
+lwIP allocator and its startup limits across the process. Configure these fields
+under `misc` in `core.json`, not in the node's `settings`:
 
-| Variable | Default | What it sizes |
-| --- | --- | --- |
-| `WW_LWIP_MAX_TCP_FLOWS` | `2048` | TCP PCBs and the TCP segment pool |
-| `WW_LWIP_MAX_UDP_FLOWS` | `2048` | UDP PCBs |
-| `WW_LWIP_MAX_REASS_DATAGRAMS` | `32` | simultaneously reassembling fragmented datagrams |
-| `WW_LWIP_MAX_TCP_LISTENERS` | `320` | listener PCBs; `PacketsToConnection` needs one per packet worker that sees TCP, and up to 254 workers are supported |
+| Core setting | Standard default | Resource |
+| --- | ---: | --- |
+| `lwip-memory-budget` | `536870912` (512 MiB) | Pool storage and charged retained packet storage |
+| `lwip-max-tcp-flows` | `65536` | TCP connection-state objects, including handshake and closing states |
+| `lwip-max-udp-flows` | `65536` | UDP connection-state objects |
+| `lwip-max-tcp-listeners` | `1024` | TCP listener objects |
+| `lwip-max-tcp-segments` | `1048576` | TCP send, retransmit and receive segment objects |
+| `lwip-max-rx-wrappers` | `262144` | PTC wrappers retaining input packets |
 
-Every derived pool is checked at configure time as well as by preprocessor guards, so an override that would overflow
-lwIP's `u16_t` counters fails before the build starts.
+Object limits accept whole numbers in `1..4294967295`. The byte budget accepts
+whole numbers from `1048576` to the smaller of the target's `SIZE_MAX` and
+`9223372036854775807`. Invalid values fail startup; changes require a restart.
+Custom builds can change TCP, UDP and listener defaults; explicit core settings
+win. More workers do not multiply these process-wide limits, and `ram-profile`
+does not change them.
 
-The `mem_malloc` heap classes in `lwippools.h` are derived from **both** flow targets, because a UDP flow allocates
-`PBUF_RAM` from that same heap for every datagram it sends. Division is rounded up and floored at one entry, so a small
-override shrinks a size class rather than deleting it. The hot class holds a full-MSS segment copy; its size is computed
-from the transport headroom, `TCP_MSS`, and the allocator's own overhead, and a static assertion fails the build if a
-future change to headroom or alignment pushes a normal write past it. It was previously 1536 bytes, which no normal
-full-MSS write could fit, so every one of them skipped the class entirely.
+Storage grows on demand within both the byte ceiling and the relevant object
+limit. The budget charges pool slabs, their headers and alignment, free objects
+retained in worker caches, CTP packet-handoff storage in both directions, and
+PTC input buffers for as long as their custom pbuf retains them. Cached pool
+storage remains charged until reclaimed. It does not preallocate every allowed
+flow or reserve the entire byte budget at startup.
 
-The shared lwIP build retains its reassembly pool sizing, but this node's packet
-input rejects fragments before lwIP. These pool constants do not grant permission
-to submit fragments to either packet-to-stack consumer. Return packets use
-reference pbufs; TCP may retain those pbufs for out-of-order delivery.
-`PacketsToConnection` derives its wrapper pool from the shared budget, TCP flow
-target and a fixed reserve. Per-PCB `TCP_OOSEQ_MAX_PBUFS` limits bound one TCP
-peer's retained input. This change does not resize the shared pools.
+The allocator reserves `R = min(1048576, floor(B / 16))` bytes within the
+configured byte budget `B` for recovery traffic. Ordinary allocations and caches
+are limited to `B - R`. Eligible validated zero-payload TCP ACK/RST ingress and
+TCP ACK/RST/keepalive output use a separate recovery path so acknowledgements can
+release queued send data even when ordinary capacity is full. This is headroom
+inside the same cap, not extra or preallocated memory; recovery traffic can still
+be refused if that headroom is exhausted.
 
-TCP send/receive windows are protocol ceilings, not 2 MiB reserved per connection.
-Several stalled senders compete for the same segment and heap pools; full-MSS copies,
-small packets and ACK/control output consume different resource classes.
+RX wrappers have their own entry reserve within `lwip-max-rx-wrappers = L`:
+`min(256, max(1, floor(L / 16)))` entries when `L > 1`, and none when `L = 1`.
+The default `262144` therefore permits `261888` ordinary wrappers and `256`
+recovery wrappers. API pool counts and limits include both classes. CTP's fixed
+16 MiB/4096-allocation handoff ceiling similarly contains a 1 MiB/256-allocation
+recovery partition, leaving 15 MiB/3840 for ordinary handoffs. Packet input and
+handoff first try ordinary admission, then eligible recovery packets may fall
+back to their reserved capacity. SYN, FIN and application payload remain ordinary.
 
-These pools are static and shared across workers. Lower the cache variables to trade concurrency for memory;
-a value large enough to overflow lwIP's `u16_t` pool counters fails the build instead of silently truncating.
-The shared TCP/UDP occupancy arrays add 512 KiB of fixed control storage. Engine tables and timeout records
-are separate allocations for active workers. Pool capacity, executable BSS and runtime RSS are distinct measures.
+The budget is not a process RSS limit. Application pending/ACK queues, receive
+staging after pbuf ownership ends, line/node state, engine/port control tables,
+unrelated buffers and native kernel resources have their own memory costs.
+CTP's per-instance 16 MiB/4096-allocation handoff limit and both bridges'
+per-flow queue, out-of-order and closer limits still apply independently.
+`tcp-stack-receive-budget` controls advertised receive windows per worker and
+does not enlarge any allocator limit. TCP send/receive windows are protocol
+ceilings, not per-connection memory reservations.
 
-Each worker engine has its own 255-index netif namespace, including its loopback and every node attached on
-that worker. Equal indices in different engines do not identify the same interface: routing validates the engine
-and exact netif. Exhaustion refuses attachment promptly and sheds the affected flow.
+Capacity refusal can reject a new flow, drop a packet or defer a TCP write until
+resources return, according to the affected path. Actual heap allocation failure
+remains fatal. Size for simultaneous flows and traffic, including handshakes and
+closing connections; a user can have many flows. A
+`TunDevice -> PacketsToConnection` chain uses this same userspace allocator.
 
-Pool exhaustion always closes or sheds the affected flow, with a rate-limited diagnostic; it never aborts the process.
+Each worker still has 255 netif indices shared by its loopback and attached nodes.
+Exhaustion refuses an attachment. Packet ingress still requires complete IPv4
+datagrams; larger pool limits do not enable fragment input or change reassembly
+policy.
+
+### Source-port capacity
+
+CTP reserves the complete wire tuple before opening TCP or UDP: protocol,
+source address and port, destination address and port. The same source port may
+serve different destinations or different configured source addresses. Identical
+tuples remain exclusive across workers and netifs until their PCB is freed,
+including TCP `TIME_WAIT`; changing workers cannot bypass this protection.
+
+For one fixed source IPv4, destination IPv4 and destination port, automatic
+allocation has 16,383 TCP ports (`49152..65534`) or 16,384 UDP ports
+(`49152..65535`), reduced by existing reservations. Unconnected or wildcard
+reservations conservatively exclude their numeric port from scoped allocation.
+Each CTP instance still uses one configured `source-ipv4`; this does not add an
+automatic source-address pool. More diverse destinations can share port numbers,
+but increasing PCB or memory limits cannot remove a fixed tuple's port ceiling.
+
+## Capacity API (`stack-stats`)
+
+Both bridge nodes register the read-only `stack-stats` operation. Grant an
+APIServer client the exact configuration, node and operation permission. Use the
+existing API client and [normal API framing](../../WaterWall-Docs/docs/05-devguides/api/protocol.mdx) to send a request such as:
+
+```json
+{
+  "id": "capacity-1",
+  "auth": {"client": "monitor", "token": "<configured token>"},
+  "selector": {"config": "edge", "node": "connection-to-packets"},
+  "operation": "stack-stats",
+  "content_type": "application/json",
+  "body_encoding": "utf8",
+  "body": "{}"
+}
+```
+
+Replace the selector and credentials with the configured values. The request
+body is an empty JSON object, at most 64 bytes including optional JSON whitespace;
+fields, trailing data and embedded NUL are rejected. The response is JSON encoded
+as UTF-8 inside the ordinary API result body. It describes the whole process,
+not just the selected node or calling worker.
+
+| Result field | Meaning |
+| --- | --- |
+| `scope`, `dynamic` | `"process"` and whether pools grow on demand |
+| `memory_budget`, `reserved_bytes`, `peak_reserved_bytes` | Configured ceiling, currently charged storage and its high-water mark |
+| `recovery_headroom`, `recovery_bytes`, `external_recovery_bytes`, `recovery_refusals` | Recovery allowance inside the cap, its currently charged storage, its external-storage subset and recovery byte-capacity refusals |
+| `external_bytes`, `external_refusals` | Charged CTP handoff/PTC pbuf-retained storage and refused external reservations |
+| `byte_refusals`, `reclaimed_bytes` | Shared byte-budget refusals and storage reclaimed under pressure |
+| `limits` | Effective TCP/UDP flow, listener, segment and RX-wrapper limits |
+| `pools` | Per-pool name, object size, limit, allocated/held objects, peak held, reserved bytes and count/byte refusals |
+| `ports.tcp`, `ports.udp` | Active/peak reservations, refusals and scoped/unscoped reservations |
+
+Byte totals and cumulative counters are decimal strings to preserve full width;
+object counts and limits are JSON integers. `reserved_bytes` includes recovery
+storage, and `external_bytes` includes `external_recovery_bytes`; do not add those
+subsets again. `held_includes_worker_caches` is true:
+`held` and `peak_held` include free objects reserved in worker caches and must not
+be interpreted as live-connection counts. Capacity and port sections are bounded
+snapshots taken under their respective locks, not an atomic traffic-wide census.
+
+The handler produces at most 32 KiB of result JSON and checks the gateway's
+response limit, working-memory allowance and deadline. A malformed body returns
+`expected_empty_object` when an error response fits those bounds; a refused result
+can have an empty body. Use per-pool count refusals, shared byte refusals and port
+refusals to identify which resource needs attention before changing a limit.
+
 
 ## Composition Notes
 
@@ -398,14 +484,15 @@ Source-backed metadata:
 
 The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
 all bridge instances on that worker. There is no separate stack thread or protocol
-core mutex. PTC preserves the delivered packet worker; CTP preserves the application
+core mutex. PTC selects the flow worker from the current packet tuple; CTP preserves the application
 line's owner and queues return packets after tuple/generation lookup. Packet output
 and normal-line callbacks remain deferred, including same-worker delivery.
 
-Flow/payload pools remain process-wide with their existing capacities. Each active
-engine adds bounded control tables and 17 timeout records; unused workers allocate
-no engine. Automatic TCP and UDP ports use separate shared occupancy accounts,
-held through PCB reclamation, including TIME_WAIT. Generated IPv4 and IPv6 fragment
+Growable flow/payload pools share the process-wide capacity limits above. Each
+active engine adds bounded control tables and 17 timeout records; unused workers
+allocate no engine. CTP connected source-port reservations distinguish full wire
+tuples and stay held through PCB reclamation, including TIME_WAIT. Unconnected
+reservations retain conservative port exclusion. Generated IPv4 and IPv6 fragment
 IDs use separate shared sequences with their existing finite-width wrap behavior.
 Worker-local detached drain lists retain each node's aggregate 4,096-object and
 16 MiB allowance. Pool/quota locks never cover stack traversal or output.

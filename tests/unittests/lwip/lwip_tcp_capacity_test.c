@@ -8,6 +8,7 @@
  * Limits: this proves stack capacity and protocol behavior, not application throughput.
  * CTest: waterwall.lwip_tcp_capacity_unit (Debug and Release).
  */
+#include "capacity_internal.h"
 #include "fixtures/lwip/lwip_engine_test_runtime.h"
 #include "lwip/ip.h"
 #include "lwip/netif.h"
@@ -24,6 +25,7 @@ typedef struct
     uint16_t          last_window;
     uint8_t           offered_scale;
     unsigned          sent_callbacks;
+    bool              recovery_test, recovery_output, callback_refused_data;
 } fixture_t;
 
 static uint8_t valueAt(uint32_t offset)
@@ -86,6 +88,13 @@ static err_t output(struct netif *netif, struct pbuf *packet, const ip4_addr_t *
         f->output_next = get32(bytes + 24) + 1;
     }
     const uint16_t payload = (uint16_t) (packet->tot_len - header);
+    if (f->recovery_test && payload == 0)
+    {
+        ww_lwip_capacity_snapshot_t snapshot;
+        wwLwipCapacitySnapshot(&snapshot, NULL, 0);
+        CHECK(! wwLwipCapacityRecoveryActive());
+        f->recovery_output |= snapshot.recovery_bytes != 0;
+    }
     if (payload != 0)
     {
         CHECK(payload <= TCP_MSS && get32(bytes + 24) == f->output_next);
@@ -126,7 +135,33 @@ static err_t sent(void *argument, struct tcp_pcb *pcb, u16_t length)
     CHECK(pcb == f->pcb && length != 0);
     f->acknowledged += length;
     ++f->sent_callbacks;
+    if (f->recovery_test)
+    {
+        /* An ACK invokes tcp_sent synchronously. A whole-stack recovery scope
+         * would incorrectly admit this application write from the reserve. */
+        uint8_t bytes[16 * TCP_MSS] = {0};
+        CHECK(length < sizeof(bytes) && sizeof(bytes) < wwLwipCapacityRecoveryHeadroom());
+        ww_lwip_capacity_snapshot_t before, after;
+        wwLwipCapacitySnapshot(&before, NULL, 0);
+        CHECK(! wwLwipCapacityRecoveryActive());
+        CHECK(tcp_write(pcb, bytes, sizeof(bytes), TCP_WRITE_FLAG_COPY) == ERR_MEM);
+        wwLwipCapacitySnapshot(&after, NULL, 0);
+        CHECK(after.recovery_bytes == before.recovery_bytes);
+        f->callback_refused_data = true;
+    }
     return ERR_OK;
+}
+
+typedef struct
+{
+    struct pbuf_custom pbuf;
+    _Alignas(MEM_ALIGNMENT) uint8_t bytes[40];
+} recovery_packet_t;
+
+static void freeRecoveryPacket(struct pbuf *packet)
+{
+    memoryFree(packet);
+    wwLwipCapacityReleaseExternalRecovery(sizeof(recovery_packet_t));
 }
 
 static void inject(fixture_t *f, uint8_t flags, uint16_t payload, bool scale)
@@ -164,8 +199,23 @@ static void inject(fixture_t *f, uint8_t flags, uint16_t payload, bool scale)
     memcpy(bytes + 36, &checksum, sizeof(checksum));
     checksum = (uint16_t) ~wwLwipChecksum(bytes, 20);
     memcpy(bytes + 10, &checksum, sizeof(checksum));
-    struct pbuf *packet = pbuf_alloc(PBUF_RAW, length, PBUF_RAM);
-    CHECK(packet != NULL && pbuf_take(packet, bytes, length) == ERR_OK);
+    struct pbuf *packet;
+    if (f->recovery_test)
+    {
+        CHECK(flags == TCP_ACK && payload == 0 && length == 40);
+        CHECK(! wwLwipCapacityTryReserveExternal(sizeof(recovery_packet_t)));
+        CHECK(wwLwipCapacityTryReserveExternalRecovery(sizeof(recovery_packet_t)));
+        recovery_packet_t *input         = memoryAllocateZero(sizeof(*input));
+        input->pbuf.custom_free_function = freeRecoveryPacket;
+        memcpy(input->bytes, bytes, length);
+        packet = pbuf_alloced_custom(PBUF_RAW, length, PBUF_REF, &input->pbuf, input->bytes, sizeof(input->bytes));
+        CHECK(packet != NULL);
+    }
+    else
+    {
+        packet = pbuf_alloc(PBUF_RAW, length, PBUF_RAM);
+        CHECK(packet != NULL && pbuf_take(packet, bytes, length) == ERR_OK);
+    }
     CHECK(wwLwipEngineInput(f->engine, packet, &f->netif) == ERR_OK);
 }
 
@@ -286,6 +336,61 @@ static void receiveCapacity(bool scale)
     stop(&f);
 }
 
+static void recoveryCapacity(void)
+{
+    testCaseSet("real TCP ACK recovery at ordinary memory admission limit");
+    ww_lwip_capacity_config_t config = {WW_LWIP_MIN_MEMORY_BUDGET, 32, 32, 8, 65536, 256};
+    wwLwipCapacityConfigure(&config);
+    wwLwipEngineSharedInit();
+    fixture_t f;
+    start(&f, true);
+    uint8_t  bytes[TCP_MSS];
+    uint32_t queued = 0;
+    for (;;)
+    {
+        for (unsigned i = 0; i < sizeof(bytes); ++i)
+            bytes[i] = valueAt(queued + i);
+        const err_t result = tcp_write(f.pcb, bytes, sizeof(bytes), TCP_WRITE_FLAG_COPY);
+        if (result == ERR_MEM)
+            break;
+        CHECK(result == ERR_OK);
+        queued += sizeof(bytes);
+        CHECK(queued < TCP_SND_BUF);
+    }
+    CHECK(queued > TCP_MSS && tcp_output(f.pcb) == ERR_OK && f.sent != 0);
+
+    /* Keep unrelated admitted storage pinned throughout the recovery. Only
+     * processing the peer's real ACK can return the TCP send queue's slots. */
+    void  *held[8192];
+    size_t count = 0;
+    while (count < LWIP_ARRAYSIZE(held) && (held[count] = mem_malloc(200)) != NULL)
+        ++count;
+    CHECK(count < LWIP_ARRAYSIZE(held));
+    ww_lwip_capacity_snapshot_t snapshot;
+    wwLwipCapacitySnapshot(&snapshot, NULL, 0);
+    const size_t external = (size_t) (config.memory_budget - snapshot.recovery_headroom - snapshot.reserved_bytes);
+    CHECK(wwLwipCapacityTryReserveExternal(external));
+    CHECK(tcp_write(f.pcb, bytes, sizeof(bytes), TCP_WRITE_FLAG_COPY) == ERR_MEM);
+    f.recovery_test = true;
+    CHECK(tcp_send_empty_ack(f.pcb) == ERR_OK && f.recovery_output);
+    const uint32_t before = f.pcb->snd_buf;
+    inject(&f, TCP_ACK, 0, false);
+    CHECK(f.acknowledged != 0 && f.pcb->snd_buf > before && f.callback_refused_data);
+    wwLwipCapacitySnapshot(&snapshot, NULL, 0);
+    CHECK(snapshot.recovery_bytes == 0 && snapshot.reserved_bytes <= config.memory_budget);
+    CHECK(snapshot.reserved_bytes <= config.memory_budget - snapshot.recovery_headroom);
+    for (unsigned i = 0; i < sizeof(bytes); ++i)
+        bytes[i] = valueAt(queued + i);
+    CHECK(tcp_write(f.pcb, bytes, sizeof(bytes), TCP_WRITE_FLAG_COPY) == ERR_OK);
+
+    f.recovery_test = false;
+    wwLwipCapacityReleaseExternal(external);
+    for (size_t i = 0; i < count; ++i)
+        mem_free(held[i]);
+    stop(&f);
+    wwLwipEngineSharedCleanup();
+}
+
 int main(void)
 {
     wwLwipEngineSharedInit();
@@ -293,6 +398,7 @@ int main(void)
     receiveCapacity(true);
     receiveCapacity(false);
     wwLwipEngineSharedCleanup();
+    recoveryCapacity();
     puts("production TCP send/receive capacity, scaling and ACK credit passed");
     return 0;
 }

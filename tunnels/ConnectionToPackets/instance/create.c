@@ -1,3 +1,4 @@
+#include "capacity_api.h"
 #include "structure.h"
 
 #include "DomainResolver/interface.h"
@@ -306,7 +307,7 @@ tunnel_t *ctpTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! ctpLoadSettings(ts, settings) || ! ctpCreateInternalDomainResolver(t, node))
+    if (! ctpLoadSettings(ts, settings) || ! ctpCreateInternalDomainResolver(t, node) || ! wwLwipCapacityRegisterApi(t))
     {
         ctpTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

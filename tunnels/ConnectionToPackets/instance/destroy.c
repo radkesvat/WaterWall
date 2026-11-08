@@ -1,3 +1,4 @@
+#include "api/node_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -30,6 +31,7 @@ static void ctpDestroyInternalDomainResolver(ctp_tstate_t *ts)
 void ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard       context;
+    nodeApiUnregister(t);
     ctp_tstate_t *ts = tunnelGetState(t);
 
     // Idempotent: Stop already ran this on the normal shutdown path.

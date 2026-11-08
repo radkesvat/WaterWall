@@ -282,6 +282,8 @@ typedef struct my_custom_pbuf
 {
     struct pbuf_custom p;
     sbuf_t            *sbuf; /* NULL after ownership transfers to TCP receive staging. */
+    size_t             allocation_charge; /* Retained input storage until custom pbuf release. */
+    bool               recovery_allocation;
     buffer_pool_t     *origin_pool;
     wid_t              origin_wid;
 } my_custom_pbuf_t;

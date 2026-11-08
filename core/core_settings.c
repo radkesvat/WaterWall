@@ -87,6 +87,14 @@ static void initCoreSettings(void)
 
     /* Per-owner target, not a memory reservation; zero disables adaptation. */
     settings->tcp_stack_receive_budget = WW_LWIP_DEFAULT_RECEIVE_BUDGET;
+    settings->lwip_capacity            = (ww_lwip_capacity_config_t) {
+                   .memory_budget = WW_LWIP_DEFAULT_MEMORY_BUDGET,
+                   .tcp_flows     = WW_LWIP_DEFAULT_TCP_FLOWS,
+                   .udp_flows     = WW_LWIP_DEFAULT_UDP_FLOWS,
+                   .tcp_listeners = WW_LWIP_DEFAULT_TCP_LISTENERS,
+                   .tcp_segments  = WW_LWIP_DEFAULT_TCP_SEGMENTS,
+                   .rx_wrappers   = WW_LWIP_DEFAULT_RX_WRAPPERS,
+    };
 
     settings->config_paths = vec_config_path_t_with_capacity(2);
 }
@@ -923,6 +931,58 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
     }
 }
 
+static bool parseLwipCapacityOfMiscJson(const cJSON *misc_obj)
+{
+    /* The JSON reader preserves signed 64-bit integer tokens exactly. Allocation
+     * accounting also has to fit the target's address-size domain. */
+    const int64_t             max_memory_budget = (uint64_t) SIZE_MAX > INT64_MAX ? INT64_MAX : (int64_t) SIZE_MAX;
+    int64_t                   memory_budget     = 0;
+    const json_value_status_t memory_status     = jsonGetObjectIntegerInRange(
+        misc_obj, "lwip-memory-budget", WW_LWIP_MIN_MEMORY_BUDGET, max_memory_budget, &memory_budget);
+    if (memory_status == kJsonValueInvalid)
+    {
+        printError("CoreSettings: \"misc.lwip-memory-budget\" must be a whole number in range [%llu, %llu]\n",
+                   (unsigned long long) WW_LWIP_MIN_MEMORY_BUDGET,
+                   (unsigned long long) max_memory_budget);
+        startupFailureRecord(1);
+        return false;
+    }
+    if (memory_status == kJsonValuePresent)
+    {
+        settings->lwip_capacity.memory_budget = (uint64_t) memory_budget;
+    }
+
+    const struct
+    {
+        const char *key;
+        uint32_t   *value;
+    } limits[] = {
+        {"lwip-max-tcp-flows", &settings->lwip_capacity.tcp_flows},
+        {"lwip-max-udp-flows", &settings->lwip_capacity.udp_flows},
+        {"lwip-max-tcp-listeners", &settings->lwip_capacity.tcp_listeners},
+        {"lwip-max-tcp-segments", &settings->lwip_capacity.tcp_segments},
+        {"lwip-max-rx-wrappers", &settings->lwip_capacity.rx_wrappers},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(limits); ++i)
+    {
+        int64_t                   value  = 0;
+        const json_value_status_t status = jsonGetObjectIntegerInRange(misc_obj, limits[i].key, 1, UINT32_MAX, &value);
+        if (status == kJsonValueInvalid)
+        {
+            printError("CoreSettings: \"misc.%s\" must be a whole number in range [1, %llu]\n",
+                       limits[i].key,
+                       (unsigned long long) UINT32_MAX);
+            startupFailureRecord(1);
+            return false;
+        }
+        if (status == kJsonValuePresent)
+        {
+            *limits[i].value = (uint32_t) value;
+        }
+    }
+    return true;
+}
+
 static void parseMiscPartOfJson(cJSON *misc_obj)
 {
     /*
@@ -971,6 +1031,11 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
     if (receive_budget_status == kJsonValuePresent)
     {
         settings->tcp_stack_receive_budget = (uint32_t) receive_budget;
+    }
+
+    if (! parseLwipCapacityOfMiscJson(misc_obj))
+    {
+        return;
     }
 
     if (cJSON_IsObject(misc_obj) && (misc_obj->child != NULL))

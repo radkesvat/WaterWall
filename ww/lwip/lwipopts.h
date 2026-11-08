@@ -34,7 +34,14 @@
 
 #include <wconfig.h>
 
+#include "capacity.h"
 #include <stdint.h>
+
+/* The private bounded fixture selects static backing explicitly. Production
+ * pools grow on demand within the startup byte and object budgets. */
+#ifndef WW_LWIP_DYNAMIC_POOLS
+#define WW_LWIP_DYNAMIC_POOLS 1
+#endif
 
 #define WW_LWIP_WORKER_ENGINES 1
 #if defined(_MSC_VER)
@@ -149,45 +156,39 @@ extern "C"
    but are faster that way! */
 #define MEM_ALIGNMENT     16U     // 4U
 
-/* MEM_SIZE: the size of the heap memory. If the application will send
-a lot of data that needs to be copied, this should be set high. */
+    /* MEM_SIZE applies to the upstream internal heap. Production MEM_USE_POOLS
+    uses the runtime allocation budget and size classes instead. */
 #define MEM_SIZE          1000000 // 10240
 
-/*
- * Production capacity baseline.
- *
- * These pools are global: every lwIP-using node in the process (PacketsToConnection,
- * ConnectionToPackets, WireGuardDevice, ...) draws from the same ones, and lwIP
- * allocates them statically at build time. The former development-sized values
- * (5 TCP pcbs, 8 UDP pcbs, 120 pool pbufs) let five concurrent TCP flows exhaust
- * the entire process, so they are sized for real concurrency here instead.
- *
- * WW_LWIP_MAX_TCP_FLOWS is the documented concurrency target. Override it (and
- * the pbuf/heap knobs below it) from the build to trade RAM against flow count on
- * a constrained target; the derived values keep their relative proportions.
- */
+    /*
+     * Production capacity baseline.
+     *
+     * Every lwIP node and worker shares process allocation budgets. Build overrides
+     * seed the runtime defaults; settings can select different startup limits.
+     * The private static test build retains these counts as fixed pool inventories.
+     */
 #ifndef WW_LWIP_MAX_TCP_FLOWS
-#define WW_LWIP_MAX_TCP_FLOWS 2048
+#define WW_LWIP_MAX_TCP_FLOWS 65536U
 #endif
 #ifndef WW_LWIP_MAX_UDP_FLOWS
-#define WW_LWIP_MAX_UDP_FLOWS 2048
+#define WW_LWIP_MAX_UDP_FLOWS 65536U
 #endif
 
-/*
- * The fragmented-datagram budget, kept separate from the flow targets on
- * purpose. Reassembly capacity is not a function of how many flows exist: it is
- * a function of how many *fragmented* datagrams may be in flight at once, and
- * multiplying it by the 2048-flow target would reserve tens of megabytes for a
- * case most topologies never hit.
- *
- * WW_LWIP_MAX_REASS_DATAGRAMS is the number of datagrams that may be
- * reassembling simultaneously. WW_LWIP_MAX_REASS_FRAGS_PER_DATAGRAM is the
- * per-datagram fragment budget the sizing assumes; 16 covers an 8 KiB datagram
- * at the smallest MTU any lwIP-using node accepts (576, whose 552-byte payload
- * quantum needs 15 fragments). Reassembly enforces this limit using
- * pbuf_clen(); return datagrams fragmented more extremely than the configured
- * budget are refused so one tuple cannot evict every peer.
- */
+    /*
+     * The fragmented-datagram budget, kept separate from the flow targets on
+     * purpose. Reassembly capacity is not a function of how many flows exist: it is
+     * a function of how many *fragmented* datagrams may be in flight at once, and
+     * multiplying it by the flow target would reserve excessive inventory for a
+     * case most topologies never hit.
+     *
+     * WW_LWIP_MAX_REASS_DATAGRAMS is the number of datagrams that may be
+     * reassembling simultaneously. WW_LWIP_MAX_REASS_FRAGS_PER_DATAGRAM is the
+     * per-datagram fragment budget the sizing assumes; 16 covers an 8 KiB datagram
+     * at the smallest MTU any lwIP-using node accepts (576, whose 552-byte payload
+     * quantum needs 15 fragments). Reassembly enforces this limit using
+     * pbuf_clen(); return datagrams fragmented more extremely than the configured
+     * budget are refused so one tuple cannot evict every peer.
+     */
 #ifndef WW_LWIP_MAX_REASS_DATAGRAMS
 #define WW_LWIP_MAX_REASS_DATAGRAMS 32
 #endif
@@ -198,39 +199,43 @@ a lot of data that needs to be copied, this should be set high. */
 #define IP_REASS_MAX_PBUFS_PER_DATAGRAM WW_LWIP_MAX_REASS_FRAGS_PER_DATAGRAM
 #endif
 
-/* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
-   sends a lot of data out of ROM (or other static memory), this
-   should be set high. */
+    /* MEMP_NUM_PBUF: the number of memp struct pbufs. If the application
+       sends a lot of data out of ROM (or other static memory), this
+       should be set high. */
 #define MEMP_NUM_PBUF    256 // 16
-/* MEMP_NUM_RAW_PCB: the number of UDP protocol control blocks. One
-   per active RAW "connection". */
+    /* MEMP_NUM_RAW_PCB: the number of UDP protocol control blocks. One
+       per active RAW "connection". */
 #define MEMP_NUM_RAW_PCB 3
-/* MEMP_NUM_UDP_PCB: the number of UDP protocol control blocks. One
-   per active UDP "connection". */
+    /* MEMP_NUM_UDP_PCB: the number of UDP protocol control blocks. One
+       per active UDP "connection". */
 #define MEMP_NUM_UDP_PCB WW_LWIP_MAX_UDP_FLOWS // 8
-/* MEMP_NUM_TCP_PCB: the number of simultaneously active TCP
-   connections. */
+    /* MEMP_NUM_TCP_PCB: the number of simultaneously active TCP
+       connections. */
 #define MEMP_NUM_TCP_PCB WW_LWIP_MAX_TCP_FLOWS // 5
-/* MEMP_NUM_TCP_PCB_LISTEN: the number of listening TCP connections.
-   PacketsToConnection creates one pretend wildcard listener per packet worker
-   that sees TCP, and core settings permit up to 254 workers, so a pool of 64
-   ran out before the supported worker count did - with more than one such node
-   in a chain, sooner still. The default covers every worker plus a margin for
-   the other lwIP users in the process. */
+    /* MEMP_NUM_TCP_PCB_LISTEN: the number of listening TCP connections.
+       PacketsToConnection creates one pretend wildcard listener per packet worker
+       that sees TCP, and core settings permit up to 254 workers, so a pool of 64
+       ran out before the supported worker count did - with more than one such node
+       in a chain, sooner still. The default covers every worker plus a margin for
+       the other lwIP users in the process. */
 #ifndef WW_LWIP_MAX_TCP_LISTENERS
-#define WW_LWIP_MAX_TCP_LISTENERS 320
+#define WW_LWIP_MAX_TCP_LISTENERS 1024U
 #endif
 #define MEMP_NUM_TCP_PCB_LISTEN WW_LWIP_MAX_TCP_LISTENERS    // 8
     /* MEMP_NUM_TCP_SEG: the number of simultaneously queued TCP
        segments. Sized so a meaningful share of the flows above can hold a
        full send window at once; raising MEMP_NUM_TCP_PCB alone is useless.
        Small flow-capacity builds still need room for one full send queue. */
+#if WW_LWIP_DYNAMIC_POOLS
+#define MEMP_NUM_TCP_SEG WW_LWIP_DEFAULT_TCP_SEGMENTS
+#else
 #define MEMP_NUM_TCP_SEG                                                                                               \
     ((16 * WW_LWIP_MAX_TCP_FLOWS) < TCP_SND_QUEUELEN ? TCP_SND_QUEUELEN : (16 * WW_LWIP_MAX_TCP_FLOWS))
-/* memp stores pool counts in a u16_t, so an over-ambitious override has to fail
-   at build time rather than silently truncate the pool. The lower bounds matter
-   just as much: the heap classes in lwippools.h divide the flow targets down, so
-   a nonpositive override would produce empty or negative pools. */
+#endif
+    /* Production object limits use uint32_t accounting. The bounded static fixture
+       retains upstream 16-bit inventory/statistics limits and validates its derived
+       counts below. Positive defaults are required in both modes; static heap
+       classes divide the flow targets down and must never become empty. */
 #if (WW_LWIP_MAX_TCP_FLOWS) < 1 || (WW_LWIP_MAX_UDP_FLOWS) < 1
 #error "WW_LWIP_MAX_TCP_FLOWS and WW_LWIP_MAX_UDP_FLOWS must be at least 1"
 #endif
@@ -242,41 +247,41 @@ a lot of data that needs to be copied, this should be set high. */
 #if (WW_LWIP_MAX_TCP_LISTENERS) < 1
 #error "WW_LWIP_MAX_TCP_LISTENERS must be at least 1"
 #endif
-#if (MEMP_NUM_TCP_SEG) > 65535 || (MEMP_NUM_TCP_PCB) > 65535 || (MEMP_NUM_UDP_PCB) > 65535 ||                          \
-    (MEMP_NUM_TCP_PCB_LISTEN) > 65535
+#if ! WW_LWIP_DYNAMIC_POOLS && ((MEMP_NUM_TCP_SEG) > 65535 || (MEMP_NUM_TCP_PCB) > 65535 ||                            \
+                                (MEMP_NUM_UDP_PCB) > 65535 || (MEMP_NUM_TCP_PCB_LISTEN) > 65535)
 #error                                                                                                                 \
     "WW_LWIP_MAX_TCP_FLOWS / WW_LWIP_MAX_UDP_FLOWS / WW_LWIP_MAX_TCP_LISTENERS exceed what lwIP's memp pools can index"
 #endif
-/* The reassembly counterpart of this guard lives next to IP_REASS_MAX_PBUFS
-   below: an #if here would read those still-undefined macros as zero. */
-/* MEMP_NUM_SYS_TIMEOUT: the number of simultaneously active
-   timeouts. */
+    /* The reassembly counterpart of this guard lives next to IP_REASS_MAX_PBUFS
+       below: an #if here would read those still-undefined macros as zero. */
+    /* MEMP_NUM_SYS_TIMEOUT: the number of simultaneously active
+       timeouts. */
 #define MEMP_NUM_SYS_TIMEOUT        17
 
-/* The following four are used only with the sequential API and can be
-   set to 0 if the application only will use the raw API. */
-/* MEMP_NUM_NETBUF: the number of struct netbufs. */
+    /* The following four are used only with the sequential API and can be
+       set to 0 if the application only will use the raw API. */
+    /* MEMP_NUM_NETBUF: the number of struct netbufs. */
 #define MEMP_NUM_NETBUF             2
-/* MEMP_NUM_NETCONN: the number of struct netconns. */
+    /* MEMP_NUM_NETCONN: the number of struct netconns. */
 #define MEMP_NUM_NETCONN            12
-/* MEMP_NUM_TCPIP_MSG_*: the number of struct tcpip_msg, which is used
-   for sequential API communication and incoming packets. Used in
-   src/api/tcpip.c. */
+    /* MEMP_NUM_TCPIP_MSG_*: the number of struct tcpip_msg, which is used
+       for sequential API communication and incoming packets. Used in
+       src/api/tcpip.c. */
 #define MEMP_NUM_TCPIP_MSG_API      32 // 16
 #define MEMP_NUM_TCPIP_MSG_INPKT    32 // 16
 
-/* ---------- Pbuf options ---------- */
-/* PBUF_POOL_SIZE: the number of buffers in the pbuf pool.
-   This is the receive path: every packet injected into a virtual netif takes one
-   (or a chain), and TCP may retain them in its out-of-order queue. Exhaustion is
-   handled by dropping the affected packet, never by aborting.
+    /* ---------- Pbuf options ---------- */
+    /* PBUF_POOL_SIZE: the number of buffers in the pbuf pool.
+       This is the receive path: every packet injected into a virtual netif takes one
+       (or a chain), and TCP may retain them in its out-of-order queue. Exhaustion is
+       handled by dropping the affected packet, never by aborting.
 
-   lwIP requires this to exceed IP_REASS_MAX_PBUFS, otherwise a full reassembly
-   backlog would leave nothing to receive with. Three times that budget, floored
-   at the previous baseline, keeps normal traffic flowing while the maximum
-   number of fragments is enqueued. */
+       lwIP requires this to exceed IP_REASS_MAX_PBUFS, otherwise a full reassembly
+       backlog would leave nothing to receive with. Three times that budget, floored
+       at the previous baseline, keeps normal traffic flowing while the maximum
+       number of fragments is enqueued. */
 #define WW_LWIP_REASS_PBUF_HEADROOM (3 * WW_LWIP_MAX_REASS_DATAGRAMS * IP_REASS_MAX_PBUFS_PER_DATAGRAM)
-    /* Reserve enough ordinary pbuf payload for one advertised receive window. */
+    /* Static fixture sizing; production pbuf storage grows under the byte budget. */
 #define WW_LWIP_PBUF_PAYLOAD_BYTES                                                                                     \
     (PBUF_POOL_BUFSIZE - PBUF_LINK_ENCAPSULATION_HLEN - PBUF_LINK_HLEN - PBUF_IP_HLEN - PBUF_TRANSPORT_HLEN)
 #define WW_LWIP_WINDOW_PBUF_HEADROOM ((TCP_WND + WW_LWIP_PBUF_PAYLOAD_BYTES - 1) / WW_LWIP_PBUF_PAYLOAD_BYTES)
@@ -285,14 +290,14 @@ a lot of data that needs to be copied, this should be set high. */
     (WW_LWIP_REASS_PBUF_HEADROOM > WW_LWIP_MIN_PBUF_POOL_SIZE ? WW_LWIP_REASS_PBUF_HEADROOM                            \
                                                               : WW_LWIP_MIN_PBUF_POOL_SIZE)
 
-/* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
+    /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool. */
 #define PBUF_POOL_BUFSIZE           1500                                                                          // 256
 
-/** SYS_LIGHTWEIGHT_PROT
- * define SYS_LIGHTWEIGHT_PROT in lwipopts.h if you want inter-task protection
- * for certain critical regions during buffer allocation, deallocation and memory
- * allocation and deallocation.
- */
+    /** SYS_LIGHTWEIGHT_PROT
+     * define SYS_LIGHTWEIGHT_PROT in lwipopts.h if you want inter-task protection
+     * for certain critical regions during buffer allocation, deallocation and memory
+     * allocation and deallocation.
+     */
 #define SYS_LIGHTWEIGHT_PROT        1
 
     /* ---------- TCP options ---------- */
@@ -388,87 +393,80 @@ a lot of data that needs to be copied, this should be set high. */
 #define IP_FRAG              1
 #define IPV6_FRAG_COPYHEADER 1
 
-/* WW_LWIP_RX_WRAPPER_POOL_SIZE: custom-pbuf wrappers for the zero-copy receive
-   path (PacketsToConnection). Every fragment lwIP retains for reassembly, and
-   every segment TCP retains out of order, pins one wrapper for as long as it
-   holds the pbuf, so this pool has to cover the reassembly budget rather than
-   the momentary in-flight packet count.
+    /* Custom-pbuf wrappers retain PTC input buffers until stack release. Production
+       uses the startup RX-wrapper object limit and charges retained sbufs against the
+       shared byte budget. A bounded subset of wrappers is reserved for validated,
+       header-only ACK/RST input so out-of-order payload cannot block recovery.
+       A one-wrapper override leaves no separate recovery slot.
 
-   It is derived from the TCP flow target too, not from reassembly alone: TCP
-   out-of-order retention is the larger consumer, and unlike PBUF_POOL exhaustion
-   it does not trigger lwIP's OOSEQ reclamation - so a pool sized only for
-   reassembly can be emptied by ordinary reordering across the advertised flow
-   count and then drop the very retransmissions that would free it.
-
-   The flow share is one wrapper per advertised flow, not a fraction of one. At
-   a quarter, the reassembly allowance left 768 wrappers for 2,048 flows, so a
-   single out-of-order segment on 769 of them exhausted the reserve - an ordinary
-   amount of reordering, not an attack. The reassembly budget is added on top
-   because it is spent by a different mechanism, and a fixed reserve on top of
-   that so recovery traffic is not competing with the backlog it has to clear.
-
-   It is still headroom rather than a hard denial-of-service bound. What makes
-   the bound hard is TCP_OOSEQ_MAX_PBUFS above, which stops one peer from
-   spending the whole pool; exhaustion beyond that drops one packet with a
-   rate-limited warning. */
+       The static fixture keeps a flow/reassembly-derived inventory for deterministic
+       exhaustion tests. Neither count grants fragment-input support to the bridges.
+       TCP_OOSEQ_MAX_PBUFS independently bounds retention by one peer; ordinary data
+       cannot consume the recovery wrapper or byte allowance. */
 #ifndef WW_LWIP_RX_WRAPPER_POOL_SIZE
+#if WW_LWIP_DYNAMIC_POOLS
+#define WW_LWIP_RX_WRAPPER_POOL_SIZE WW_LWIP_DEFAULT_RX_WRAPPERS
+#else
 #define WW_LWIP_RX_WRAPPER_POOL_SIZE (IP_REASS_MAX_PBUFS + WW_LWIP_MAX_TCP_FLOWS + 256)
 #endif
+#endif
 
-#if (IP_REASS_MAX_PBUFS) > 65535 || (PBUF_POOL_SIZE) > 65535 || (WW_LWIP_RX_WRAPPER_POOL_SIZE) > 65535
+#if (IP_REASS_MAX_PBUFS) > 65535 || (PBUF_POOL_SIZE) > 65535 ||                                                        \
+    (! WW_LWIP_DYNAMIC_POOLS && (WW_LWIP_RX_WRAPPER_POOL_SIZE) > 65535)
 #error "WW_LWIP_MAX_REASS_DATAGRAMS exceeds what lwIP's pbuf/reassembly pools can index"
 #endif
 #if (PBUF_POOL_SIZE) <= (IP_REASS_MAX_PBUFS)
 #error "PBUF_POOL_SIZE must exceed IP_REASS_MAX_PBUFS or a full reassembly backlog starves the receive path"
 #endif
 
-/* ---------- ICMP options ---------- */
+    /* ---------- ICMP options ---------- */
 #define ICMP_TTL              255
 
-/* ---------- DHCP options ---------- */
-/* Define LWIP_DHCP to 1 if you want DHCP configuration of
-   interfaces. */
+    /* ---------- DHCP options ---------- */
+    /* Define LWIP_DHCP to 1 if you want DHCP configuration of
+       interfaces. */
 #define LWIP_DHCP             LWIP_UDP
 
-/* 1 if you want to do an ARP check on the offered address
-   (recommended). */
+    /* 1 if you want to do an ARP check on the offered address
+       (recommended). */
 #define DHCP_DOES_ARP_CHECK   (LWIP_DHCP)
 
-/* ---------- AUTOIP options ------- */
+    /* ---------- AUTOIP options ------- */
 #define LWIP_AUTOIP           (LWIP_DHCP)
 #define LWIP_DHCP_AUTOIP_COOP (LWIP_DHCP && LWIP_AUTOIP)
 
-/* ---------- UDP options ---------- */
+    /* ---------- UDP options ---------- */
 #define LWIP_UDP              1
 #define LWIP_UDPLITE          LWIP_UDP
 #define UDP_TTL               255
 
-/* ---------- RAW options ---------- */
-/*
- * Intentionally disabled, and intentionally not merely defaulted off.
- *
- * WaterWall's exact-netif identity work - index plus non-reusable generation on
- * every PCB, with a removal preflight - covers TCP and UDP. The patched IP_PCB
- * carries `netif_generation` for RAW PCBs too, but upstream RAW bind, input,
- * send, disconnect and address-change paths still match on the one-byte index
- * alone, so a RAW PCB can outlive its netif and then answer for whatever
- * interface inherits that index. No node in this project opens a RAW PCB.
- *
- * Turning this on therefore needs the same treatment TCP and UDP got, including
- * netconn/socket error propagation and forced-index-reuse tests - not a flag
- * flip. The guard below is what makes that a build failure rather than a silent
- * regression, and it is why exact-netif test coverage never claims RAW.
- */
+    /* ---------- RAW options ---------- */
+    /*
+     * Intentionally disabled, and intentionally not merely defaulted off.
+     *
+     * WaterWall's exact-netif identity work - index plus non-reusable generation on
+     * every PCB, with a removal preflight - covers TCP and UDP. The patched IP_PCB
+     * carries `netif_generation` for RAW PCBs too, but upstream RAW bind, input,
+     * send, disconnect and address-change paths still match on the one-byte index
+     * alone, so a RAW PCB can outlive its netif and then answer for whatever
+     * interface inherits that index. No node in this project opens a RAW PCB.
+     *
+     * Turning this on therefore needs the same treatment TCP and UDP got, including
+     * netconn/socket error propagation and forced-index-reuse tests - not a flag
+     * flip. The guard below is what makes that a build failure rather than a silent
+     * regression, and it is why exact-netif test coverage never claims RAW.
+     */
 #define LWIP_RAW              0
 
 #if LWIP_RAW
 #error "LWIP_RAW is unsupported: RAW PCBs lack the exact-netif generation checks TCP and UDP have"
 #endif
 
-/* ---------- Statistics options ---------- */
+    /* ---------- Statistics options ---------- */
 
 #define LWIP_STATS         1
 #define LWIP_STATS_DISPLAY 1
+#define LWIP_STATS_LARGE   1
 
 #if LWIP_STATS
 #define LINK_STATS   1
@@ -484,10 +482,10 @@ a lot of data that needs to be copied, this should be set high. */
 #define SYS_STATS    1
 #endif /* LWIP_STATS */
 
-/* ---------- NETBIOS options ---------- */
+    /* ---------- NETBIOS options ---------- */
 #define LWIP_NETBIOS_RESPOND_NAME_QUERY 1
 
-/* ---------- PPP options ---------- */
+    /* ---------- PPP options ---------- */
 
 #define PPP_SUPPORT 1 /* Set > 0 for PPP */
 
@@ -495,10 +493,10 @@ a lot of data that needs to be copied, this should be set high. */
 
 #define NUM_PPP       1 /* Max PPP sessions. */
 
-/* Select modules to enable.  Ideally these would be set in the makefile but
- * we're limited by the command line length so you need to modify the settings
- * in this file.
- */
+    /* Select modules to enable.  Ideally these would be set in the makefile but
+     * we're limited by the command line length so you need to modify the settings
+     * in this file.
+     */
 #define PPPOE_SUPPORT 1
 #define PPPOS_SUPPORT 1
 

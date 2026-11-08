@@ -192,7 +192,9 @@ int waterwallInnerMain(int argc, char **argv)
         .application_finalizer = waterwallApplicationFinalize,
     };
 
-    /* Set the owner-engine receive target before shared runtime initialization. */
+    /* Capacity and the owner-engine receive target are fixed before workers or
+     * shared stack storage can be created. */
+    wwLwipCapacityConfigure(&getCoreSettings()->lwip_capacity);
     wwLwipEngineSetDefaultReceiveBudget(getCoreSettings()->tcp_stack_receive_budget);
 
     // core logger is available after ww setup

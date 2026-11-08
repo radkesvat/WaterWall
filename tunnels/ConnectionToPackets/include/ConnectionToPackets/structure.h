@@ -47,13 +47,19 @@ typedef struct ctp_handoff_budget_s
     wmutex_t lock;
     size_t   max_bytes, max_entries;
     size_t   bytes, entries;
+    size_t   recovery_max_bytes, recovery_max_entries;
+    size_t   recovery_bytes, recovery_entries;
     uint64_t ingress_refused, egress_refused;
     bool     detached;
 } ctp_handoff_budget_t;
 
 ctp_handoff_budget_t *ctpHandoffBudgetCreate(size_t max_bytes, size_t max_entries);
-bool                  ctpHandoffReserve(ctp_handoff_budget_t *budget, size_t charge, bool ingress);
+bool                  ctpHandoffReserveIngress(ctp_handoff_budget_t *budget, size_t charge, bool recovery_eligible,
+                                               bool *recovery_reserved);
+bool                  ctpHandoffReserveOutput(ctp_handoff_budget_t *budget, size_t charge, bool recovery_eligible,
+                                              bool *recovery_reserved);
 void                  ctpHandoffRelease(ctp_handoff_budget_t *budget, size_t charge);
+void                  ctpHandoffReleaseRecovery(ctp_handoff_budget_t *budget, size_t charge);
 void                  ctpHandoffBudgetDetach(ctp_handoff_budget_t *budget);
 
 typedef enum ctp_line_kind_e

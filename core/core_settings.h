@@ -1,7 +1,8 @@
 #pragma once
 
-#include "net/async_dns.h"
+#include "lwip/capacity.h"
 #include "net/address_context.h"
+#include "net/async_dns.h"
 #include "wlibc.h"
 
 #define i_type vec_config_path_t // NOLINT
@@ -44,6 +45,7 @@ struct core_settings_s
     bool              splice_enabled;
     uint16_t          mtu_size;
     uint32_t          tcp_stack_receive_budget;
+    ww_lwip_capacity_config_t lwip_capacity;
     vec_config_path_t config_paths;
 };
 

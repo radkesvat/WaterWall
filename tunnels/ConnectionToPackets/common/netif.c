@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "recovery_packet.h"
 
 /*
  * One emitted IPv4 packet on its way from lwIP to the chain's packet side.
@@ -11,21 +12,31 @@
  * worker is the caller, so the boundary holds unconditionally. The same buffer
  * transfers onward; no lwIP storage escapes, and cancellation needs no pool.
  */
-static void ctpEmitPacketDestroy(sbuf_t *buf, ctp_handoff_budget_t *budget)
+static void ctpEmitPacketDestroy(sbuf_t *buf, ctp_handoff_budget_t *budget, bool recovery)
 {
     const size_t charge = sbufGetAllocationCharge(buf);
     sbufDestroy(buf);
-    ctpHandoffRelease(budget, charge);
+    if (recovery)
+        ctpHandoffReleaseRecovery(budget, charge);
+    else
+        ctpHandoffRelease(budget, charge);
 }
 
 static void ctpEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
 {
     discard reason;
     discard arg1;
-    ctpEmitPacketDestroy(arg2, arg3);
+    ctpEmitPacketDestroy(arg2, arg3, false);
 }
 
-static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void ctpEmitRecoveryPacketCleanup(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
+{
+    discard reason;
+    discard arg1;
+    ctpEmitPacketDestroy(arg2, arg3, true);
+}
+
+static void ctpEmitPacketOnWorkerClass(worker_t *worker, void *arg1, void *arg2, void *arg3, bool recovery)
 {
     tunnel_t             *t      = arg1;
     sbuf_t               *buf    = arg2;
@@ -39,11 +50,14 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
     // admission has closed. Do not extend it into a neighbouring callback.
     if (UNLIKELY(packet_line == NULL || ctpTunnelIsStopping(t)))
     {
-        ctpEmitPacketDestroy(buf, budget);
+        ctpEmitPacketDestroy(buf, budget, recovery);
         return;
     }
 
-    ctpHandoffRelease(budget, sbufGetAllocationCharge(buf));
+    if (recovery)
+        ctpHandoffReleaseRecovery(budget, sbufGetAllocationCharge(buf));
+    else
+        ctpHandoffRelease(budget, sbufGetAllocationCharge(buf));
 
     /*
      * Hold admission across the callback. Shutdown
@@ -72,6 +86,18 @@ static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void
 #endif
 
     ctpNextGateLeave(t);
+}
+
+/* The immutable callback pair carries the reservation class without adding a
+ * message allocation or attaching allocator metadata to the published sbuf. */
+static void ctpEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    ctpEmitPacketOnWorkerClass(worker, arg1, arg2, arg3, false);
+}
+
+static void ctpEmitRecoveryPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    ctpEmitPacketOnWorkerClass(worker, arg1, arg2, arg3, true);
 }
 
 /*
@@ -174,7 +200,11 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
         LOGF("ConnectionToPackets: output packet buffer geometry is unrepresentable");
         abortProgramNow(1);
     }
-    if (! ctpHandoffReserve(ts->handoff_budget, charge, false))
+    uint8_t    control[kWwLwipRecoveryPacketMax];
+    const bool recovery_eligible = p->tot_len <= sizeof(control) && pbufLargeCopyToPtr(p, control) == p->tot_len &&
+                                   wwLwipPacketIsRecovery(control, p->tot_len, false);
+    bool recovery_reserved;
+    if (! ctpHandoffReserveOutput(ts->handoff_budget, charge, recovery_eligible, &recovery_reserved))
         return ERR_MEM;
     /* Size detached output to the packet: a pooled small buffer would retain
      * several KiB even for a queued ACK. This replaces the old message allocation
@@ -186,12 +216,13 @@ err_t ctpNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     const wid_t packet_wid = ctpSelectPacketWorkerLocked(ctx, sbufGetMutablePtr(buf), sbufGetLength(buf));
 
-    if (sendWorkerMessageForceQueueWithCleanup(packet_wid,
-                                               (WorkerMessageCallback) ctpEmitPacketOnWorker,
-                                               ctpEmitPacketCleanup,
-                                               ctx->tunnel,
-                                               buf,
-                                               ts->handoff_budget) != kWorkerMessageSubmitAccepted)
+    if (sendWorkerMessageForceQueueWithCleanup(
+            packet_wid,
+            (WorkerMessageCallback) (recovery_reserved ? ctpEmitRecoveryPacketOnWorker : ctpEmitPacketOnWorker),
+            recovery_reserved ? ctpEmitRecoveryPacketCleanup : ctpEmitPacketCleanup,
+            ctx->tunnel,
+            buf,
+            ts->handoff_budget) != kWorkerMessageSubmitAccepted)
     {
         return ERR_MEM;
     }

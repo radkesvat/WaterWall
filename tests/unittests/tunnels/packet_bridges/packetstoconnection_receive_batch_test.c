@@ -16,6 +16,7 @@
  */
 /* PTC receive staging stays owned by the line until deferred delivery. */
 #include "PacketsToConnection/structure.h"
+#include "capacity.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/lwip/lwip_test_runtime.h"
 
@@ -702,11 +703,78 @@ static void caseReuseCancellation(bool foreign_cancel)
     teardown(&f);
 }
 
+static void caseRetainedInputBudget(void)
+{
+    fixture_t f;
+    setup(&f);
+    ww_lwip_engine_t *previous;
+    twfRequire(wwLwipEngineEnter(f.engine, &previous), "input-budget engine entry failed");
+    struct pbuf                *held = makeCustomInput(NULL, 32, 0, 0);
+    ww_lwip_capacity_snapshot_t before, full, after;
+    wwLwipCapacitySnapshot(&before, NULL, 0);
+    twfRequire(before.external_bytes == ((my_custom_pbuf_t *) held)->allocation_charge,
+               "custom pbuf did not charge its complete retained sbuf");
+    /* Force free slab/cache reclamation before occupying the remaining budget.
+     * The live PCB and custom wrapper keep their slabs charged. */
+    twfRequire(! wwLwipCapacityTryReserveExternal((size_t) before.config.memory_budget),
+               "retained input was omitted from the shared budget");
+    wwLwipCapacitySnapshot(&full, NULL, 0);
+    const size_t reservation =
+        (size_t) (full.config.memory_budget - full.recovery_headroom - full.reserved_bytes + full.recovery_bytes);
+    twfRequire(wwLwipCapacityTryReserveExternal(reservation), "could not fill retained-input budget");
+    sbuf_t *packet = bufferpoolGetBestFit(f.env.pool, 72, 0);
+    sbufSetLength(packet, 72);
+    memoryZero(sbufGetMutablePtr(packet), 72);
+    ptcReceiveAdmissionTestSubmitPacketToStack(packet, &f.route.netif);
+    twfRequire(captured_input == NULL, "packet escaped exhausted retained-input budget");
+    wwLwipCapacitySnapshot(&after, NULL, 0);
+    twfRequire(after.external_refusals == full.external_refusals + 1, "retained-input refusal was not counted");
+
+    /* Direct trusted TUN input may omit checksums. Header-only ACKs still
+     * require complete geometry, and the retained copy must be compact even
+     * when the device delivered a large scratch allocation. */
+    f.route.netif.ww_trusted_receive_checksums = 1;
+    packet                                     = bufferpoolGetLargeBuffer(f.env.pool);
+    const size_t source_charge                 = sbufGetAllocationCharge(packet);
+    sbufSetLength(packet, 40);
+    uint8_t *bytes = sbufGetMutablePtr(packet);
+    memoryZero(bytes, 40);
+    bytes[0] = 0x45;
+    bytes[9] = IP_PROTO_TCP;
+    PUT_BE16(bytes + 2, 40);
+    PUT_BE16(bytes + 20, 40000);
+    PUT_BE16(bytes + 22, 8000);
+    bytes[32] = 0x50;
+    bytes[33] = TCP_ACK;
+    ptcReceiveAdmissionTestSubmitPacketToStack(packet, &f.route.netif);
+    struct pbuf *control = captured_input;
+    captured_input       = NULL;
+    twfRequire(control != NULL && ((my_custom_pbuf_t *) control)->recovery_allocation &&
+                   ((my_custom_pbuf_t *) control)->allocation_charge < source_charge,
+               "ACK could not enter through compact reserved receive storage");
+    wwLwipCapacitySnapshot(&after, NULL, 0);
+    twfRequire(after.external_recovery_bytes != 0 && after.recovery_bytes <= after.recovery_headroom &&
+                   after.reserved_bytes <= after.config.memory_budget,
+               "ACK recovery escaped the configured memory ceiling");
+    pbuf_free(control);
+    wwLwipCapacitySnapshot(&after, NULL, 0);
+    twfRequire(after.external_recovery_bytes == 0, "ACK recovery charge leaked after pbuf free");
+    wwLwipCapacityReleaseExternal(reservation);
+    struct pbuf *recovered = makeCustomInput(NULL, 32, 0, 0);
+    pbuf_free(recovered);
+    pbuf_free(held);
+    wwLwipCapacitySnapshot(&after, NULL, 0);
+    twfRequire(after.external_bytes == 0, "retained-input budget did not settle after pbuf free");
+    wwLwipEngineLeave(f.engine, previous);
+    teardown(&f);
+}
+
 int main(void)
 {
     twfRequire(lwipTestRuntimeInitialize(), "failed to initialize lwIP receive runtime");
     wwLwipEngineSharedInit();
     ptcRxWrapperPoolInitializeOnce();
+    caseRetainedInputBudget();
     caseBatchAndPause();
     caseDeferredReceiveCreditAcks(false, false);
     caseDeferredReceiveCreditAcks(true, false);

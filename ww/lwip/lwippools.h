@@ -7,22 +7,21 @@
  */
 
 /*
- * MEM_USE_POOLS is on, so this list - not MEM_SIZE - is lwIP's real heap. Every
+ * MEM_USE_POOLS is on, so this list - not MEM_SIZE - defines lwIP's size classes. Every
  * PBUF_RAM allocation lands here, including the copies tcp_write(...,
  * TCP_WRITE_FLAG_COPY) makes for outbound data and the per-fragment buffers
- * ip4_frag() builds, so it has to scale with the connection targets in
- * lwipopts.h rather than with a development workload.
+ * ip4_frag() builds. Production allocates backing slabs on demand within the
+ * configured byte budget, independently of the flow-count defaults.
  *
  * MEM_USE_POOLS_TRY_BIGGER_POOL is on, so a request that finds its own class
  * empty falls forward into the next one instead of failing immediately.
  * Exhaustion must still stay survivable: callers close or shed the affected flow.
  *
- * Both flow targets feed the sizing: UDP flows allocate PBUF_RAM from this same
- * heap for every datagram they send, so deriving the classes from the TCP target
- * alone would under-serve a UDP-heavy deployment.
- * Each rounded flow share reserves four blocks to provide shared send headroom.
- * At the default flow targets, the classes reserve about 18.5 MiB before allocator
- * overhead. This static capacity is independent of the runtime RAM profile.
+ * Both flow targets feed static-fixture sizing because UDP also consumes these
+ * classes. Production class counts are descriptor seeds, not fixed inventory;
+ * ordinary and recovery backing remain isolated under the shared byte ceiling.
+ * Production grows these classes on demand within the shared byte budget; their
+ * declared counts apply only to the bounded static allocator fixture.
  *
  * WW_LWIP_FULL_MSS_BLOCK is the hot class, and its size is computed rather than
  * guessed. A full-MSS tcp_write(..., COPY) asks pbuf_alloc() for
@@ -43,13 +42,19 @@
      LWIP_MEM_ALIGN_SIZE(TCP_MSS) + LWIP_MEM_ALIGN_SIZE(sizeof(struct pbuf)) +                                         \
      LWIP_MEM_ALIGN_SIZE(sizeof(struct memp_malloc_helper)))
 #define WW_LWIP_FULL_MSS_BLOCK 1664
+#if WW_LWIP_DYNAMIC_POOLS
+/* Descriptor counts do not reserve storage or limit production payload classes.
+ * Their slabs share the configured byte budget. */
+#define WW_LWIP_HEAP_CLASS(divisor) 1
+#else
 #define WW_LWIP_HEAP_FLOWS     (WW_LWIP_MAX_TCP_FLOWS + WW_LWIP_MAX_UDP_FLOWS)
 #define WW_LWIP_HEAP_CLASS(divisor)                                                                                    \
     ((((WW_LWIP_HEAP_FLOWS) + (divisor) - 1) / (divisor)) > 1 ? (((WW_LWIP_HEAP_FLOWS) + (divisor) - 1) / (divisor))   \
                                                               : 1)
+#endif
 
 #if MEM_USE_POOLS
-#if (WW_LWIP_HEAP_CLASS(4) * 4) > 65535
+#if ! WW_LWIP_DYNAMIC_POOLS && (WW_LWIP_HEAP_CLASS(4) * 4) > 65535
 #error "WW_LWIP_MAX_TCP_FLOWS / WW_LWIP_MAX_UDP_FLOWS exceed what lwIP's malloc-pool counts can index"
 #endif
 LWIP_MALLOC_MEMPOOL_START

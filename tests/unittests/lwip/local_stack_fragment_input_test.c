@@ -59,6 +59,9 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
     require(createNetworkLogger(NULL, true) != NULL, "logger creation failed");
     require(createInternalLogger(NULL, true) != NULL, "internal logger creation failed");
     require(lwipTestRuntimeInitialize(), "lwIP random runtime initialization failed");
+    /* CTP copies rejected ingress through the shared capacity allocator even
+     * when validation prevents it from entering a worker engine. */
+    wwLwipEngineSharedInit();
     checkSumInit();
     master_pool_t *large  = masterpoolCreateWithCapacity(8);
     master_pool_t *medium = masterpoolCreateWithCapacity(8);
@@ -144,6 +147,7 @@ static void runInput(uint16_t fragments, uint8_t protocol, bool shifted, uint32_
         masterpoolMakeEmpty(masters[i]);
         masterpoolDestroy(masters[i]);
     }
+    wwLwipEngineSharedCleanup();
     require(wwLwipShutdown(), "lwIP shutdown failed");
     lwipTestRuntimeCleanup();
     networkloggerDestroy();

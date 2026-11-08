@@ -1,3 +1,4 @@
+#include "api/node_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"
@@ -31,6 +32,7 @@ void ptcDestroyLwipResources(tunnel_t *t)
 void ptcTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard context;
+    nodeApiUnregister(t);
     ptcTunnelOnStop(t, context);
 
     ptc_tstate_t *state = tunnelGetState(t);

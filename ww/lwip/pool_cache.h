@@ -13,6 +13,9 @@ struct memp_desc;
 #endif
 
 void wwLwipPoolCacheRegisterRxPool(const struct memp_desc *pool);
+/* Caller holds shared allocator protection. Detaches every published free
+ * cache list without touching live protocol objects. */
+void wwLwipPoolCacheReclaimAll(void);
 
 #if WW_LWIP_POOL_CACHE_ENABLED
 void *wwLwipPoolCacheMalloc(const struct memp_desc *pool);

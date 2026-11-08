@@ -3,7 +3,8 @@
  * suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testParse, testStartupOptions, testVerboseLogging
+ * Cases: testParse, testStartupOptions, testVerboseLogging, testTcpStackReceiveBudget,
+ * testLwipCapacity (defaults, independent limits, exact wide values and invalid input).
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -198,6 +199,165 @@ static int testTcpStackReceiveBudget(void)
     return 0;
 }
 
+static int testLwipCapacity(void)
+{
+    const char *defaults[] = {
+        "{\"configs\":[\"nodes.json\"]}",
+        "{\"configs\":[\"nodes.json\"],\"misc\":{}}",
+        "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":1,\"ram-profile\":\"minimal\"}}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(defaults); ++i)
+    {
+        CHECK(testParse(defaults[i]));
+        const ww_lwip_capacity_config_t *capacity = &getCoreSettings()->lwip_capacity;
+        CHECK(capacity->memory_budget == WW_LWIP_DEFAULT_MEMORY_BUDGET);
+        CHECK(capacity->tcp_flows == WW_LWIP_DEFAULT_TCP_FLOWS);
+        CHECK(capacity->udp_flows == WW_LWIP_DEFAULT_UDP_FLOWS);
+        CHECK(capacity->tcp_listeners == WW_LWIP_DEFAULT_TCP_LISTENERS);
+        CHECK(capacity->tcp_segments == WW_LWIP_DEFAULT_TCP_SEGMENTS);
+        CHECK(capacity->rx_wrappers == WW_LWIP_DEFAULT_RX_WRAPPERS);
+        destroyCoreSettings();
+    }
+
+    CHECK(testParse("{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-memory-budget\":1073741824,"
+                    "\"lwip-max-tcp-flows\":100000,\"lwip-max-udp-flows\":200000,"
+                    "\"lwip-max-tcp-listeners\":1025,\"lwip-max-tcp-segments\":5000000,"
+                    "\"lwip-max-rx-wrappers\":300000,\"tcp-stack-receive-budget\":0}}"));
+    const ww_lwip_capacity_config_t *capacity = &getCoreSettings()->lwip_capacity;
+    CHECK(capacity->memory_budget == UINT64_C(1073741824));
+    CHECK(capacity->tcp_flows == 100000 && capacity->udp_flows == 200000);
+    CHECK(capacity->tcp_listeners == 1025 && capacity->tcp_segments == 5000000 && capacity->rx_wrappers == 300000);
+    CHECK(getCoreSettings()->tcp_stack_receive_budget == 0);
+    destroyCoreSettings();
+
+    const uint64_t max_memory_budget = (uint64_t) SIZE_MAX > INT64_MAX ? INT64_MAX : (uint64_t) SIZE_MAX;
+    const uint64_t budgets[]         = {
+        WW_LWIP_MIN_MEMORY_BUDGET,
+        UINT64_C(1073741825),
+#if SIZE_MAX > UINT32_MAX
+        UINT64_C(9007199254740993), /* Plain JSON integer above double's exact range. */
+#endif
+        max_memory_budget,
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(budgets); ++i)
+    {
+        char      json[160];
+        const int length = snprintf(json,
+                                    sizeof(json),
+                                    "{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-memory-budget\":%llu}}",
+                                    (unsigned long long) budgets[i]);
+        CHECK(length > 0 && (size_t) length < sizeof(json));
+        CHECK(testParse(json));
+        CHECK(getCoreSettings()->lwip_capacity.memory_budget == budgets[i]);
+        CHECK(getCoreSettings()->lwip_capacity.tcp_flows == WW_LWIP_DEFAULT_TCP_FLOWS);
+        CHECK(getCoreSettings()->tcp_stack_receive_budget == WW_LWIP_DEFAULT_RECEIVE_BUDGET);
+        destroyCoreSettings();
+    }
+
+    const char    *keys[]           = {"lwip-max-tcp-flows",
+                                       "lwip-max-udp-flows",
+                                       "lwip-max-tcp-listeners",
+                                       "lwip-max-tcp-segments",
+                                       "lwip-max-rx-wrappers"};
+    const uint32_t default_limits[] = {WW_LWIP_DEFAULT_TCP_FLOWS,
+                                       WW_LWIP_DEFAULT_UDP_FLOWS,
+                                       WW_LWIP_DEFAULT_TCP_LISTENERS,
+                                       WW_LWIP_DEFAULT_TCP_SEGMENTS,
+                                       WW_LWIP_DEFAULT_RX_WRAPPERS};
+    const uint32_t valid_limits[]   = {1, 65536, UINT32_MAX};
+    for (size_t key = 0; key < ARRAY_SIZE(keys); ++key)
+    {
+        for (size_t i = 0; i < ARRAY_SIZE(valid_limits); ++i)
+        {
+            char      json[160];
+            const int length = snprintf(json,
+                                        sizeof(json),
+                                        "{\"configs\":[\"nodes.json\"],\"misc\":{\"%s\":%llu}}",
+                                        keys[key],
+                                        (unsigned long long) valid_limits[i]);
+            CHECK(length > 0 && (size_t) length < sizeof(json));
+            CHECK(testParse(json));
+            capacity                = &getCoreSettings()->lwip_capacity;
+            const uint32_t actual[] = {capacity->tcp_flows,
+                                       capacity->udp_flows,
+                                       capacity->tcp_listeners,
+                                       capacity->tcp_segments,
+                                       capacity->rx_wrappers};
+            for (size_t j = 0; j < ARRAY_SIZE(actual); ++j)
+            {
+                CHECK(actual[j] == (j == key ? valid_limits[i] : default_limits[j]));
+            }
+            CHECK(capacity->memory_budget == WW_LWIP_DEFAULT_MEMORY_BUDGET);
+            destroyCoreSettings();
+        }
+    }
+
+    const char *invalid_limits[] = {"null",
+                                    "true",
+                                    "false",
+                                    "\"65536\"",
+                                    "[]",
+                                    "{}",
+                                    "-1",
+                                    "0",
+                                    "1.5",
+                                    "4294967295.5",
+                                    "4294967296",
+                                    "1e100",
+                                    "1e999"};
+    for (size_t key = 0; key < ARRAY_SIZE(keys); ++key)
+    {
+        for (size_t i = 0; i < ARRAY_SIZE(invalid_limits); ++i)
+        {
+            char      json[160];
+            const int length = snprintf(json,
+                                        sizeof(json),
+                                        "{\"configs\":[\"nodes.json\"],\"misc\":{\"%s\":%s}}",
+                                        keys[key],
+                                        invalid_limits[i]);
+            CHECK(length > 0 && (size_t) length < sizeof(json));
+            CHECK(! testParse(json));
+            destroyCoreSettings();
+            CHECK(getCoreSettings() == NULL);
+        }
+    }
+
+    const char *invalid_budgets[] = {
+        "null",
+        "true",
+        "false",
+        "\"1048576\"",
+        "[]",
+        "{}",
+        "-1",
+        "0",
+        "1",
+        "1048575",
+        "1048576.5",
+        "9223372036854775807.5",
+        "9223372036854775808",
+        "18446744073709551615",
+        "1e100",
+        "1e999",
+#if SIZE_MAX <= UINT32_MAX
+        "4294967296",
+#endif
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_budgets); ++i)
+    {
+        char      json[160];
+        const int length = snprintf(json,
+                                    sizeof(json),
+                                    "{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-memory-budget\":%s}}",
+                                    invalid_budgets[i]);
+        CHECK(length > 0 && (size_t) length < sizeof(json));
+        CHECK(! testParse(json));
+        destroyCoreSettings();
+        CHECK(getCoreSettings() == NULL);
+    }
+    return 0;
+}
+
 int main(void)
 {
     testCaseSet("core_configuration_test");
@@ -205,6 +365,7 @@ int main(void)
     CHECK(testStartupOptions() == 0);
     CHECK(testVerboseLogging() == 0);
     CHECK(testTcpStackReceiveBudget() == 0);
+    CHECK(testLwipCapacity() == 0);
 
     const char *valid = "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":2},"
                         "\"dns\":{\"domains\":[\"example.test\"],\"servers\":\"127.0.0.1\"}}";
