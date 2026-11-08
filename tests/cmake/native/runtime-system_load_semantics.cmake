@@ -65,6 +65,10 @@
   waterwall_add_native_executable(wsocket_validation_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/wsocket_validation_test.c)
   target_link_libraries(wsocket_validation_test PRIVATE ww_test_support)
   target_link_libraries(wsocket_validation_test PRIVATE ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(wsocket_validation_test PRIVATE WW_TEST_WRAP_GETADDRINFO=1)
+    target_link_options(wsocket_validation_test PRIVATE "-Wl,--wrap=getaddrinfo")
+  endif()
   add_dependencies(waterwall_unit_tests wsocket_validation_test)
 
   add_waterwall_unit_test(waterwall.wsocket_validation_unit wsocket_validation_test "unit;net;socket;validation")

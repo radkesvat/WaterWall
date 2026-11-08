@@ -88,7 +88,14 @@ int resolveAddr(const char *host, sockaddr_u *addr)
 
     if (inet_pton(AF_INET6, host, &addr->sin6.sin6_addr) == 1)
     {
-        addr->sa.sa_family = AF_INET6; // host is ipv6
+        addr->sa.sa_family       = AF_INET6; // host is ipv6
+        addr->sin6.sin6_port     = 0;
+        addr->sin6.sin6_flowinfo = 0;
+        addr->sin6.sin6_scope_id = 0;
+#if defined(OS_DARWIN) || defined(OS_BSD)
+        addr->sin6.sin6_len = sizeof(addr->sin6);
+#endif
+        return 0;
     }
 
     struct addrinfo *ais = NULL;

@@ -3,7 +3,9 @@
  * suite.
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
- * Cases: testValidCases, testInvalidCases, testImmutability
+ * Cases: testValidCases, testInvalidCases, testImmutability, testNumericAddresses,
+ * testResolverFallback. On Linux, getaddrinfo is wrapped to refuse resolution,
+ * proving numeric parsing works independently of DNS and configured IP families.
  * Checks: Assertion labels include: <null>; writable IPv4 endpoint was rejected; verifyIPPort modified a
  * valid IPv4 input; writable IPv6 endpoint was rejected
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -17,6 +19,76 @@
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 #include "wwapi.h"
 
+#if defined(WW_TEST_WRAP_GETADDRINFO)
+static unsigned resolver_calls;
+
+int __wrap_getaddrinfo(const char *host, const char *service, const struct addrinfo *hints, struct addrinfo **result);
+int __wrap_getaddrinfo(const char *host, const char *service, const struct addrinfo *hints, struct addrinfo **result)
+{
+    (void) host;
+    (void) service;
+    (void) hints;
+    ++resolver_calls;
+    *result = NULL;
+    return EAI_NONAME;
+}
+#endif
+
+static void testNumericAddresses(void)
+{
+    const struct
+    {
+        const char *text;
+        int         family;
+    } cases[] = {{"127.0.0.1", AF_INET},
+                 {"::1", AF_INET6},
+                 {"2001:db8:1122:3344:5566:7788:99aa:bbcc", AF_INET6},
+                 {"::ffff:192.0.2.1", AF_INET6}};
+
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        sockaddr_u address  = {0};
+        sockaddr_u expected = {0};
+        void      *expected_ip =
+            cases[i].family == AF_INET ? (void *) &expected.sin.sin_addr : (void *) &expected.sin6.sin6_addr;
+        require(inet_pton(cases[i].family, cases[i].text, expected_ip) == 1, "invalid numeric address fixture");
+        memorySet(&address, 0xa5, sizeof(address));
+        require(resolveAddr(cases[i].text, &address) == 0, "numeric address required resolution");
+        if (cases[i].family == AF_INET6)
+        {
+            require(address.sin6.sin6_port == 0 && address.sin6.sin6_flowinfo == 0 && address.sin6.sin6_scope_id == 0,
+                    "numeric IPv6 address retained uninitialized metadata");
+#if defined(OS_DARWIN) || defined(OS_BSD)
+            require(address.sin6.sin6_len == sizeof(address.sin6), "numeric IPv6 address length changed");
+#endif
+        }
+        require(sockaddrSetIpAddressPort(&address, cases[i].text, 4321) == 0, "numeric address required resolution");
+        require(address.sa.sa_family == cases[i].family, "numeric address family changed");
+        require(sockaddrPort(&address) == 4321, "numeric address port changed");
+        const void *actual_ip =
+            cases[i].family == AF_INET ? (const void *) &address.sin.sin_addr : (const void *) &address.sin6.sin6_addr;
+        const size_t length =
+            cases[i].family == AF_INET ? sizeof(address.sin.sin_addr) : sizeof(address.sin6.sin6_addr);
+        require(memoryEqual(actual_ip, expected_ip, length), "numeric address bytes changed");
+    }
+#if defined(WW_TEST_WRAP_GETADDRINFO)
+    require(resolver_calls == 0, "numeric address reached getaddrinfo");
+#endif
+}
+
+#if defined(WW_TEST_WRAP_GETADDRINFO)
+static void testResolverFallback(void)
+{
+    const char *cases[] = {"example.invalid", "fe80::1%lo", "2001:db8::invalid"};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        sockaddr_u     address = {0};
+        const unsigned before  = resolver_calls;
+        require(resolveAddr(cases[i], &address) == EAI_NONAME, "resolver error was not preserved");
+        require(resolver_calls == before + 1, "nonliteral address skipped resolver fallback");
+    }
+}
+#endif
 
 static void expectValid(const char *value)
 {
@@ -154,5 +226,9 @@ int main(void)
     testValidCases();
     testInvalidCases();
     testImmutability();
+    TEST_RUN_CASE(testNumericAddresses);
+#if defined(WW_TEST_WRAP_GETADDRINFO)
+    TEST_RUN_CASE(testResolverFallback);
+#endif
     return 0;
 }
