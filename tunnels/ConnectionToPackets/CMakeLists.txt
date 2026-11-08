@@ -2,7 +2,6 @@
 add_library(ConnectionToPackets STATIC
                     instance/create.c
                     instance/destroy.c
-                    instance/api.c
                     instance/node.c
                     instance/start.c
                     instance/pre_stop.c

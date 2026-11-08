@@ -459,9 +459,8 @@ enum
     kLineStateSize   = sizeof(ctp_lstate_t)
 };
 
-WW_EXPORT void         ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
-WW_EXPORT tunnel_t    *ctpTunnelCreate(node_t *node);
-WW_EXPORT api_result_t ctpTunnelApi(tunnel_t *instance, sbuf_t *message);
+WW_EXPORT void      ctpTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
+WW_EXPORT tunnel_t *ctpTunnelCreate(node_t *node);
 
 void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void ctpTunnelOnStart(tunnel_t *t);
