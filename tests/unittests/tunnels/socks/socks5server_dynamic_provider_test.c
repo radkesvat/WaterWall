@@ -632,7 +632,7 @@ static line_t *makeWrongWorkerProtectedLine(void)
 
     line_t *line = (line_t *) (mapping + page_size - line_state_at);
     atomic_init(&line->refc, 1);
-    line->active_tunnels_mask = UINT64_MAX;
+    memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive = true;
     line->wid   = 0;
     twfRequire(mprotect(mapping + page_size, page_size, PROT_NONE) == 0,

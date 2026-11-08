@@ -150,7 +150,7 @@ int main(void)
     line_t *line      = memoryAllocateCacheAlignedZero(line_size);
     require(line != NULL, "failed to allocate Encryption failure line");
     atomic_init(&line->refc, 1);
-    line->active_tunnels_mask = UINT64_MAX;
+    memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive             = true;
     line->wid               = 0;
     encryption_lstate_t *ls = lineGetState(line, encryption);

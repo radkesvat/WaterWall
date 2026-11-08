@@ -810,7 +810,7 @@ static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool
     line_t *line = memoryAllocateCacheAlignedZero(sizeof(line_t) + tls->lstate_size);
     require(line != NULL, "failed to allocate ordinary ClientHello profile line");
     atomic_init(&line->refc, 1);
-    line->active_tunnels_mask = UINT64_MAX;
+    memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive          = true;
     line->wid            = 0;
     ordinary_init_count  = 0;
@@ -1483,7 +1483,7 @@ static void testOrdinaryLargeClientHelloIsCompletelyDrained(void)
     line_t  *line      = memoryAllocateCacheAlignedZero(line_size);
     require(line != NULL, "failed to allocate ordinary oversized-Init line");
     atomic_init(&line->refc, 1);
-    line->active_tunnels_mask = UINT64_MAX;
+    memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive = true;
     line->wid   = 0;
 

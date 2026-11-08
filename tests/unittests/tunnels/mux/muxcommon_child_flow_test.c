@@ -209,7 +209,8 @@ static void testNotifications(void)
     for (size_t i = 0; i < ARRAY_SIZE(orientations); ++i)
     {
         tunnel_t             sender = {0}, prev = {0}, next = {0};
-        line_t               child = {.alive = true, .active_tunnels_mask = UINT64_MAX, .refc = 1};
+        line_t               child = {
+                          .alive = true, .active_tunnels_mask = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX}, .refc = 1};
         notification_probe_t p     = {
                 .orientation = orientations[i], .sender = &sender, .prev = &prev, .next = &next, .child = &child};
         probe         = &p;

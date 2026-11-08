@@ -234,7 +234,7 @@ static void envSetup(test_env_t *env)
         env->lines[wid] = memoryAllocateZero(sizeof(*env->lines[wid]));
         require(env->lines[wid] != NULL, "failed to allocate a packet line");
         atomicStoreU32Relaxed(&env->lines[wid]->refc, 1);
-        env->lines[wid]->active_tunnels_mask = UINT64_MAX;
+        memorySet(env->lines[wid]->active_tunnels_mask, 0xFF, sizeof(env->lines[wid]->active_tunnels_mask));
         env->lines[wid]->alive = true;
         env->lines[wid]->wid   = wid;
     }

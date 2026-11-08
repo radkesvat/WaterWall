@@ -152,7 +152,7 @@ static line_t *twfLineCreate(uint32_t lstate_size)
     line_t *l = memoryAllocateCacheAlignedZero(sizeof(line_t) + lstate_size);
     twfRequire(l != NULL, "failed to allocate a test line");
     atomic_init(&l->refc, 1);
-    l->active_tunnels_mask = UINT64_MAX;
+    memorySet(l->active_tunnels_mask, 0xFF, sizeof(l->active_tunnels_mask));
     l->alive = true;
     l->wid   = 0;
     return l;

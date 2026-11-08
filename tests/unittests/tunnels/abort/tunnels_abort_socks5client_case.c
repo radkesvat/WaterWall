@@ -35,7 +35,7 @@ static int rejectUdpInit(socks5client_line_kind_t kind)
         return kAbortCaseAllocationFailed;
     }
     atomic_init(&l->refc, 1);
-    l->active_tunnels_mask    = UINT64_MAX;
+    memorySet(l->active_tunnels_mask, 0xFF, sizeof(l->active_tunnels_mask));
     l->alive                  = true;
     l->wid                    = 0;
     socks5client_lstate_t *ls = lineGetState(l, t);

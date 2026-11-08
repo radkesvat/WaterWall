@@ -3,6 +3,7 @@
 /* Shared line layout for inline line accessors and tunnel dispatch. */
 
 #include "address_context.h"
+#include "chain.h"
 #include "generic_pool.h"
 #include "objects/user_handle.h"
 #include "wlibc.h"
@@ -61,7 +62,7 @@ typedef struct line_s
     line_refc_t       refc;
     bool              alive;
     wid_t             wid;
-    uint64_t          active_tunnels_mask; // One bit per chain index; cleared bits permanently bypass callbacks.
+    uint64_t          active_tunnels_mask[kTunnelMaskWordCount]; // Cleared bits permanently bypass callbacks.
     line_user_auth_t  user_auths[kLineMaxUsers];
     uint8_t           user_count;
     uint8_t           established : 1;

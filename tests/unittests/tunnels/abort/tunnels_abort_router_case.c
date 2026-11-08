@@ -53,7 +53,7 @@ int tunnelsAbortRouterTargetEstCase(void)
         return kAbortCaseAllocationFailed;
     }
     atomic_init(&l->refc, 1);
-    l->active_tunnels_mask = UINT64_MAX;
+    memorySet(l->active_tunnels_mask, 0xFF, sizeof(l->active_tunnels_mask));
     l->alive            = true;
     l->wid              = 0;
     router_lstate_t *ls = lineGetState(l, t);

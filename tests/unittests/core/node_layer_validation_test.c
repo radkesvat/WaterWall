@@ -904,6 +904,90 @@ static node_t makeDomainResolverNode(const char *name)
     return node;
 }
 
+static void testFullChainSolvingAndIndexing(bool branched)
+{
+    testCaseSet(branched ? "256-node merged branch solving and indexing" : "256-node path solving and indexing");
+    node_t          nodes[256];
+    tunnel_t       *tunnels[256];
+    tunnel_chain_t *chain  = tunnelchainCreate(0);
+    tunnel_chain_t *branch = branched ? tunnelchainCreate(0) : NULL;
+    require(chain != NULL && (! branched || branch != NULL), "failed to create full layer-solving chain");
+
+    ww_startup_context_t startup = {0};
+    wwStartupContextBegin(&startup);
+    for (uint16_t i = 0; i < ARRAY_SIZE(tunnels); ++i)
+    {
+        nodes[i]                       = makeLoggerTunnelNode("full-chain-node");
+        nodes[i].flags                 = kNodeFlagSupportsSplice;
+        nodes[i].required_padding_left = 1;
+        if (i == 0)
+        {
+            nodes[i].flags |= kNodeFlagChainHead;
+            nodes[i].layer_group           = kNodeLayer4;
+            nodes[i].layer_group_prev_node = kNodeLayerNone;
+            nodes[i].layer_group_next_node = kNodeLayer4;
+            nodes[i].can_have_prev         = false;
+        }
+        else if (i == 255 || (branched && i == 127))
+        {
+            nodes[i].flags |= kNodeFlagChainEnd;
+            nodes[i].layer_group           = kNodeLayer4;
+            nodes[i].layer_group_prev_node = kNodeLayer4;
+            nodes[i].layer_group_next_node = kNodeLayerNone;
+            nodes[i].can_have_next         = false;
+        }
+        tunnels[i] = tunnelCreate(&nodes[i], 0, 32);
+        require(tunnels[i] != NULL, "failed to create full layer-solving tunnel");
+        tunnelchainInsert(branched && i >= 128 ? branch : chain, tunnels[i]);
+        if (i != 0)
+        {
+            if (branched && i == 128)
+            {
+                tunnelBindDown(tunnels[0], tunnels[i]);
+            }
+            else
+            {
+                bindTunnels(tunnels[i - 1], tunnels[i]);
+            }
+        }
+    }
+    if (branched)
+    {
+        require(
+            tunnelchainRegisterLayerRelation(
+                branch, tunnels[1], kTunnelLayerSidePrev, tunnels[128], kTunnelLayerSidePrev, kTunnelLayerRelationSame),
+            "failed to register relation between full-chain branches");
+        tunnelchainCombine(chain, branch);
+        require(chain->layer_relations_count == 1, "full-chain merge lost its branch relation");
+    }
+    require(! startupFailurePending() && chain->tunnels.len == 256, "full layer-solving chain was rejected");
+
+    validateTunnelChains(tunnels, ARRAY_SIZE(tunnels));
+    require(! startupFailurePending() && chain->layer_solution_ready, "full chain layer validation failed");
+    node_manager_config_t cfg = {.chains = vec_chains_t_init()};
+    finalizeTunnelChains(&cfg, tunnels, ARRAY_SIZE(tunnels));
+    require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "full chain finalization failed");
+    require(chain->finalized && ! chain->contains_packet_node, "full stream chain was not finalized as a stream");
+    require(chain->sum_line_state_size == 256 * 32 && chain->sum_padding_left == 256,
+            "full chain requirements were truncated");
+    for (uint16_t i = 0; i < ARRAY_SIZE(tunnels); ++i)
+    {
+        require(tunnels[i]->chain == chain && tunnels[i]->chain_index == i && tunnels[i]->lstate_offset == i * 32,
+                "full chain indexing lost ownership, index, or state offset");
+        require(chain->resolved_prev_layer[i] == (i == 0 ? kLayerDomainEmpty : kLayerDomainL4),
+                "full chain previous edge resolved to the wrong layer");
+        const bool tail = i == 255 || (branched && i == 127);
+        require(chain->resolved_next_layer[i] == (tail ? kLayerDomainEmpty : kLayerDomainL4),
+                "full chain next edge resolved to the wrong layer");
+    }
+    vec_chains_t_drop(&cfg.chains);
+    tunnelchainDestroy(chain);
+    for (uint16_t i = 0; i < ARRAY_SIZE(tunnels); ++i)
+    {
+        tunnelDestroy(tunnels[i]);
+    }
+}
+
 static void testValidLoggerTunnelL3toL3(void)
 {
     node_t n_head = {
@@ -1588,12 +1672,30 @@ static void testChainSpliceCapability(void)
                  {0, kNodeFlagNone},
                  {32, kNodeFlagNone},
                  {63, kNodeFlagNone},
+                 {64, kNodeFlagNone},
+                 {127, kNodeFlagNone},
+                 {128, kNodeFlagNone},
+                 {191, kNodeFlagNone},
+                 {192, kNodeFlagNone},
+                 {255, kNodeFlagNone},
                  {0, kNodeFlagBlocksSplice},
                  {32, kNodeFlagBlocksSplice},
                  {63, kNodeFlagBlocksSplice},
+                 {64, kNodeFlagBlocksSplice},
+                 {127, kNodeFlagBlocksSplice},
+                 {128, kNodeFlagBlocksSplice},
+                 {191, kNodeFlagBlocksSplice},
+                 {192, kNodeFlagBlocksSplice},
+                 {255, kNodeFlagBlocksSplice},
                  {0, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
                  {32, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
-                 {63, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice}};
+                 {63, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {64, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {127, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {128, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {191, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {192, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice},
+                 {255, kNodeFlagSupportsSplice | kNodeFlagBlocksSplice}};
     for (size_t test = 0; test < ARRAY_SIZE(cases); ++test)
     {
         node_t          nodes[kMaxChainLen]   = {0};
@@ -2032,6 +2134,8 @@ int main(void)
     testValidTransparentMiddleChainL4();
     testValidTransparentMiddleChainL3();
     testValidMultiHopTransparent();
+    testFullChainSolvingAndIndexing(false);
+    testFullChainSolvingAndIndexing(true);
     testValidOppositeLayerChainL3toL4();
     testValidOppositeLayerChainL4toL3();
     testValidBridgeSameLayerL3();

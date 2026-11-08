@@ -38,7 +38,6 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                    .user_count             = 0,
                    .wid                    = wid,
                    .alive                  = true,
-                   .active_tunnels_mask    = UINT64_MAX,
                    .pools                  = pools,
                    .established            = false,
                    .prefer_ordinary_read_u = false,
@@ -50,6 +49,11 @@ static inline line_t *lineCreateForWorker(wid_t current, generic_pool_t **pools,
                        (routing_context_t) {.dest_ctx = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .src_ctx  = (address_context_t) {.ip_address.type = IPADDR_TYPE_V4},
                                             .local_listener_port = 0}};
+
+    for (size_t word = 0; word < kTunnelMaskWordCount; ++word)
+    {
+        l->active_tunnels_mask[word] = UINT64_MAX;
+    }
 
     memoryZero((void *) &l->tunnels_line_state[0], genericpoolGetItemSize(pools[current]) - sizeof(line_t));
 

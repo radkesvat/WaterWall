@@ -572,14 +572,17 @@ static uint32_t tunnelGetCorrectAlignedLineStateSize(uint32_t size)
     return aligned_size;
 }
 
-static_assert(kMaxChainLen <= 64, "Every tunnel must fit in the line's active mask");
+static_assert(sizeof(((line_t *) 0)->active_tunnels_mask) * CHAR_BIT >= kMaxChainLen,
+              "Every tunnel must fit in the line's active mask");
 
 /** Whether this tunnel still receives flow callbacks for the given line. */
 static inline bool tunnelIsActiveForLine(const tunnel_t *t, const line_t *line)
 {
     assert(t != NULL && line != NULL);
     assert(t->chain_index < kMaxChainLen);
-    return (line->active_tunnels_mask & (UINT64_C(1) << t->chain_index)) != 0;
+    const uint16_t word = t->chain_index / kTunnelMaskWordBits;
+    const uint16_t bit  = t->chain_index % kTunnelMaskWordBits;
+    return (line->active_tunnels_mask[word] & (UINT64_C(1) << bit)) != 0;
 }
 
 /**
@@ -603,7 +606,9 @@ static inline void tunnelBypassLine(tunnel_t *t, line_t *line)
     assert(t->chain_index < kMaxChainLen);
     assert(t->prev != NULL && t->next != NULL);
     debugAssertZeroBuf(((uint8_t *) line->tunnels_line_state) + t->lstate_offset, t->lstate_size);
-    line->active_tunnels_mask &= ~(UINT64_C(1) << t->chain_index);
+    const uint16_t word = t->chain_index / kTunnelMaskWordBits;
+    const uint16_t bit  = t->chain_index % kTunnelMaskWordBits;
+    line->active_tunnels_mask[word] &= ~(UINT64_C(1) << bit);
 }
 
 /* Include the supplied target in the search. Valid paths end at an active

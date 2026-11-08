@@ -399,7 +399,8 @@ static void requireWireGuardKeepsWorker(sbuf_t *buf)
     for (wid_t current_wid = 0; current_wid < getWorkersCount(); ++current_wid)
     {
         testWorkerBindWID(current_wid);
-        line_t line = {.wid = current_wid, .alive = true, .active_tunnels_mask = UINT64_MAX};
+        line_t line = {
+            .wid = current_wid, .alive = true, .active_tunnels_mask = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX}};
         for (unsigned direction = 0; direction < 2; ++direction)
         {
             state.transport_side_is_next = direction != 0;

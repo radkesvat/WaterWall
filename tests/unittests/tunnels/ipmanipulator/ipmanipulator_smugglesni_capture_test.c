@@ -342,7 +342,7 @@ static line_t makeTestLineForWorker(wid_t wid)
 {
     line_t line = {0};
     atomicStoreU32Relaxed(&line.refc, 1);
-    line.active_tunnels_mask = UINT64_MAX;
+    memorySet(line.active_tunnels_mask, 0xFF, sizeof(line.active_tunnels_mask));
     line.alive = true;
     line.wid   = wid;
     return line;

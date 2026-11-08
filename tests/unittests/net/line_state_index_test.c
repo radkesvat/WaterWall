@@ -1,5 +1,5 @@
 /*
- * Covers: line state index; the explicit inputs, callbacks and expected results below define this suite.
+ * Covers: line state index through 255, distinct dense slots, large offsets and complete line geometry.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: testLargeOffsets, testDenseSlots, testSizeLimits
@@ -22,10 +22,9 @@
 
 enum
 {
-    kTunnelCount   = 19,
+    kTunnelCount   = kMaxChainLen,
     kLineStateSize = 3712
 };
-
 
 static void testLargeOffsets(void)
 {
@@ -54,7 +53,9 @@ static void testLargeOffsets(void)
     }
 
     require(tunnels[18]->lstate_offset == 66816U, "19th line-state offset wrapped below 64 KiB");
-    require(mem_offset == 70528U, "indexed line-state total is incorrect");
+    require(tunnels[255]->chain_index == 255 && tunnels[255]->lstate_offset == 946560U,
+            "high-index line-state slot was truncated or wrapped");
+    require(mem_offset == kTunnelCount * kLineStateSize, "indexed line-state total is incorrect");
     require(mem_offset == chain->sum_line_state_size, "indexed and accumulated line-state totals differ");
 
     tunnelchainDestroy(chain);
@@ -66,11 +67,18 @@ static void testLargeOffsets(void)
 
 static void testDenseSlots(void)
 {
-    static const uint32_t sizes[]    = {0, 1, 31, 32, 33, 63, 64, 65, 96, 97};
-    static const uint32_t reserved[] = {0, 32, 32, 32, 64, 64, 64, 96, 96, 128};
-    tunnel_t             *tunnels[sizeof(sizes) / sizeof(sizes[0])];
-    node_t                node  = {.type = (char *) "TestTunnel"};
-    tunnel_chain_t       *chain = tunnelchainCreate(1);
+    static const uint32_t size_pattern[] = {0, 1, 31, 32, 33, 63, 64, 65, 96, 97};
+    static const uint32_t slot_pattern[] = {0, 32, 32, 32, 64, 64, 64, 96, 96, 128};
+    uint32_t              sizes[kMaxChainLen];
+    uint32_t              reserved[kMaxChainLen];
+    tunnel_t             *tunnels[kMaxChainLen];
+    for (unsigned i = 0; i < kMaxChainLen; ++i)
+    {
+        sizes[i]    = size_pattern[i % ARRAY_SIZE(size_pattern)];
+        reserved[i] = slot_pattern[i % ARRAY_SIZE(slot_pattern)];
+    }
+    node_t          node  = {.type = (char *) "TestTunnel"};
+    tunnel_chain_t *chain = tunnelchainCreate(1);
     require(chain != NULL, "failed to create dense chain");
 
     uint32_t offset = 0;
@@ -81,9 +89,15 @@ static void testDenseSlots(void)
         require(tunnels[i]->tstate_size == kCpuLineCacheSize, "tunnel-wide alignment changed");
         require(tunnels[i]->lstate_size == reserved[i], "line-state reservation is not dense");
         tunnelchainInsert(chain, tunnels[i]);
+        const uint32_t expected_offset = offset;
         tunnels[i]->onIndex(tunnels[i], i, &offset);
+        require(tunnels[i]->chain_index == i && tunnels[i]->lstate_offset == expected_offset &&
+                    offset == expected_offset + reserved[i],
+                "dense line-state indexing truncated or overlapped a slot");
     }
     require(offset == chain->sum_line_state_size, "dense indexed and reserved totals differ");
+    require(tunnels[255]->lstate_size != 0 && tunnels[255]->lstate_offset > tunnels[192]->lstate_offset,
+            "fixture did not reserve distinct nonzero high-index line state");
 
     uint32_t item_size;
     require(tunnelchainTryComputeLineItemSize(offset, &item_size), "dense line item size failed");

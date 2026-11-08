@@ -381,7 +381,7 @@ static void serverFixtureSetupWithShaping(server_delay_fixture_t *fixture, bool 
     fixture->line = memoryAllocateCacheAlignedZero(sizeof(line_t) + fixture->tls->lstate_size);
     requireServer(fixture->line != NULL, "failed to allocate server lifecycle line");
     atomic_init(&fixture->line->refc, 1);
-    fixture->line->active_tunnels_mask = UINT64_MAX;
+    memorySet(fixture->line->active_tunnels_mask, 0xFF, sizeof(fixture->line->active_tunnels_mask));
     fixture->line->alive = true;
     fixture->line->wid   = 0;
 

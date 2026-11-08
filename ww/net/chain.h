@@ -15,7 +15,9 @@ typedef struct line_s   line_t;
 
 enum
 {
-    kMaxChainLen = 64
+    kMaxChainLen         = 256,
+    kTunnelMaskWordBits  = 64,
+    kTunnelMaskWordCount = (kMaxChainLen + kTunnelMaskWordBits - 1) / kTunnelMaskWordBits
 };
 
 typedef enum

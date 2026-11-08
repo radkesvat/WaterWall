@@ -90,43 +90,58 @@ static void testInsertion(bool side_branch)
     tunnelDestroy(previous);
 }
 
-static void testCapacityFailure(void)
+static void testCapacity(bool reject)
 {
-    testCaseSet("capacity rejection");
+    testCaseSet(reject ? "capacity rejection" : "helper fills final capacity slot");
     node_t          node   = {.name = (char *) "target", .type = (char *) "TestTunnel", .required_padding_left = 1};
     tunnel_t       *target = createTunnel(&node, 32);
     tunnel_t       *helper = createTunnel(&node, 64);
     tunnel_t       *existing[kMaxChainLen];
-    tunnel_chain_t *chain = tunnelchainCreate(0);
+    const uint16_t  initial_length = kMaxChainLen - (reject ? 0 : 1);
+    tunnel_chain_t *chain          = tunnelchainCreate(0);
     require(chain != NULL, "failed to create chain");
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
-    for (uint16_t i = 0; i < kMaxChainLen; ++i)
+    for (uint16_t i = 0; i < initial_length; ++i)
     {
         existing[i] = createTunnel(&node, 32);
         tunnelchainInsert(chain, existing[i]);
     }
-    require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "maximum-size chain was rejected");
-    tunnelBind(existing[0], target);
+    require(wwStartupSucceeded(wwStartupContextEnd(&startup)), "capacity fixture chain was rejected");
+    tunnel_t *previous = existing[initial_length - 1];
+    tunnelBind(previous, target);
 
     wwStartupContextBegin(&startup);
-    require(! tunnelInsertBefore(target, helper, chain), "helper was accepted beyond the chain node limit");
-    require(! wwStartupSucceeded(wwStartupContextEnd(&startup)), "rejected insertion did not fail startup");
-    require(existing[0]->next == target && target->prev == existing[0], "rejected insertion rewired the target");
-    require(helper->prev == NULL && helper->next == NULL && helper->chain == NULL,
-            "rejected helper acquired bindings or chain ownership");
-    require(target->chain == NULL, "rejected insertion registered the target");
+    require(tunnelInsertBefore(target, helper, chain) == ! reject, "helper insertion ignored chain capacity");
+    require(wwStartupSucceeded(wwStartupContextEnd(&startup)) == ! reject,
+            "helper insertion returned wrong startup result");
+    if (reject)
+    {
+        require(previous->next == target && target->prev == previous, "rejected insertion rewired the target");
+        require(helper->prev == NULL && helper->next == NULL && helper->chain == NULL,
+                "rejected helper acquired bindings or chain ownership");
+    }
+    else
+    {
+        require(previous->next == helper && helper->prev == previous && helper->next == target &&
+                    target->prev == helper,
+                "last-slot helper was not bound before target");
+        require(helper->chain == chain && chain->tunnels.tuns[kMaxChainLen - 1] == helper,
+                "last-slot helper lost chain membership");
+        require(tunnelGetBranchEntry(previous, target) == helper, "last-slot branch entry skipped the helper");
+    }
+    require(target->chain == NULL, "helper insertion registered the target");
     require(chain->tunnels.len == kMaxChainLen && chain->sum_padding_left == kMaxChainLen &&
-                chain->sum_line_state_size == kMaxChainLen * 32,
-            "rejected insertion changed chain metadata");
-    for (uint16_t i = 0; i < kMaxChainLen; ++i)
+                chain->sum_line_state_size == initial_length * 32 + (reject ? 0 : helper->lstate_size),
+            "helper insertion changed the wrong chain metadata");
+    for (uint16_t i = 0; i < initial_length; ++i)
     {
         require(chain->tunnels.tuns[i] == existing[i] && existing[i]->chain == chain,
                 "rejected insertion changed existing chain membership");
     }
 
     tunnelchainDestroy(chain);
-    for (uint16_t i = 0; i < kMaxChainLen; ++i)
+    for (uint16_t i = 0; i < initial_length; ++i)
     {
         tunnelDestroy(existing[i]);
     }
@@ -216,7 +231,8 @@ int main(void)
     setInternalLogger(logger);
     testInsertion(false);
     testInsertion(true);
-    testCapacityFailure();
+    testCapacity(false);
+    testCapacity(true);
 #if WW_TUNNEL_LOOKUP_WRAP_TEST
     testDefaultChainFailure(false);
     testDefaultChainFailure(true);

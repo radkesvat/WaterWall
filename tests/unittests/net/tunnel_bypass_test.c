@@ -1,8 +1,8 @@
 /*
  * Covers: permanent per-line tunnel bypass across all flow events and both directions.
- * Setup: A 64-tunnel chain with shuffled link order, real line pools, and one bound
+ * Setup: A 256-tunnel chain with shuffled link order, real line pools, and one bound
  * logical worker. The fixture owns normal lines; the chain owns its packet line.
- * Checks: default/explicit/context dispatch, consecutive skips including bits 0/63,
+ * Checks: default/explicit/context dispatch across all four mask words, consecutive boundary skips,
  * line isolation and reuse, reentrant disable, repeatable Est and advisory Pause/Resume, Finish destruction, packet
  * publication and the certified packet enqueue boundary. Nonempty line state must be zero, including padding, before
  * bypass; Debug rejects dirty state. No network or concurrency claim. CTest: waterwall.tunnel_bypass_unit
@@ -105,6 +105,27 @@ static sbuf_t *makePayload(void)
     return buf;
 }
 
+static void requireAllEnabled(const line_t *line, const char *message)
+{
+    for (size_t word = 0; word < ARRAY_SIZE(line->active_tunnels_mask); ++word)
+        require(line->active_tunnels_mask[word] == UINT64_MAX, message);
+}
+
+static void requireOnlyBypassed(const line_t *line, tunnel_t **tunnels, const bool *bypassed)
+{
+    for (unsigned i = 0; i < kMaxChainLen; ++i)
+        require(tunnelIsActiveForLine(tunnels[i], line) == ! bypassed[i],
+                "bypassing one tunnel changed another index or mask word");
+    for (unsigned word = 0; word < ARRAY_SIZE(line->active_tunnels_mask); ++word)
+    {
+        uint64_t expected = UINT64_MAX;
+        for (unsigned bit = 0; bit < 64 && word * 64 + bit < kMaxChainLen; ++bit)
+            if (bypassed[word * 64 + bit])
+                expected &= ~(UINT64_C(1) << bit);
+        require(line->active_tunnels_mask[word] == expected, "bypass cleared the wrong mask word or bit");
+    }
+}
+
 static void testDispatch(line_t *line, tunnel_t **path, unsigned disabled)
 {
     const struct
@@ -182,6 +203,157 @@ static void testDispatch(line_t *line, tunnel_t **path, unsigned disabled)
             }
         }
     }
+}
+
+static void testBoundaryDispatch(tunnel_chain_t *chain, tunnel_t **tunnels, tunnel_t **path)
+{
+    // Windows cover interior index pairs 255/0, 63/64, 127/128 and 191/192.
+    for (unsigned window = 0; window < 8; window += 2)
+    {
+        line_t *line                   = lineCreate(chain->line_pools, 0);
+        line_t *other                  = lineCreate(chain->line_pools, 0);
+        bool    bypassed[kMaxChainLen] = {false};
+        requireAllEnabled(line, "new line did not enable every tunnel");
+        requireAllEnabled(other, "independent line did not enable every tunnel");
+        testDispatch(line, &path[window], 0);
+        for (unsigned disabled = 1; disabled <= 2; ++disabled)
+        {
+            tunnel_t *t = path[window + disabled];
+            tunnelBypassLine(t, line);
+            tunnelBypassLine(t, line);
+            bypassed[t->chain_index] = true;
+            requireOnlyBypassed(line, tunnels, bypassed);
+            testDispatch(line, &path[window], disabled);
+            requireAllEnabled(other, "bypass affected another line");
+            testDispatch(other, &path[window], 0);
+        }
+        lineDestroy(other);
+        line_t *retired = line;
+        lineDestroy(line);
+        line = lineCreate(chain->line_pools, 0);
+#if BYPASS_GENERIC_POOL != 1
+        require(line == retired, "fixture did not exercise pooled line reuse");
+#endif
+        discard retired;
+        requireAllEnabled(line, "pooled line retained disabled tunnels");
+        lineDestroy(line);
+    }
+}
+
+static tunnel_t **forwarding_path;
+static unsigned   forwarding_visits;
+
+static bool visitForwardingTunnel(tunnel_t *t, line_t *line, unsigned event, bool upstream)
+{
+    require(line == expected_line && event == expected_event && upstream == expected_upstream,
+            "full active path changed line, event or direction");
+    require(forwarding_visits < kMaxChainLen, "full active path delivered too many callbacks");
+    unsigned position = upstream ? forwarding_visits : kMaxChainLen - 1 - forwarding_visits;
+    require(t == forwarding_path[position], "full active path skipped or reordered an enabled tunnel");
+    require(tunnelIsActiveForLine(t, line), "full active path reached a disabled tunnel");
+    return ++forwarding_visits == kMaxChainLen;
+}
+
+#define FORWARD_EVENT(name, event, upstream, next)                                                                     \
+    static void name(tunnel_t *t, line_t *line)                                                                        \
+    {                                                                                                                  \
+        if (visitForwardingTunnel(t, line, event, upstream))                                                           \
+        {                                                                                                              \
+            record(t, line, event, upstream);                                                                          \
+            if (event == kFin && ! upstream)                                                                           \
+                lineDestroy(line);                                                                                     \
+            return;                                                                                                    \
+        }                                                                                                              \
+        next(t, line);                                                                                                 \
+    }
+
+FORWARD_EVENT(forwardInitU, kInit, true, tunnelNextUpStreamInit)
+FORWARD_EVENT(forwardInitD, kInit, false, tunnelPrevDownStreamInit)
+FORWARD_EVENT(forwardEstU, kEst, true, tunnelNextUpStreamEst)
+FORWARD_EVENT(forwardEstD, kEst, false, tunnelPrevDownStreamEst)
+FORWARD_EVENT(forwardFinU, kFin, true, tunnelNextUpStreamFinish)
+FORWARD_EVENT(forwardFinD, kFin, false, tunnelPrevDownStreamFinish)
+FORWARD_EVENT(forwardPauseU, kPause, true, tunnelNextUpStreamPause)
+FORWARD_EVENT(forwardPauseD, kPause, false, tunnelPrevDownStreamPause)
+FORWARD_EVENT(forwardResumeU, kResume, true, tunnelNextUpStreamResume)
+FORWARD_EVENT(forwardResumeD, kResume, false, tunnelPrevDownStreamResume)
+
+static void forwardPayload(tunnel_t *t, line_t *line, sbuf_t *buf, bool upstream)
+{
+    if (visitForwardingTunnel(t, line, kPayload, upstream))
+    {
+        recordPayload(t, line, buf, upstream);
+        return;
+    }
+    (upstream ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload)(t, line, buf);
+}
+
+static void forwardPayloadU(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    forwardPayload(t, line, buf, true);
+}
+
+static void forwardPayloadD(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    forwardPayload(t, line, buf, false);
+}
+
+static void testFullActivePath(tunnel_chain_t *chain, tunnel_t **path)
+{
+    forwarding_path = path;
+    for (unsigned i = 0; i < kMaxChainLen; ++i)
+    {
+        path[i]->fnInitU    = forwardInitU;
+        path[i]->fnInitD    = forwardInitD;
+        path[i]->fnEstU     = forwardEstU;
+        path[i]->fnEstD     = forwardEstD;
+        path[i]->fnFinU     = forwardFinU;
+        path[i]->fnFinD     = forwardFinD;
+        path[i]->fnPauseU   = forwardPauseU;
+        path[i]->fnPauseD   = forwardPauseD;
+        path[i]->fnResumeU  = forwardResumeU;
+        path[i]->fnResumeD  = forwardResumeD;
+        path[i]->fnPayloadU = forwardPayloadU;
+        path[i]->fnPayloadD = forwardPayloadD;
+    }
+    const TunnelFlowRoutineInit events[][2] = {
+        {tunnelDownStreamInit, tunnelUpStreamInit},
+        {tunnelDownStreamEst, tunnelUpStreamEst},
+        {tunnelDownStreamFin, tunnelUpStreamFin},
+        {tunnelDownStreamPause, tunnelUpStreamPause},
+        {tunnelDownStreamResume, tunnelUpStreamResume},
+    };
+    for (unsigned up = 0; up < 2; ++up)
+    {
+        for (unsigned event = 0; event <= kPayload; ++event)
+        {
+            line_t *line      = lineCreate(chain->line_pools, 0);
+            expected_line     = line;
+            expected_tunnel   = path[up ? kMaxChainLen - 1 : 0];
+            expected_event    = event;
+            expected_upstream = up != 0;
+            forwarding_visits = deliveries = 0;
+            lineRef(line);
+            if (event == kPayload)
+                (up ? tunnelUpStreamPayload
+                    : tunnelDownStreamPayload)(path[up ? 0 : kMaxChainLen - 1], line, makePayload());
+            else
+                events[event][up](path[up ? 0 : kMaxChainLen - 1], line);
+            require(forwarding_visits == kMaxChainLen && deliveries == 1,
+                    "full active path did not visit all 256 tunnels");
+            if (event == kFin && ! up)
+                require(! lineIsAlive(line), "full active downstream Finish did not destroy the owner's line");
+            else
+            {
+                require(lineIsAlive(line), "full active path unexpectedly destroyed its line");
+                requireAllEnabled(line, "full active path disabled a tunnel");
+                lineDestroy(line);
+            }
+            lineUnref(line);
+        }
+    }
+    for (unsigned i = 0; i < kMaxChainLen; ++i)
+        installRecorders(path[i]);
 }
 
 static void bypassDuringInit(tunnel_t *t, line_t *line)
@@ -269,7 +441,7 @@ static void testAdvisoryPauseResume(tunnel_chain_t *chain, tunnel_t **path)
         }
     }
 
-    require(line->active_tunnels_mask == UINT64_MAX, "transparent notification forwarding bypassed an active tunnel");
+    requireAllEnabled(line, "transparent notification forwarding bypassed an active tunnel");
     lineDestroy(line);
     installRecorders(path[1]);
     installRecorders(path[2]);
@@ -360,20 +532,25 @@ int main(void)
     uint32_t        offset = 0;
     for (uint16_t i = 0; i < kMaxChainLen; ++i)
     {
-        const uint32_t lstate_size = i == 0 ? 1 : i == 63 ? 33 : 0;
+        const uint32_t lstate_size = i == 0 ? 1 : i == 255 ? 33 : 0;
         tunnels[i]                 = tunnelCreate(&node, sizeof(packet_lifecycle_anchor_t), lstate_size);
         require(tunnels[i] != NULL, "failed to create tunnel");
         tunnelchainInsert(chain, tunnels[i]);
         tunnels[i]->onIndex(tunnels[i], i, &offset);
         installRecorders(tunnels[i]);
     }
-    path[0]       = tunnels[7];
-    path[1]       = tunnels[63];
-    path[2]       = tunnels[0];
-    unsigned slot = 3;
-    for (unsigned i = 1; i < 63; ++i)
-        if (i != 7)
+    const unsigned prefix[] = {7, 255, 0, 63, 64, 127, 128, 191, 192};
+    unsigned       slot     = 0;
+    for (unsigned i = 0; i < ARRAY_SIZE(prefix); ++i)
+        path[slot++] = tunnels[prefix[i]];
+    for (unsigned i = 0; i < kMaxChainLen; ++i)
+    {
+        bool already_added = false;
+        for (unsigned j = 0; j < ARRAY_SIZE(prefix); ++j)
+            already_added |= i == prefix[j];
+        if (! already_added)
             path[slot++] = tunnels[i];
+    }
     require(slot == kMaxChainLen, "invalid shuffled path");
     for (unsigned i = 1; i < kMaxChainLen; ++i)
         tunnelBind(path[i - 1], path[i]);
@@ -388,32 +565,14 @@ int main(void)
     chain->packet_lines    = memoryAllocate(sizeof(*chain->packet_lines));
     chain->packet_lines[0] = lineCreate(chain->line_pools, 0);
 
+    testBoundaryDispatch(chain, tunnels, path);
+    testFullActivePath(chain, path);
     testBypassRequiresDestroyedState(chain, path[1]);
     testRepeatedEst(chain, path);
     testAdvisoryPauseResume(chain, path);
 
-    line_t *line  = lineCreate(chain->line_pools, 0);
-    line_t *other = lineCreate(chain->line_pools, 0);
-    require(line->active_tunnels_mask == UINT64_MAX, "new line did not enable every tunnel");
-    testDispatch(line, path, 0);
-    tunnelBypassLine(path[1], line);
-    require(line->active_tunnels_mask == (UINT64_MAX & ~(UINT64_C(1) << 63)), "wrong bit cleared for index 63");
-    testDispatch(line, path, 1);
-    tunnelBypassLine(path[2], line);
-    tunnelBypassLine(path[2], line);
-    require(! tunnelIsActiveForLine(path[1], line) && ! tunnelIsActiveForLine(path[2], line),
-            "bypass was not permanent/idempotent");
-    testDispatch(line, path, 2);
-    require(other->active_tunnels_mask == UINT64_MAX, "bypass affected another line");
-    testDispatch(other, path, 0);
-    line_t *retired = line;
-    lineDestroy(line);
-    line = lineCreate(chain->line_pools, 0);
-#if BYPASS_GENERIC_POOL != 1
-    require(line == retired, "fixture did not exercise pooled line reuse");
-#endif
-    discard retired;
-    require(line->active_tunnels_mask == UINT64_MAX, "pooled line retained disabled tunnels");
+    line_t *line = lineCreate(chain->line_pools, 0);
+    requireAllEnabled(line, "new line did not enable every tunnel");
 
     path[1]->fnInitU  = bypassDuringInit;
     path[2]->fnInitU  = establishDuringInit;
@@ -446,7 +605,6 @@ int main(void)
     require(deliveries == 1 && ! lineIsAlive(line), "Finish did not reach and destroy the owned normal line");
     lineUnref(line);
     installRecorders(path[0]);
-    lineDestroy(other);
 
     testPacketDispatch(chain, path);
     tunnelchainDestroy(chain);
