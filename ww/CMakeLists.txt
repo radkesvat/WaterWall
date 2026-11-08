@@ -1858,7 +1858,10 @@ if(NOT MSVC)
 endif()
 
 if(APPLE)
-    target_compile_options(ww PRIVATE -Wno-shorten-64-to-32 -Wno-unused-command-line-argument)
+    # AppleClang does not match the Clang branch above, so the tunnels would not get its PUBLIC -Wno-shorten-64-to-32
+    # and stop on size_t narrowing under ww's -Werror
+    target_compile_options(ww PUBLIC -Wno-shorten-64-to-32)
+    target_compile_options(ww PRIVATE -Wno-unused-command-line-argument)
     # Disable precompiled headers on Apple platforms due to clang issues with C/C++ mixed compilation
     set_target_properties(ww PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 endif()
