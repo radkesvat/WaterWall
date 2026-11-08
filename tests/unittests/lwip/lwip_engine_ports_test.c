@@ -29,6 +29,7 @@ typedef enum
 static pthread_barrier_t             rendezvous;
 static struct netif                  interfaces[2];
 static uint16_t                      automatic_tcp[2], automatic_udp[2];
+static uint16_t                      scoped_tcp[2], scoped_udp[2];
 static _Thread_local uint32_t        last_tcp_sequence;
 static _Thread_local struct udp_pcb *pretend_child;
 static _Thread_local bool            refuse_child;
@@ -150,6 +151,118 @@ static void registryExhaustion(ww_lwip_transport_t transport)
     for (unsigned i = 0; i < 8; ++i)
         wwLwipPortRelease(transport, &holds[i]);
 }
+
+static void connectedRegistryChecks(ww_lwip_transport_t transport)
+{
+    /* The actual production range supports more simultaneous flows when their
+     * wire tuples differ. Keep the private fixture's tiny PCB budget separate. */
+    const unsigned        count  = 20000;
+    ww_lwip_port_scope_t *claims = calloc(count, sizeof(*claims));
+    CHECK(claims != NULL);
+    ip_addr_t local, remote;
+    IP_ADDR4(&local, 10, 90, 0, 1);
+    for (unsigned i = 0; i < count; ++i)
+    {
+        IP_ADDR4(&remote, 192, 0, i / 256, i % 256);
+        CHECK(wwLwipPortScopeAllocate(transport, &claims[i], &local, &remote, 443, 49152, 65534) != 0);
+    }
+    ww_lwip_port_stats_t stats;
+    wwLwipPortGetStats(transport, &stats);
+    CHECK(stats.active == count && stats.scoped == count && stats.unscoped == 0 && stats.peak >= count);
+
+    ww_lwip_port_scope_t duplicate = {0}, distinct = {0};
+    const uint16_t       port = claims[0].port;
+    CHECK(wwLwipPortScopeAllocate(
+              transport, &duplicate, &claims[0].local, &claims[0].remote, claims[0].remote_port, port, port) == 0);
+    /* A wildcard/unconnected bind must not take an existing connected port,
+     * even when its owner is on another engine. */
+    uint16_t unconnected = 0;
+    CHECK(! wwLwipPortTryCommitBound(transport, &unconnected, port, IP_ADDR_ANY));
+    CHECK(unconnected == 0);
+    IP_ADDR4(&local, 10, 90, 0, 2);
+    CHECK(wwLwipPortScopeAllocate(transport, &distinct, &local, &claims[0].remote, claims[0].remote_port, port, port) ==
+          port);
+    wwLwipPortScopeRelease(transport, &distinct);
+    CHECK(wwLwipPortScopeAllocate(transport, &distinct, &claims[0].local, &claims[0].remote, 8443, port, port) == port);
+    wwLwipPortScopeRelease(transport, &distinct);
+    wwLwipPortScopeRelease(transport, &claims[0]);
+    CHECK(wwLwipPortScopeAllocate(
+              transport, &duplicate, &claims[0].local, &claims[0].remote, claims[0].remote_port, port, port) == port);
+    wwLwipPortScopeRelease(transport, &duplicate);
+    for (unsigned i = 1; i < count; ++i)
+        wwLwipPortScopeRelease(transport, &claims[i]);
+    free(claims);
+    wwLwipPortCommit(transport, &unconnected, port, false);
+    CHECK(wwLwipPortScopeAllocate(transport, &distinct, &local, &remote, 443, port, port) == 0);
+    wwLwipPortRelease(transport, &unconnected);
+    wwLwipPortGetStats(transport, &stats);
+    CHECK(stats.active == 0 && stats.scoped == 0 && stats.unscoped == 0 && stats.refused >= 3);
+}
+
+static void connectedPcbReuse(void)
+{
+    ip_addr_t local, peer;
+    IP_ADDR4(&local, 10, 0, 0, 1);
+    IP_ADDR4(&peer, 10, 0, 0, 2);
+    for (unsigned transport = 0; transport < 2; ++transport)
+    {
+        struct tcp_pcb *tcp[2] = {NULL};
+        struct udp_pcb *udp[2] = {NULL};
+        uint16_t        first_port;
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            if (transport == kWwLwipTcp)
+            {
+                tcp[i] = tcp_new();
+                CHECK(tcp[i] != NULL && tcp_bind_netif(tcp[i], &interfaces[owner]) == ERR_OK);
+            }
+            else
+            {
+                udp[i] = udp_new();
+                CHECK(udp[i] != NULL && udp_bind_netif(udp[i], &interfaces[owner]) == ERR_OK);
+            }
+        }
+        if (transport == kWwLwipTcp)
+        {
+            CHECK(wwLwipTcpBindConnected(tcp[0], &local, &peer, 80) == ERR_OK);
+            first_port = tcp[0]->local_port;
+        }
+        else
+        {
+            CHECK(wwLwipUdpBindConnected(udp[0], &local, &peer, 80) == ERR_OK);
+            first_port = udp[0]->local_port;
+        }
+        /* Fill the fixture's eight-port range for one peer. The next different
+         * peer wraps onto the first real PCB's port on this exact same netif. */
+        ww_lwip_port_scope_t remaining[7] = {{0}};
+        for (unsigned i = 0; i < 7; ++i)
+            CHECK(wwLwipPortScopeAllocate(
+                      (ww_lwip_transport_t) transport, &remaining[i], &local, &peer, 80, 49152, 49159) != 0);
+        if (transport == kWwLwipTcp)
+        {
+            CHECK(wwLwipTcpBindConnected(tcp[1], &local, &peer, 80) == ERR_BUF);
+            CHECK(wwLwipTcpBindConnected(tcp[1], &local, &peer, 81) == ERR_OK);
+            CHECK(tcp[1]->local_port == first_port);
+            CHECK(tcp_connect(tcp[0], &peer, 80, NULL) == ERR_OK);
+            CHECK(tcp_connect(tcp[1], &peer, 81, NULL) == ERR_OK);
+            tcp_abort(tcp[0]);
+            tcp_abort(tcp[1]);
+        }
+        else
+        {
+            CHECK(wwLwipUdpBindConnected(udp[1], &local, &peer, 80) == ERR_USE);
+            CHECK(wwLwipUdpBindConnected(udp[1], &local, &peer, 81) == ERR_OK);
+            CHECK(udp[1]->local_port == first_port);
+            CHECK(udp_connect(udp[0], &peer, 80) == ERR_OK);
+            CHECK(udp_connect(udp[1], &peer, 81) == ERR_OK);
+            udp_remove(udp[0]);
+            udp_remove(udp[1]);
+        }
+        for (unsigned i = 0; i < 7; ++i)
+            wwLwipPortScopeRelease((ww_lwip_transport_t) transport, &remaining[i]);
+        CHECK(wwLwipTestPortOccupancy((ww_lwip_transport_t) transport, first_port) == 0);
+    }
+}
 static struct tcp_pcb *makeTimeWait(ww_lwip_engine_t *engine)
 {
     ip_addr_t peer;
@@ -157,6 +270,9 @@ static struct tcp_pcb *makeTimeWait(ww_lwip_engine_t *engine)
     struct tcp_pcb *pcb = tcp_new();
     CHECK(pcb != NULL);
     CHECK(tcp_bind_netif(pcb, &interfaces[owner]) == ERR_OK);
+    ip_addr_t local;
+    IP_ADDR4(&local, 10, 0, 0, 1);
+    CHECK(wwLwipTcpBindConnected(pcb, &local, &peer, 80) == ERR_OK);
     CHECK(tcp_connect(pcb, &peer, 80, NULL) == ERR_OK);
     uint32_t iss  = last_tcp_sequence;
     uint16_t port = pcb->local_port;
@@ -168,6 +284,10 @@ static struct tcp_pcb *makeTimeWait(ww_lwip_engine_t *engine)
     inject(engine, port, TCP_FIN | TCP_ACK, 9001, iss + 2, kTcpPacket);
     CHECK(pcb->state == TIME_WAIT && tcp_tw_pcbs == pcb);
     CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, port) == 1);
+    ww_lwip_port_scope_t collision = {0};
+    CHECK(wwLwipPortScopeAllocate(kWwLwipTcp, &collision, &local, &peer, 80, port, port) == 0);
+    CHECK(wwLwipPortScopeAllocate(kWwLwipTcp, &collision, &local, &peer, 81, port, port) == port);
+    wwLwipPortScopeRelease(kWwLwipTcp, &collision);
     return pcb;
 }
 static void receiveChild(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *source, u16_t port)
@@ -199,6 +319,9 @@ static void detailedChecks(ww_lwip_engine_t *engine)
 {
     registryExhaustion(kWwLwipTcp);
     registryExhaustion(kWwLwipUdp);
+    connectedRegistryChecks(kWwLwipTcp);
+    connectedRegistryChecks(kWwLwipUdp);
+    connectedPcbReuse();
     struct tcp_pcb *tcp = tcp_new();
     CHECK(tcp != NULL);
     CHECK(tcp_bind(tcp, IP_ADDR_ANY, 49152) == ERR_OK);
@@ -262,6 +385,18 @@ static void detailedChecks(ww_lwip_engine_t *engine)
     CHECK(tcp_connect(tcp, &peer, 80, NULL) == ERR_MEM);
     CHECK(tcp->local_port == 0 && tcp->ww_tracked_port == 0);
     tcp_abort(tcp);
+    tcp = tcp_new();
+    CHECK(tcp != NULL);
+    ip_addr_t scoped_local;
+    IP_ADDR4(&scoped_local, 10, 0, 0, 1);
+    CHECK(tcp_bind_netif(tcp, &interfaces[owner]) == ERR_OK);
+    CHECK(wwLwipTcpBindConnected(tcp, &scoped_local, &peer, 80) == ERR_OK);
+    const uint16_t failed_port = tcp->local_port;
+    CHECK(tcp_connect(tcp, &peer, 80, NULL) == ERR_MEM);
+    CHECK(tcp->local_port == failed_port && tcp->ww_port_scope.port == failed_port);
+    CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, failed_port) == 1);
+    tcp_abort(tcp);
+    CHECK(wwLwipTestPortOccupancy(kWwLwipTcp, failed_port) == 0);
     for (unsigned i = 0; i < MEMP_NUM_TCP_SEG; ++i)
         memp_free(MEMP_TCP_SEG, segments[i]);
     registryExhaustion(kWwLwipTcp);
@@ -368,6 +503,42 @@ static void *run(void *argument)
     CHECK(tcp_close(tcp) == ERR_OK);
     udp_remove(udp);
     meet();
+    /* Identical on-wire tuples cannot reuse a port merely because engines and
+     * their exact netif identities differ. Real PCB frees release both claims. */
+    ip_addr_t local, peer;
+    IP_ADDR4(&local, 10, 0, 0, 1);
+    IP_ADDR4(&peer, 10, 0, 0, 2);
+    tcp = tcp_new();
+    udp = udp_new();
+    CHECK(tcp != NULL && udp != NULL);
+    CHECK(tcp_bind_netif(tcp, &interfaces[owner]) == ERR_OK);
+    CHECK(udp_bind_netif(udp, &interfaces[owner]) == ERR_OK);
+    CHECK(wwLwipTcpBindConnected(tcp, &local, IP_ADDR_ANY, 80) == ERR_VAL);
+    CHECK(wwLwipUdpBindConnected(udp, &local, IP_ADDR_ANY, 80) == ERR_VAL);
+    CHECK(wwLwipTcpBindConnected(tcp, &local, &peer, 80) == ERR_OK);
+    CHECK(wwLwipUdpBindConnected(udp, &local, &peer, 80) == ERR_OK);
+    scoped_tcp[owner] = tcp->local_port;
+    scoped_udp[owner] = udp->local_port;
+    CHECK(tcp_bind(tcp, &local, 0) == ERR_USE);
+    CHECK(udp_bind(udp, &local, 0) == ERR_USE);
+    CHECK(tcp_connect(tcp, &peer, 81, NULL) == ERR_USE);
+    CHECK(udp_connect(udp, &peer, 81) == ERR_USE);
+    err_t listen_error = ERR_OK;
+    CHECK(tcp_listen_with_backlog_and_err(tcp, 1, &listen_error) == NULL && listen_error == ERR_USE);
+    CHECK(udp_connect(udp, &peer, 80) == ERR_OK);
+    meet();
+    CHECK(scoped_tcp[0] != scoped_tcp[1] && scoped_udp[0] != scoped_udp[1]);
+    struct tcp_pcb *conflict_tcp = tcp_new();
+    struct udp_pcb *conflict_udp = udp_new();
+    CHECK(conflict_tcp != NULL && conflict_udp != NULL);
+    CHECK(tcp_bind(conflict_tcp, IP_ADDR_ANY, scoped_tcp[1 - owner]) == ERR_USE);
+    CHECK(udp_bind(conflict_udp, IP_ADDR_ANY, scoped_udp[1 - owner]) == ERR_USE);
+    tcp_abort(conflict_tcp);
+    udp_remove(conflict_udp);
+    meet();
+    CHECK(tcp_close(tcp) == ERR_OK);
+    udp_remove(udp);
+    meet();
     if (owner == 0)
         detailedChecks(engine);
     meet();
@@ -387,6 +558,7 @@ int main(void)
         CHECK(pthread_join(threads[i], NULL) == 0);
     CHECK(pthread_barrier_destroy(&rendezvous) == 0);
     wwLwipEngineSharedCleanup();
-    puts("concurrent automatic ports, PCB-lifetime holds, TIME_WAIT, rebind and failure settlement passed");
+    puts(
+        "concurrent automatic ports, 20000 scoped tuples, PCB-lifetime holds, TIME_WAIT and failure settlement passed");
     return 0;
 }

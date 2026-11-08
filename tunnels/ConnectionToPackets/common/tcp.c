@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "port_registry.h"
 
 /*
  * Clears every callback lwIP could still use to reach this line state. Once this
@@ -135,9 +136,9 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
         goto done;
     }
 
-    // Port 0 makes lwIP pick a free ephemeral port now, so the exact inbound
-    // tuple is known before the flow is published.
-    if (tcp_bind(pcb, &local_ip, 0) != ERR_OK)
+    // Reserve the complete wire tuple before publishing its return route or
+    // sending a SYN. Other destinations can share the same source port.
+    if (wwLwipTcpBindConnected(pcb, &local_ip, dest_ip, dest_port) != ERR_OK)
     {
         LOGE("ConnectionToPackets: could not bind a local port for the virtual source address");
         goto done;

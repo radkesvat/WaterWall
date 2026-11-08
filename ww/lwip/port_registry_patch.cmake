@@ -32,7 +32,8 @@ function(ww_apply_lwip_ports_patch lwip_dir)
 #endif]=])
     ww_lwip_replace_once("${lwip_dir}/src/include/lwip/ip.h"
 [=[#define WW_LWIP_IP_OWNER void *ww_engine;]=]
-[=[#define WW_LWIP_IP_OWNER void *ww_engine; u16_t ww_tracked_port;]=])
+[=[#include "port_registry.h"
+#define WW_LWIP_IP_OWNER void *ww_engine; u16_t ww_tracked_port; ww_lwip_port_scope_t ww_port_scope;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
 [=[
 tcp_new_port(void)
@@ -104,6 +105,8 @@ tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
 {
 #if WW_LWIP_WORKER_ENGINES
   u8_t ww_port_reserved = 0;
+  ip_addr_t ww_old_local_ip = pcb->local_ip;
+  if (pcb->ww_port_scope.port != 0) { return ERR_USE; }
 #endif]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
 [=[    port = tcp_new_port();]=]
@@ -116,13 +119,19 @@ tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
   pcb->local_port = port;]=]
 [=[done:
 #if WW_LWIP_WORKER_ENGINES
-  wwLwipPortCommit(kWwLwipTcp, &pcb->ww_tracked_port, port, ww_port_reserved != 0);
+  if (ww_port_reserved) {
+    wwLwipPortCommit(kWwLwipTcp, &pcb->ww_tracked_port, port, true);
+  } else if (!wwLwipPortTryCommitBound(kWwLwipTcp, &pcb->ww_tracked_port, port, &pcb->local_ip)) {
+    pcb->local_ip = ww_old_local_ip;
+    return ERR_USE;
+  }
 #endif
   pcb->local_port = port;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
 [=[  memp_free(MEMP_TCP_PCB, pcb);]=]
 [=[#if WW_LWIP_WORKER_ENGINES
   wwLwipPortRelease(kWwLwipTcp, &pcb->ww_tracked_port);
+  wwLwipPortScopeRelease(kWwLwipTcp, &pcb->ww_port_scope);
 #endif
   memp_free(MEMP_TCP_PCB, pcb);]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
@@ -186,6 +195,8 @@ udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
 {
 #if WW_LWIP_WORKER_ENGINES
   u8_t ww_port_reserved = 0;
+  ip_addr_t ww_old_local_ip = pcb->local_ip;
+  if (pcb->ww_port_scope.port != 0) { return ERR_USE; }
 #endif]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
 [=[    port = udp_new_port();]=]
@@ -198,19 +209,26 @@ udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
   pcb->local_port = port;]=]
 [=[done:
 #if WW_LWIP_WORKER_ENGINES
-  wwLwipPortCommit(kWwLwipUdp, &pcb->ww_tracked_port, port, ww_port_reserved != 0);
+  if (ww_port_reserved) {
+    wwLwipPortCommit(kWwLwipUdp, &pcb->ww_tracked_port, port, true);
+  } else if (!wwLwipPortTryCommitBound(kWwLwipUdp, &pcb->ww_tracked_port, port, &pcb->local_ip)) {
+    pcb->local_ip = ww_old_local_ip;
+    return ERR_USE;
+  }
 #endif
   pcb->local_port = port;]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
 [=[  memp_free(MEMP_UDP_PCB, pcb);]=]
 [=[#if WW_LWIP_WORKER_ENGINES
   wwLwipPortRelease(kWwLwipUdp, &pcb->ww_tracked_port);
+  wwLwipPortScopeRelease(kWwLwipUdp, &pcb->ww_port_scope);
 #endif
   memp_free(MEMP_UDP_PCB, pcb);]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
 [=[  memp_free(MEMP_TCP_PCB_LISTEN, pcb);]=]
 [=[#if WW_LWIP_WORKER_ENGINES
   wwLwipPortRelease(kWwLwipTcp, &pcb->ww_tracked_port);
+  wwLwipPortScopeRelease(kWwLwipTcp, &pcb->ww_port_scope);
 #endif
   memp_free(MEMP_TCP_PCB_LISTEN, pcb);]=])
     ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
@@ -325,4 +343,100 @@ udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)
     ww_pretend_attempted = 1;
     for (pcb = udp_pcbs; pcb != NULL; pcb = pcb->next) {
       if ((pcb->pretend_netif_idx != NETIF_NO_INDEX)]=])
+
+    # Connected source bindings reserve the wire tuple before the first output.
+    # They deliberately do not use tcp_bind/udp_bind's unconnected port claim:
+    # those APIs must exclude every peer sharing a local address and port.
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
+[=[err_t
+tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+err_t
+wwLwipTcpBindConnected(struct tcp_pcb *pcb, const ip_addr_t *local,
+                       const ip_addr_t *remote, u16_t remote_port)
+{
+  WW_LWIP_ASSERT_PCB_OWNER(pcb);
+  LWIP_ASSERT_CORE_LOCKED();
+  LWIP_ASSERT("fresh TCP source binding", pcb->state == CLOSED && pcb->local_port == 0 &&
+              pcb->ww_tracked_port == 0 && pcb->ww_port_scope.port == 0);
+  LWIP_ASSERT("final TCP netif", pcb->netif_idx != NETIF_NO_INDEX);
+  if (tcp_pcb_netif_identity_invalid(pcb)) { return ERR_IF; }
+  if (ip_addr_isany(remote) || (remote_port == 0) ||
+      (IP_GET_TYPE(local) != IP_GET_TYPE(remote))) { return ERR_VAL; }
+  const u16_t port = wwLwipPortScopeAllocate(kWwLwipTcp, &pcb->ww_port_scope, local, remote,
+                                            remote_port, TCP_LOCAL_PORT_RANGE_START,
+                                            TCP_LOCAL_PORT_RANGE_END - 1U);
+  if (port == 0) { return ERR_BUF; }
+  ip_addr_copy(pcb->local_ip, *local);
+  pcb->local_port = port;
+  TCP_REG(&tcp_bound_pcbs, pcb);
+  return ERR_OK;
+}
+#endif
+
+err_t
+tcp_bind(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[err_t
+udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+err_t
+wwLwipUdpBindConnected(struct udp_pcb *pcb, const ip_addr_t *local,
+                       const ip_addr_t *remote, u16_t remote_port)
+{
+  WW_LWIP_ASSERT_PCB_OWNER(pcb);
+  LWIP_ASSERT_CORE_LOCKED();
+  LWIP_ASSERT("fresh UDP source binding", pcb->local_port == 0 && pcb->ww_tracked_port == 0 &&
+              pcb->ww_port_scope.port == 0 && (pcb->flags & UDP_FLAGS_CONNECTED) == 0);
+  LWIP_ASSERT("final UDP netif", pcb->netif_idx != NETIF_NO_INDEX);
+  if (udp_pcb_netif_identity_invalid(pcb)) { return ERR_IF; }
+  if (ip_addr_isany(remote) || (remote_port == 0) ||
+      (IP_GET_TYPE(local) != IP_GET_TYPE(remote))) { return ERR_VAL; }
+  const u16_t port = wwLwipPortScopeAllocate(kWwLwipUdp, &pcb->ww_port_scope, local, remote,
+                                            remote_port, UDP_LOCAL_PORT_RANGE_START,
+                                            UDP_LOCAL_PORT_RANGE_END);
+  if (port == 0) { return ERR_USE; }
+  ip_addr_copy(pcb->local_ip, *local);
+  pcb->local_port = port;
+  mib2_udp_bind(pcb);
+  pcb->next = udp_pcbs;
+  udp_pcbs = pcb;
+  return ERR_OK;
+}
+#endif
+
+err_t
+udp_bind(struct udp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port)]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
+[=[  LWIP_DEBUGF(TCP_DEBUG, ("tcp_connect to port %"U16_F"\n", port));]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  if ((pcb->ww_port_scope.port != 0) &&
+      !wwLwipPortScopeMatches(&pcb->ww_port_scope, &pcb->local_ip, ipaddr, port)) {
+    return ERR_USE;
+  }
+#endif
+  LWIP_DEBUGF(TCP_DEBUG, ("tcp_connect to port %"U16_F"\n", port));]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/tcp.c"
+[=[  /* already listening? */]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  if (pcb->ww_port_scope.port != 0) { res = ERR_USE; goto done; }
+#endif
+  /* already listening? */]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[  if (pcb->local_port == 0) {
+    err_t err = udp_bind(pcb, &pcb->local_ip, pcb->local_port);]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  if ((pcb->ww_port_scope.port != 0) &&
+      !wwLwipPortScopeMatches(&pcb->ww_port_scope, &pcb->local_ip, ipaddr, port)) {
+    return ERR_USE;
+  }
+#endif
+  if (pcb->local_port == 0) {
+    err_t err = udp_bind(pcb, &pcb->local_ip, pcb->local_port);]=])
+    ww_lwip_replace_once("${lwip_dir}/src/core/udp.c"
+[=[  /* reset remote address association */]=]
+[=[#if WW_LWIP_WORKER_ENGINES
+  LWIP_ASSERT("scoped UDP endpoints are immutable", pcb->ww_port_scope.port == 0);
+#endif
+  /* reset remote address association */]=])
 endfunction()

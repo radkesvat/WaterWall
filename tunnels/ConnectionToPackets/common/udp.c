@@ -1,6 +1,7 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
+#include "port_registry.h"
 
 struct udp_pcb *ctpUdpDetachCallbacksLocked(ctp_lstate_t *ls)
 {
@@ -59,7 +60,7 @@ bool ctpUdpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
         goto done;
     }
 
-    if (udp_bind(pcb, &local_ip, 0) != ERR_OK)
+    if (wwLwipUdpBindConnected(pcb, &local_ip, dest_ip, dest_port) != ERR_OK)
     {
         LOGE("ConnectionToPackets: could not bind a local port for the virtual source address");
         goto done;
