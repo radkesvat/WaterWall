@@ -40,5 +40,15 @@ void tcpudpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     tunnelchainInsert(chain, t);
     ts->tcp_connector->onChain(ts->tcp_connector, chain);
+    if (startupFailurePending())
+        return;
+    chain = tunnelGetChain(t);
     ts->udp_connector->onChain(ts->udp_connector, chain);
+    if (startupFailurePending())
+        return;
+    chain = tunnelGetChain(t);
+    tunnelchainInsert(chain, ts->resolver);
+    if (startupFailurePending())
+        return;
+    discard domainresolverTunnelAttachEmbedded(ts->resolver, t, NULL);
 }

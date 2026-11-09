@@ -335,6 +335,188 @@ static void caseSpliceOwnerDispatch(bool cancel_drain)
 }
 #endif
 
+static void caseDisabledDnsDropsBorrowedDatagram(void)
+{
+    twfSetCase("stateless disabled DNS drops unresolved borrowed datagrams without callbacks");
+    udpstateless_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(fixture.uss);
+    state->dns_policy                  = (dns_policy_t) {.supplied = true, .resolve = false};
+    atomic_init(&state->socket.retired, false);
+    address_context_t *destination = lineGetDestinationAddressContext(fixture.line);
+    addresscontextDomainSetByString(destination, "disabled.example");
+    addresscontextSetPort(destination, 53);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+    const uint32_t refs = twfLineRefCount(fixture.line);
+    sbuf_t        *buf  = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    udpstatelesssocketTunnelWritePayload(fixture.uss, fixture.line, buf);
+    twfRequire(lineIsAlive(fixture.line) && twfLineRefCount(fixture.line) == refs,
+               "disabled DNS destroyed a borrowed line or retained a DNS reference");
+    twfRequire(fixture.trace.next_finish == 0 && fixture.trace.prev_finish == 0,
+               "disabled DNS emitted Finish for a borrowed datagram");
+    udpstatelesssocket_lstate_t *ls = lineGetState(fixture.line, fixture.uss);
+    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+    lineDestroy(fixture.line);
+    fixtureTeardown(&fixture);
+}
+
+#if defined(OS_LINUX)
+static tunnel_t *protected_dns_provider;
+static unsigned  protected_dns_queries, native_dns_queries;
+static bool      protected_dns_answer = true;
+
+int __wrap_workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype,
+                                           dns_resolve_cb cb, void *userdata);
+int __wrap_workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype,
+                                           dns_resolve_cb cb, void *userdata)
+{
+    discard wid;
+    discard domain;
+    discard service;
+    discard socktype;
+    discard cb;
+    discard userdata;
+    ++native_dns_queries;
+    return ARES_ENOTINITIALIZED;
+}
+
+static void protectedDnsInit(tunnel_t *egress, line_t *line)
+{
+    discard            egress;
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    twfRequire(addresscontextIsResolverDns(destination) && addresscontextDestinationIsPinned(destination) &&
+                   destination->port == 5353 && destination->proto_udp &&
+                   ntohl(destination->ip_address.u_addr.ip4.addr) == 0x7f000035U,
+               "stateless DNS did not reach the selected numeric server and UDP egress");
+    addresscontextSetDestinationPinned(destination, false);
+    tunnelDownStreamEst(protected_dns_provider, line);
+}
+
+static void protectedDnsFinish(tunnel_t *egress, line_t *line)
+{
+    discard egress;
+    discard line;
+}
+
+static void protectedDnsPayload(tunnel_t *egress, line_t *line, sbuf_t *query)
+{
+    discard egress;
+    ++protected_dns_queries;
+    if (! protected_dns_answer)
+    {
+        lineReuseBuffer(line, query);
+        return;
+    }
+    const uint8_t *wire = sbufGetRawPtr(query);
+    size_t         end  = 12;
+    while (end < sbufGetLength(query) && wire[end] != 0)
+        end += (size_t) wire[end] + 1;
+    end += 5;
+    twfRequire(end <= sbufGetLength(query), "malformed DNS fixture question");
+    const bool ipv4  = wire[end - 4] == 0 && wire[end - 3] == 1;
+    sbuf_t    *reply = bufferpoolGetBestFit(lineGetBufferPool(line), end + (ipv4 ? 16 : 0), 0);
+    sbufSetLength(reply, end + (ipv4 ? 16 : 0));
+    uint8_t *answer = sbufGetMutablePtr(reply);
+    memoryCopy(answer, wire, end);
+    answer[2] = 0x81;
+    answer[3] = 0x80;
+    answer[6] = 0;
+    answer[7] = ipv4 ? 1 : 0;
+    answer[8] = answer[9] = answer[10] = answer[11] = 0;
+    if (ipv4)
+    {
+        const uint8_t record[] = {0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 42};
+        memoryCopy(answer + end, record, sizeof(record));
+    }
+    lineReuseBuffer(line, query);
+    tunnelDownStreamPayload(protected_dns_provider, line, reply);
+}
+
+static void caseProtectedDnsProvider(void)
+{
+    twfSetCase("stateless DNS submits through its policy provider and snapshots mutable destinations");
+    udpstateless_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+    twfRequire(ares_library_init(ARES_LIB_INIT_ALL) == ARES_SUCCESS, "c-ares initialization failed");
+    asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
+    GSTATE.dns_options.lookups = (char *) "b";
+    cJSON *settings            = cJSON_Parse("{\"mode\":\"chain\",\"strategy\":\"only-ipv4\","
+                                             "\"servers\":[\"127.0.0.53:5353\"]}");
+    node_t provider_node       = {
+              .name = (char *) "stateless-provider", .type = (char *) "DomainResolver", .node_settings_json = settings};
+    node_t factory         = nodeDomainResolverGet();
+    protected_dns_provider = factory.createHandle(&provider_node);
+    memoryFree(factory.type);
+    twfRequire(protected_dns_provider != NULL, "failed to construct stateless DNS provider");
+    node_t    egress_node         = {.type = (char *) "FixtureDnsEgress"};
+    tunnel_t *egress              = tunnelCreate(&egress_node, 0, 0);
+    egress->fnInitU               = protectedDnsInit;
+    egress->fnFinU                = protectedDnsFinish;
+    egress->fnPayloadU            = protectedDnsPayload;
+    tunnel_chain_t *chain         = tunnelchainCreate(1);
+    protected_dns_provider->chain = chain;
+    twfRequire(domainresolverTunnelAttachEmbedded(protected_dns_provider, fixture.uss, egress),
+               "failed to select stateless DNS fixture egress");
+    udpstatelesssocket_lstate_t *borrowed = lineGetState(fixture.line, fixture.uss);
+    memoryZeroAligned32(borrowed, tunnelGetCorrectAlignedLineStateSize(sizeof(*borrowed)));
+    lineDestroy(fixture.line);
+    twfLinePoolTeardown(&fixture.lines);
+    fixture.uss->lstate_offset = protected_dns_provider->lstate_size;
+    twfLinePoolSetup(
+        &fixture.lines, protected_dns_provider->lstate_size + fixture.uss->lstate_size, kTestLinePoolItems);
+    chain->line_pools[0]               = fixture.lines.pools[0];
+    fixture.line                       = twfLinePoolCreateLine(&fixture.lines);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(fixture.uss);
+    state->dns_policy                  = (dns_policy_t) {.resolve = true, .supplied = true, .strategy = kDsOnlyIpV4};
+    state->dns_strategy_override       = true;
+    state->dns_provider                = protected_dns_provider;
+    atomic_init(&state->socket.retired, false);
+    twfRequire(mutexTryInit(&state->dns_cache_mutex), "DNS cache mutex setup failed");
+    protected_dns_queries = native_dns_queries = 0;
+    protected_dns_answer                       = true;
+    address_context_t *destination             = lineGetDestinationAddressContext(fixture.line);
+    addresscontextDomainSetByString(destination, "stateless-policy.test");
+    addresscontextSetPort(destination, 20453);
+    const uint32_t refs = twfLineRefCount(fixture.line);
+    sbuf_t        *buf  = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    udpstatelesssocketTunnelWritePayload(fixture.uss, fixture.line, buf);
+    addresscontextReset(destination);
+    addresscontextDomainSetByString(destination, "new-context.test");
+    addresscontextSetPort(destination, 20454);
+    sockaddr_u cached;
+    for (unsigned i = 0;
+         i < 20 && ! udpstatelesssocketDnsCacheLookup(state, "stateless-policy.test", 20453, kDsOnlyIpV4, &cached);
+         ++i)
+        twfRequire(wloopProcessEvents(fixture.env.loop, 5) >= 0, "DNS event dispatch failed");
+    twfRequire(protected_dns_queries > 0 && native_dns_queries == 0, "stateless DNS bypassed the selected provider");
+    twfRequire(udpstatelesssocketDnsCacheLookup(state, "stateless-policy.test", 20453, kDsOnlyIpV4, &cached) &&
+                   ntohl(cached.sin.sin_addr.s_addr) == 0x7f00002aU && ntohs(cached.sin.sin_port) == 20453,
+               "mutable context changed the retained DNS destination or cache key");
+    twfRequire(twfLineRefCount(fixture.line) == refs, "completed stateless DNS request retained a line reference");
+    protected_dns_answer = false;
+    buf                  = bufferpoolGetSmallBuffer(fixture.env.pool);
+    sbufSetLength(buf, 1);
+    udpstatelesssocketTunnelWritePayload(fixture.uss, fixture.line, buf);
+    protected_dns_provider->onWorkerQuiesce(protected_dns_provider, 0, wwLifecycleStartupRollback());
+    protected_dns_provider->onWorkerStop(protected_dns_provider, 0, wwLifecycleStartupRollback());
+    twfRequire(twfLineRefCount(fixture.line) == refs && native_dns_queries == 0,
+               "shutdown DNS completion leaked a request or fell back to native");
+    lineDestroy(fixture.line);
+    udpstatelesssocketDnsCacheClear(state);
+    mutexDestroy(&state->dns_cache_mutex);
+    tunnelOwnedChildDestroy(protected_dns_provider);
+    protected_dns_provider = NULL;
+    cJSON_Delete(settings);
+    chain->line_pools[0] = NULL;
+    tunnelchainDestroy(chain);
+    tunnelDestroy(egress);
+    ares_library_cleanup();
+    fixtureTeardown(&fixture);
+}
+#endif
+
 int main(void)
 {
 #if WW_HAVE_SPLICE
@@ -344,6 +526,10 @@ int main(void)
     caseHeadOnlyMetadata();
     caseEndpointOwnerFinishKillsLine();
     caseBorrowedLineFinishDoesNotDestroy();
+    caseDisabledDnsDropsBorrowedDatagram();
+#if defined(OS_LINUX)
+    caseProtectedDnsProvider();
+#endif
 
     printf("owned_line_finish_udpstatelesssocket_test: all cases passed\n");
     return 0;

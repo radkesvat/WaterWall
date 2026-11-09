@@ -28,10 +28,122 @@ static void requireSettingsRejected(const char *json)
     cJSON_Delete(settings);
 }
 
+static void testSharedPolicy(void)
+{
+    const dns_policy_defaults_t defaults = {
+        .resolve       = false,
+        .strategy      = kDsInvalid,
+        .core_strategy = kDsPreferIpV6,
+    };
+    static const struct
+    {
+        const char          *json;
+        bool                 valid;
+        bool                 resolve;
+        enum domain_strategy strategy;
+    } cases[] = {
+        {"{}", true, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":false}}", true, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true}}", true, true, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"core-settings\"}}", true, true, kDsPreferIpV6},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"only-ipv4\"}}", true, true, kDsOnlyIpV4},
+        {"{\"dns-behaviour\":null}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":[]}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"strategy\":\"only-ipv4\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":1}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":null}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"extra\":true}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":1}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"ONLY-IPV4\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"NATIVE\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":false,\"strategy\":\"only-ipv4\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":false,\"mode\":\"native\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":false,\"servers\":[]}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":false,\"dns-next\":null}}", false, false, kDsInvalid},
+        {"{\"domain-strategy\":null,\"dns-behaviour\":{\"resolve\":true}}", false, false, kDsInvalid},
+        {"{\"resolve-domains\":false,\"dns-behaviour\":{\"resolve\":false}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"native\\u0000suffix\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"only-ipv4\\u0000suffix\"}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\\u0000suffix\":true}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\\u0000suffix\":{\"resolve\":true}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"resolve\":false}}", false, false, kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\",\"servers\":[\"127.0.0.1\\u0000suffix\"]}}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\",\"servers\":[\"127.0.0.1\"],\"dns-next\":"
+         "\"entry\\u0000suffix\"}}",
+         false,
+         false,
+         kDsInvalid},
+
+    };
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        testCaseSet(cases[i].json);
+        cJSON       *settings = cJSON_Parse(cases[i].json);
+        dns_policy_t policy;
+        require(dnsPolicyParseSettings(&policy, settings, &defaults, "test.dns-behaviour") == cases[i].valid,
+                "common policy validity differs");
+        if (cases[i].valid)
+            require(policy.resolve == cases[i].resolve && policy.strategy == cases[i].strategy,
+                    "common policy lost defaults or effective values");
+        dnsPolicyDestroy(&policy);
+        cJSON_Delete(settings);
+    }
+    const char *strategies[] = {"accept-dns-returned-order", "prefer-ipv4", "prefer-ipv6", "only-ipv4", "only-ipv6"};
+    for (size_t i = 0; i < sizeof(strategies) / sizeof(strategies[0]); ++i)
+    {
+        cJSON               *value = cJSON_CreateString(strategies[i]);
+        enum domain_strategy strategy;
+        require(dnsPolicyParseStrategy(value, defaults.core_strategy, &strategy), "canonical strategy rejected");
+        require(strcmp(dnsPolicyStrategyName(strategy), strategies[i]) == 0, "strategy round trip changed");
+        cJSON_Delete(value);
+    }
+    const char *invalid_overrides[] = {
+        "{\"dns-behaviour\":{\"strategy\":\"only-ipv4\\u0000suffix\"}}",
+        "{\"dns-behaviour\":{\"strategy\\u0000suffix\":\"only-ipv4\"}}",
+        "{\"dns-behaviour\":{\"strategy\":\"only-ipv4\",\"strategy\":\"only-ipv6\"}}",
+        "{\"dns-behaviour\":{\"resolve\":true}}",
+    };
+    for (size_t i = 0; i < sizeof(invalid_overrides) / sizeof(invalid_overrides[0]); ++i)
+    {
+        cJSON               *override = cJSON_Parse(invalid_overrides[i]);
+        enum domain_strategy strategy = kDsOnlyIpV4;
+        require(! dnsPolicyParseStrategyOverride(&strategy, override, true, "weighted"),
+                "invalid weighted strategy override accepted");
+        cJSON_Delete(override);
+    }
+    cJSON                *settings   = cJSON_Parse("{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\","
+                                                   "\"servers\":[\"127.0.0.1:53\"]}}");
+    dns_policy_defaults_t restricted = defaults;
+    restricted.require_dns_next      = true;
+    dns_policy_t policy;
+    require(! dnsPolicyParseSettings(&policy, settings, &restricted, "restricted"), "required DNS branch omitted");
+    dnsPolicyDestroy(&policy);
+    cJSON_AddStringToObject(cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour"), "dns-next", "dns-out");
+    require(dnsPolicyParseSettings(&policy, settings, &restricted, "restricted"), "explicit DNS branch rejected");
+    cJSON       *flat = dnsPolicyCreateResolverSettings(&policy);
+    dns_policy_t copy;
+    require(dnsPolicyParseFlat(&copy, flat, &defaults, "flat"), "effective helper policy rejected");
+    require(copy.mode == policy.mode && strcmp(copy.servers_csv, policy.servers_csv) == 0 &&
+                strcmp(copy.dns_next, policy.dns_next) == 0,
+            "helper policy lost explicit transport");
+    dnsPolicyDestroy(&copy);
+    dnsPolicyDestroy(&policy);
+    cJSON_Delete(flat);
+    restricted.ipv4_only = true;
+    require(! dnsPolicyParseSettings(&policy, settings, &restricted, "ipv4-only"), "IPv4-only restriction ignored");
+    dnsPolicyDestroy(&policy);
+    cJSON_Delete(settings);
+}
+
 int main(void)
 {
     testCaseSet("domainresolver_configuration_test");
     require(createNetworkLogger(NULL, false) != NULL, "network logger setup failed");
+    testSharedPolicy();
     GSTATE.workers_count = 1;
     asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
     // No registered TcpUdpConnector, and no dynamic-library discovery.
@@ -48,6 +160,12 @@ int main(void)
         domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
         cJSON_Delete(settings);
     }
+    cJSON    *disabled_settings = cJSON_Parse("{\"resolve\":false}");
+    tunnel_t *disabled          = createResolver(disabled_settings);
+    require(disabled != NULL && ! domainresolverTunnelResolutionEnabled(disabled), "flat disabled resolver rejected");
+    domainresolverTunnelDestroy(disabled, wwLifecycleStartupRollback());
+    cJSON_Delete(disabled_settings);
+    requireSettingsRejected("{\"resolve\":false,\"strategy\":\"only-ipv4\"}");
     requireSettingsRejected("{\"mode\":\"direct\",\"servers\":[\"127.0.0.1:53\"]}");
     // An unavailable direct connector must not poison later native creation.
     tunnel_t *native = createResolver(NULL);

@@ -9,6 +9,7 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts)
 {
     assert(ts != NULL);
+    dnsPolicyDestroy(&ts->dns_policy);
 
     addresscontextReset(&ts->target_addr);
     memoryZeroAligned32(ts, tunnelGetCorrectAlignedStateSize(sizeof(*ts)));

@@ -118,6 +118,7 @@ bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
         return false;
     const char *keys[] = {"mode",
                           "domain-strategy",
+                          "dns-behaviour",
                           "target-address",
                           "port",
                           "username",
@@ -152,8 +153,23 @@ bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
         (! cJSON_IsString(f) || (stringCompare(f->valuestring, "connect") && stringCompare(f->valuestring, "http"))))
         return false;
     ts->connect = ! f || ! stringCompare(f->valuestring, "connect");
-    if (! domainStrategy(ts, GET("domain-strategy")))
+    if (GET("dns-behaviour") == NULL && ! domainStrategy(ts, GET("domain-strategy")))
         return false;
+    const dns_policy_defaults_t dns_defaults = {
+        .resolve          = ts->resolve_domains,
+        .strategy         = ts->domain_strategy,
+        .core_strategy    = GSTATE.domain_strategy,
+        .require_dns_next = true,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, json, &dns_defaults, "HttpProxyClient->settings->dns-behaviour"))
+        return false;
+    ts->resolve_domains = ts->dns_policy.resolve;
+    ts->domain_strategy = ts->dns_policy.strategy;
+    if (ts->resolve_domains && ! ts->connect)
+    {
+        LOGF("HttpProxyClient: enabled dns-behaviour requires mode connect");
+        return false;
+    }
     f = GET("verbose");
     if (f && ! cJSON_IsBool(f))
         return false;

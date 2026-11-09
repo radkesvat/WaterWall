@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "DomainResolver/interface.h"
+
 #include "loggers/network_logger.h"
 
 static bool routerDeferUntilPrevious(tunnel_t *t, tunnel_chain_t *chain)
@@ -143,4 +145,6 @@ void routerTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         // next rule instead of carrying a potentially freed chain across iterations.
         chain = tunnelGetChain(t);
     }
+    if (ts->domain_resolver_tunnel != NULL && ! domainresolverTunnelAttachEmbedded(ts->domain_resolver_tunnel, t, t))
+        startupFailureRecord(1);
 }

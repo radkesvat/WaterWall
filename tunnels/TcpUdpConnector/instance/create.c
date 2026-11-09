@@ -18,9 +18,9 @@ static void tcpudpconnectorConfigureCallbacks(tunnel_t *t)
 }
 
 static bool tcpudpconnectorConfigureChildNode(node_t *child, node_t template_node, const node_t *owner,
-                                              const char *suffix)
+                                              const char *suffix, cJSON *settings)
 {
-    if (! nodeConfigureChild(child, template_node, owner, suffix, kNodeChildLinkNone, owner->node_settings_json))
+    if (! nodeConfigureChild(child, template_node, owner, suffix, kNodeChildLinkNone, settings))
     {
         return false;
     }
@@ -33,12 +33,14 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
 {
     tcpudpconnector_tstate_t *ts = tunnelGetState(t);
 
-    if (! tcpudpconnectorConfigureChildNode(&ts->tcp_node, nodeTcpConnectorGet(), node, ".tcp-connector"))
+    if (! tcpudpconnectorConfigureChildNode(
+            &ts->tcp_node, nodeTcpConnectorGet(), node, ".tcp-connector", ts->child_settings))
     {
         LOGF("TcpUdpConnector: failed to configure internal TcpConnector node");
         return false;
     }
-    if (! tcpudpconnectorConfigureChildNode(&ts->udp_node, nodeUdpConnectorGet(), node, ".udp-connector"))
+    if (! tcpudpconnectorConfigureChildNode(
+            &ts->udp_node, nodeUdpConnectorGet(), node, ".udp-connector", ts->child_settings))
     {
         LOGF("TcpUdpConnector: failed to configure internal UdpConnector node");
         return false;
@@ -59,7 +61,62 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
         return false;
     }
     ts->udp_node.instance = ts->udp_connector;
+    tcpconnectorTunnelSetDnsProvider(ts->tcp_connector, ts->resolver);
+    udpconnectorTunnelSetDnsProvider(ts->udp_connector, ts->resolver);
 
+    return true;
+}
+
+static bool tcpudpconnectorCreateDnsProvider(tunnel_t *t, node_t *node)
+{
+    tcpudpconnector_tstate_t *ts              = tunnelGetState(t);
+    enum domain_strategy      legacy_strategy = GSTATE.domain_strategy;
+    if (! getDomainStrategyFromJsonObjectOrDefault(
+            &legacy_strategy, node->node_settings_json, "domain-strategy", GSTATE.domain_strategy))
+    {
+        LOGF("JSON Error: TcpUdpConnector->settings->domain-strategy is invalid");
+        return false;
+    }
+    const dns_policy_defaults_t defaults = {
+        .resolve          = true,
+        .strategy         = legacy_strategy,
+        .core_strategy    = GSTATE.domain_strategy,
+        .require_dns_next = true,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, node->node_settings_json, &defaults, "TcpUdpConnector->settings"))
+        return false;
+    ts->resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
+    if (! nodeConfigureChild(&ts->resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".dns-provider",
+                             kNodeChildLinkNone,
+                             ts->resolver_settings))
+        return false;
+    ts->resolver_node.flags |= kNodeFlagNoChain;
+    ts->resolver_node.can_have_prev         = false;
+    ts->resolver_node.can_have_next         = false;
+    ts->resolver_node.layer_group           = kNodeLayer4;
+    ts->resolver_node.layer_group_prev_node = kNodeLayerNone;
+    ts->resolver_node.layer_group_next_node = kNodeLayerNone;
+    ts->resolver                            = nodemanagerCreateTunnelInstance(&ts->resolver_node);
+    if (ts->resolver == NULL)
+        return false;
+    ts->resolver_node.instance = ts->resolver;
+
+    /* Private children retain their own preparation storage but borrow this
+     * provider. Construct them with transport-free settings to avoid creating
+     * duplicate explicit branches or direct-mode connector trees. */
+    ts->child_settings = cJSON_Duplicate(node->node_settings_json, true);
+    cJSON_DeleteItemFromObjectCaseSensitive(ts->child_settings, "dns-behaviour");
+    cJSON_DeleteItemFromObjectCaseSensitive(ts->child_settings, "domain-strategy");
+    cJSON *child_policy = cJSON_AddObjectToObject(ts->child_settings, "dns-behaviour");
+    cJSON_AddBoolToObject(child_policy, "resolve", ts->dns_policy.resolve);
+    if (ts->dns_policy.resolve)
+        cJSON_AddItemToObject(
+            child_policy,
+            "strategy",
+            cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(ts->resolver_settings, "strategy"), true));
     return true;
 }
 
@@ -87,7 +144,7 @@ tunnel_t *tcpudpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! tcpudpconnectorCreateChildTunnels(t, node))
+    if (! tcpudpconnectorCreateDnsProvider(t, node) || ! tcpudpconnectorCreateChildTunnels(t, node))
     {
         tcpudpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

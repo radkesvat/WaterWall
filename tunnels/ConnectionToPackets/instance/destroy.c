@@ -25,6 +25,7 @@ static void ctpDestroyInternalDomainResolver(ctp_tstate_t *ts)
         ts->domain_resolver_settings = NULL;
     }
 
+    dnsPolicyDestroy(&ts->dns_policy);
     ctpClearInternalNode(&ts->domain_resolver_node);
 }
 

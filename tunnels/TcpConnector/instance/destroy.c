@@ -67,5 +67,6 @@ void tcpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *contex
         memoryFree(ts->source_ip);
     }
 
+    dnsPolicyDestroy(&ts->dns_policy);
     tunnelDestroy(t);
 }

@@ -1,5 +1,7 @@
 #include "internal.h"
 
+#include "DomainResolver/interface.h"
+
 #include "loggers/network_logger.h"
 
 void vmessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
@@ -81,4 +83,8 @@ void vmessclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     {
         next_tunnel->onChain(next_tunnel, chain);
     }
+    if (startupFailurePending())
+        return;
+    if (resolver != NULL && ! domainresolverTunnelAttachEmbedded(resolver, t, t))
+        startupFailureRecord(1);
 }

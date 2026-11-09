@@ -2,27 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool domainresolverParseStrategy(domainresolver_tstate_t *ts, const cJSON *settings)
-{
-    const cJSON *strategy_json = cJSON_GetObjectItemCaseSensitive(settings, "strategy");
-
-    if (strategy_json == NULL || (cJSON_IsString(strategy_json) && strategy_json->valuestring != NULL &&
-                                  stricmp(strategy_json->valuestring, "core-settings") == 0))
-    {
-        ts->strategy = GSTATE.domain_strategy;
-        return true;
-    }
-
-    if (getDomainStrategyFromJson(strategy_json, &ts->strategy))
-    {
-        return true;
-    }
-
-    LOGF("JSON Error: DomainResolver->settings->strategy must be one of \"core-settings\", "
-         "\"accept-dns-returned-order\", \"prefer-ipv4\", \"prefer-ipv6\", \"only-ipv4\", or \"only-ipv6\"");
-    return false;
-}
-
 tunnel_t *domainresolverTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(domainresolver_tstate_t), sizeof(domainresolver_lstate_t));
@@ -60,7 +39,7 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     }
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-    if (! domainresolverParseStrategy(ts, settings) || ! domainresolverConfigureTransport(t, settings))
+    if (! domainresolverConfigureTransport(t, settings))
     {
         domainresolverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;

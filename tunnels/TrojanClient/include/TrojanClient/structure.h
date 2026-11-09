@@ -57,6 +57,7 @@ enum
 
 typedef struct trojanclient_tstate_s
 {
+    dns_policy_t  dns_policy;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;

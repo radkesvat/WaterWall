@@ -15,7 +15,33 @@ static tunnel_t *resolver;
 static line_t   *observed_line;
 static sbuf_t   *retained_write;
 static unsigned  writes, finishes, pauses, resumes, results, cancellations;
+static unsigned  preparations, preparation_cleanups;
+static bool      preparation_refuses;
 static bool      init_establishes, init_finishes, init_pauses, answer_queries, submitting;
+
+static bool prepareOwned(tunnel_t *helper, tunnel_t *owner, line_t *line, void *storage)
+{
+    discard                  owner;
+    domainresolver_lstate_t *ls = lineGetState(line, helper);
+    twfRequire(ls->dns_transport != NULL, "owned preparation lost exact transport association");
+    twfRequire(storage != NULL && ((uint8_t *) storage)[0] == 0, "owned preparation storage was not initialized");
+    address_context_t *target = lineGetDestinationAddressContext(line);
+    twfRequire(addresscontextDestinationIsPinned(target) && addresscontextIsResolverDns(target) && target->port == 53 &&
+                   addresscontextIsIpType(target),
+               "owned preparation lost authoritative target");
+    ((uint8_t *) storage)[0] = 0x5a;
+    ++preparations;
+    return ! preparation_refuses;
+}
+
+static void destroyOwnedPreparation(tunnel_t *helper, tunnel_t *owner, line_t *line, void *storage)
+{
+    discard helper;
+    discard owner;
+    discard line;
+    twfRequire(((uint8_t *) storage)[0] == 0x5a, "owned preparation storage was overwritten before cleanup");
+    ++preparation_cleanups;
+}
 
 static void observeInit(tunnel_t *next, line_t *line)
 {
@@ -229,6 +255,47 @@ static void testPendingTcpQuiesce(tunnel_t *next, const asyncdns_options_t *opti
     init_establishes = true;
 }
 
+static void testOwnedPreparation(tunnel_t *next, const asyncdns_options_t *options)
+{
+    twfSetCase("shared entries prepare and clean owned UDP/TCP lines without helper Init");
+    domainresolver_tstate_t *ts = tunnelGetState(resolver);
+    ts->shared_entry = ts->dns_egress     = next;
+    domainresolver_transport_t *transport = domainresolverTransportCreate(resolver, next, 0, options);
+    twfRequire(transport != NULL, "owned preparation transport construction failed");
+    sockaddr_u peer          = {0};
+    peer.sin.sin_family      = AF_INET;
+    peer.sin.sin_port        = htons(53);
+    peer.sin.sin_addr.s_addr = htonl(0x7f000035U);
+    for (unsigned tcp = 0; tcp < 2; ++tcp)
+    {
+        for (unsigned synchronous_finish = 0; synchronous_finish < 2; ++synchronous_finish)
+        {
+            init_finishes                  = synchronous_finish != 0;
+            const unsigned prepared_before = preparations;
+            const unsigned cleanup_before  = preparation_cleanups;
+            ares_socket_t  socket          = dnsTransportOpen(AF_INET, tcp ? SOCK_STREAM : SOCK_DGRAM, 0, transport);
+            int            result          = dnsTransportConnect(socket, &peer.sa, sizeof(peer.sin), 0, transport);
+            twfRequire((synchronous_finish ? result == -1 : result == 0) && preparations == prepared_before + 1,
+                       "owned preparation failed or ran more than once");
+            dnsTransportClose(socket, transport);
+            releaseObserved();
+            twfRequire(preparation_cleanups == cleanup_before + 1, "owned line cleanup did not run exactly once");
+        }
+    }
+    init_finishes                 = false;
+    preparation_refuses           = true;
+    const unsigned cleanup_before = preparation_cleanups;
+    ares_socket_t  refused        = dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport);
+    twfRequire(dnsTransportConnect(refused, &peer.sa, sizeof(peer.sin), 0, transport) == -1 &&
+                   transport->sockets->line == NULL && observed_line == NULL,
+               "failed preparation entered owner Init or left owned line alive");
+    dnsTransportClose(refused, transport);
+    twfRequire(preparation_cleanups == cleanup_before + 1, "failed owned preparation did not settle storage");
+    preparation_refuses = false;
+    domainresolverTransportDestroy(transport);
+    ts->shared_entry = ts->dns_egress = NULL;
+}
+
 int main(int argc, char **argv)
 {
     const char *selected = argc == 2 ? argv[1] : NULL;
@@ -251,6 +318,7 @@ int main(int argc, char **argv)
     next->fnFinU          = observeFinish;
     next->fnPauseU        = observePause;
     next->fnResumeU       = observeResume;
+    domainresolverTunnelSetPrepareHook(resolver, next, 32, prepareOwned, destroyOwnedPreparation);
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, resolver->lstate_size, 8);
     tunnel_chain_t *chain = tunnelchainCreate(1);
@@ -359,6 +427,7 @@ int main(int argc, char **argv)
         testWakeDeadline(next, &options);
     if (selected == NULL || strcmp(selected, "pending-tcp") == 0)
         testPendingTcpQuiesce(next, &options);
+    testOwnedPreparation(next, &options);
     chain->line_pools[0] = NULL;
     tunnelchainDestroy(chain);
     twfLinePoolTeardown(&lines);

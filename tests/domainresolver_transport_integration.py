@@ -166,23 +166,23 @@ def serve_echo(listener, observed_sources=None):
         DnsFixture.start(echo, peer)
 
 
-def request(process, name, port=APP):
+def request(process, name, port=APP, numeric=False):
     peer = connect_when_ready(process, (HOST, port), deadline=time.monotonic() + 8,
                               failure=lambda: AssertionError("resolver runtime exited"))
     try:
         peer.settimeout(8)
         peer.sendall(b"\x05\x01\x00")
         assert exact(peer, 2) == b"\x05\x00"
-        encoded = name.encode()
-        peer.sendall(b"\x05\x01\x00\x03" + bytes([len(encoded)]) + encoded + struct.pack(">H", SERVICE))
+        address = b"\x01" + socket.inet_aton(name) if numeric else b"\x03" + bytes([len(name.encode())]) + name.encode()
+        peer.sendall(b"\x05\x01\x00" + address + struct.pack(">H", SERVICE))
         return peer
     except BaseException:
         peer.close()
         raise
 
 
-def roundtrip(process, name, port=APP):
-    with request(process, name, port) as peer:
+def roundtrip(process, name, port=APP, numeric=False):
+    with request(process, name, port, numeric=numeric) as peer:
         complete_roundtrip(peer, name)
 
 
@@ -191,6 +191,33 @@ def complete_roundtrip(peer, name):
     body = (name + "|ordered application data").encode() * 100
     peer.sendall(body)
     assert exact(peer, len(body)) == body, f"echo mismatch for {name}"
+
+
+def udp_application(process, name, numeric=False):
+    """A SOCKS UDP application uses the combined owner's UDP child/provider."""
+    with connect_when_ready(process, (HOST, APP), deadline=time.monotonic() + 8,
+                            failure=lambda: AssertionError("UDP application runtime exited")) as control:
+        control.settimeout(5)
+        control.sendall(b"\x05\x01\x00")
+        assert exact(control, 2) == b"\x05\x00"
+        control.sendall(b"\x05\x03\x00\x01\x00\x00\x00\x00\x00\x00")
+        reply = exact(control, 10)
+        assert reply[:4] == b"\x05\x00\x00\x01", "UDP association failed"
+        relay = (socket.inet_ntoa(reply[4:8]), struct.unpack(">H", reply[8:10])[0])
+        address = b"\x01" + socket.inet_aton(name) if numeric else b"\x03" + bytes([len(name)]) + name.encode()
+        header = b"\x00\x00\x00" + address + struct.pack(">H", SERVICE)
+        body = b"combined provider UDP application"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+            client.settimeout(.2)
+            deadline = time.monotonic() + 5
+            while True:
+                client.sendto(header + body, relay)
+                try:
+                    received, _ = client.recvfrom(65536)
+                    assert received[:4] == b"\x00\x00\x00\x01" and received[10:] == body, "UDP application echo changed"
+                    return
+                except TimeoutError:
+                    assert time.monotonic() < deadline, "UDP application did not traverse combined provider"
 
 
 def wait_query(fixture, name):
@@ -261,8 +288,154 @@ def config(mode, endpoint):
     return nodes
 
 
+def udp_balancing_config(mode, endpoint):
+    policy = {"resolve": mode != "disabled"}
+    if mode != "disabled":
+        policy.update({"mode": mode, "strategy": "only-ipv4"})
+        if mode != "native":
+            policy["servers"] = [endpoint]
+        if mode == "chain":
+            policy["dns-next"] = "dns-out"
+    settings = {"balance-mode": "packet", "dns-behaviour": policy,
+                "addresses": [{"address": address, "port": SERVICE, "weight": 1}
+                              for address in (HOST, "udp-balance.test", "tcp-balance.test")]}
+    nodes = [node("in", "UdpListener", {"address": HOST, "port": APP}, "out"),
+             node("out", "UdpConnector", settings)]
+    if mode == "chain":
+        nodes.append(connector("dns-out"))
+    return nodes
+
+
+def run_udp_balancing(binary, mode):
+    """Initial and later weighted destinations share one selected DNS backend."""
+    install_termination_handler()
+    with RunDirectory("ww-udp-dns-policy-") as root, ExitStack() as stack:
+        fixture = DnsFixture(stack, HOST, DNS)
+        native = DnsFixture(stack, HOST, NATIVE, spoof=False)
+        echo = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+        echo.bind((HOST, SERVICE))
+
+        def serve_datagrams():
+            while True:
+                try:
+                    data, peer = echo.recvfrom(65536)
+                    echo.sendto(data, peer)
+                except OSError:
+                    return
+
+        DnsFixture.start(serve_datagrams)
+        (root / "config.json").write_text(json.dumps({"name": "udp-dns-policy", "nodes":
+            udp_balancing_config(mode, f"{HOST}:{DNS}")}))
+        (root / "core.json").write_text(json.dumps({**core_config(workers=2), "dns": {
+            "servers": [f"{HOST}:{NATIVE}"], "lookups": "b", "timeout-ms": 500,
+            "max-timeout-ms": 1000, "tries": 2}}))
+        with Process([binary], cwd=root, log_path=root / "stdout.log",
+                     cleanup_signal=signal.SIGTERM) as process:
+            client = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+            client.settimeout(.08)
+            received = set()
+            deadline = time.monotonic() + 10
+            for index in range(128):
+                process.check_running("UDP DNS policy runtime exited")
+                body = f"datagram-{index}".encode()
+                client.sendto(body, (HOST, APP))
+                try:
+                    reply, peer = client.recvfrom(65536)
+                    assert peer == (HOST, APP) and reply.startswith(b"datagram-"), "UDP echo changed"
+                    received.add(reply)
+                except TimeoutError:
+                    pass
+                assert time.monotonic() < deadline, "UDP DNS policy did not make progress"
+                expected = native if mode == "native" else fixture
+                if len(received) >= 16 and (mode == "disabled" or all(
+                        (name, network) in expected.names for name, network in
+                        (("udp-balance.test", "udp"), ("tcp-balance.test", "udp"),
+                         ("tcp-balance.test", "tcp")))):
+                    break
+            assert len(received) >= 16, "numeric UDP destinations stopped working"
+            if mode == "disabled":
+                assert fixture.counts == native.counts == {"udp": 0, "tcp": 0}, "disabled UDP queried DNS"
+            else:
+                expected = native if mode == "native" else fixture
+                assert all((name, network) in expected.names for name, network in
+                           (("udp-balance.test", "udp"), ("tcp-balance.test", "udp"),
+                            ("tcp-balance.test", "tcp"))), "later UDP destinations bypassed selected DNS policy"
+                other = fixture if mode == "native" else native
+                assert other.counts == {"udp": 0, "tcp": 0}, f"UDP DNS transport fallback: {other.counts}"
+            process.send_signal(signal.SIGTERM)
+            assert process.wait(timeout=8) == 128 + signal.SIGTERM, "UDP DNS shutdown failed"
+    print(f"UDP packet balancing {mode}: initial/later DNS, TCP fallback, numeric destinations and no escape passed")
+    return 0
+
+
+def embedded_config(kind, mode, endpoint):
+    """Exercise the same real DNS transport through a consumer-owned provider."""
+    policy = {"resolve": mode != "disabled"}
+    if mode != "disabled":
+        policy.update({"mode": mode, "strategy": "only-ipv4"})
+        if mode != "native":
+            policy["servers"] = [endpoint]
+    nodes = config("omitted", endpoint)
+    nodes.pop(2)  # Resolution belongs to the consumer under test.
+    nodes[1]["next"] = "consumer"
+    if kind in ("tcp", "combined"):
+        nodes[2]["name"] = "consumer"
+        nodes[2]["type"] = "TcpConnector" if kind == "tcp" else "TcpUdpConnector"
+        owner = nodes[2]
+        if kind == "combined":
+            nodes[0]["type"] = "TcpUdpListener"
+            nodes[1]["settings"].update({"udp": True, "ipv4": HOST})
+    elif kind == "router":
+        settings = {"rules": [{"resolver-dns": True, "target": "dns-out"}]} if mode == "chain" else {}
+        owner = node("consumer", "Router", settings, "app-out")
+        nodes.append(owner)
+        if mode == "chain":
+            nodes.append(connector("dns-out"))
+    elif kind == "ctp":
+        owner = node("consumer", "ConnectionToPackets", {"source-ipv4": "10.27.0.2"}, "ptc")
+        nodes += [owner, node("ptc", "PacketsToConnection", {}, "app-out")]
+    else:
+        # The peer must carry both DNS datagrams and TCP fallback.
+        nodes[2] = connector("app-out")
+        # All logical proxy targets remain separate from their numeric outer peer.
+        peer_kind = {"vless": "Vless", "vmess": "Vmess", "trojan": "Trojan", "socks": "Socks5", "http": "HttpProxy"}[kind]
+        settings = {"target-address": "dest_context->address", "port": "dest_context->port"}
+        server_settings = {"connect": True, "udp": True}
+        if kind in ("vless", "vmess"):
+            settings["uuid"] = server_settings["uuid"] = UUID
+        elif kind == "trojan":
+            settings["password"] = server_settings["password"] = "dns-test-password"
+        elif kind == "socks":
+            server_settings.update({"no-auth": True, "ipv4": HOST})
+        elif kind == "http":
+            server_settings = {"no-auth": True}
+        if kind != "http":
+            settings["protocol"] = "dest_context->protocol"
+        owner = node("consumer", peer_kind + "Client", settings, "vpn-out")
+        nodes += [owner, node("vpn-out", "TcpConnector", {"address": HOST, "port": VPN, "fastopen": False}),
+                  node("vpn-in", "TcpListener", {"address": HOST, "port": VPN}, "proxy-server"),
+                  node("proxy-server", peer_kind + "Server", server_settings, "app-out")]
+        if kind == "socks":
+            nodes[-2]["type"] = "TcpUdpListener"
+            nodes[-3]["type"] = "TcpUdpConnector"
+    if mode == "chain" and kind in ("tcp", "combined", "ctp", "http"):
+        policy["dns-next"] = "dns-out"
+        nodes.append(connector("dns-out"))
+    owner["settings"]["dns-behaviour"] = policy
+    if mode == "disabled":
+        for entry in nodes:
+            if entry["name"] == "app-out":
+                entry["settings"]["dns-behaviour"] = {"resolve": False}
+    return nodes
+
+
 def main():
     binary, mode = sys.argv[1:]
+    if mode.startswith("udp-balancing-"):
+        return run_udp_balancing(binary, mode.removeprefix("udp-balancing-"))
+    embedded = mode.split("-") if mode.startswith("embedded-") else None
+    if embedded:
+        _, consumer, mode = embedded
     install_termination_handler()
     with RunDirectory("ww-resolver-transport-") as root, ExitStack() as stack:
         dns_host = "::1" if mode == "direct6" else HOST
@@ -275,6 +448,19 @@ def main():
         echo.listen()
         direct_sources, vpn_sources = [], []
         DnsFixture.start(serve_echo, echo, direct_sources)
+        if embedded and consumer == "combined":
+            udp_echo = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+            udp_echo.bind((HOST, SERVICE))
+
+            def serve_application_datagrams():
+                while True:
+                    try:
+                        data, peer = udp_echo.recvfrom(65536)
+                        udp_echo.sendto(data, peer)
+                    except OSError:
+                        return
+
+            DnsFixture.start(serve_application_datagrams)
         if mode == "shared-vless":
             vpn_echo = stack.enter_context(socket.socket())
             vpn_echo.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -282,7 +468,7 @@ def main():
             vpn_echo.listen()
             DnsFixture.start(serve_echo, vpn_echo, vpn_sources)
         endpoint = f"[{dns_host}]:{DNS}" if ":" in dns_host else f"{dns_host}:{DNS}"
-        nodes = config("direct" if mode == "isolation" else mode, endpoint)
+        nodes = embedded_config(consumer, mode, endpoint) if embedded else config("direct" if mode == "isolation" else mode, endpoint)
         if mode == "isolation":
             second = DnsFixture(stack, HOST, DNS + 4, answer="127.0.0.2")
             echo2 = stack.enter_context(socket.socket())
@@ -305,6 +491,25 @@ def main():
             for name in ("server.crt", "server.key"):
                 shutil.copyfile(Path(__file__).parent / "speedtests/_shared" / name, root / name)
         with Process([binary], cwd=root, log_path=root / "stdout.log", cleanup_signal=signal.SIGTERM) as process:
+            if embedded and mode == "disabled":
+                roundtrip(process, HOST, numeric=True)
+                with request(process, "disabled.test") as peer:
+                    try:
+                        reply = peer.recv(10)
+                        if len(reply) >= 2 and reply[:2] == b"\x05\x00":
+                            # Transport Est can precede a remote protocol's refusal.
+                            peer.sendall(b"unresolved target must not be delivered")
+                            assert peer.recv(4096) == b"", "unresolved destination carried application data"
+                    except (ConnectionResetError, BrokenPipeError):
+                        pass
+                roundtrip(process, HOST, numeric=True)
+                if consumer == "combined":
+                    udp_application(process, HOST, numeric=True)
+                assert fixture.counts == native.counts == {"udp": 0, "tcp": 0}, "disabled consumer queried DNS"
+                process.send_signal(signal.SIGTERM)
+                assert process.wait(timeout=8) == 128 + signal.SIGTERM, "disabled consumer shutdown failed"
+                print(f"{consumer}: disabled lookup preserved numeric destinations and made no DNS queries")
+                return 0
             if mode == "rejected":
                 with request(process, "blocked.test") as peer:
                     try:
@@ -318,6 +523,10 @@ def main():
                 return 0
             roundtrip(process, "udp.test")
             roundtrip(process, "tcp.test")
+            if embedded and consumer == "combined":
+                udp_application(process, "tcp-application.test")
+                selected_dns = native if mode == "native" else fixture
+                assert ("tcp-application.test", "udp") in selected_dns.names and ("tcp-application.test", "tcp") in selected_dns.names, "combined UDP application did not use its shared DNS policy"
             if mode == "shared-vless":
                 roundtrip(process, "vpn.test")
                 roundtrip(process, "tcp-vpn.test")

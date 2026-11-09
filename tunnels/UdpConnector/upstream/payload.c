@@ -199,7 +199,12 @@ static void udpconnectorOnPacketDnsResolved(void *userdata, int status, const ch
 
     if (asyncdnsStatusIsShutdown(status))
     {
-        discard udpconnectorPacketDestinationFail(t, line, ls, cache);
+        /* Provider quiescence can cancel while the borrowed application line
+         * is still alive. Settle retention without Resume or new work. */
+        cache->resolving   = false;
+        cache->has_context = false;
+        addresscontextReset(&cache->dest_ctx);
+        udpconnectorPacketDestinationDropPending(ls, cache);
         lineUnref(line);
         udpconnectorPacketDnsRequestDestroy(request);
         return;
@@ -252,23 +257,26 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
 
     udpconnector_packet_dns_request_t *request     = memoryAllocate(sizeof(*request));
     char                              *domain_copy = stringDuplicate(dest_ctx->domain);
-    *request = (udpconnector_packet_dns_request_t) {
-        .tunnel            = t,
-        .line              = l,
-        .domain            = domain_copy,
-        .destination_index = destination_index,
-        .strategy          = ts->domain_strategy,
-        .cancelled         = false,
-        .prev              = NULL,
-        .next              = NULL,
+    *request                                       = (udpconnector_packet_dns_request_t) {
+                                              .tunnel            = t,
+                                              .line              = l,
+                                              .domain            = domain_copy,
+                                              .destination_index = destination_index,
+                                              .port              = dest_ctx->port,
+                                              .strategy          = ts->domain_strategy,
+                                              .cancelled         = false,
+                                              .prev              = NULL,
+                                              .next              = NULL,
     };
 
     lineRef(l);
     udpconnectorPacketDnsRequestLink(ls, request);
     cache->resolving = true;
 
-    int rc = workerResolveDomainServiceAsync(
-        lineGetWID(l), request->domain, NULL, SOCK_DGRAM, udpconnectorOnPacketDnsResolved, request);
+    char service[6];
+    snprintf(service, sizeof(service), "%u", (unsigned) request->port);
+    int rc = domainresolverTunnelResolveRaw(
+        ts->domain_resolver_tunnel, l, request->domain, service, SOCK_DGRAM, udpconnectorOnPacketDnsResolved, request);
     if (rc != ARES_SUCCESS)
     {
         udpconnectorPacketDnsRequestUnlink(ls, request);
@@ -429,6 +437,12 @@ static udpconnector_packet_peer_result_e udpconnectorSelectPacketPeer(tunnel_t *
 
     if (addresscontextIsDomain(&cache->dest_ctx) && ! addresscontextIsDomainResolved(&cache->dest_ctx))
     {
+        if (! ts->dns_policy.resolve)
+        {
+            LOGE("UdpConnector: unresolved packet destination while DNS resolution is disabled");
+            lineReuseBuffer(l, buf);
+            return kUdpConnectorPacketPeerConsumed;
+        }
         if (! queueWrite(t, l, ls, &cache->pending_queue, buf))
         {
             return kUdpConnectorPacketPeerConsumed;
@@ -481,6 +495,21 @@ void udpconnectorTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 }
 
 #if defined(UDPCONNECTOR_POOL_TEST_HOOKS)
+void udpconnectorTestCompletePacketDnsShutdown(tunnel_t *t, line_t *line, uint32_t destination_index)
+{
+    udpconnector_lstate_t             *ls      = lineGetState(line, t);
+    udpconnector_packet_dns_request_t *request = memoryAllocate(sizeof(*request));
+    *request                                   = (udpconnector_packet_dns_request_t) {
+                                          .tunnel            = t,
+                                          .line              = line,
+                                          .domain            = stringDuplicate("quiesce.test"),
+                                          .destination_index = destination_index,
+    };
+    lineRef(line);
+    udpconnectorPacketDnsRequestLink(ls, request);
+    udpconnectorOnPacketDnsResolved(request, ARES_ECANCELLED, NULL, NULL, 0);
+}
+
 bool udpconnectorTestFlushPacketDestinationQueue(tunnel_t *t, line_t *l, uint32_t destination_index)
 {
     udpconnector_lstate_t *ls = lineGetState(l, t);

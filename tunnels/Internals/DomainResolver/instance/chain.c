@@ -42,7 +42,8 @@ static bool domainresolverDnsPathReturnsToOwner(tunnel_t *t, node_t *target)
     // Detect configured structural next cycles before invoking nested onChain.
     for (unsigned depth = 0; target != NULL && depth <= kMaxChainLen; ++depth)
     {
-        if (target == t->node || target->instance == t)
+        if (target == t->node || target->instance == t ||
+            target->instance == ((domainresolver_tstate_t *) tunnelGetState(t))->embedded_owner)
             return true;
         if (target->hash_next == 0)
             return false;
@@ -76,13 +77,47 @@ static tunnel_t *domainresolverCreateDnsHead(tunnel_t *owner)
     return head;
 }
 
-void domainresolverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+static bool domainresolverDnsEntrySupportsTransport(tunnel_t *entry)
+{
+    const char *type = entry->node->type;
+    if ((entry->node->flags & kNodeFlagDnsTransportUnsupported) != 0)
+    {
+        LOGF("DomainResolver: DNS entry %s has configured framing that cannot support both UDP and TCP fallback",
+             type != NULL ? type : "<unnamed>");
+        return false;
+    }
+    if (type != NULL && (strcmp(type, "TcpConnector") == 0 || strcmp(type, "UdpConnector") == 0 ||
+                         strcmp(type, "HttpProxyClient") == 0 || strcmp(type, "HttpClient") == 0 ||
+                         strcmp(type, "TlsClient") == 0 || strcmp(type, "UdpStatelessSocket") == 0))
+    {
+        LOGF("DomainResolver: DNS entry %s must support both UDP queries and TCP fallback", type);
+        return false;
+    }
+    return true;
+}
+
+static bool domainresolverAttachDnsEgress(tunnel_t *t, tunnel_chain_t *chain)
 {
     domainresolver_tstate_t *ts = tunnelGetState(t);
-    tunnelDefaultOnChain(t, chain);
-    if (startupFailurePending() || ts->mode == kDomainResolverModeNative)
-        return;
-    chain = tunnelGetChain(t);
+    assert(tunnelGetChain(t) == chain);
+    if (ts->dns_attached)
+        return ! startupFailurePending();
+    ts->dns_attached = true;
+    if (! ts->resolve || ts->provider != NULL || ts->mode == kDomainResolverModeNative)
+        return true;
+
+    if (ts->mode == kDomainResolverModeChain && ts->dns_next == NULL && ts->embedded_owner != NULL)
+    {
+        if (ts->shared_entry == NULL)
+        {
+            LOGF("DomainResolver: this embedded owner requires an explicit dns-next branch in chain mode");
+            goto failure;
+        }
+        if (! domainresolverDnsEntrySupportsTransport(ts->shared_entry))
+            goto failure;
+        ts->dns_egress = ts->shared_entry;
+        return true;
+    }
 
     node_t *target;
     if (ts->mode == kDomainResolverModeDirect)
@@ -94,71 +129,103 @@ void domainresolverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         if (t->node->hash_next == 0)
         {
             LOGF("DomainResolver: chain mode requires next when dns-next is omitted");
-            startupFailureRecord(1);
-            return;
+            goto failure;
         }
         target = nodemanagerGetConfigNodeByHash(t->node->node_manager_config, t->node->hash_next);
     }
     if (target == NULL || target->instance == NULL)
     {
         LOGF("DomainResolver: DNS egress node is unavailable");
-        startupFailureRecord(1);
-        return;
+        goto failure;
+    }
+    if (ts->embedded_owner != NULL && (target->instance == ts->embedded_owner || target == ts->embedded_owner->node))
+    {
+        LOGF("DomainResolver: dns-next cannot name its embedding owner; omit it for a supported shared entry or use a "
+             "separate branch");
+        goto failure;
     }
     if (domainresolverDnsPathReturnsToOwner(t, target))
     {
         LOGF("DomainResolver: DNS egress contains a structural cycle through its resolver");
-        startupFailureRecord(1);
-        return;
+        goto failure;
     }
-    if (ts->mode == kDomainResolverModeChain && t->node->hash_next == target->hash_name)
+    if (! domainresolverDnsEntrySupportsTransport(target->instance))
+        goto failure;
+    if (ts->embedded_owner == NULL && ts->mode == kDomainResolverModeChain && t->node->hash_next == target->hash_name)
     {
         ts->dns_egress = tunnelGetBranchEntry(t, target->instance);
         if (ts->dns_egress == NULL)
         {
             LOGF("DomainResolver: ordinary next node has no callable DNS branch entry");
-            startupFailureRecord(1);
+            goto failure;
         }
-        return;
+        return true;
     }
     if (target->instance->prev != NULL || target->instance->chain == chain)
     {
-        LOGF("DomainResolver: DNS egress already belongs to another predecessor or branch");
-        startupFailureRecord(1);
-        return;
+        LOGF("DomainResolver: DNS egress already belongs to another predecessor or branch; use the supported shared "
+             "default or a separate DNS branch");
+        goto failure;
     }
 
     ts->dns_head = domainresolverCreateDnsHead(t);
     if (ts->dns_head == NULL)
-    {
-        startupFailureRecord(1);
-        return;
-    }
-    /* A dedicated L4 root keeps the DNS edge separate from the resolver's
-     * application-side SameAs layer constraints. It shares indexing and pools. */
+        goto failure;
+    /* The dedicated L4 root does not constrain the application-side edge. */
     tunnelBind(ts->dns_head, target->instance);
     tunnelchainInsert(chain, ts->dns_head);
     if (startupFailurePending())
-        return;
+        return false;
     if (target->instance->chain != NULL)
         tunnelchainCombine(chain, target->instance->chain);
     else
         target->instance->onChain(target->instance, chain);
     if (startupFailurePending())
-        return;
+        return false;
+    /* Nested chaining may have combined and destroyed the original chain. */
+    assert(tunnelGetChain(t) == tunnelGetChain(target->instance));
     ts->dns_egress = tunnelGetBranchEntry(ts->dns_head, target->instance);
     if (ts->dns_egress == NULL)
     {
         LOGF("DomainResolver: DNS egress has no callable branch entry");
-        startupFailureRecord(1);
+        goto failure;
     }
+    return true;
+
+failure:
+    startupFailureRecord(1);
+    return false;
+}
+
+bool domainresolverTunnelAttachEmbedded(tunnel_t *resolver, tunnel_t *owner, tunnel_t *shared_entry)
+{
+    assert(resolver != NULL && owner != NULL && resolver != owner && resolver->chain != NULL);
+    domainresolver_tstate_t *ts = tunnelGetState(resolver);
+    assert(ts->embedded_owner == NULL || ts->embedded_owner == owner);
+    ts->embedded_owner = owner;
+    ts->shared_entry   = shared_entry;
+    if (! domainresolverAttachDnsEgress(resolver, tunnelGetChain(resolver)))
+    {
+        LOGF("%s: failed to attach settings.dns-behaviour DNS egress for node %s",
+             owner->node->type != NULL ? owner->node->type : "DNS policy owner",
+             owner->node->name != NULL ? owner->node->name : "<unnamed>");
+        return false;
+    }
+    return true;
+}
+
+void domainresolverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+{
+    tunnelDefaultOnChain(t, chain);
+    if (! startupFailurePending())
+        discard domainresolverAttachDnsEgress(t, tunnelGetChain(t));
 }
 
 void domainresolverTunnelOnIndex(tunnel_t *t, uint16_t index, uint32_t *mem_offset)
 {
     tunnelDefaultOnIndex(t, index, mem_offset);
     domainresolver_tstate_t *ts = tunnelGetState(t);
-    if (ts->mode == kDomainResolverModeNative)
+    if (! ts->resolve || ts->provider != NULL || ts->mode == kDomainResolverModeNative)
         return;
     tunnel_chain_t *chain = tunnelGetChain(t);
     assert(chain->layer_solution_ready);

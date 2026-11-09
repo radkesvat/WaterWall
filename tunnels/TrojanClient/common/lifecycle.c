@@ -9,6 +9,7 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts)
 {
     assert(ts != NULL);
+    dnsPolicyDestroy(&ts->dns_policy);
 
     addresscontextReset(&ts->target_addr);
     memoryZero(ts->password_hex, sizeof(ts->password_hex));

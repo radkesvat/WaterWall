@@ -13,6 +13,7 @@ static void setLineProtocol(line_t *l, uint8_t protocol)
 
 void vmessclientTunnelstateDestroy(vmessclient_tstate_t *ts)
 {
+    dnsPolicyDestroy(&ts->dns_policy);
     addresscontextReset(&ts->target_addr);
     memorySecureZero(&ts->key, sizeof(ts->key));
     memorySecureZero(ts->uuid, sizeof(ts->uuid));

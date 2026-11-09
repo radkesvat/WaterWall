@@ -403,29 +403,39 @@ static const char *get_settings =
 
 static void configuration(void)
 {
-    const char *bad[] = {"{}",
-                         "{\"target-address\":\"x\",\"port\":0}",
-                         "{\"target-address\":\"x\",\"port\":65536}",
-                         "{\"target-address\":\"x\",\"port\":80.5}",
-                         "{\"target-address\":\"x\",\"port\":80,\"port\":81}",
-                         "{\"target-address\":\"x\",\"port\":80,\"mode\":\"auto\"}",
-                         "{\"target-address\":\"x\",\"port\":80,\"path\":\"/\"}",
-                         "{\"target-address\":\"x\",\"port\":80,\"username\":\"u\"}",
-                         "{\"target-address\":\"a@b\",\"port\":80}",
-                         "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"hOsT\":\"x\"}}",
-                         "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"X\":\"a\",\"x\":\"b\"}}",
-                         "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"X\":\"a\\r\\nb\"}}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"content-length\":1}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\"}",
-                         ("{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\",\"content-"
-                          "length\":9007199254740992}"),
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"method\":\"HEAD\"}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/%zz\"}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/#fragment\"}",
-                         "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"connect-response-timeout-ms\":1}",
-                         "{\"target-address\":\"x\",\"port\":80,\"http-version\":\"1.1\"}"};
+    const char *bad[] = {
+        "{}",
+        "{\"target-address\":\"x\",\"port\":0}",
+        "{\"target-address\":\"x\",\"port\":65536}",
+        "{\"target-address\":\"x\",\"port\":80.5}",
+        "{\"target-address\":\"x\",\"port\":80,\"port\":81}",
+        "{\"target-address\":\"x\",\"port\":80,\"mode\":\"auto\"}",
+        "{\"target-address\":\"x\",\"port\":80,\"path\":\"/\"}",
+        "{\"target-address\":\"x\",\"port\":80,\"username\":\"u\"}",
+        "{\"target-address\":\"a@b\",\"port\":80}",
+        "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"hOsT\":\"x\"}}",
+        "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"X\":\"a\",\"x\":\"b\"}}",
+        "{\"target-address\":\"x\",\"port\":80,\"headers\":{\"X\":\"a\\r\\nb\"}}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"content-length\":1}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\"}",
+        ("{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"body-mode\":\"fixed\",\"content-"
+         "length\":9007199254740992}"),
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"method\":\"HEAD\"}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/%zz\"}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"path\":\"/#fragment\"}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"connect-response-timeout-ms\":1}",
+        "{\"target-address\":\"x\",\"port\":80,\"http-version\":\"1.1\"}",
+        "{\"mode\":\"http\",\"target-address\":\"x\",\"port\":80,\"dns-behaviour\":{\"resolve\":true}}",
+        "{\"target-address\":\"x\",\"port\":80,\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\",\"servers\":["
+        "\"127.0.0.1:53\"]}}",
+        "{\"target-address\":\"x\",\"port\":80,\"domain-strategy\":\"do-not-resolve-domains\",\"dns-behaviour\":{"
+        "\"resolve\":false}}"};
     for (size_t i = 0; i < ARRAY_SIZE(bad); ++i)
         require(config(bad[i]) == NULL, bad[i]);
+    openLine("{\"mode\":\"http\",\"target-address\":\"origin.test\",\"port\":80,"
+             "\"dns-behaviour\":{\"resolve\":false}}");
+    require(strstr(sent, "POST http://origin.test:80/ HTTP/1.1\r\n") != NULL, "disabled HTTP policy changed authority");
+    closeLine();
     rewrite_target = true;
     openLine("{\"target-address\":\"dest_context->address\",\"port\":\"dest_context->port\",\"username\":\"u\","
              "\"password\":\"p:p\"}");

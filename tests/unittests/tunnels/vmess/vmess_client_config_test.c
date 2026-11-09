@@ -14,7 +14,14 @@ static void construct(cJSON *settings, bool expected)
     tunnel_t *t             = vmessclientTunnelCreate(&node);
     twfRequire((t != NULL) == expected, "configuration acceptance differs from the declared client contract");
     if (t != NULL)
+    {
+        const vmessclient_tstate_t *ts = tunnelGetState(t);
+        const bool                  dns_unsupported =
+            ! vmessModeValid(ts->security, ts->options, 1) || ! vmessModeValid(ts->security, ts->options, 2);
+        twfRequire(((node.flags & kNodeFlagDnsTransportUnsupported) != 0) == dns_unsupported,
+                   "configured DNS transport capability differs from framing support");
         t->onDestroy(t, wwLifecycleStartupRollback());
+    }
     cJSON_Delete(settings);
     memoryFree(node.type);
 }
@@ -105,6 +112,42 @@ static void strategies(void)
     cJSON *json = settings();
     cJSON_AddStringToObject(json, "domain-strategy", "unknown");
     construct(json, false);
+}
+
+static void dnsBehaviour(void)
+{
+    const char *policies[] = {
+        "{\"resolve\":false}",
+        "{\"resolve\":true}",
+        "{\"resolve\":true,\"strategy\":\"prefer-ipv4\"}",
+        "{\"resolve\":true,\"mode\":\"chain\",\"servers\":[\"127.0.0.1:53\"]}",
+        "{\"resolve\":true,\"mode\":\"chain\",\"servers\":[\"127.0.0.1:53\"],\"dns-next\":\"dns\"}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(policies); ++i)
+    {
+        cJSON *json = settings();
+        cJSON_AddItemToObject(json, "dns-behaviour", cJSON_Parse(policies[i]));
+        construct(json, true);
+    }
+    cJSON *json = settings();
+    cJSON_AddItemToObject(json, "dns-behaviour", cJSON_Parse(policies[0]));
+    cJSON_AddStringToObject(json, "domain-strategy", "do-not-resolve-domains");
+    construct(json, false);
+
+    /* Shared DNS requires UDP and TCP even for a configured TCP application. */
+    for (unsigned explicit_branch = 0; explicit_branch < 2; ++explicit_branch)
+    {
+        json = settings();
+        cJSON_AddStringToObject(json, "security", "zero");
+        cJSON_AddItemToObject(json, "dns-behaviour", cJSON_Parse(policies[explicit_branch ? 4 : 3]));
+        construct(json, explicit_branch != 0);
+    }
+
+    json = settings();
+    cJSON_AddStringToObject(json, "protocol", "udp");
+    cJSON_AddStringToObject(json, "packet-encoding", "packetaddr");
+    cJSON_AddItemToObject(json, "dns-behaviour", cJSON_Parse(policies[0]));
+    construct(json, true);
 }
 
 static void invalidTypes(void)
@@ -297,6 +340,7 @@ int main(void)
     TEST_RUN_CASE(aliases);
     TEST_RUN_CASE(modes);
     TEST_RUN_CASE(strategies);
+    TEST_RUN_CASE(dnsBehaviour);
     TEST_RUN_CASE(invalidTypes);
     TEST_RUN_CASE(exactStrings);
     TEST_RUN_CASE(maturityOptions);

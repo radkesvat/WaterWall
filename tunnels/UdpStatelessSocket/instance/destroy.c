@@ -49,5 +49,12 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
     memoryFree(state->listen_address);
     memoryFree(state->interface_name);
 
+    if (state->dns_provider != NULL)
+        tunnelOwnedChildDestroy(state->dns_provider);
+    cJSON_Delete(state->dns_provider_settings);
+    memoryFree(state->dns_provider_node.name);
+    memoryFree(state->dns_provider_node.type);
+    memoryFree(state->dns_provider_node.next);
+    dnsPolicyDestroy(&state->dns_policy);
     tunnelDestroy(t);
 }

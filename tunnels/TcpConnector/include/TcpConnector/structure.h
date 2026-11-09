@@ -27,6 +27,7 @@ typedef struct tcpconnector_tstate_s
 {
     local_idle_table_t **idle_tables; // worker-local idle tables for closing dead connections
 
+    dns_policy_t  dns_policy;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;

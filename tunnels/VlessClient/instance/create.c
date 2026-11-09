@@ -13,8 +13,7 @@ static bool vlessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings = cJSON_CreateObject();
-    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -174,7 +173,7 @@ static bool parseProtocol(vlessclient_tstate_t *ts, const cJSON *settings)
     return false;
 }
 
-static bool parseDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
+static bool parseLegacyDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *strategy_json = cJSON_GetObjectItemCaseSensitive(settings, "domain-strategy");
 
@@ -235,6 +234,24 @@ static bool parseDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
 
     LOGF("JSON Error: VlessClient->settings->domain-strategy has an unsupported value");
     return false;
+}
+
+static bool parseDomainStrategy(vlessclient_tstate_t *ts, const cJSON *settings)
+{
+    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
+        ! parseLegacyDomainStrategy(ts, settings))
+        return false;
+
+    const dns_policy_defaults_t defaults = {
+        .resolve       = ts->resolve_domains,
+        .strategy      = (enum domain_strategy) ts->domain_strategy,
+        .core_strategy = GSTATE.domain_strategy,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, settings, &defaults, "VlessClient->settings->dns-behaviour"))
+        return false;
+    ts->resolve_domains = ts->dns_policy.resolve;
+    ts->domain_strategy = ts->dns_policy.strategy;
+    return true;
 }
 
 static bool parseFirstPayloadTimeout(vlessclient_tstate_t *ts, const cJSON *settings)

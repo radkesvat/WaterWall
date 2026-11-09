@@ -120,7 +120,9 @@ enum node_flags
     // the native device, or destroys the packet line. Immutable after startup.
     kNodeFlagPacketPayloadEnqueueOnly = (1 << 9),
     // Kernel receive trust on an immediate packet pair; does not enable TX offload.
-    kNodeFlagTrustedPacketReceiveChecksumsActive = (1 << 10)
+    kNodeFlagTrustedPacketReceiveChecksumsActive = (1 << 10),
+    // This configured logical input cannot carry both UDP DNS and TCP fallback.
+    kNodeFlagDnsTransportUnsupported = (1 << 11)
 };
 
 enum node_layer_group

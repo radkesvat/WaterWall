@@ -22,8 +22,7 @@ static bool udpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     udpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings = cJSON_CreateObject();
-    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -105,10 +104,11 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
 {
     const cJSON *jaddresses = cJSON_GetObjectItemCaseSensitive(settings, "addresses");
     const cJSON *jadresses  = cJSON_GetObjectItemCaseSensitive(settings, "adresses");
+    const cJSON *jdestinations = cJSON_GetObjectItemCaseSensitive(settings, "destinations");
 
-    if (jaddresses != NULL && jadresses != NULL)
+    if ((jaddresses != NULL) + (jadresses != NULL) + (jdestinations != NULL) > 1)
     {
-        LOGF("JSON Error: UdpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
+        LOGF("JSON Error: UdpConnector->settings : Use one destination array spelling");
         startupFailureRecord(1);
         return NULL;
     }
@@ -118,7 +118,7 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
         return jaddresses;
     }
 
-    return jadresses;
+    return jadresses != NULL ? jadresses : jdestinations;
 }
 
 static bool parseAddressSettings(dynamic_value_t *dest_addr_selected, address_context_t *constant_dest_addr,
@@ -426,7 +426,18 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    state->domain_strategy = domain_strategy;
+    const dns_policy_defaults_t dns_defaults = {
+        .resolve          = true,
+        .strategy         = domain_strategy,
+        .core_strategy    = GSTATE.domain_strategy,
+        .require_dns_next = true,
+    };
+    if (! dnsPolicyParseSettings(&state->dns_policy, settings, &dns_defaults, "UdpConnector->settings"))
+    {
+        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+    state->domain_strategy = state->dns_policy.strategy;
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", -1);
     if (! getPositiveIntFromJsonObjectOrBoolDefault(&state->send_buffer_size,
                                                     settings,

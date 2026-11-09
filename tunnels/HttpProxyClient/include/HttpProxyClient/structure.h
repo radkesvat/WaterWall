@@ -30,6 +30,7 @@ typedef struct
     bool                 connect, dynamic_address, dynamic_port, verbose;
     wid_t                worker_count;
     hpc_worker_t        *workers;
+    dns_policy_t         dns_policy;
     bool                 resolve_domains;
     enum domain_strategy domain_strategy;
     tunnel_t            *domain_resolver_tunnel;

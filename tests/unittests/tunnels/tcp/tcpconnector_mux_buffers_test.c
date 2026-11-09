@@ -254,6 +254,94 @@ static void testPinnedDnsDestination(void)
     }
 }
 
+static void testDnsPolicyDestinations(void)
+{
+    const struct
+    {
+        const char          *settings;
+        bool                 accepted;
+        bool                 resolve;
+        enum domain_strategy strategy;
+    } cases[] = {
+        {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"domain-strategy\":\"only-ipv6\"}]}",
+         true,
+         true,
+         kDsOnlyIpV6},
+        {"{\"destinations\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{\"strategy\":\"only-ipv6\"}}]}",
+         true,
+         true,
+         kDsOnlyIpV6},
+        {"{\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"only-ipv6\"},"
+         "\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{\"strategy\":\"core-settings\"}}]}",
+         true,
+         true,
+         kDsPreferIpV4},
+        {"{\"dns-behaviour\":{\"resolve\":false},"
+         "\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1}]}",
+         true,
+         false,
+         kDsPreferIpV4},
+        {"{\"dns-behaviour\":{\"resolve\":false},"
+         "\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{\"strategy\":\"only-ipv4\"}}]}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"domain-strategy\":\"ipv4\",\"dns-behaviour\":{\"strategy\":\"only-ipv4\"}}]}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"only-ipv4\"}}]}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{\"strategy\":3}}]}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
+         "\"dns-behaviour\":{}}]}",
+         false,
+         false,
+         kDsInvalid},
+        {"{\"address\":\"127.0.0.1\",\"port\":443,"
+         "\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\",\"servers\":[\"127.0.0.1:53\"]}}",
+         false,
+         false,
+         kDsInvalid},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        testCaseSet(cases[i].settings);
+        cJSON *settings = cJSON_Parse(cases[i].settings);
+        require(settings != NULL, "invalid DNS policy fixture");
+        node_t node = {
+            .name = (char *) "tcp-policy-test", .type = (char *) "TcpConnector", .node_settings_json = settings};
+        ww_startup_context_t startup = {0};
+        wwStartupContextBegin(&startup);
+        tunnel_t *connector = tcpconnectorTunnelCreate(&node);
+        discard   wwStartupContextEnd(&startup);
+        require((connector != NULL) == cases[i].accepted, "weighted DNS policy acceptance mismatch");
+        if (connector != NULL)
+        {
+            tcpconnector_tstate_t *state = tunnelGetState(connector);
+            require(state->dns_policy.resolve == cases[i].resolve, "resolve flag was lost");
+            require(state->destinations_count == 1 && state->destinations[0].domain_strategy == (int) cases[i].strategy,
+                    "weighted destination lost its effective DNS strategy");
+            require(domainresolverTunnelResolutionEnabled(state->domain_resolver_tunnel) == cases[i].resolve,
+                    "preparation helper did not retain disabled DNS policy");
+            tcpconnectorTunnelDestroy(connector, wwLifecycleStartupRollback());
+        }
+        cJSON_Delete(settings);
+    }
+}
+
 int main(void)
 {
     testCaseSet("tcpconnector_mux_buffers_test");
@@ -277,6 +365,7 @@ int main(void)
     GSTATE.workers_count    = 1;
     GSTATE.domain_strategy  = kDsPreferIpV4;
     testAddressSettings();
+    testDnsPolicyDestinations();
     testPinnedDnsDestination();
 #ifdef TCP_CONNECTOR_TEST_RANDOM_WRAP
     testFreeBindBoundaries();

@@ -29,8 +29,7 @@ tunnel_t *httpproxyclientTunnelCreate(node_t *node)
     ts->workers      = memoryAllocateZero(sizeof(*ts->workers) * ts->worker_count);
     if (ts->resolve_domains)
     {
-        ts->domain_resolver_settings = cJSON_CreateObject();
-        cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", ts->domain_strategy);
+        ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
         if (! nodeConfigureChild(&ts->domain_resolver_node,
                                  nodeDomainResolverGet(),
                                  node,

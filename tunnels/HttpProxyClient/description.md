@@ -1,3 +1,7 @@
+<!--
+Documentation version: 1
+-->
+
 # HttpProxyClient Node
 
 `HttpProxyClient` connects through an upstream HTTP/1.1 proxy. It is a Layer 4
@@ -17,6 +21,45 @@ node supplies body bytes only. Use CONNECT when the application already speaks
 HTTP, TLS, or another TCP protocol and should retain its own framing.
 `HttpProxyServer` provides the incoming forward-proxy interface; `HttpClient`
 provides a separate HTTP transport with additional framing modes.
+
+## DNS behaviour
+
+Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Local resolution remains disabled when this object is omitted.
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean whenever the object is present. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
+
+In `chain` mode, an explicit `dns-next` naming a separate, otherwise unbound DNS branch is required.
+An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+`resolve: false` lets a supported proxy request retain its hostname. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
+
+Enabled local resolution is supported only with HTTP `mode: "connect"`. Ordinary HTTP keeps its authority semantics. The HTTP `settings.mode` and DNS `settings.dns-behaviour.mode` select different operations.
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
+
 
 ## Typical Placement
 

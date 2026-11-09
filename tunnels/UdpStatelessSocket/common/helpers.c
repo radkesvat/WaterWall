@@ -634,6 +634,12 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
     udpstatelesssocketDnsRequestDestroy(request);
 }
 
+static int udpstatelesssocketEffectiveDnsStrategy(const udpstatelesssocket_tstate_t *state,
+                                                  const address_context_t           *dest_ctx)
+{
+    return state->dns_strategy_override ? state->dns_policy.strategy : dest_ctx->domain_strategy;
+}
+
 static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *buf, const address_context_t *dest_ctx)
 {
     assert(addresscontextIsDomain(dest_ctx));
@@ -644,20 +650,23 @@ static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
         return;
     }
 
+    udpstatelesssocket_tstate_t      *state       = tunnelGetState(t);
     udpstatelesssocket_dns_request_t *request     = memoryAllocate(sizeof(*request));
     char                             *domain_copy = stringDuplicate(dest_ctx->domain);
-    *request = (udpstatelesssocket_dns_request_t) {
-        .tunnel   = t,
-        .line     = l,
-        .buf      = buf,
-        .domain   = domain_copy,
-        .port     = dest_ctx->port,
-        .strategy = dest_ctx->domain_strategy,
+    *request                                      = (udpstatelesssocket_dns_request_t) {
+                                             .tunnel   = t,
+                                             .line     = l,
+                                             .buf      = buf,
+                                             .domain   = domain_copy,
+                                             .port     = dest_ctx->port,
+                                             .strategy = udpstatelesssocketEffectiveDnsStrategy(state, dest_ctx),
     };
 
     lineRef(l);
-    int rc = workerResolveDomainServiceAsync(
-        lineGetWID(l), request->domain, NULL, SOCK_DGRAM, udpstatelesssocketOnDnsResolved, request);
+    char service[6];
+    snprintf(service, sizeof(service), "%u", (unsigned) request->port);
+    int rc = domainresolverTunnelResolveRaw(
+        state->dns_provider, l, request->domain, service, SOCK_DGRAM, udpstatelesssocketOnDnsResolved, request);
     if (rc != ARES_SUCCESS)
     {
         lineUnref(l);
@@ -693,11 +702,20 @@ void udpstatelesssocketTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (addresscontextIsDomain(dest_ctx) && ! addresscontextIsDomainResolved(dest_ctx))
     {
+        if (! state->dns_policy.resolve)
+        {
+            LOGE("UdpStatelessSocket: unresolved outbound destination while DNS resolution is disabled");
+            lineReuseBuffer(l, buf);
+            return;
+        }
         if (addresscontextHasPort(dest_ctx))
         {
             sockaddr_u cached_addr;
-            if (udpstatelesssocketDnsCacheLookup(
-                    state, dest_ctx->domain, dest_ctx->port, dest_ctx->domain_strategy, &cached_addr))
+            if (udpstatelesssocketDnsCacheLookup(state,
+                                                 dest_ctx->domain,
+                                                 dest_ctx->port,
+                                                 udpstatelesssocketEffectiveDnsStrategy(state, dest_ctx),
+                                                 &cached_addr))
             {
                 if (loggerCheckWriteLevel(getDnsLogger(), (log_level_e) LOG_LEVEL_DEBUG))
                 {

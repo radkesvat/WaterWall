@@ -193,6 +193,7 @@ typedef struct udpconnector_tstate_s
 {
     udpconnector_worker_pool_t *worker_pools; // worker-local pools for pooling UDP sockets
 
+    dns_policy_t  dns_policy;
     node_t        domain_resolver_node;
     tunnel_t     *domain_resolver_tunnel;
     struct cJSON *domain_resolver_settings;
@@ -233,6 +234,7 @@ struct udpconnector_packet_dns_request_s
     line_t   *line;
     char     *domain;
     uint32_t  destination_index;
+    uint16_t  port;
     int       strategy;
     bool      cancelled;
 
@@ -373,4 +375,5 @@ udpconnector_binding_t          *udpconnectorTestGetLineFixedBinding(const udpco
 uint32_t                         udpconnectorTestGetLineBindingCount(const udpconnector_lstate_t *ls);
 udpconnector_binding_t          *udpconnectorTestGetLineFirstBinding(const udpconnector_lstate_t *ls);
 bool udpconnectorTestFlushPacketDestinationQueue(tunnel_t *t, line_t *l, uint32_t destination_index);
+void udpconnectorTestCompletePacketDnsShutdown(tunnel_t *t, line_t *line, uint32_t destination_index);
 #endif

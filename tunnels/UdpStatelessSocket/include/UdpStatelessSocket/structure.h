@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 enum
@@ -33,6 +34,11 @@ struct udpstatelesssocket_send_request_s
 
 typedef struct udpstatelesssocket_tstate_s
 {
+    dns_policy_t                dns_policy;
+    bool                        dns_strategy_override;
+    node_t                      dns_provider_node;
+    tunnel_t                   *dns_provider;
+    cJSON                      *dns_provider_settings;
     udpsock_t                   socket; // UDP socket side-data, including worker-local peer idle tables
     master_pool_t              *send_request_master_pool;
     threadsafe_generic_pool_t **send_request_pools;

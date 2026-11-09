@@ -79,10 +79,17 @@ add_waterwall_test_labels(waterwall.dns_slow_answer "integration" "tunnels" "soc
 add_waterwall_case_resource_lock(waterwall.dns_slow_answer dns_slow_answer)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
    TARGET DomainResolver AND TARGET TcpUdpConnector AND TARGET Socks5Server AND TARGET Router)
+  set(dns_behaviour_config_consumers "")
+  foreach(consumer IN ITEMS TcpConnector UdpConnector TcpUdpConnector Router Socks5Client
+      TrojanClient VlessClient VmessClient HttpProxyClient ConnectionToPackets UdpStatelessSocket)
+    if(TARGET ${consumer})
+      list(APPEND dns_behaviour_config_consumers ${consumer})
+    endif()
+  endforeach()
   add_waterwall_isolated_test(waterwall.domainresolver_configuration
     "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_configuration_test.py"
-    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
-  set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 90)
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" ${dns_behaviour_config_consumers})
+  set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 180)
   add_waterwall_test_labels(waterwall.domainresolver_configuration "integration" "tunnels" "dns")
   add_waterwall_case_resource_lock(waterwall.domainresolver_configuration domainresolver_transport)
   foreach(mode IN ITEMS omitted native direct direct6 chain chain-sniff chain-default shared shared-explicit shared-vless vless isolation rejected pinned vless-pinned)
@@ -97,6 +104,36 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
     add_waterwall_test_labels(${resolver_case} "integration" "tunnels" "dns")
     add_waterwall_case_resource_lock(${resolver_case} domainresolver_transport)
   endforeach()
+  foreach(consumer IN ITEMS tcp combined router ctp vless vmess trojan socks http)
+    if((consumer STREQUAL "ctp" AND NOT (TARGET ConnectionToPackets AND TARGET PacketsToConnection)) OR
+       (consumer STREQUAL "vless" AND NOT (TARGET VlessClient AND TARGET VlessServer)) OR
+       (consumer STREQUAL "vmess" AND NOT (TARGET VmessClient AND TARGET VmessServer)) OR
+       (consumer STREQUAL "trojan" AND NOT (TARGET TrojanClient AND TARGET TrojanServer)) OR
+       (consumer STREQUAL "socks" AND NOT (TARGET Socks5Client AND TARGET TcpUdpListener)) OR
+       (consumer STREQUAL "http" AND NOT (TARGET HttpProxyClient AND TARGET HttpProxyServer)))
+      continue()
+    endif()
+    foreach(mode IN ITEMS native direct chain disabled)
+      set(resolver_case waterwall.dns_behaviour_${consumer}_${mode})
+      add_waterwall_isolated_test(${resolver_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_transport_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "embedded-${consumer}-${mode}")
+      set_tests_properties(${resolver_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${resolver_case} "integration" "tunnels" "dns")
+      add_waterwall_case_resource_lock(${resolver_case} domainresolver_transport)
+    endforeach()
+  endforeach()
+  if(TARGET UdpListener AND TARGET UdpConnector)
+    foreach(mode IN ITEMS native direct chain disabled)
+      set(resolver_case waterwall.dns_behaviour_udp_balancing_${mode})
+      add_waterwall_isolated_test(${resolver_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_transport_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "udp-balancing-${mode}")
+      set_tests_properties(${resolver_case} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(${resolver_case} "integration" "tunnels" "dns" "udp")
+      add_waterwall_case_resource_lock(${resolver_case} domainresolver_transport)
+    endforeach()
+  endif()
 endif()
 # The protocol peer is socket-connected, so ordinary server/TLS nodes cannot
 # mask TrojanClient capability. strace checks actual positive splice transfers.

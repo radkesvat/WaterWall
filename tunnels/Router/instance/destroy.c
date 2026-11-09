@@ -16,6 +16,8 @@ static void routerDestroyInternalDomainResolver(router_tstate_t *ts)
         ts->domain_resolver_tunnel = NULL;
     }
 
+    cJSON_Delete(ts->domain_resolver_settings);
+    dnsPolicyDestroy(&ts->dns_policy);
     routerClearInternalNode(&ts->domain_resolver_node);
 }
 

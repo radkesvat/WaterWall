@@ -129,6 +129,19 @@ static void dnsTests(void)
         stringNPrintf(json, sizeof(json), "{\"target-address\":\"x\",\"port\":443,\"domain-strategy\":%s}", bad[i]);
         require(! config(json), "invalid strategy accepted");
     }
+    defer_start = true;
+    lookups     = 0;
+    openLine("{\"target-address\":\"origin.test\",\"port\":443,"
+             "\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"only-ipv4\"}}");
+    defer_start = false;
+    dnsStart();
+    require(lookups == 1 && ! stringCompare(lookup_name, "origin.test") && ! next_inits,
+            "new policy did not resolve prepared CONNECT target");
+    dns_resolved_addr_t policy_answer = answer("192.0.2.31");
+    dnsComplete(ARES_SUCCESS, &policy_answer, 1);
+    numericWire("192.0.2.31:443");
+    closeLine();
+
     fail_child = true;
     require(! config("{\"target-address\":\"x\",\"port\":443,\"domain-strategy\":\"resolve-domains-and-prefer-ipv4\"}"),
             "helper construction rollback");

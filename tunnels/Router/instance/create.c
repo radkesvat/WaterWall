@@ -4,7 +4,7 @@
 
 #include "loggers/network_logger.h"
 
-static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
+static bool routerLoadLegacyResolveDomains(router_tstate_t *ts, const cJSON *settings)
 {
     ts->resolve_domains = false;
 
@@ -29,6 +29,23 @@ static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
     return true;
 }
 
+static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
+{
+    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
+        ! routerLoadLegacyResolveDomains(ts, settings))
+        return false;
+
+    const dns_policy_defaults_t defaults = {
+        .resolve       = ts->resolve_domains,
+        .strategy      = GSTATE.domain_strategy,
+        .core_strategy = GSTATE.domain_strategy,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, settings, &defaults, "Router->settings->dns-behaviour"))
+        return false;
+    ts->resolve_domains = ts->dns_policy.resolve;
+    return true;
+}
+
 static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     router_tstate_t *ts = tunnelGetState(t);
@@ -38,8 +55,13 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    if (! nodeConfigureChild(
-            &ts->domain_resolver_node, nodeDomainResolverGet(), node, ".domain-resolver", kNodeChildLinkNone, NULL))
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
+    if (! nodeConfigureChild(&ts->domain_resolver_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".domain-resolver",
+                             kNodeChildLinkNone,
+                             ts->domain_resolver_settings))
     {
         LOGF("Router: failed to configure internal DomainResolver node");
         return false;

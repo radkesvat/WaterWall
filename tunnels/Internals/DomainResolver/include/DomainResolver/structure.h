@@ -21,6 +21,9 @@ typedef enum domainresolver_mode_e
 typedef struct domainresolver_tstate_s
 {
     tunnel_t                             *prepare_owner;
+    tunnel_t                             *provider;
+    tunnel_t                             *embedded_owner;
+    tunnel_t                             *shared_entry;
     domainresolver_prepare_fn             prepare;
     domainresolver_user_lstate_destroy_fn user_lstate_destroy;
     uint32_t                              user_lstate_offset;
@@ -39,6 +42,8 @@ typedef struct domainresolver_tstate_s
     domainresolver_transport_t          **dns_workers;
     bool                                 *dns_worker_closed;
     unsigned                              dns_workers_count;
+    bool                                  resolve;
+    bool                                  dns_attached;
     bool                                  verbose;
     bool                                  use_line_strategy;
     bool                                  allow_missing_destination;

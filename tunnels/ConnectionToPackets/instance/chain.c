@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "DomainResolver/interface.h"
+
 #include "loggers/network_logger.h"
 
 /*
@@ -86,4 +88,8 @@ void ctpTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     {
         next_tunnel->onChain(next_tunnel, chain);
     }
+    if (startupFailurePending())
+        return;
+    if (! domainresolverTunnelAttachEmbedded(resolver, t, NULL))
+        startupFailureRecord(1);
 }

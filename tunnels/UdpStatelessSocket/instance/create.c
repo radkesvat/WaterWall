@@ -8,6 +8,52 @@ static tunnel_t *udpstatelesssocketTunnelCreateFail(tunnel_t *t)
     return NULL;
 }
 
+static void udpstatelesssocketTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+{
+    tunnelDefaultOnChain(t, chain);
+    if (startupFailurePending())
+        return;
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    chain                              = tunnelGetChain(t);
+    tunnelchainInsert(chain, state->dns_provider);
+    if (startupFailurePending())
+        return;
+    discard domainresolverTunnelAttachEmbedded(state->dns_provider, t, NULL);
+}
+
+static bool udpstatelesssocketCreateDnsProvider(tunnel_t *t, node_t *node)
+{
+    udpstatelesssocket_tstate_t *state    = tunnelGetState(t);
+    const dns_policy_defaults_t  defaults = {
+         .resolve          = true,
+         .strategy         = kDsInvalid,
+         .core_strategy    = GSTATE.domain_strategy,
+         .require_dns_next = true,
+    };
+    if (! dnsPolicyParseSettings(
+            &state->dns_policy, node->node_settings_json, &defaults, "UdpStatelessSocket->settings"))
+        return false;
+    const cJSON *policy          = cJSON_GetObjectItemCaseSensitive(node->node_settings_json, "dns-behaviour");
+    state->dns_strategy_override = cJSON_GetObjectItemCaseSensitive(policy, "strategy") != NULL;
+    state->dns_provider_settings = dnsPolicyCreateResolverSettings(&state->dns_policy);
+    if (! nodeConfigureChild(&state->dns_provider_node,
+                             nodeDomainResolverGet(),
+                             node,
+                             ".dns-provider",
+                             kNodeChildLinkNone,
+                             state->dns_provider_settings))
+        return false;
+    state->dns_provider_node.flags |= kNodeFlagNoChain;
+    state->dns_provider_node.can_have_prev         = false;
+    state->dns_provider_node.can_have_next         = false;
+    state->dns_provider_node.layer_group           = kNodeLayer4;
+    state->dns_provider_node.layer_group_prev_node = kNodeLayerNone;
+    state->dns_provider_node.layer_group_next_node = kNodeLayerNone;
+    state->dns_provider                            = nodemanagerCreateTunnelInstance(&state->dns_provider_node);
+    state->dns_provider_node.instance              = state->dns_provider;
+    return state->dns_provider != NULL;
+}
+
 tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
 {
     /* Head-only placement is the supported design, not a temporary restriction.
@@ -34,6 +80,7 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     t->fnPauseD   = &udpstatelesssocketTunnelDownStreamPause;
     t->fnResumeD  = &udpstatelesssocketTunnelDownStreamResume;
 
+    t->onChain          = &udpstatelesssocketTunnelOnChain;
     t->onPrepare        = &udpstatelesssocketTunnelOnPrepair;
     t->onStart          = &udpstatelesssocketTunnelOnStart;
     t->onWorkerQuiesce  = &udpstatelesssocketTunnelOnWorkerQuiesce;
@@ -154,6 +201,9 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
         return udpstatelesssocketTunnelCreateFail(t);
     }
     state->listen_port = (uint16_t) listen_port;
+
+    if (! udpstatelesssocketCreateDnsProvider(t, node))
+        return udpstatelesssocketTunnelCreateFail(t);
 
     atomic_init(&state->socket.retired, false);
     state->socket.idle_tables       = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());

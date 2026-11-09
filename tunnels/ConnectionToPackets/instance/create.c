@@ -27,31 +27,17 @@ static void initializeTunnelCallbacks(tunnel_t *t)
     t->onDestroy        = &ctpTunnelDestroy;
 }
 
-static void ctpAddDomainStrategySetting(cJSON *settings, enum domain_strategy strategy)
-{
-    cJSON *strategy_json       = cJSON_AddNumberToObject(settings, "strategy", (double) strategy);
-    strategy_json->valueint    = (int) strategy;
-    strategy_json->valuedouble = (double) strategy_json->valueint;
-}
-
-static cJSON *ctpCreateDomainResolverSettings(enum domain_strategy strategy)
-{
-    cJSON *settings = cJSON_CreateObject();
-    ctpAddDomainStrategySetting(settings, strategy);
-
-    return settings;
-}
-
 /*
  * The same internal-resolver pattern the connectors use: a DomainResolver is
- * inserted directly in front of this node during chaining, so Init always runs
- * with a resolved destination and never has to buffer while DNS is pending.
+ * inserted directly in front of this node during chaining. Preparation remains
+ * active with lookup disabled; Init rejects unresolved input in that case. With
+ * lookup enabled, DNS settles before Init without retaining payload in this node.
  */
 static bool ctpCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     ctp_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings = ctpCreateDomainResolverSettings((enum domain_strategy) ts->domain_strategy);
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
                              node,
@@ -226,7 +212,8 @@ bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
      * error that names the value to use.
      */
     enum domain_strategy domain_strategy = kDsOnlyIpV4;
-    if (! getDomainStrategyFromJsonObjectOrDefault(&domain_strategy, settings, "domain-strategy", kDsOnlyIpV4))
+    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
+        ! getDomainStrategyFromJsonObjectOrDefault(&domain_strategy, settings, "domain-strategy", kDsOnlyIpV4))
     {
         LOGF("JSON Error: ConnectionToPackets->settings->domain-strategy (string or integer field) : The value was "
              "invalid");
@@ -238,7 +225,16 @@ bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
              "IPv4 only, so \"only-ipv4\" is the only strategy that can always produce a usable destination");
         return false;
     }
-    ts->domain_strategy = (int) domain_strategy;
+    const dns_policy_defaults_t defaults = {
+        .resolve          = true,
+        .strategy         = domain_strategy,
+        .core_strategy    = GSTATE.domain_strategy,
+        .require_dns_next = true,
+        .ipv4_only        = true,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, settings, &defaults, "ConnectionToPackets->settings->dns-behaviour"))
+        return false;
+    ts->domain_strategy = (int) ts->dns_policy.strategy;
 
     int64_t connect_timeout_ms = (int64_t) kCtpDefaultConnectTimeoutMs;
     if (! ctpLoadOptionalInteger(settings, "tcp-connect-timeout-ms", 1, (int64_t) UINT32_MAX, &connect_timeout_ms))

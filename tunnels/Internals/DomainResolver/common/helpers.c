@@ -153,6 +153,9 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
 
     *started_out = false;
 
+    if (! ts->resolve)
+        return true;
+
     if (addresscontextIsIpType(dest_ctx) || addresscontextIsDomainResolved(dest_ctx))
     {
         return true;
@@ -182,22 +185,7 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
     ls->phase = kDomainResolverPhaseResolving;
 
     *started_out = true;
-    int rc;
-    if (ts->mode == kDomainResolverModeNative)
-        rc = lineResolveDomainServiceAsync(l, domain, NULL, socktype, domainresolverOnDnsResolved, t, NULL);
-    else
-    {
-        domainresolver_transport_t *transport = domainresolverGetTransportForLine(t, l);
-        rc                                    = transport == NULL ? ARES_ENOTINITIALIZED
-                                                                  : lineResolveDomainOnResolverAsync(l,
-                                                                  domainresolverTransportResolver(transport),
-                                                                  domain,
-                                                                  NULL,
-                                                                  socktype,
-                                                                  domainresolverOnDnsResolved,
-                                                                  t,
-                                                                  NULL);
-    }
+    int rc       = domainresolverTunnelResolve(t, l, domain, NULL, socktype, domainresolverOnDnsResolved, t, NULL);
     if (UNLIKELY(rc != ARES_SUCCESS))
     {
         *started_out = false;

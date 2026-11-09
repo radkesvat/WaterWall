@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DomainResolver/interface.h"
 #include "wwapi.h"
 
 #include "TcpConnector/interface.h"
@@ -7,6 +8,11 @@
 
 typedef struct tcpudpconnector_tstate_s
 {
+    dns_policy_t dns_policy;
+    node_t       resolver_node;
+    tunnel_t    *resolver;
+    cJSON       *resolver_settings;
+    cJSON       *child_settings;
     node_t    tcp_node;
     node_t    udp_node;
     tunnel_t *tcp_connector;

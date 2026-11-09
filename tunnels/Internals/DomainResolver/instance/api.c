@@ -61,3 +61,64 @@ void *domainresolverTunnelGetUserLineState(tunnel_t *t, line_t *l)
     domainresolver_tstate_t *ts = tunnelGetState(t);
     return domainresolverGetUserLineState(ts, lineGetState(l, t));
 }
+
+void domainresolverTunnelSetProvider(tunnel_t *helper, tunnel_t *provider)
+{
+    assert(helper != provider && helper->chain == NULL && provider != NULL);
+    domainresolver_tstate_t *ts = tunnelGetState(helper);
+    assert(ts->mode == kDomainResolverModeNative && ts->dns_workers == NULL);
+    ts->provider = provider;
+}
+
+bool domainresolverTunnelResolutionEnabled(tunnel_t *resolver)
+{
+    return ((domainresolver_tstate_t *) tunnelGetState(resolver))->resolve;
+}
+
+enum domain_strategy domainresolverTunnelStrategy(tunnel_t *resolver)
+{
+    return ((domainresolver_tstate_t *) tunnelGetState(resolver))->strategy;
+}
+
+static tunnel_t *domainresolverEffectiveProvider(tunnel_t *provider)
+{
+    domainresolver_tstate_t *ts = tunnelGetState(provider);
+    return ts->provider != NULL ? ts->provider : provider;
+}
+
+int domainresolverTunnelResolve(tunnel_t *provider, line_t *line, const char *domain, const char *service, int socktype,
+                                LineDnsResolveFn cb, tunnel_t *callback_tunnel, void *userdata)
+{
+    assert(lineIsOnCurrentWorker(line));
+    if (! domainresolverTunnelResolutionEnabled(provider))
+        return ARES_EBADNAME;
+    provider                    = domainresolverEffectiveProvider(provider);
+    domainresolver_tstate_t *ts = tunnelGetState(provider);
+    if (! ts->resolve)
+        return ARES_EBADNAME;
+    if (ts->mode == kDomainResolverModeNative)
+        return lineResolveDomainServiceAsync(line, domain, service, socktype, cb, callback_tunnel, userdata);
+    domainresolver_transport_t *transport = domainresolverGetTransportForLine(provider, line);
+    if (transport == NULL)
+        return ARES_ENOTINITIALIZED;
+    return lineResolveDomainOnResolverAsync(
+        line, domainresolverTransportResolver(transport), domain, service, socktype, cb, callback_tunnel, userdata);
+}
+
+int domainresolverTunnelResolveRaw(tunnel_t *provider, line_t *line, const char *domain, const char *service,
+                                   int socktype, dns_resolve_cb cb, void *userdata)
+{
+    assert(lineIsOnCurrentWorker(line));
+    if (! domainresolverTunnelResolutionEnabled(provider))
+        return ARES_EBADNAME;
+    provider                    = domainresolverEffectiveProvider(provider);
+    domainresolver_tstate_t *ts = tunnelGetState(provider);
+    if (! ts->resolve)
+        return ARES_EBADNAME;
+    if (ts->mode == kDomainResolverModeNative)
+        return workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, cb, userdata);
+    domainresolver_transport_t *transport = domainresolverGetTransportForLine(provider, line);
+    return transport == NULL
+               ? ARES_ENOTINITIALIZED
+               : asyncdnsResolve(domainresolverTransportResolver(transport), domain, service, socktype, cb, userdata);
+}

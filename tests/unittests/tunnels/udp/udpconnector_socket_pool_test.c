@@ -2012,6 +2012,64 @@ static void testQueueAdmission(void)
     teardownFixture(&fixture);
 }
 
+static void testDisabledPacketDnsDropsUnresolvedPeer(void)
+{
+    twfSetCase("disabled UDP packet DNS drops unresolved peers and preserves numeric sends");
+    test_fixture_t fixture;
+    setupFixtureMode(&fixture, kUdpConnectorBalanceModePacket);
+    line_t                *line    = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
+    udpconnector_tstate_t *ts      = tunnelGetState(fixture.connector);
+    udpconnector_lstate_t *ls      = lineGetState(line, fixture.connector);
+    ts->dns_policy                 = (dns_policy_t) {.supplied = true, .resolve = false};
+    ts->dest_addr_selected.status  = kDvsFromDest;
+    ts->dest_port_selected.status  = kDvsFromDest;
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    addresscontextReset(destination);
+    addresscontextDomainSetByString(destination, "disabled.example");
+    addresscontextSetPort(destination, 20002);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+    const uint32_t refs = twfLineRefCount(line);
+    udpconnectorTunnelUpStreamPayload(fixture.connector, line, makeDatagram(&fixture, "drop unresolved"));
+    twfRequire(lineIsAlive(line) && fixture.finish_calls == 0, "disabled DNS closed its borrowed line");
+    twfRequire(twfLineRefCount(line) == refs && ls->packet_dns_requests == NULL,
+               "disabled DNS submitted an asynchronous request");
+    twfRequire(bufferbudgetGetUsage(&ls->write_budget).charge == 0, "disabled DNS retained the datagram");
+    twfRequireEqualU32(ls->bindings_count, 1, "unresolved peer acquired a socket binding");
+    addresscontextReset(destination);
+    twfRequire(addresscontextSetIpAddress(destination, "127.0.0.1"), "set numeric destination");
+    addresscontextSetPort(destination, 20002);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+    udpconnectorTunnelUpStreamPayload(fixture.connector, line, makeDatagram(&fixture, "numeric succeeds"));
+    twfRequireEqualU32(ls->bindings_count, 2, "disabled DNS refused a numeric destination");
+    udpconnectorTunnelUpStreamFinish(fixture.connector, line);
+    lineDestroy(line);
+    teardownFixture(&fixture);
+}
+
+static void testPacketDnsQuiesceDoesNotResume(void)
+{
+    twfSetCase("custom UDP DNS cancellation settles pending pause without callbacks");
+    test_fixture_t fixture;
+    setupFixtureMode(&fixture, kUdpConnectorBalanceModePacket);
+    line_t                            *line  = createAndInitLineIpv4(&fixture, "127.0.0.1", 20001);
+    udpconnector_lstate_t             *ls    = lineGetState(line, fixture.connector);
+    udpconnector_packet_destination_t *cache = &ls->packet_destinations[0];
+    testQueueWrite(ls, &cache->pending_queue, makeDatagram(&fixture, "pending DNS"));
+    cache->resolving     = true;
+    ls->queue_pause_sent = true;
+    const uint32_t refs  = twfLineRefCount(line);
+    udpconnectorTestCompletePacketDnsShutdown(fixture.connector, line, 0);
+    twfRequire(fixture.resume_calls == 0 && fixture.finish_calls == 0,
+               "DNS quiescence emitted an application callback");
+    twfRequire(lineIsAlive(line) && twfLineRefCount(line) == refs && ls->packet_dns_requests == NULL,
+               "DNS quiescence failed to settle its borrowed-line reference");
+    twfRequire(! cache->resolving && ! cache->has_context && bufferbudgetGetUsage(&ls->write_budget).charge == 0,
+               "DNS quiescence retained pending datagrams or destination state");
+    udpconnectorTunnelUpStreamFinish(fixture.connector, line);
+    lineDestroy(line);
+    teardownFixture(&fixture);
+}
+
 int main(int argc, char **argv)
 {
     GSTATE.workers_count   = 1;
@@ -2063,6 +2121,8 @@ int main(int argc, char **argv)
     testCase28_BindingPublicationFailureRollback();
     testCase29_SecondSocketFailurePreservesExisting();
     testCase30_WorkerQuiesceStopCleanup();
+    testDisabledPacketDnsDropsUnresolvedPeer();
+    testPacketDnsQuiesceDoesNotResume();
 
     printf("ALL 30 UDP CONNECTOR SOCKET POOL TESTS PASSED\n");
     return 0;

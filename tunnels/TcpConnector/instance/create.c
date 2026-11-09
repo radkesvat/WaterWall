@@ -23,8 +23,7 @@ static bool tcpconnectorCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
     tcpconnector_tstate_t *ts = tunnelGetState(t);
 
-    ts->domain_resolver_settings = cJSON_CreateObject();
-    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -71,7 +70,15 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
         LOGF("JSON Error: TcpConnector->settings->domain-strategy (string or integer field) : The value was invalid");
         return false;
     }
-    state->domain_strategy = domain_strategy;
+    const dns_policy_defaults_t dns_defaults = {
+        .resolve          = true,
+        .strategy         = domain_strategy,
+        .core_strategy    = GSTATE.domain_strategy,
+        .require_dns_next = true,
+    };
+    if (! dnsPolicyParseSettings(&state->dns_policy, settings, &dns_defaults, "TcpConnector->settings"))
+        return false;
+    state->domain_strategy = state->dns_policy.strategy;
     getIntFromJsonObjectOrDefault(&(state->fwmark), settings, "fwmark", kFwMarkInvalid);
     state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
@@ -137,8 +144,10 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
         &destination->option_tcp_fast_open, settings, "fastopen", state->option_tcp_fast_open);
     getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
     enum domain_strategy domain_strategy = (enum domain_strategy) state->domain_strategy;
-    if (! getDomainStrategyFromJsonObjectOrDefault(
-            &domain_strategy, settings, "domain-strategy", (enum domain_strategy) state->domain_strategy))
+    if ((! state->dns_policy.resolve && cJSON_HasObjectItem(settings, "domain-strategy")) ||
+        ! getDomainStrategyFromJsonObjectOrDefault(
+            &domain_strategy, settings, "domain-strategy", (enum domain_strategy) state->domain_strategy) ||
+        ! dnsPolicyParseStrategyOverride(&domain_strategy, settings, state->dns_policy.resolve, error_path))
     {
         LOGF("JSON Error: %s->domain-strategy (string or integer field) : The value was invalid", error_path);
         return false;
@@ -202,10 +211,11 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
 {
     const cJSON *jaddresses = cJSON_GetObjectItemCaseSensitive(settings, "addresses");
     const cJSON *jadresses  = cJSON_GetObjectItemCaseSensitive(settings, "adresses");
+    const cJSON *jdestinations = cJSON_GetObjectItemCaseSensitive(settings, "destinations");
 
-    if (jaddresses != NULL && jadresses != NULL)
+    if ((jaddresses != NULL) + (jadresses != NULL) + (jdestinations != NULL) > 1)
     {
-        LOGF("JSON Error: TcpConnector->settings : Use either \"addresses\" or \"adresses\", not both");
+        LOGF("JSON Error: TcpConnector->settings : Use one destination array spelling");
         startupFailureRecord(1);
         return NULL;
     }
@@ -215,7 +225,7 @@ static const cJSON *getDestinationArraySettings(const cJSON *settings)
         return jaddresses;
     }
 
-    return jadresses;
+    return jadresses != NULL ? jadresses : jdestinations;
 }
 
 static bool parseDestinationAddress(dynamic_value_t *dest_addr_selected, address_context_t *constant_dest_addr,

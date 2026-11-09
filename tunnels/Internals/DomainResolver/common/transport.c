@@ -27,6 +27,7 @@ struct domainresolver_socket_s
     sockaddr_u                  peer;
     buffer_queue_t              input;
     int                         family;
+    bool                        owned_prepared;
     bool                        tcp;
     bool                        established;
     bool                        send_paused;
@@ -141,6 +142,16 @@ static void dnsTransportDetachLine(domainresolver_socket_t *socket, bool notify)
         tunnelUpStreamFin(socket->transport->egress, line);
     domainresolver_lstate_t *ls = lineGetState(line, socket->transport->owner);
     ls->dns_transport           = NULL;
+    domainresolver_tstate_t *ts = tunnelGetState(socket->transport->owner);
+    if (socket->owned_prepared)
+    {
+        socket->owned_prepared = false;
+        if (ts->user_lstate_destroy != NULL && ts->user_lstate_size > 0)
+            ts->user_lstate_destroy(
+                socket->transport->owner, ts->prepare_owner, line, domainresolverGetUserLineState(ts, ls));
+        if (ts->user_lstate_size > 0)
+            memoryZeroAligned32(domainresolverGetUserLineState(ts, ls), ts->user_lstate_size);
+    }
     if (lineIsAlive(line))
         lineDestroy(line);
     lineUnref(line);
@@ -252,7 +263,22 @@ static int dnsTransportConnect(ares_socket_t handle, const struct sockaddr *addr
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), socket->tcp ? IP_PROTO_TCP : IP_PROTO_UDP);
     linePreferOrdinaryReadBoth(line);
     lineRef(line);
-    tunnelUpStreamInit(transport->egress, line);
+    domainresolver_tstate_t *ts       = tunnelGetState(transport->owner);
+    bool                     prepared = true;
+    if (ts->shared_entry != NULL && ts->dns_egress == ts->shared_entry && ts->prepare != NULL)
+    {
+        /* This owned line already contains the exact transport association.
+         * Ordinary helper Init would overwrite it. Only initialize the owner's
+         * preparation storage and run its destination selector once. */
+        if (ts->user_lstate_size > 0)
+            memoryZeroAligned32(domainresolverGetUserLineState(ts, ls), ts->user_lstate_size);
+        socket->owned_prepared = true;
+        prepared = ts->prepare(transport->owner, ts->prepare_owner, line, domainresolverGetUserLineState(ts, ls));
+    }
+    if (prepared && lineIsAlive(line))
+        tunnelUpStreamInit(transport->egress, line);
+    else if (lineIsAlive(line))
+        dnsTransportFail(socket, false);
     bool alive = lineIsAlive(line);
     lineUnref(line);
     if (! alive || socket->failed)

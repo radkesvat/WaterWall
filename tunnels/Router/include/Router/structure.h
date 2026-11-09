@@ -50,6 +50,8 @@ enum router_classify_result_e
 
 typedef struct router_tstate_s
 {
+    dns_policy_t                    dns_policy;
+    cJSON                          *domain_resolver_settings;
     node_t                          domain_resolver_node;
     tunnel_t                       *domain_resolver_tunnel;
     router_rule_t                  *rules;

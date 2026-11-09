@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -51,6 +51,43 @@ it (`username`, `password`). The full list is in the
 - **Across conditions in one rule** → `AND` (every condition must match).
 - **Across rules** → first match wins, in JSON order; later rules are skipped.
 - **No match anywhere** → the default `next` route.
+
+## DNS behaviour
+
+Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Local resolution remains disabled when this object is omitted.
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean whenever the object is present. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
+
+In `chain` mode, omission of `dns-next` uses this node's logical inlet, after owned-DNS preparation and without re-entering its resolver.
+An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+Resolution completes before rule classification. With `resolve: false`, Router can still evaluate domains and other available metadata, including lines without a destination. For Iran split routing, put `resolver-dns: true -> VPN` first, then `destination-ip: "geoip:ir" -> direct`, and use VPN as `next`. No root sniffing is needed. Resolving only inside a later proxy is too late for this GeoIP decision. See the [complete protected-DNS example](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx#chain-example-shared-router-and-vless-over-tls).
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
+
 
 ## How a connection is routed
 

@@ -13,8 +13,15 @@ static bool vmessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
         return true;
     }
 
-    ts->domain_resolver_settings = cJSON_CreateObject();
-    cJSON_AddNumberToObject(ts->domain_resolver_settings, "strategy", (double) ts->domain_strategy);
+    if (ts->dns_policy.mode == kDnsPolicyModeChain && ts->dns_policy.dns_next == NULL &&
+        (! vmessModeValid(ts->security, ts->options, 1) || ! vmessModeValid(ts->security, ts->options, 2)))
+    {
+        LOGF("VmessClient: shared DNS chain entry requires framing that supports both TCP and UDP; "
+             "choose a suitable dns-next branch");
+        return false;
+    }
+
+    ts->domain_resolver_settings = dnsPolicyCreateResolverSettings(&ts->dns_policy);
 
     if (! nodeConfigureChild(&ts->domain_resolver_node,
                              nodeDomainResolverGet(),
@@ -155,7 +162,7 @@ static bool parseProtocol(vmessclient_tstate_t *ts, const cJSON *settings)
     return true;
 }
 
-static bool parseDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
+static bool parseLegacyDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *strategy_json = cJSON_GetObjectItemCaseSensitive(settings, "domain-strategy");
 
@@ -218,6 +225,24 @@ static bool parseDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
     return false;
 }
 
+static bool parseDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
+{
+    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
+        ! parseLegacyDomainStrategy(ts, settings))
+        return false;
+
+    const dns_policy_defaults_t defaults = {
+        .resolve       = ts->resolve_domains,
+        .strategy      = (enum domain_strategy) ts->domain_strategy,
+        .core_strategy = GSTATE.domain_strategy,
+    };
+    if (! dnsPolicyParseSettings(&ts->dns_policy, settings, &defaults, "VmessClient->settings->dns-behaviour"))
+        return false;
+    ts->resolve_domains = ts->dns_policy.resolve;
+    ts->domain_strategy = ts->dns_policy.strategy;
+    return true;
+}
+
 static bool parseFirstPayloadTimeout(vmessclient_tstate_t *ts, const cJSON *settings)
 {
     const cJSON *value   = cJSON_GetObjectItemCaseSensitive(settings, "first-payload-timeout-ms");
@@ -244,6 +269,7 @@ static bool validateSettings(const cJSON *settings)
                                       "protocol",
                                       "proto",
                                       "domain-strategy",
+                                      "dns-behaviour",
                                       "first-payload-timeout-ms",
                                       "security",
                                       "encrypted-counter-policy",
@@ -418,6 +444,9 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
         tunnelDestroy(t);
         return NULL;
     }
+
+    if (! vmessModeValid(ts->security, ts->options, 1) || ! vmessModeValid(ts->security, ts->options, 2))
+        node->flags |= kNodeFlagDnsTransportUnsupported;
 
     if (! vmessclientCreateInternalDomainResolver(t, node) || ! vmessclientRegisterApi(t))
     {

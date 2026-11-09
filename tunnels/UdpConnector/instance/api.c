@@ -16,3 +16,9 @@ tunnel_t *udpconnectorTunnelGetEntryTunnel(tunnel_t *t)
     udpconnector_tstate_t *ts = tunnelGetState(t);
     return ts->domain_resolver_tunnel != NULL ? ts->domain_resolver_tunnel : t;
 }
+
+void udpconnectorTunnelSetDnsProvider(tunnel_t *t, tunnel_t *provider)
+{
+    udpconnector_tstate_t *ts = tunnelGetState(t);
+    domainresolverTunnelSetProvider(ts->domain_resolver_tunnel, provider);
+}

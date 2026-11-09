@@ -6,6 +6,7 @@ void httpproxyclientTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *con
     if (ts->domain_resolver_tunnel)
         tunnelOwnedChildDestroy(ts->domain_resolver_tunnel);
     cJSON_Delete(ts->domain_resolver_settings);
+    dnsPolicyDestroy(&ts->dns_policy);
     memoryFree(ts->domain_resolver_node.name);
     memoryFree(ts->domain_resolver_node.type);
     memoryFree(ts->domain_resolver_node.next);

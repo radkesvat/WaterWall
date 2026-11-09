@@ -25,6 +25,11 @@ void tcpudpconnectorTunnelstateDestroy(tcpudpconnector_tstate_t *ts)
 
     tcpudpconnectorClearChildNode(&ts->tcp_node);
     tcpudpconnectorClearChildNode(&ts->udp_node);
+    tcpudpconnectorDestroyChildTunnel(&ts->resolver, &ts->resolver_node);
+    tcpudpconnectorClearChildNode(&ts->resolver_node);
+    cJSON_Delete(ts->child_settings);
+    cJSON_Delete(ts->resolver_settings);
+    dnsPolicyDestroy(&ts->dns_policy);
 }
 
 void tcpudpconnectorTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context)

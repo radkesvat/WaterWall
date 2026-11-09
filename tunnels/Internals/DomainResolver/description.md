@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
@@ -41,6 +41,7 @@ alone does not encrypt traffic.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | Node `next` | — | The application continuation; also the default DNS entry in `chain`. |
+| `settings.resolve` | `true` | Enable lookup; false passes through without lookup and rejects all other DNS policy fields. |
 | `settings.mode` | `native` | One of `native`, `direct`, or `chain`. |
 | `settings.strategy` | `core-settings` | How to choose an address from the DNS results. |
 | `settings.verbose` | `false` | Log the start of a lookup at the DNS debug level. Resolved-address logs use the normal DNS logger. |
@@ -61,8 +62,7 @@ Use a string for `strategy`:
 | `only-ipv4` | Accept only IPv4 results. |
 | `only-ipv6` | Accept only IPv6 results. |
 
-The shared parser also accepts its internal numeric strategy values. Address
-selection is independent of the DNS transport mode.
+Existing flat configurations without `resolve` also retain their numeric/case-insensitive legacy strategy parsing. With explicit `resolve`, strategies use the canonical strings above. Address selection is independent of DNS transport.
 
 ## Native Mode
 
@@ -137,10 +137,7 @@ your existing `core.json`. Replace the documentation address with your resolver:
 }
 ```
 
-Many nodes already create native DomainResolver helpers internally. For ordinary
-native DNS, their own `domain-strategy` or Router's `resolve-domains` setting may
-be sufficient; an additional explicit resolver is useful when you need to choose
-its position before routing or another consumer.
+Consumers expose the same policy under `settings.dns-behaviour`; the standalone node keeps these DNS fields flat, alongside `verbose`. An explicit DomainResolver remains useful to choose lookup position before routing. Do not nest `dns-behaviour` on DomainResolver.
 
 ## Direct Mode
 
@@ -425,6 +422,191 @@ entries. Private predecessor helpers are included when resolving the callable
 entry. This is not arbitrary many-to-one sharing of an existing VPN chain, and
 structural checks cannot detect every runtime bootstrap dependency.
 
+## Embedded policies and disabled resolution
+
+On consuming nodes, the object must contain a boolean `resolve`. For example:
+
+```json
+{"dns-behaviour": {"resolve": true, "mode": "native", "strategy": "core-settings"}}
+```
+
+Direct and chain use the same `servers` grammar described below. Unknown fields,
+empty/null/non-object policies and numeric strategies are rejected. Do not combine
+this object with same-scope legacy `domain-strategy` or Router `resolve-domains`.
+Omitting it retains each consumer's old settings and defaults. Strategy omission
+retains the consumer's address preference; `core-settings` explicitly chooses the
+core preference without changing DNS transport.
+
+Use exactly `{"resolve": false}` inside `dns-behaviour` to disable local lookup.
+Standalone DomainResolver uses flat `"resolve": false` instead. Both reject
+`mode`, `strategy`, `servers` and `dns-next` while disabled. Preparation still
+selects destination address, port and protocol; pre-resolved addresses survive.
+A supported proxy can forward an unresolved hostname. Socket connectors, CTP
+and datagram endpoints reject unresolved targets without OS/native fallback.
+
+| Consumer | Default chain DNS entry |
+| --- | --- |
+| Standalone DomainResolver | Ordinary configured `next`; explicit same-next is also supported. |
+| Router | Its logical inlet, without re-entering its hidden resolver. |
+| SOCKS5, Trojan, VLESS and VMess clients | Its logical inlet with owned-DNS preparation; selected framing must carry UDP and TCP. |
+| TcpConnector, UdpConnector and HttpProxyClient | Explicit `dns-next` required. HTTP resolution is CONNECT-only. |
+| TcpUdpConnector and ConnectionToPackets | Explicit `dns-next` required. CTP remains IPv4-only. |
+| UdpStatelessSocket | Explicit `dns-next` required; its ordinary `next` serves its peer/line role. |
+
+For embedded policies, explicitly naming the owner is rejected. Omit the name for
+a supported shared entry, or bind a separate, otherwise unowned branch. The
+selected path must carry both UDP queries and TCP fallback. A rejected route or
+failed lookup never switches to native DNS or an application fallback path.
+Direct/chain channels and caches are private to one provider and worker; the
+combined connector's children borrow one authoritative provider and branch.
+
+### Router-owned protected DNS
+
+This complete configuration resolves before GeoIP classification using Router's
+own entry. Replace the documentation addresses, UUID, SNI and GeoIP database path
+and provide the remote TLS/VLESS service as in the preceding chain example.
+
+```json
+{
+  "name": "router-owned-dns-and-application-routing",
+  "nodes": [
+    {
+      "name": "local-in",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080
+      },
+      "next": "socks"
+    },
+    {
+      "name": "socks",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": true,
+        "ipv4": "127.0.0.1"
+      },
+      "next": "router"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "geoip-db-path": "/var/lib/waterwall/GeoLite2-Country.mmdb",
+        "rules": [
+          {
+            "resolver-dns": true,
+            "target": "vpn-client"
+          },
+          {
+            "destination-ip": "geoip:ir",
+            "target": "direct-out"
+          }
+        ],
+        "dns-behaviour": {
+          "resolve": true,
+          "mode": "chain",
+          "servers": [
+            "203.0.113.53:53"
+          ],
+          "strategy": "prefer-ipv4"
+        }
+      },
+      "next": "vpn-client"
+    },
+    {
+      "name": "direct-out",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "vpn-client",
+      "type": "VlessClient",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "protocol": "dest_context->protocol",
+        "domain-strategy": "do-not-resolve-domains"
+      },
+      "next": "vpn-tls"
+    },
+    {
+      "name": "vpn-tls",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "vpn.example.net",
+        "verify": true
+      },
+      "next": "vpn-out"
+    },
+    {
+      "name": "vpn-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "198.51.100.20",
+        "port": 443
+      }
+    }
+  ]
+}
+```
+
+The leading `resolver-dns` rule sends UDP and TCP DNS through TLS/VLESS. The
+unmarked application later matches `geoip:ir` for direct egress, or the default
+VPN route. Root sniffing is unnecessary. Resolving only in the later VlessClient
+would be too late for this Router's IP decision.
+
+### Proxy-owned shared entry
+
+This VLESS fragment resolves its logical target through its own proxy entry.
+Define `vpn-tls -> TcpConnector` with a numeric outer VPN endpoint, as above.
+Do not set `dns-next` to the embedding client name.
+
+```json
+{
+  "name": "vpn-client",
+  "type": "VlessClient",
+  "next": "vpn-tls",
+  "settings": {
+    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "dest_context->protocol",
+    "dns-behaviour": {"resolve": true, "mode": "chain", "servers": ["203.0.113.53:53"]}
+  }
+}
+```
+
+The generated line keeps its numeric DNS target and exact UDP/TCP protocol. The
+logical client consumes the destination pin; its outer connector independently
+selects the VPN endpoint. The original application has no DNS-origin marker.
+
+### Connector with a separate branch
+
+This complete local SOCKS configuration gives the connector an explicit DNS
+branch. Use a protected proxy branch in place of `dns-out` to protect DNS.
+
+```json
+{
+  "name": "connector-dns-branch",
+  "nodes": [
+    {"name": "in", "type": "TcpListener", "next": "socks", "settings": {"address": "127.0.0.1", "port": 1080}},
+    {"name": "socks", "type": "Socks5Server", "next": "app-out", "settings": {"no-auth": true, "connect": true}},
+    {"name": "app-out", "type": "TcpConnector", "settings": {
+      "address": "dest_context->address", "port": "dest_context->port",
+      "dns-behaviour": {"resolve": true, "mode": "chain", "servers": ["203.0.113.53:53"], "dns-next": "dns-out"}
+    }},
+    {"name": "dns-out", "type": "TcpUdpConnector", "settings": {"address": "dest_context->address", "port": "dest_context->port"}}
+  ]
+}
+```
+
 ## DNS Servers and Options for Direct and Chain
 
 `servers` must contain 1–32 numeric endpoints. Supported forms are:
@@ -471,15 +653,20 @@ because it uses port 53.
 
 ## Scope of the Selected Mode
 
-The mode controls only lookups performed by this explicit DomainResolver.
-Implicit helpers in connectors, Router, proxy clients and ConnectionToPackets
-remain native. Direct worker/line DNS callers, UdpConnector per-destination DNS
-and UdpStatelessSocket outbound DNS also retain their native backend.
-Already-numeric or resolved destinations need no further lookup.
+Each policy controls lookups owned by its consumer. TcpConnector, UdpConnector,
+TcpUdpConnector, Router, SOCKS5/Trojan/VLESS/VMess clients, HttpProxyClient,
+ConnectionToPackets and UdpStatelessSocket share this parser and backend.
+UdpConnector's packet-balanced destinations and UdpStatelessSocket's asynchronous
+outbound datagrams use their selected provider too. Omitted policies preserve
+existing defaults; proxy-local resolution and Router resolution remain disabled.
+There is no automatic transport-policy inheritance between nodes.
 
-Selecting chain mode therefore does not protect every DNS request in WaterWall,
-change system DNS, or intercept application DNS arriving through TUN. Ensure
-other lookups and the outer transport's bootstrap use the intended policy.
+WireGuard hostname peer endpoints still resolve synchronously during startup.
+HttpClient authority/Host and TlsClient SNI do not select a transport endpoint.
+PTC fake DNS and TunDevice system-DNS configuration have separate responsibilities.
+Selecting chain mode does not control every DNS source or intercept arbitrary
+application DNS. Bootstrap the outer VPN endpoint numerically or through an
+independent policy/path.
 
 ## Runtime and Failure Behavior
 

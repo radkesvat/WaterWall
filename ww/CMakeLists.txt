@@ -160,6 +160,7 @@ add_library(ww STATIC
     net/tls_client_hello.c
     net/async_dns.c
     net/dns_strategy.c
+    net/dns_policy.c
     net/adapter.c
     net/tunnel.c
     net/line.c

@@ -5,6 +5,7 @@
 void socks5clientTunnelstateDestroy(socks5client_tstate_t *ts)
 {
     assert(ts != NULL);
+    dnsPolicyDestroy(&ts->dns_policy);
 
     addresscontextReset(&ts->target_addr);
 

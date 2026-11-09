@@ -40,4 +40,7 @@ void udpconnectorTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     }
 
     tunnelchainInsert(chain, t);
+    if (startupFailurePending())
+        return;
+    discard domainresolverTunnelAttachEmbedded(resolver, t, NULL);
 }
