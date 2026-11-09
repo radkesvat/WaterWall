@@ -787,8 +787,9 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
         result = udpSendBuffer(wioGetFD(io), io->loop->bufpool, buf, peer_addr, false);
     else
     {
-        int sent = sendto(wioGetFD(io), sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
-        result   = (udp_send_result_t) {.bytes = sent, .error = sent < 0 ? socketERRNO() : 0};
+        int sent = sendto(
+            wioGetFD(io), (const char *) sbufGetRawPtr(buf), (size_t) len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+        result = (udp_send_result_t) {.bytes = sent, .error = sent < 0 ? socketERRNO() : 0};
     }
     int nwrite = result.bytes;
     if (result.retire)
