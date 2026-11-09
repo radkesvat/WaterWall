@@ -1,5 +1,5 @@
 <!--
-Documentation version: 164
+Documentation version: 165
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
@@ -62,7 +62,7 @@ Use a string for `strategy`:
 | `only-ipv4` | Accept only IPv4 results. |
 | `only-ipv6` | Accept only IPv6 results. |
 
-Existing flat configurations without `resolve` also retain their numeric/case-insensitive legacy strategy parsing. With explicit `resolve`, strategies use the canonical strings above. Address selection is independent of DNS transport.
+Only the canonical lowercase strategy strings above are accepted; numeric strategies are rejected. This also applies when `resolve` is omitted. The optional `resolve` field defaults to `true`. Address selection is independent of DNS transport.
 
 ## Native Mode
 
@@ -319,7 +319,7 @@ TcpUdpListener -> Socks5Server -> DomainResolver -> Router
         "address": "dest_context->address",
         "port": "dest_context->port",
         "protocol": "dest_context->protocol",
-        "domain-strategy": "do-not-resolve-domains"
+        "dns-behaviour": {"resolve": false}
       },
       "next": "vpn-tls"
     },
@@ -435,9 +435,9 @@ On consuming nodes, the object must contain a boolean `resolve`. For example:
 ```
 
 Direct and chain use the same `servers` grammar described below. Unknown fields,
-empty/null/non-object policies and numeric strategies are rejected. Do not combine
-this object with same-scope legacy `domain-strategy` or Router `resolve-domains`.
-Omitting it retains each consumer's old settings and defaults. Strategy omission
+empty/null/non-object policies and numeric strategies are rejected. Strategy
+names must use the canonical lowercase strings. Omitting the object uses each
+consumer's defaults. Strategy omission
 retains the consumer's address preference; `core-settings` explicitly chooses the
 core preference without changing DNS transport.
 
@@ -536,7 +536,7 @@ and provide the remote TLS/VLESS service as in the preceding chain example.
         "address": "dest_context->address",
         "port": "dest_context->port",
         "protocol": "dest_context->protocol",
-        "domain-strategy": "do-not-resolve-domains"
+        "dns-behaviour": {"resolve": false}
       },
       "next": "vpn-tls"
     },

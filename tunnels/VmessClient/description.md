@@ -1,5 +1,5 @@
 <!--
-Documentation version: 5
+Documentation version: 6
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessClient.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessClient.mdx synchronized.
 -->
 
@@ -37,7 +37,7 @@ Certificate validation and SNI remain TlsClient settings.
     "port": 443,
     "protocol": "tcp",
     "security": "aes-128-gcm",
-    "domain-strategy": "do-not-resolve-domains",
+    "dns-behaviour": {"resolve": false},
     "first-payload-timeout-ms": 400,
     "verbose": false
   }
@@ -72,7 +72,7 @@ To preserve an incoming proxy/router destination:
 | `target-address` / `address` / `target` | Required | Literal host/IP, `dest_context->address`, or `line->dest_ctx->address`. Domains contain 1..255 non-NUL bytes. |
 | `port` | Required | Integer 1..65535, `dest_context->port`, or `line->dest_ctx->port`. |
 | `protocol` / `proto` | `tcp` | `tcp`/`connect`, `udp`/`udp-associate`, `dest_context->protocol`, or `line->dest_ctx->protocol`. |
-| `domain-strategy` | `do-not-resolve-domains` | One of the strategies below. |
+| `dns-behaviour` | Local resolution disabled | Local lookup, address selection and DNS transport; see DNS behaviour below. |
 | `first-payload-timeout-ms` | `400` | Integer 0..4294967295; zero sends an idle request without deliberate waiting after transport Est. |
 | `security` | `aes-128-gcm` | `aes-128-gcm`, `chacha20-poly1305`, `auto`, `none`, or `zero`. |
 | `chunk-masking` | Mode-dependent | Boolean; true except for `zero`. |
@@ -116,8 +116,7 @@ hostname when enabled. Literal IPs and already-resolved targets need no lookup.
 
 This setting concerns the final target reached through the proxy. The following
 connector selects the proxy server's address and has its own DNS settings.
-Without `dns-behaviour`, local resolution is disabled by default; an existing
-`domain-strategy` setting can still enable it.
+Without `dns-behaviour`, local resolution is disabled.
 
 Packetaddr requires an IP target. An unresolved hostname must be resolved locally
 first; disabling lookup does not make packetaddr accept hostnames.
@@ -141,7 +140,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -161,30 +160,13 @@ and its following transport. To use another path, set `dns-next` to a separate
 DNS branch that does not already belong to another node. Leave the field omitted
 to use this node; do not set it to this node's own name.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 `resolve: false` keeps the hostname in requests that support it. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
 
 Packetaddr still requires an IP target after preparation/resolution. A shared DNS entry must support both TCP and UDP with the configured VMess framing.
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
-### Domains
-
-| `domain-strategy` | Behavior |
-| --- | --- |
-| `do-not-resolve-domains` | Send the domain for resolution by the VMess server. |
-| `resolve-domains-and-accept-dns-returned-order` | Use the first usable local DNS answer. |
-| `resolve-domains-and-prefer-ipv4` | Prefer IPv4, falling back to IPv6. |
-| `resolve-domains-and-prefer-ipv6` | Prefer IPv6, falling back to IPv4. |
-| `resolve-domains-and-use-only-ipv4` | Require an IPv4 answer. |
-| `resolve-domains-and-use-only-ipv6` | Require an IPv6 answer. |
-| `resolve-domains-with-core-settings` | Use the core DNS settings and address preference. |
-
-Local resolution uses an owned DomainResolver before VmessClient. Its preparation
-hook applies the final target before DNS; it handles pending input while resolving.
-Literal IPs and already-resolved targets need no lookup. The client snapshots the selected destination before
-downstream transport nodes can replace the line destination with the server endpoint.
 
 ## Security and framing
 

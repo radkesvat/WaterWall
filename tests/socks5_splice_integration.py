@@ -120,7 +120,7 @@ def run(binary, side, enabled, authenticated, bandwidth=False):
     is_client = side.endswith("client")
     selected_method = 2 if authenticated else 0
     settings = ({"address": "origin.test", "port": 80, "protocol": "tcp",
-                 "domain-strategy": "resolve-domains-and-use-only-ipv4"} if is_client else
+                 "dns-behaviour": {"resolve": True, "strategy": "only-ipv4"}} if is_client else
                 {"connect": True, "udp": False, "no-auth": True})
     if udp:
         settings = ({"address": HOST, "port": 80, "protocol": "udp"} if is_client else

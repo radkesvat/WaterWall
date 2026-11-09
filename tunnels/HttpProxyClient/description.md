@@ -1,5 +1,5 @@
 <!--
-Documentation version: 2
+Documentation version: 3
 -->
 
 # HttpProxyClient Node
@@ -158,7 +158,7 @@ mode options fail startup.
 | --- | --- | --- |
 | `mode` | `"connect"` | `"connect"` or `"http"`. |
 | `target-address` | Required | Origin IPv4, IPv6, domain, or exactly `"dest_context->address"`; 1–255 bytes. |
-| `domain-strategy` | `"do-not-resolve-domains"` | Origin DNS selection; resolving values require CONNECT. |
+| `dns-behaviour` | Local resolution disabled | Origin lookup, address selection and DNS transport; enabled resolution requires CONNECT. |
 | `port` | Required | Origin integer port 1–65535, or exactly `"dest_context->port"`. |
 | `username`, `password` | Absent | Optional pair for preemptive Basic proxy authentication. Both must be supplied together. |
 | `headers` | `{}` | Additional string-valued request headers, in either mode. |
@@ -166,23 +166,12 @@ mode options fail startup.
 
 `target-address` contains a host or IP, not a URL; the port is separate. IPv6
 authorities are bracketed on the wire, and every authority includes its port.
-Domain targets use proxy-side DNS by default. Optional `domain-strategy` enables
-local origin DNS in CONNECT mode only; HTTP mode preserves the original absolute
-URI authority and accepts only omission or `do-not-resolve-domains`.
+Domain targets use proxy-side DNS by default. Set `dns-behaviour.resolve` to `true`
+to resolve the origin locally in CONNECT mode. Ordinary HTTP mode retains the
+configured hostname in the request authority and does not allow local resolution.
+The DNS behaviour section below lists the policy fields and address strategies.
 
-| `domain-strategy` | CONNECT behavior |
-| --- | --- |
-| `do-not-resolve-domains` | Default; send the domain to the proxy. |
-| `resolve-domains-and-accept-dns-returned-order` | First usable DNS answer. |
-| `resolve-domains-and-prefer-ipv4` | Prefer IPv4, falling back to returned IPv6. |
-| `resolve-domains-and-prefer-ipv6` | Prefer IPv6, falling back to returned IPv4. |
-| `resolve-domains-and-use-only-ipv4` | IPv4 answer required. |
-| `resolve-domains-and-use-only-ipv6` | IPv6 answer required. |
-| `resolve-domains-with-core-settings` | Use the core DNS selection strategy. |
-
-These exact lowercase strings are required. Unknown, empty, null, non-string,
-and duplicate values fail startup. Resolving strategies fail startup in HTTP
-mode even for literal targets. Literal IPv4/IPv6 and already-resolved dynamic
+Literal IPv4/IPv6 and already-resolved dynamic
 IPs bypass DNS, including opposite-family literals: these policies select DNS
 answers, not explicit IPs. Preference fallback does not retry proxy requests.
 
@@ -200,7 +189,7 @@ For example, these settings resolve the origin locally:
   "mode": "connect",
   "target-address": "origin.example",
   "port": 443,
-  "domain-strategy": "resolve-domains-and-prefer-ipv4"
+  "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
 }
 ```
 
@@ -268,8 +257,7 @@ hostname when enabled. Literal IPs and already-resolved targets need no lookup.
 
 This setting concerns the final target reached through the proxy. The following
 connector selects the proxy server's address and has its own DNS settings.
-Without `dns-behaviour`, local resolution is disabled by default; an existing
-`domain-strategy` setting can still enable it.
+Without `dns-behaviour`, local resolution is disabled.
 
 Local resolution is supported only in CONNECT mode. In ordinary HTTP mode, the
 configured hostname remains the request authority for the upstream proxy.
@@ -293,7 +281,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -312,7 +300,7 @@ For `chain`, set `dns-next` to the name of a separate DNS branch that supports
 both UDP and TCP. The branch must not already belong to another node. This node
 has no default DNS branch; naming this node itself is not allowed.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 `resolve: false` keeps the hostname in requests that support it. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
 

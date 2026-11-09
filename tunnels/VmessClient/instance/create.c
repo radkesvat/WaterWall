@@ -162,78 +162,11 @@ static bool parseProtocol(vmessclient_tstate_t *ts, const cJSON *settings)
     return true;
 }
 
-static bool parseLegacyDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
+static bool parseDnsBehaviour(vmessclient_tstate_t *ts, const cJSON *settings)
 {
-    const cJSON *strategy_json = cJSON_GetObjectItemCaseSensitive(settings, "domain-strategy");
-
-    ts->resolve_domains = false;
-    ts->domain_strategy = kDsInvalid;
-
-    if (strategy_json == NULL)
-    {
-        return true;
-    }
-
-    if (! cJSON_IsString(strategy_json) || strategy_json->valuestring == NULL || strategy_json->valuestring[0] == '\0')
-    {
-        LOGF("JSON Error: VmessClient->settings->domain-strategy must be a non-empty string");
-        return false;
-    }
-
-    const char *strategy = strategy_json->valuestring;
-
-    if (stricmp(strategy, "do-not-resolve-domains") == 0)
-    {
-        ts->resolve_domains = false;
-        return true;
-    }
-
-    ts->resolve_domains = true;
-
-    if (stricmp(strategy, "resolve-domains-with-core-settings") == 0)
-    {
-        ts->domain_strategy = GSTATE.domain_strategy;
-        return true;
-    }
-    if (stricmp(strategy, "resolve-domains-and-accept-dns-returned-order") == 0)
-    {
-        ts->domain_strategy = kDsInvalid;
-        return true;
-    }
-    if (stricmp(strategy, "resolve-domains-and-prefer-ipv4") == 0)
-    {
-        ts->domain_strategy = kDsPreferIpV4;
-        return true;
-    }
-    if (stricmp(strategy, "resolve-domains-and-prefer-ipv6") == 0)
-    {
-        ts->domain_strategy = kDsPreferIpV6;
-        return true;
-    }
-    if (stricmp(strategy, "resolve-domains-and-use-only-ipv4") == 0)
-    {
-        ts->domain_strategy = kDsOnlyIpV4;
-        return true;
-    }
-    if (stricmp(strategy, "resolve-domains-and-use-only-ipv6") == 0)
-    {
-        ts->domain_strategy = kDsOnlyIpV6;
-        return true;
-    }
-
-    LOGF("JSON Error: VmessClient->settings->domain-strategy has an unsupported value");
-    return false;
-}
-
-static bool parseDomainStrategy(vmessclient_tstate_t *ts, const cJSON *settings)
-{
-    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
-        ! parseLegacyDomainStrategy(ts, settings))
-        return false;
-
     const dns_policy_defaults_t defaults = {
-        .resolve       = ts->resolve_domains,
-        .strategy      = (enum domain_strategy) ts->domain_strategy,
+        .resolve       = false,
+        .strategy      = kDsInvalid,
         .core_strategy = GSTATE.domain_strategy,
     };
     if (! dnsPolicyParseSettings(&ts->dns_policy, settings, &defaults, "VmessClient->settings->dns-behaviour"))
@@ -268,7 +201,6 @@ static bool validateSettings(const cJSON *settings)
                                       "port",
                                       "protocol",
                                       "proto",
-                                      "domain-strategy",
                                       "dns-behaviour",
                                       "first-payload-timeout-ms",
                                       "security",
@@ -435,7 +367,7 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
     }
 
     if (! validateSettings(settings) || ! parseUuid(ts, settings) || ! parseTargetAddress(ts, settings) ||
-        ! parseTargetPort(ts, settings) || ! parseProtocol(ts, settings) || ! parseDomainStrategy(ts, settings) ||
+        ! parseTargetPort(ts, settings) || ! parseProtocol(ts, settings) || ! parseDnsBehaviour(ts, settings) ||
         ! parseFirstPayloadTimeout(ts, settings) || ! parseSecurity(ts, settings) ||
         ! parseMaturityOptions(ts, settings))
     {

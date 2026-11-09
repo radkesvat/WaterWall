@@ -96,22 +96,29 @@ static void modes(void)
 
 static void strategies(void)
 {
-    const char *names[] = {"do-not-resolve-domains",
-                           "resolve-domains-and-accept-dns-returned-order",
-                           "resolve-domains-and-prefer-ipv4",
-                           "resolve-domains-and-prefer-ipv6",
-                           "resolve-domains-and-use-only-ipv4",
-                           "resolve-domains-and-use-only-ipv6",
-                           "resolve-domains-with-core-settings"};
+    const char *names[] = {
+        "accept-dns-returned-order", "prefer-ipv4", "prefer-ipv6", "only-ipv4", "only-ipv6", "core-settings"};
     for (size_t i = 0; i < ARRAY_SIZE(names); ++i)
     {
-        cJSON *json = settings();
-        cJSON_AddStringToObject(json, "domain-strategy", names[i]);
+        cJSON *json   = settings();
+        cJSON *policy = cJSON_AddObjectToObject(json, "dns-behaviour");
+        cJSON_AddBoolToObject(policy, "resolve", true);
+        cJSON_AddStringToObject(policy, "strategy", names[i]);
         construct(json, true);
     }
-    cJSON *json = settings();
-    cJSON_AddStringToObject(json, "domain-strategy", "unknown");
-    construct(json, false);
+    const char *removed[] = {"do-not-resolve-domains",
+                             "resolve-domains-and-accept-dns-returned-order",
+                             "resolve-domains-and-prefer-ipv4",
+                             "resolve-domains-and-prefer-ipv6",
+                             "resolve-domains-and-use-only-ipv4",
+                             "resolve-domains-and-use-only-ipv6",
+                             "resolve-domains-with-core-settings"};
+    for (size_t i = 0; i < ARRAY_SIZE(removed); ++i)
+    {
+        cJSON *json = settings();
+        cJSON_AddStringToObject(json, "domain-strategy", removed[i]);
+        construct(json, false);
+    }
 }
 
 static void dnsBehaviour(void)

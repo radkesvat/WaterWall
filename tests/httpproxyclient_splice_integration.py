@@ -86,7 +86,7 @@ def run(binary, mode, enabled, auth):
     if auth in ("direct", "tls", "local", "tracked"):
         settings.update({"username": "user", "password": "pass"})
     if local_dns:
-        settings["domain-strategy"] = "resolve-domains-and-use-only-ipv4"
+        settings["dns-behaviour"] = {"resolve": True, "strategy": "only-ipv4"}
         if dynamic_dns:
             settings.update({"target-address": "dest_context->address", "port": "dest_context->port"})
     with RunDirectory("waterwall-http-client-") as directory:
@@ -101,7 +101,7 @@ def run(binary, mode, enabled, auth):
         if local_dns:
             (root / "hosts").write_text("127.0.0.20 origin.example\n::1 proxy.example\n")
             nodes[0]["next"] = "origin-input" if dynamic_dns else "router" if branch_dns else "client"
-            nodes[2]["settings"].update({"address": "proxy.example", "domain-strategy": "only-ipv6"})
+            nodes[2]["settings"].update({"address": "proxy.example", "dns-behaviour": {"resolve": True, "strategy": "only-ipv6"}})
             if branch_dns:
                 nodes.extend([
                     {"name": "router", "type": "Router", "next": "unused",
@@ -258,7 +258,7 @@ def pending_shutdown(binary):
              "settings": {"address": "127.0.0.1", "port": 27971}},
             {"name": "client", "type": "HttpProxyClient", "next": "transport",
              "settings": {"target-address": "pending.test", "port": 443,
-                          "domain-strategy": "resolve-domains-and-prefer-ipv4"}},
+                          "dns-behaviour": {"resolve": True, "strategy": "prefer-ipv4"}}},
             {"name": "transport", "type": "TcpConnector",
              "settings": {"address": "127.0.0.1", "port": 27972}},
         ]

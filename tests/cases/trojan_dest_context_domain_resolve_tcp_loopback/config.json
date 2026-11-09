@@ -21,7 +21,10 @@
         "address": "dest_context->address",
         "port": "dest_context->port",
         "protocol": "dest_context->protocol",
-        "domain-strategy": "resolve-domains-and-prefer-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "prefer-ipv4"
+        }
       },
       "next": "proxy-connector"
     },

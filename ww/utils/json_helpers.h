@@ -357,21 +357,6 @@ static inline bool getDomainStrategyFromJson(const cJSON *json_value, enum domai
     return false;
 }
 
-static inline bool getDomainStrategyFromJsonObjectOrDefault(enum domain_strategy *dest, const cJSON *json_obj,
-                                                            const char *key, enum domain_strategy def)
-{
-    assert(dest != NULL);
-
-    const cJSON *json_value = cJSON_GetObjectItemCaseSensitive(json_obj, key);
-    if (json_value == NULL)
-    {
-        *dest = def;
-        return true;
-    }
-
-    return getDomainStrategyFromJson(json_value, dest);
-}
-
 static inline bool getPositiveIntFromJsonObjectOrBoolDefault(int *dest, const cJSON *json_obj, const char *key,
                                                              int true_value, int def)
 {

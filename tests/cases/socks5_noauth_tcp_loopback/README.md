@@ -28,7 +28,7 @@ Generated core settings, logs and mutable inputs belong to the private run direc
 
 Contract exercised: Verifies `Socks5Client` without credentials against `Socks5Server(no-auth=true)` across a real TCP proxy hop. The
   SOCKS request target is configured as `localhost` and resolved by
-  `domain-strategy=resolve-domains-and-use-only-ipv4` before `Socks5Server` reaches the separate tester TCP listener
+  `dns-behaviour: {"resolve": true, "strategy": "only-ipv4"}` before `Socks5Server` reaches the separate tester TCP listener
   through a `TcpConnector` using `dest_context`, so the case covers method `0x00` negotiation, client-side target
   resolution, and CONNECT target forwarding.
   It also proves `Socks5Server(udp=false)` remains valid behind a TCP-only listener and does not require a dynamic UDP

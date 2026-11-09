@@ -265,9 +265,9 @@ static void testDnsPolicyDestinations(void)
     } cases[] = {
         {"{\"addresses\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
          "\"domain-strategy\":\"only-ipv6\"}]}",
-         true,
-         true,
-         kDsOnlyIpV6},
+         false,
+         false,
+         kDsInvalid},
         {"{\"destinations\":[{\"address\":\"127.0.0.1\",\"port\":443,\"weight\":1,"
          "\"dns-behaviour\":{\"strategy\":\"only-ipv6\"}}]}",
          true,

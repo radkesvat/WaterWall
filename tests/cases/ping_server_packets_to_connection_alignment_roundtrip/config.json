@@ -61,7 +61,10 @@
       "settings": {
         "source-ipv4": "10.90.0.1",
         "mtu": 1400,
-        "domain-strategy": "only-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        }
       },
       "next": "ping-client"
     },

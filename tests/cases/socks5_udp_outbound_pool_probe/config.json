@@ -28,7 +28,10 @@
       "settings": {
         "address": "dest_context->address",
         "port": "dest_context->port",
-        "domain-strategy": "only-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        }
       }
     }
   ]

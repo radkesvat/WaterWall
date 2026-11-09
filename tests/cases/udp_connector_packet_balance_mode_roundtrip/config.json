@@ -28,7 +28,10 @@
       "type": "UdpConnector",
       "settings": {
         "balance-mode": "packet",
-        "domain-strategy": 3,
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        },
         "addresses": [
           {
             "address": "localhost",

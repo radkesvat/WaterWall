@@ -70,7 +70,7 @@ void ctpTunnelUpStreamInit(tunnel_t *t, line_t *l)
     if (dest_ctx->ip_address.type != IPADDR_TYPE_V4)
     {
         // The node is IPv4-only by design. Configuration already refuses an
-        // IPv6-selecting domain-strategy, so reaching here means a literal IPv6
+        // IPv6-selecting DNS strategy, so reaching here means a literal IPv6
         // destination or a chain that resolved one on this node's behalf.
         LOGE("ConnectionToPackets: this node emits IPv4 only, but the destination is IPv6. "
              "Give this chain an IPv4 destination");

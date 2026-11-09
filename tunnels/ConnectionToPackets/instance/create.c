@@ -211,23 +211,9 @@ bool ctpLoadSettings(ctp_tstate_t *ts, const cJSON *settings)
      * them here turns a class of runtime line failures into one configuration
      * error that names the value to use.
      */
-    enum domain_strategy domain_strategy = kDsOnlyIpV4;
-    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
-        ! getDomainStrategyFromJsonObjectOrDefault(&domain_strategy, settings, "domain-strategy", kDsOnlyIpV4))
-    {
-        LOGF("JSON Error: ConnectionToPackets->settings->domain-strategy (string or integer field) : The value was "
-             "invalid");
-        return false;
-    }
-    if (domain_strategy != kDsOnlyIpV4)
-    {
-        LOGF("JSON Error: ConnectionToPackets->settings->domain-strategy (string or integer field) : this node emits "
-             "IPv4 only, so \"only-ipv4\" is the only strategy that can always produce a usable destination");
-        return false;
-    }
     const dns_policy_defaults_t defaults = {
         .resolve          = true,
-        .strategy         = domain_strategy,
+        .strategy         = kDsOnlyIpV4,
         .core_strategy    = GSTATE.domain_strategy,
         .require_dns_next = true,
         .ipv4_only        = true,

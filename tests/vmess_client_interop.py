@@ -46,10 +46,8 @@ ROTATED_UUID = "6783a3e7-e373-51cd-8642-c83782b807c5"
 TOKEN = "0123456789abcdef" * 4
 REJECT = ("wrong_uuid", "disabled", "expired", "quota")
 STRATEGIES = (
-    "do-not-resolve-domains", "resolve-domains-and-accept-dns-returned-order",
-    "resolve-domains-and-prefer-ipv4", "resolve-domains-and-prefer-ipv6",
-    "resolve-domains-and-use-only-ipv4", "resolve-domains-and-use-only-ipv6",
-    "resolve-domains-with-core-settings",
+    "disabled", "accept-dns-returned-order", "prefer-ipv4", "prefer-ipv6",
+    "only-ipv4", "only-ipv6", "core-settings",
 )
 
 
@@ -115,7 +113,9 @@ def inputs(root, args):
         entry = "websocket-client"
     settings = {"uuid": ROTATED_UUID if args.scenario == "wrong_uuid" else (SHORT_ID if args.short_id else UUID),
                 "address": target_address(args), "port": TARGET_PORT, "protocol": args.protocol,
-                "security": args.cipher, "domain-strategy": args.dns, "first-payload-timeout-ms": 40,
+                "security": args.cipher, "dns-behaviour": (
+                    {"resolve": False} if args.dns == "disabled" else {"resolve": True, "strategy": args.dns}),
+                "first-payload-timeout-ms": 40,
                 "encrypted-counter-policy": args.counter_policy,
                 "send-termination": args.send_termination == "true", "packet-encoding": args.packet_encoding}
     if args.destination == "context":
@@ -149,7 +149,7 @@ def inputs(root, args):
         nodes.append(node("vmess-server", "VmessServer", server_settings, "target-connector"))
         nodes.append(node("target-connector", "UdpConnector" if args.protocol == "udp" else "TcpConnector",
                           {"address": "dest_context->address", "port": "dest_context->port",
-                           "domain-strategy": "only-ipv4"}))
+                           "dns-behaviour": {"resolve": True, "strategy": "only-ipv4"}}))
         server_entry = "vmess-server"
         if args.transport in ("ws", "wss"):
             nodes.append(node("websocket-server", "HttpServer", {"http-version": "1.1", "websocket": True,

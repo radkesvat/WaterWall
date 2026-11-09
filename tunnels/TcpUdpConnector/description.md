@@ -1,5 +1,5 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpUdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -43,7 +43,7 @@ The previous node must set either the destination protocol or the source protoco
   "settings": {
     "address": "dest_context->address",
     "port": "dest_context->port",
-    "domain-strategy": "prefer-ipv4",
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"},
     "nodelay": true,
     "fastopen": false,
     "large-send-buffer": true,
@@ -83,7 +83,8 @@ Alternatively, use the `addresses` array supported by `TcpConnector` and `UdpCon
 
 Most options are inherited directly from `TcpConnector` and `UdpConnector`:
 
-- `domain-strategy`, `large-send-buffer`, `large-recv-buffer`, `interface`, `source-ip`, and `fwmark` are parsed by both child connectors where supported.
+- `dns-behaviour` sets one shared DNS policy for both child connectors.
+- `large-send-buffer`, `large-recv-buffer`, `interface`, `source-ip`, and `fwmark` are parsed by both child connectors where supported.
 - `nodelay` and `fastopen` apply to the internal `TcpConnector`.
 - `balance-mode` applies to the internal `UdpConnector`.
 
@@ -100,7 +101,7 @@ destinations need no lookup.
 This is the endpoint the connector will reach: the application target in a direct
 chain, or the proxy server after a proxy client. Both children use the same DNS
 policy. Without `dns-behaviour`, local resolution is enabled in `native` mode,
-using the existing core or legacy `domain-strategy` preference.
+using the core `dns.domain-strategy` preference.
 
 Configure this lookup with `settings.dns-behaviour`:
 
@@ -121,7 +122,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -140,7 +141,7 @@ For `chain`, set `dns-next` to the name of a separate DNS branch that supports
 both UDP and TCP. The branch must not already belong to another node. This node
 has no default DNS branch; naming this node itself is not allowed.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 

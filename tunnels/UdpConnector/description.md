@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -43,7 +43,7 @@ need a `next` node.
     "fwmark": 10,
     "interface": "eth0",
     "source-ip": "192.0.2.10",
-    "domain-strategy": "prefer-ipv4"
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
   }
 }
 ```
@@ -172,23 +172,8 @@ need a `next` node.
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
   If `TunDevice` loop protection has published an automatic egress pin, `source-ip` alone does not override that pin. Make sure the source IP belongs to the pinned/default interface, or set `interface` explicitly.
 
-- `domain-strategy` `(string or integer)`
-  Selects how domain DNS results are chosen.
-  Default: the core `dns.domain-strategy` value. If the core value is omitted, the default is `"prefer-ipv4"`.
-
-  Supported string values:
-  - `"accept-dns-returned-order"`: use addresses in the resolver's returned order
-  - `"prefer-ipv4"`: use IPv4 first, fallback to IPv6
-  - `"prefer-ipv6"`: use IPv6 first, fallback to IPv4
-  - `"only-ipv4"`: use only IPv4 addresses
-  - `"only-ipv6"`: use only IPv6 addresses
-
-  Legacy integer values are still accepted:
-  - `0`: accept DNS returned order
-  - `1`: prefer IPv4
-  - `2`: prefer IPv6
-  - `3`: only IPv4
-  - `4`: only IPv6
+- `dns-behaviour` `(object)`
+  Controls local lookup, address selection and DNS transport. By default, native resolution uses the core address preference. See DNS behaviour below.
 
 ## DNS behaviour
 
@@ -200,7 +185,7 @@ needs no lookup.
 
 The policy applies both at connection setup and when packet balancing later
 selects another destination. Without `dns-behaviour`, local resolution is enabled
-in `native` mode, using the existing core or legacy `domain-strategy` preference.
+in `native` mode, using the core `dns.domain-strategy` preference.
 
 Configure this lookup with `settings.dns-behaviour`:
 
@@ -221,7 +206,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -240,7 +225,7 @@ For `chain`, set `dns-next` to the name of a separate DNS branch that supports
 both UDP and TCP. The branch must not already belong to another node. This node
 has no default DNS branch; naming this node itself is not allowed.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 
@@ -255,7 +240,7 @@ See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) f
 During upstream `init`, `UdpConnector`:
 
 - computes the destination address and port for this line
-- maps `domain-strategy` onto the line destination context
+- maps `dns-behaviour.strategy` onto the line destination context
 - resolves an unresolved hostname if local DNS is enabled; IP destinations need no lookup
 - prepares worker-local UDP resources for the resolved destination
 - applies the configured buffers, source IP, interface, `fwmark`, and egress pin
@@ -355,7 +340,7 @@ With `"packet"` balance mode, a `random(x,y)` port is selected when that destina
 
 - Domain resolution in this path is asynchronous and keeps pre-resolution datagrams queued up to the connector queue limit.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- Connection-init DNS resolution is handled by an internal `DomainResolver`; `UdpConnector` keeps its own public `domain-strategy` vocabulary.
+- Connection-init DNS resolution is handled by an internal `DomainResolver`; `UdpConnector` uses the shared `dns-behaviour` policy.
 - Paused reads drop inbound datagrams instead of buffering them.
 - Local source ports are connector-managed and must not be used as line
   identifiers.

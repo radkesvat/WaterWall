@@ -378,6 +378,15 @@ static bool parseDestinationArray(udpconnector_tstate_t *state, const cJSON *set
         char                        error_path[96];
         snprintf(error_path, sizeof(error_path), "UdpConnector->settings->addresses[%d]", index);
 
+        if (cJSON_HasObjectItem(entry, "domain-strategy") || cJSON_HasObjectItem(entry, "resolve-domains"))
+        {
+            LOGF("JSON Error: %s no longer accepts domain-strategy or resolve-domains; configure dns-behaviour on the "
+                 "node",
+                 error_path);
+            cleanupDestinationArray(state);
+            return false;
+        }
+
         if (! parseAddressSettings(
                 &destination->dest_addr_selected, &destination->constant_dest_addr, entry, error_path) ||
             ! parsePortSettings(&destination->dest_port_selected,
@@ -418,17 +427,9 @@ tunnel_t *udpconnectorTunnelCreate(node_t *node)
         return NULL;
     }
 
-    enum domain_strategy domain_strategy = GSTATE.domain_strategy;
-    if (! getDomainStrategyFromJsonObjectOrDefault(
-            &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
-    {
-        LOGF("JSON Error: UdpConnector->settings->domain-strategy (string or integer field) : The value was invalid");
-        udpconnectorTunnelDestroy(t, wwLifecycleStartupRollback());
-        return NULL;
-    }
     const dns_policy_defaults_t dns_defaults = {
         .resolve          = true,
-        .strategy         = domain_strategy,
+        .strategy         = GSTATE.domain_strategy,
         .core_strategy    = GSTATE.domain_strategy,
         .require_dns_next = true,
     };

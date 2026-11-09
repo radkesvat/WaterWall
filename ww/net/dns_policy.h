@@ -31,8 +31,8 @@ typedef struct dns_policy_defaults_s
     bool                 ipv4_only;
 } dns_policy_defaults_t;
 
-/* Legacy fields are converted by the consumer before passing defaults. A new
- * object cannot coexist with domain-strategy or resolve-domains at that scope. */
+/* Consumers supply their defaults directly. Removed domain-strategy and
+ * resolve-domains fields are rejected even when dns-behaviour is absent. */
 bool dnsPolicyParseSettings(dns_policy_t *policy, const cJSON *settings, const dns_policy_defaults_t *defaults,
                             const char *path);
 bool dnsPolicyParseFlat(dns_policy_t *policy, const cJSON *settings, const dns_policy_defaults_t *defaults,

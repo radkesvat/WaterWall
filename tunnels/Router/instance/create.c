@@ -4,39 +4,10 @@
 
 #include "loggers/network_logger.h"
 
-static bool routerLoadLegacyResolveDomains(router_tstate_t *ts, const cJSON *settings)
-{
-    ts->resolve_domains = false;
-
-    if (settings == NULL)
-    {
-        return true;
-    }
-
-    const cJSON *resolve_domains = cJSON_GetObjectItemCaseSensitive(settings, "resolve-domains");
-    if (resolve_domains == NULL)
-    {
-        return true;
-    }
-
-    if (! cJSON_IsBool(resolve_domains))
-    {
-        LOGF("JSON Error: Router->settings->resolve-domains (boolean field) : expected a boolean");
-        return false;
-    }
-
-    ts->resolve_domains = cJSON_IsTrue(resolve_domains);
-    return true;
-}
-
 static bool routerLoadResolveDomains(router_tstate_t *ts, const cJSON *settings)
 {
-    if (cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour") == NULL &&
-        ! routerLoadLegacyResolveDomains(ts, settings))
-        return false;
-
     const dns_policy_defaults_t defaults = {
-        .resolve       = ts->resolve_domains,
+        .resolve       = false,
         .strategy      = GSTATE.domain_strategy,
         .core_strategy = GSTATE.domain_strategy,
     };

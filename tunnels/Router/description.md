@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -146,7 +146,6 @@ object:
 | `sniffing` | array | no | domain-sniffing modes: `http1`, `http2`, `http`, `tls`, `quic`, `http3` (see [Domain sniffing](#domain-sniffing)). Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false` (see [When domain sniffing runs](#when-domain-sniffing-runs)) |
 | `dns-behaviour` | object | no | Optional [DNS resolution before routing](#resolving-domains-before-routing); disabled by default. Resolve an unresolved hostname when rules need its IP. |
-| `resolve-domains` | boolean | no | Default `false`. Enables native DNS before routing; cannot be combined with `dns-behaviour`. |
 | `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` (see [GeoIP](#geoip)) |
 | `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database used by `geosite:<list>` (see [GeoSite](#geosite)) |
 
@@ -629,17 +628,9 @@ application DNS, the operating system, or lookups performed by other nodes. See
 [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for shared DNS options, caching and
 connection reuse.
 
-### `resolve-domains`
-
-`"resolve-domains": true` also enables Router's internal resolver, using native
-DNS and the core address strategy. Its default is `false`. If you use
-`dns-behaviour`, omit `resolve-domains`; the two settings cannot be combined.
-Use `dns-behaviour` to select direct or chain transport or an address strategy.
-
 The policy must be a nonempty object with the fields listed above. Unknown
-fields, numeric strategies and a same-scope `domain-strategy` alongside
-`dns-behaviour` are rejected.
-
+fields and numeric strategies are rejected. Strategy names use the canonical
+lowercase strings listed above.
 
 ## GeoIP & GeoSite databases
 
@@ -656,7 +647,7 @@ two-letter ISO-3166 codes, parsed case-insensitively (e.g. `geoip:ir`,
 - Required only when at least one parsed rule uses a `geoip:` token.
 - An IP that is not found in the database simply does not match.
 - A domain-only destination has no IP to look up; combine with
-  `resolve-domains` when needed.
+  `dns-behaviour: {"resolve": true}` when needed.
 
 ### GeoSite
 
@@ -833,7 +824,7 @@ initial replay is also materialized into the temporary ordinary backlog. Once
 startup settles, payloads pass through unchanged in both directions;
 metadata-only routing normally commits during Init and preserves splice buffers
 from the first subsequent delivery. The internal DomainResolver retains its
-splice capability when `resolve-domains` is enabled.
+splice capability when `dns-behaviour.resolve` is enabled.
 
 Splice activation still requires an eligible finalized chain and `misc.splice`.
 Every configured branch and internal helper participates in that check, including

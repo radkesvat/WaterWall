@@ -86,24 +86,6 @@ bool dnsPolicyParseStrategy(const cJSON *value, enum domain_strategy core_strate
     return true;
 }
 
-static bool dnsPolicyParseEffectiveStrategy(const cJSON *value, enum domain_strategy core_strategy,
-                                            enum domain_strategy *strategy, bool legacy)
-{
-    if (cJSON_IsString(value) && ((value->type & cJSON_StringHasEmbeddedNul) != 0 || value->valuestring == NULL ||
-                                  ! configLexicalCheckEncodingQuiet(value->valuestring, strlen(value->valuestring))))
-        return false;
-    if (dnsPolicyParseStrategy(value, core_strategy, strategy))
-        return true;
-    if (! legacy)
-        return false;
-    if (cJSON_IsString(value) && value->valuestring != NULL && stricmp(value->valuestring, "core-settings") == 0)
-    {
-        *strategy = core_strategy;
-        return true;
-    }
-    return getDomainStrategyFromJson(value, strategy);
-}
-
 const char *dnsPolicyStrategyName(enum domain_strategy strategy)
 {
     switch (strategy)
@@ -161,7 +143,7 @@ static bool dnsPolicyParseObject(dns_policy_t *policy, const cJSON *object, cons
              strcmp(field->string, "strategy") != 0 && strcmp(field->string, "servers") != 0 &&
              strcmp(field->string, "dns-next") != 0 && (! flat || strcmp(field->string, "verbose") != 0)))
         {
-            LOGF("JSON Error: %s contains an unsupported field", path);
+            LOGF("JSON Error: %s contains an unsupported field: %s", path, field->string);
             return false;
         }
     }
@@ -199,8 +181,7 @@ static bool dnsPolicyParseObject(dns_policy_t *policy, const cJSON *object, cons
         else
             goto invalid_mode;
     }
-    if (strategy != NULL && ! dnsPolicyParseEffectiveStrategy(
-                                strategy, defaults->core_strategy, &policy->strategy, flat && resolve == NULL))
+    if (strategy != NULL && ! dnsPolicyParseStrategy(strategy, defaults->core_strategy, &policy->strategy))
     {
         LOGF("JSON Error: %s.strategy requires core-settings, accept-dns-returned-order, prefer-ipv4, prefer-ipv6, "
              "only-ipv4 or only-ipv6",
@@ -290,6 +271,16 @@ static bool dnsPolicyFieldIsUniqueAndExact(const cJSON *settings, const char *ke
     return true;
 }
 
+static bool dnsPolicyRejectRemovedFields(const cJSON *settings, const char *path)
+{
+    if (cJSON_HasObjectItem(settings, "domain-strategy") || cJSON_HasObjectItem(settings, "resolve-domains"))
+    {
+        LOGF("JSON Error: %s no longer accepts domain-strategy or resolve-domains; use dns-behaviour", path);
+        return false;
+    }
+    return true;
+}
+
 bool dnsPolicyParseSettings(dns_policy_t *policy, const cJSON *settings, const dns_policy_defaults_t *defaults,
                             const char *path)
 {
@@ -300,12 +291,8 @@ bool dnsPolicyParseSettings(dns_policy_t *policy, const cJSON *settings, const d
         LOGF("JSON Error: %s requires exact DNS policy field names", path);
         return false;
     }
-    if (object != NULL &&
-        (cJSON_HasObjectItem(settings, "domain-strategy") || cJSON_HasObjectItem(settings, "resolve-domains")))
-    {
-        LOGF("JSON Error: %s conflicts with legacy domain-strategy or resolve-domains", path);
+    if (! dnsPolicyRejectRemovedFields(settings, path))
         return false;
-    }
     return dnsPolicyParseObject(policy, object, defaults, path, false);
 }
 
@@ -353,15 +340,16 @@ bool dnsPolicyParseStrategyOverride(enum domain_strategy *strategy, const cJSON 
                                     const char *path)
 {
     const cJSON *object = cJSON_GetObjectItemCaseSensitive(settings, "dns-behaviour");
+    if (! dnsPolicyRejectRemovedFields(settings, path))
+        return false;
     if (object == NULL)
         return true;
-    if (! resolve_enabled || ! dnsPolicyFieldIsUniqueAndExact(settings, "dns-behaviour") ||
-        cJSON_HasObjectItem(settings, "domain-strategy") || ! cJSON_IsObject(object) ||
+    if (! resolve_enabled || ! dnsPolicyFieldIsUniqueAndExact(settings, "dns-behaviour") || ! cJSON_IsObject(object) ||
         ! dnsPolicyObjectFieldsAreExact(object) || object->child == NULL || object->child->next != NULL ||
         object->child->string == NULL || strcmp(object->child->string, "strategy") != 0 ||
         ! dnsPolicyParseStrategy(object->child, GSTATE.domain_strategy, strategy))
     {
-        LOGF("JSON Error: %s requires only a string strategy, enabled node resolution and no legacy domain-strategy",
+        LOGF("JSON Error: %s.dns-behaviour requires only a canonical string strategy and enabled node resolution",
              path);
         return false;
     }

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Client.mdx, and all files must keep the same documentation version.
 -->
 
@@ -43,7 +43,7 @@ Important:
     "protocol": "tcp",
     "user": "alice",
     "pass": "secret",
-    "domain-strategy": "do-not-resolve-domains",
+    "dns-behaviour": {"resolve": false},
     "verbose": false
   }
 }
@@ -73,7 +73,7 @@ Accepted credential keys:
     "address": "example.com",
     "port": 443,
     "protocol": "tcp",
-    "domain-strategy": "resolve-domains-and-prefer-ipv4"
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
   }
 }
 ```
@@ -119,34 +119,8 @@ falls back to IPv6.
 - `settings.verbose`
   Enables extra tunnel logging.
 
-- `settings.domain-strategy`
-  Controls whether `Socks5Client` resolves domain targets before encoding the SOCKS5 command or UDP packet destination.
-
-  Default: `"do-not-resolve-domains"`.
-
-  Supported values:
-
-  - `"do-not-resolve-domains"`
-    Keep domain targets as domains in the SOCKS5 request. This preserves the previous behavior and lets the SOCKS5
-    server side resolve the target domain.
-  - `"resolve-domains-and-accept-dns-returned-order"`
-    Resolve domain targets and use the first usable DNS result.
-  - `"resolve-domains-and-prefer-ipv4"`
-    Resolve domain targets, prefer IPv4, and fall back to IPv6.
-  - `"resolve-domains-and-prefer-ipv6"`
-    Resolve domain targets, prefer IPv6, and fall back to IPv4.
-  - `"resolve-domains-and-use-only-ipv4"`
-    Resolve domain targets and use only IPv4 answers. If DNS returns no IPv4 answer, the line is closed.
-  - `"resolve-domains-and-use-only-ipv6"`
-    Resolve domain targets and use only IPv6 answers. If DNS returns no IPv6 answer, the line is closed.
-  - `"resolve-domains-with-core-settings"`
-    Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
-
-  When local resolution is enabled, `Socks5Client` uses an internal `DomainResolver` whose prepare hook applies the
-  configured target before DNS resolution.
-  Resolution is applied when the final SOCKS target address is an unresolved hostname. This includes both fixed JSON addresses and
-  `"dest_context->address"`. Literal IPs and already-resolved targets need no lookup. While DNS is pending, the internal resolver queues
-  payloads before the SOCKS5 handshake starts.
+- `settings.dns-behaviour`
+  Controls local target lookup, address selection and DNS transport. See DNS behaviour below.
 
 ## DNS behaviour
 
@@ -157,8 +131,7 @@ hostname when enabled. Literal IPs and already-resolved targets need no lookup.
 
 This setting concerns the final target reached through the proxy. The following
 connector selects the proxy server's address and has its own DNS settings.
-Without `dns-behaviour`, local resolution is disabled by default; an existing
-`domain-strategy` setting can still enable it.
+Without `dns-behaviour`, local resolution is disabled.
 
 Configure this lookup with `settings.dns-behaviour`:
 
@@ -179,7 +152,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -199,7 +172,7 @@ and its following transport. To use another path, set `dns-next` to a separate
 DNS branch that does not already belong to another node. Leave the field omitted
 to use this node; do not set it to this node's own name.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 `resolve: false` keeps the hostname in requests that support it. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
 
@@ -215,7 +188,7 @@ through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supp
   either by the internal resolver prepare hook or directly during client init when local DNS resolution is disabled.
 - the resolved SOCKS target is kept in `Socks5Client` line state so the proxy transport connector can rewrite
   `line->dest_ctx` without changing the later SOCKS request.
-- if `domain-strategy` enables resolution and the target is a domain, DNS resolution happens before the SOCKS5 greeting
+- if `dns-behaviour.resolve` is true and the target is an unresolved hostname, DNS resolution happens before the SOCKS5 greeting
   is sent by the internal `DomainResolver`.
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - if `protocol` uses `dest_context->protocol`, the incoming destination protocol is read before any configured

@@ -39,7 +39,7 @@ def run(binary, mode, enabled):
     elif sniffing:
         settings = {"sniffing": ["http1"], "rules": [{"destination-domain": "route.test", "target": "target"}]}
     else:
-        settings = {"resolve-domains": mode == "router_resolve",
+        settings = {"dns-behaviour": {"resolve": mode == "router_resolve"},
                     "rules": [{"source-port": 27991, "target": "target"}]}
     with RunDirectory("waterwall-router-splice-") as directory:
         root = Path(directory)

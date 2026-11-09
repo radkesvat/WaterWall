@@ -193,10 +193,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
     endif()
   endforeach()
   if("local" IN_LIST vmess_client_peers)
-    foreach(strategy IN ITEMS resolve-domains-and-accept-dns-returned-order
-        resolve-domains-and-prefer-ipv4 resolve-domains-and-prefer-ipv6
-        resolve-domains-and-use-only-ipv4 resolve-domains-and-use-only-ipv6
-        resolve-domains-with-core-settings)
+    foreach(strategy IN ITEMS accept-dns-returned-order prefer-ipv4 prefer-ipv6
+        only-ipv4 only-ipv6 core-settings)
       string(REPLACE "-" "_" strategy_label "${strategy}")
       add_waterwall_vmess_client_interop("local_${strategy_label}"
         --peer waterwall --target domain --destination fixed --dns "${strategy}")

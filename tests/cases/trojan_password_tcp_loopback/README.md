@@ -35,5 +35,5 @@ Generated core settings, logs and mutable inputs belong to the private run direc
 Contract exercised: Verifies `TrojanClient(password=...) -> TlsClient -> TcpConnector` against
   `TcpListener -> TlsServer -> TrojanServer` using the real `AuthenticationClient -> AuthenticationServer` user database
   path. The Trojan TCP `CONNECT` target is configured as `localhost` and resolved by
-  `domain-strategy=resolve-domains-and-use-only-ipv4` before the server reaches the separate tester TCP listener through
+  `dns-behaviour: {"resolve": true, "strategy": "only-ipv4"}` before the server reaches the separate tester TCP listener through
   `dest_context`.

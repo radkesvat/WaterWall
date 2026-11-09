@@ -105,8 +105,15 @@ def embedded_configuration(binary, consumers):
             run(binary, kind + "-" + label, consumer_config(kind, policy), True)
         for index, policy in enumerate(invalid):
             run(binary, f"{kind}-invalid-{index}", consumer_config(kind, policy), diagnostic_name=kind)
-        legacy = {"resolve-domains": False} if kind == "Router" else {"domain-strategy": "only-ipv4"}
-        run(binary, kind + "-legacy-conflict", consumer_config(kind, {"resolve": False}, legacy), diagnostic_name=kind)
+        for field, value in (("domain-strategy", "only-ipv4"), ("resolve-domains", False)):
+            for label, policy in (("alone", "omitted"), ("with-policy", {"resolve": False})):
+                run(binary, f"{kind}-removed-{field}-{label}",
+                    consumer_config(kind, policy, {field: value}), diagnostic_name=kind)
+            if kind in {"TcpConnector", "UdpConnector"}:
+                nodes = consumer_config(kind)
+                nodes[1]["settings"] = {"destinations": [
+                    {"address": "127.0.0.1", "port": 53, "weight": 1, field: value}]}
+                run(binary, f"{kind}-removed-weighted-{field}", nodes, diagnostic_name=kind)
         shared = {"resolve": True, "mode": "chain", "servers": ["127.0.0.1:53"]}
         run(binary, kind + "-default-entry", consumer_config(kind, shared), kind in SHARED, diagnostic_name=kind)
         if kind in SHARED:
@@ -156,6 +163,11 @@ def main():
     nodes.pop()
     run(binary, "chain-no-default-next", nodes)
     cases = [
+        ("numeric-strategy", {"strategy": 3}),
+        ("uppercase-strategy", {"strategy": "ONLY-IPV4"}),
+        ("strategy-alias", {"strategy": "ipv4"}),
+        ("removed-domain-strategy", {"domain-strategy": "only-ipv4"}),
+        ("removed-resolve-domains", {"resolve-domains": True}),
         ("mode-type", {"mode": 1}),
         ("mode-value", {"mode": "invalid"}),
         ("native-servers", {"mode": "native", "servers": ["127.0.0.1"]}),

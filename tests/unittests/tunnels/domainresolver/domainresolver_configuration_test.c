@@ -61,6 +61,12 @@ static void testSharedPolicy(void)
         {"{\"dns-behaviour\":{\"resolve\":false,\"mode\":\"native\"}}", false, false, kDsInvalid},
         {"{\"dns-behaviour\":{\"resolve\":false,\"servers\":[]}}", false, false, kDsInvalid},
         {"{\"dns-behaviour\":{\"resolve\":false,\"dns-next\":null}}", false, false, kDsInvalid},
+        {"{\"domain-strategy\":\"only-ipv4\"}", false, false, kDsInvalid},
+        {"{\"domain-strategy\":1}", false, false, kDsInvalid},
+        {"{\"domain-strategy\":null}", false, false, kDsInvalid},
+        {"{\"resolve-domains\":true}", false, false, kDsInvalid},
+        {"{\"resolve-domains\":false}", false, false, kDsInvalid},
+        {"{\"resolve-domains\":null}", false, false, kDsInvalid},
         {"{\"domain-strategy\":null,\"dns-behaviour\":{\"resolve\":true}}", false, false, kDsInvalid},
         {"{\"resolve-domains\":false,\"dns-behaviour\":{\"resolve\":false}}", false, false, kDsInvalid},
         {"{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"native\\u0000suffix\"}}", false, false, kDsInvalid},
@@ -102,6 +108,13 @@ static void testSharedPolicy(void)
         cJSON_Delete(value);
     }
     const char *invalid_overrides[] = {
+        "{\"domain-strategy\":\"only-ipv4\"}",
+        "{\"domain-strategy\":1}",
+        "{\"domain-strategy\":null}",
+        "{\"domain-strategy\":\"only-ipv4\",\"dns-behaviour\":{\"strategy\":\"only-ipv4\"}}",
+        "{\"resolve-domains\":false}",
+        "{\"dns-behaviour\":{\"strategy\":1}}",
+        "{\"dns-behaviour\":{\"strategy\":\"ONLY-IPV4\"}}",
         "{\"dns-behaviour\":{\"strategy\":\"only-ipv4\\u0000suffix\"}}",
         "{\"dns-behaviour\":{\"strategy\\u0000suffix\":\"only-ipv4\"}}",
         "{\"dns-behaviour\":{\"strategy\":\"only-ipv4\",\"strategy\":\"only-ipv6\"}}",
@@ -115,6 +128,18 @@ static void testSharedPolicy(void)
                 "invalid weighted strategy override accepted");
         cJSON_Delete(override);
     }
+    cJSON               *override = cJSON_Parse("{\"dns-behaviour\":{\"strategy\":\"only-ipv4\"}}");
+    enum domain_strategy strategy = kDsPreferIpV6;
+    require(dnsPolicyParseStrategyOverride(&strategy, override, true, "weighted") && strategy == kDsOnlyIpV4,
+            "canonical weighted strategy override rejected");
+    require(! dnsPolicyParseStrategyOverride(&strategy, override, false, "weighted"),
+            "weighted strategy override enabled disabled resolution");
+    cJSON_Delete(override);
+    override = cJSON_CreateObject();
+    strategy = kDsPreferIpV6;
+    require(dnsPolicyParseStrategyOverride(&strategy, override, false, "weighted") && strategy == kDsPreferIpV6,
+            "omitted weighted override changed inherited strategy");
+    cJSON_Delete(override);
     cJSON                *settings   = cJSON_Parse("{\"dns-behaviour\":{\"resolve\":true,\"mode\":\"chain\","
                                                    "\"servers\":[\"127.0.0.1:53\"]}}");
     dns_policy_defaults_t restricted = defaults;
@@ -145,6 +170,7 @@ int main(void)
     require(createNetworkLogger(NULL, false) != NULL, "network logger setup failed");
     testSharedPolicy();
     GSTATE.workers_count = 1;
+    GSTATE.domain_strategy = kDsPreferIpV6;
     asyncdnsOptionsSetDefaults(&GSTATE.dns_options);
     // No registered TcpUdpConnector, and no dynamic-library discovery.
     configPolicyRestrict();
@@ -157,6 +183,8 @@ int main(void)
         domainresolver_tstate_t *ts = tunnelGetState(resolver);
         require(ts->mode == kDomainResolverModeNative && ts->dns_connector == NULL && ts->dns_workers == NULL,
                 "native construction created line transport state");
+        require(ts->resolve && ts->strategy == GSTATE.domain_strategy,
+                "omitted flat fields lost enabled native/core defaults");
         domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
         cJSON_Delete(settings);
     }
@@ -165,6 +193,23 @@ int main(void)
     require(disabled != NULL && ! domainresolverTunnelResolutionEnabled(disabled), "flat disabled resolver rejected");
     domainresolverTunnelDestroy(disabled, wwLifecycleStartupRollback());
     cJSON_Delete(disabled_settings);
+    const char *strategies[] = {
+        "core-settings", "accept-dns-returned-order", "prefer-ipv4", "prefer-ipv6", "only-ipv4", "only-ipv6"};
+    for (size_t i = 0; i < sizeof(strategies) / sizeof(strategies[0]); ++i)
+    {
+        testCaseSet(strategies[i]);
+        cJSON *settings = cJSON_CreateObject();
+        cJSON_AddStringToObject(settings, "strategy", strategies[i]);
+        tunnel_t *resolver = createResolver(settings);
+        require(resolver != NULL, "canonical flat strategy rejected without explicit resolve");
+        domainresolver_tstate_t *ts = tunnelGetState(resolver);
+        require(ts->resolve && ts->mode == kDomainResolverModeNative &&
+                    (i == 0 ? ts->strategy == GSTATE.domain_strategy
+                            : strcmp(dnsPolicyStrategyName(ts->strategy), strategies[i]) == 0),
+                "canonical flat strategy or implicit defaults changed");
+        domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
+        cJSON_Delete(settings);
+    }
     requireSettingsRejected("{\"resolve\":false,\"strategy\":\"only-ipv4\"}");
     requireSettingsRejected("{\"mode\":\"direct\",\"servers\":[\"127.0.0.1:53\"]}");
     // An unavailable direct connector must not poison later native creation.
@@ -173,6 +218,13 @@ int main(void)
     domainresolverTunnelDestroy(native, wwLifecycleStartupRollback());
 
     const char *invalid_settings[] = {
+        "{\"strategy\":1}",
+        "{\"strategy\":\"ONLY-IPV4\"}",
+        "{\"strategy\":\"Core-Settings\"}",
+        "{\"resolve\":true,\"strategy\":1}",
+        "{\"resolve\":true,\"strategy\":\"ONLY-IPV4\"}",
+        "{\"domain-strategy\":\"only-ipv4\"}",
+        "{\"resolve-domains\":false}",
         "{\"mode\":\"chain\",\"servers\":[\"127.0.0.1\"],\"dns-next\":null}",
         "{\"mode\":\"chain\",\"servers\":[\"127.0.0.1\"],\"dns-next\":\"\"}",
         "{\"mode\":\"chain\",\"servers\":[\"127.0.0.1\"],\"dns-next\":false}",

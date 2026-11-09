@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
@@ -101,7 +101,7 @@ to go.
 
 The contract is enforced at both ends:
 
-- `domain-strategy` accepts only `only-ipv4`, so an AAAA-only domain fails DNS with a name in the message instead of
+- With local resolution enabled, the effective `dns-behaviour.strategy` must be `only-ipv4`, so an AAAA-only domain fails DNS with a name in the message instead of
   resolving to an address this node then has to reject
 - a literal IPv6 `target-address` is a configuration error
 - a destination that is nonetheless IPv6 closes that one line with an explicit error
@@ -165,7 +165,7 @@ a warning, and destruction logs accumulated return/output refusal counters.
 | `target-address` | no | `dest_context->address` | IPv4 address or domain to connect to. The exact string `dest_context->address` keeps the incoming destination address. A configured address overrides only that address. Literal IPv6 is rejected. |
 | `port` | no | `dest_context->port` | Integer destination port in `1` .. `65535`, or the exact string `dest_context->port` to keep the incoming destination port. |
 | `mtu` | no | core `misc.mtu` | Raw IP MTU of the virtual netifs. Valid range `576` .. `9000`. TCP derives its send MSS from it; UDP fragments above it. An inherited core value outside the range is a configuration error, not something to round into range. Core `misc.mtu` is itself validated as a whole number in `68` .. `65535` before it is stored, so it can no longer wrap into a different MTU or into zero. |
-| `domain-strategy` | no | `only-ipv4` | `only-ipv4` is the only accepted value. Every other strategy can hand this node an address it cannot use: the two IPv6 ones directly, `prefer-ipv4` through its AAAA-only fallback, and `accept-dns-returned-order` by preferring neither family. |
+| `dns-behaviour` | no | Native lookup with `only-ipv4` | Controls local lookup and DNS transport. Enabled resolution requires `only-ipv4`, or `core-settings` when core also selects it. |
 | `tcp-connect-timeout-ms` | no | `30000` | Deadline for the active TCP open. On expiry the line is closed toward the previous node. |
 | `max-pending-bytes` | no | `262144` | Pending-data budget before connection establishment or while lwIP's send window is full. Valid range `1024` .. `67108864`. Admission also allows a fixed 1 MiB of delivery headroom; passing the combined bound sheds that flow. |
 
@@ -181,7 +181,7 @@ Example:
   "settings": {
     "source-ipv4": "10.90.0.1",
     "mtu": 1420,
-    "domain-strategy": "only-ipv4",
+    "dns-behaviour": {"resolve": true, "strategy": "only-ipv4"},
     "tcp-connect-timeout-ms": 30000,
     "max-pending-bytes": 262144
   },
@@ -238,7 +238,7 @@ For `chain`, set `dns-next` to the name of a separate DNS branch that supports
 both UDP and TCP. The branch must not already belong to another node. This node
 has no default DNS branch; naming this node itself is not allowed.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 With `resolve: false`, destination preparation still runs. Numeric IPv4 addresses or destinations already resolved to IPv4 work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 
@@ -516,7 +516,6 @@ response limit, working-memory allowance and deadline. A malformed body returns
 `expected_empty_object` when an error response fits those bounds; a refused result
 can have an empty body. Use per-pool count refusals, shared byte refusals and port
 refusals to identify which resource needs attention before changing a limit.
-
 
 ## Composition Notes
 

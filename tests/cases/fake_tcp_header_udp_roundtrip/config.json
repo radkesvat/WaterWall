@@ -63,7 +63,10 @@
       "settings": {
         "source-ipv4": "10.90.0.1",
         "mtu": 1475,
-        "domain-strategy": "only-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        }
       },
       "next": "fake-client"
     },

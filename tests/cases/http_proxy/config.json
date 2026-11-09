@@ -124,7 +124,9 @@
       "name": "route-selector",
       "type": "Router",
       "settings": {
-        "resolve-domains": false,
+        "dns-behaviour": {
+          "resolve": false
+        },
         "rules": [
           {
             "source-port": 29082,
@@ -234,7 +236,9 @@
       "name": "local-router",
       "type": "Router",
       "settings": {
-        "resolve-domains": false,
+        "dns-behaviour": {
+          "resolve": false
+        },
         "rules": [
           {
             "username": "route",
@@ -307,7 +311,10 @@
       "settings": {
         "address": "localhost",
         "port": 29088,
-        "domain-strategy": "only-ipv4",
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        },
         "fastopen": false
       }
     },
@@ -348,7 +355,10 @@
       "settings": {
         "address": "localhost",
         "port": 29088,
-        "domain-strategy": "only-ipv4",
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        },
         "fastopen": false
       }
     }

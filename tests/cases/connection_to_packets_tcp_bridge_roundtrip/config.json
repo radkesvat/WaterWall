@@ -34,7 +34,10 @@
         "target-address": "10.90.0.2",
         "port": 9001,
         "mtu": 1500,
-        "domain-strategy": "only-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        }
       },
       "next": "packets-to-connection"
     },

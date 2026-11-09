@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -36,7 +36,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "fwmark": 10,
     "interface": "eth0",
     "source-ip": "192.0.2.10",
-    "domain-strategy": "prefer-ipv4"
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
   }
 }
 ```
@@ -60,7 +60,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
         "fwmark": 10,
         "interface": "eth0",
         "source-ip": "192.0.2.10",
-        "domain-strategy": "prefer-ipv4"
+        "dns-behaviour": {"strategy": "prefer-ipv4"}
       },
       {
         "address": "198.51.100.20",
@@ -75,7 +75,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
     "large-send-buffer": true,
     "large-recv-buffer": true,
     "fwmark": -1,
-    "domain-strategy": "prefer-ipv4"
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
   }
 }
 ```
@@ -149,7 +149,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   - `fwmark`
   - `interface`
   - `source-ip`
-  - `domain-strategy`
+  - `dns-behaviour` with only a `strategy` field
 
   If any of these fields is omitted in an address object, the top-level value from `settings` is used as that object's default. For `interface` and `source-ip`, a per-address JSON `null` disables an inherited top-level value.
 
@@ -191,25 +191,10 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
   This is useful when the host has multiple local addresses and the default route would choose the wrong source address.
   If `TunDevice` loop protection has published an automatic egress pin, `source-ip` alone does not override that pin. Make sure the source IP belongs to the pinned/default interface, or set `interface` explicitly.
 
-- `domain-strategy` `(string or integer)`
-  Selects how domain DNS results are chosen.
-  Default: the core `dns.domain-strategy` value. If the core value is omitted, the default is `"prefer-ipv4"`.
+- `dns-behaviour` `(object)`
+  Controls local lookup, address selection and DNS transport. By default, native resolution uses the core address preference. See DNS behaviour below.
 
-  Supported string values:
-  - `"accept-dns-returned-order"`: use addresses in the resolver's returned order
-  - `"prefer-ipv4"`: use IPv4 first, fallback to IPv6
-  - `"prefer-ipv6"`: use IPv6 first, fallback to IPv4
-  - `"only-ipv4"`: use only IPv4 addresses
-  - `"only-ipv6"`: use only IPv6 addresses
-
-  Legacy integer values are still accepted:
-  - `0`: accept DNS returned order
-  - `1`: prefer IPv4
-  - `2`: prefer IPv6
-  - `3`: only IPv4
-  - `4`: only IPv6
-
-When `addresses` is used, these optional fields can be set at the top level as defaults and overridden independently by each address object.
+When `addresses` is used, socket options can be set at the top level as defaults and overridden independently by each address object. A destination's `dns-behaviour` accepts only `strategy`; lookup enablement and DNS transport remain node settings.
 For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient` or `MuxServer`, independently of core `misc.tcp-tune`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
 
 ## DNS behaviour
@@ -223,7 +208,7 @@ destination needs no lookup.
 The lookup concerns the server this connector will dial. After a proxy client,
 that is the proxy server; in a direct connection, it is the application's target.
 Without `dns-behaviour`, local resolution is enabled in `native` mode, using the
-existing core or legacy `domain-strategy` address preference.
+core `dns.domain-strategy` address preference.
 
 Configure this lookup with `settings.dns-behaviour`:
 
@@ -244,7 +229,7 @@ The address is a documentation placeholder; replace it with your resolver.
 | --- | --- |
 | `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
 | `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission uses this consumer's default address preference. |
 | `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
 | `dns-next` | Nonempty DNS-entry name for chain only. |
 
@@ -263,11 +248,11 @@ For `chain`, set `dns-next` to the name of a separate DNS branch that supports
 both UDP and TCP. The branch must not already belong to another node. This node
 has no default DNS branch; naming this node itself is not allowed.
 
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields and numeric strategies are rejected. Strategy names use the canonical lowercase strings above. `core-settings` chooses address preference only and never changes DNS transport.
 
 With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 
-A weighted `destinations[]` entry may use `"dns-behaviour": {"strategy": "only-ipv4"}` as a strategy-only override; `addresses` remains accepted. It inherits node transport, servers and DNS branch. Other policy fields there, a same-entry legacy `domain-strategy`, or any explicit override with node resolution disabled are rejected. The destination is selected once; its socket options and strategy survive DNS.
+A weighted `destinations[]` entry may use `"dns-behaviour": {"strategy": "only-ipv4"}` as a strategy-only override; `addresses` remains accepted. It inherits node transport, servers and DNS branch. Other policy fields there, or any explicit override with node resolution disabled, are rejected. The destination is selected once; its socket options and strategy survive DNS.
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
@@ -299,13 +284,13 @@ The same is true for `port`.
 
 When `addresses` is used, the same selection rules apply inside each array element.
 The connector first picks one destination object by weight, then resolves that chosen object's `address` and `port` for the line.
-The chosen object's socket options and `domain-strategy` are used for that line; omitted option fields inherit the top-level defaults.
+The chosen object's socket options and `dns-behaviour.strategy` are used for that line; omitted option fields inherit the top-level defaults.
 
 This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite routing information. For example, a protocol-aware node can fill `dest_context`, and `TcpConnector` can connect to that decoded target.
 
 ### Domain resolution
 
-If local DNS is enabled and the selected destination is an unresolved hostname, `TcpConnector` maps its `domain-strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
+If local DNS is enabled and the selected destination is an unresolved hostname, `TcpConnector` maps its `dns-behaviour.strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
 
 ### Subnet randomization on constant IP addresses
 
@@ -387,7 +372,7 @@ allowing longer inactivity require both adapter idle limits to accommodate it.
 
 - This node is meant to be used as an outbound chain end.
 - `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- DNS resolution in this path is asynchronous and handled by an internal `DomainResolver`; `TcpConnector` keeps its own public `domain-strategy` vocabulary.
+- DNS resolution in this path is asynchronous and handled by an internal `DomainResolver`; `TcpConnector` uses the shared `dns-behaviour` policy.
 
 ## Node Metadata
 

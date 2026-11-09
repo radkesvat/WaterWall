@@ -63,16 +63,9 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
 
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_no_delay), settings, "nodelay", true);
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_fast_open), settings, "fastopen", false);
-    enum domain_strategy domain_strategy = GSTATE.domain_strategy;
-    if (! getDomainStrategyFromJsonObjectOrDefault(
-            &domain_strategy, settings, "domain-strategy", GSTATE.domain_strategy))
-    {
-        LOGF("JSON Error: TcpConnector->settings->domain-strategy (string or integer field) : The value was invalid");
-        return false;
-    }
     const dns_policy_defaults_t dns_defaults = {
         .resolve          = true,
-        .strategy         = domain_strategy,
+        .strategy         = GSTATE.domain_strategy,
         .core_strategy    = GSTATE.domain_strategy,
         .require_dns_next = true,
     };
@@ -144,14 +137,8 @@ static bool parseDestinationSocketOptions(tcpconnector_destination_t *destinatio
         &destination->option_tcp_fast_open, settings, "fastopen", state->option_tcp_fast_open);
     getIntFromJsonObjectOrDefault(&destination->fwmark, settings, "fwmark", state->fwmark);
     enum domain_strategy domain_strategy = (enum domain_strategy) state->domain_strategy;
-    if ((! state->dns_policy.resolve && cJSON_HasObjectItem(settings, "domain-strategy")) ||
-        ! getDomainStrategyFromJsonObjectOrDefault(
-            &domain_strategy, settings, "domain-strategy", (enum domain_strategy) state->domain_strategy) ||
-        ! dnsPolicyParseStrategyOverride(&domain_strategy, settings, state->dns_policy.resolve, error_path))
-    {
-        LOGF("JSON Error: %s->domain-strategy (string or integer field) : The value was invalid", error_path);
+    if (! dnsPolicyParseStrategyOverride(&domain_strategy, settings, state->dns_policy.resolve, error_path))
         return false;
-    }
     destination->domain_strategy      = domain_strategy;
     destination->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     destination->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;

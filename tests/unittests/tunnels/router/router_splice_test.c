@@ -334,7 +334,7 @@ static void setupBeforeInit(router_fixture_t *f, bool sniffrouter, bool target, 
     f->node                    = sniffrouter ? nodeSniffRouterGet() : nodeRouterGet();
     f->node.name               = (char *) "router-test";
     f->node.next               = (char *) "default";
-    f->node.node_settings_json = resolve_domains ? cJSON_Parse("{\"resolve-domains\":true}") : NULL;
+    f->node.node_settings_json = resolve_domains ? cJSON_Parse("{\"dns-behaviour\":{\"resolve\":true}}") : NULL;
     f->router                  = f->node.createHandle(&f->node);
     require(f->router != NULL, "construct router");
     f->prev   = tunnelCreate(NULL, 0, 0);

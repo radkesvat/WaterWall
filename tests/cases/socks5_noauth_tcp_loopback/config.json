@@ -13,7 +13,10 @@
         "address": "localhost",
         "port": 24151,
         "protocol": "tcp",
-        "domain-strategy": "resolve-domains-and-use-only-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "only-ipv4"
+        }
       },
       "next": "tcp-connector"
     },

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -513,10 +513,11 @@ DNS connections.
 `domain-strategy` controls how connector nodes choose an address when a domain
 resolves to IPv4 and/or IPv6 records.
 
-This value is the core default for nodes that do not specify their own
-`domain-strategy`. `TcpConnector` and `UdpConnector` can still override it in
-their own `settings`. `TcpConnector` per-address entries can also override the
-connector's default for that specific destination.
+This value supplies the default address preference for connectors and other
+consumers that inherit it. Configure a node's own preference with
+`settings.dns-behaviour.strategy`. A weighted `TcpConnector` destination may use
+`"dns-behaviour": {"strategy": "only-ipv4"}` to override only that preference;
+lookup enablement and DNS transport remain node settings.
 
 Valid string values:
 

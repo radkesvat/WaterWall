@@ -62,7 +62,10 @@
         "port": "dest_context->port",
         "nodelay": true,
         "fastopen": false,
-        "domain-strategy": "prefer-ipv4"
+        "dns-behaviour": {
+          "resolve": true,
+          "strategy": "prefer-ipv4"
+        }
       }
     },
     {

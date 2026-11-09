@@ -13,7 +13,9 @@
       "name": "router",
       "type": "Router",
       "settings": {
-        "resolve-domains": true,
+        "dns-behaviour": {
+          "resolve": true
+        },
         "rules": [
           {
             "source-port": 23600,

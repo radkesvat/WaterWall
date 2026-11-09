@@ -51,7 +51,7 @@ def run(binary, udp, enabled, timeout=None, nested=False, waiting=False):
             {"name": "vless", "type": "VlessClient", "next": "connect",
              "settings": {"uuid": "5783a3e7-e373-51cd-8642-c83782b807c5", "address": "127.0.0.1", "port": 443,
                           "protocol": "dest_context->protocol",
-                          "domain-strategy": "resolve-domains-and-prefer-ipv4"}},
+                          "dns-behaviour": {"resolve": True, "strategy": "prefer-ipv4"}}},
             {"name": "connect", "type": "TcpConnector",
              "settings": {"address": "127.0.0.1", "port": 27952, "nodelay": True, "fastopen": False}},
         ]

@@ -82,42 +82,12 @@ static bool extraHeaders(hpc_tstate_t *ts, const cJSON *headers)
     ts->headers[length] = 0;
     return true;
 }
-static bool domainStrategy(hpc_tstate_t *ts, const cJSON *value)
-{
-    static const char         *names[]      = {"do-not-resolve-domains",
-                                               "resolve-domains-and-accept-dns-returned-order",
-                                               "resolve-domains-and-prefer-ipv4",
-                                               "resolve-domains-and-prefer-ipv6",
-                                               "resolve-domains-and-use-only-ipv4",
-                                               "resolve-domains-and-use-only-ipv6",
-                                               "resolve-domains-with-core-settings"};
-    const enum domain_strategy strategies[] = {
-        kDsInvalid, kDsInvalid, kDsPreferIpV4, kDsPreferIpV6, kDsOnlyIpV4, kDsOnlyIpV6, GSTATE.domain_strategy};
-    if (! value)
-        return true;
-    if (cJSON_IsString(value))
-        for (size_t i = 0; i < ARRAY_SIZE(names); ++i)
-            if (! stringCompare(value->valuestring, names[i]))
-            {
-                if (i && ! ts->connect)
-                {
-                    LOGF("HttpProxyClient: resolving domain-strategy requires mode connect");
-                    return false;
-                }
-                ts->resolve_domains = i != 0;
-                ts->domain_strategy = strategies[i];
-                return true;
-            }
-    LOGF("HttpProxyClient: domain-strategy must be a supported non-empty lowercase string");
-    return false;
-}
 bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
 {
     const cJSON *json = node->node_settings_json, *f;
     if (! cJSON_IsObject(json) || ! nodeHasNext(node))
         return false;
     const char *keys[] = {"mode",
-                          "domain-strategy",
                           "dns-behaviour",
                           "target-address",
                           "port",
@@ -152,12 +122,10 @@ bool hpcParseSettings(hpc_tstate_t *ts, node_t *node)
     if (f &&
         (! cJSON_IsString(f) || (stringCompare(f->valuestring, "connect") && stringCompare(f->valuestring, "http"))))
         return false;
-    ts->connect = ! f || ! stringCompare(f->valuestring, "connect");
-    if (GET("dns-behaviour") == NULL && ! domainStrategy(ts, GET("domain-strategy")))
-        return false;
+    ts->connect                              = ! f || ! stringCompare(f->valuestring, "connect");
     const dns_policy_defaults_t dns_defaults = {
-        .resolve          = ts->resolve_domains,
-        .strategy         = ts->domain_strategy,
+        .resolve          = false,
+        .strategy         = kDsInvalid,
         .core_strategy    = GSTATE.domain_strategy,
         .require_dns_next = true,
     };

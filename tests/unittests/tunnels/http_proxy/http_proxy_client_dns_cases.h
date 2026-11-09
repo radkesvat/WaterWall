@@ -60,22 +60,22 @@ static dns_resolved_addr_t answer(const char *ip)
     memoryCopy(&result.addr, &sa, result.addrlen);
     return result;
 }
-static const char *strategies[] = {"do-not-resolve-domains",
-                                   "resolve-domains-and-accept-dns-returned-order",
-                                   "resolve-domains-and-prefer-ipv4",
-                                   "resolve-domains-and-prefer-ipv6",
-                                   "resolve-domains-and-use-only-ipv4",
-                                   "resolve-domains-and-use-only-ipv6",
-                                   "resolve-domains-with-core-settings"};
+static const char *dns_policies[] = {"{\"resolve\":false}",
+                                     "{\"resolve\":true,\"strategy\":\"accept-dns-returned-order\"}",
+                                     "{\"resolve\":true,\"strategy\":\"prefer-ipv4\"}",
+                                     "{\"resolve\":true,\"strategy\":\"prefer-ipv6\"}",
+                                     "{\"resolve\":true,\"strategy\":\"only-ipv4\"}",
+                                     "{\"resolve\":true,\"strategy\":\"only-ipv6\"}",
+                                     "{\"resolve\":true,\"strategy\":\"core-settings\"}"};
 static void        dnsOpen(unsigned strategy, bool dynamic_address, bool dynamic_port, const char *target)
 {
     char json[768];
     stringNPrintf(json,
                   sizeof(json),
-                  "{\"target-address\":\"%s\",\"port\":%s,\"domain-strategy\":\"%s\",\"idle-timeout-ms\":10}",
+                  "{\"target-address\":\"%s\",\"port\":%s,\"dns-behaviour\":%s,\"idle-timeout-ms\":10}",
                   dynamic_address ? "dest_context->address" : target,
                   dynamic_port ? "\"dest_context->port\"" : "443",
-                  strategies[strategy]);
+                  dns_policies[strategy]);
     defer_start = true;
     lookups     = 0;
     openLine(json);
@@ -100,15 +100,15 @@ static void numericWire(const char *authority)
 static void dnsTests(void)
 {
     /* The complete strict settings/mode matrix, including construction/destruction. */
-    for (unsigned i = 0; i < ARRAY_SIZE(strategies); ++i)
+    for (unsigned i = 0; i < ARRAY_SIZE(dns_policies); ++i)
         for (unsigned http = 0; http < 2; ++http)
         {
             char json[512];
             stringNPrintf(json,
                           sizeof(json),
-                          "{\"mode\":\"%s\",\"target-address\":\"127.0.0.1\",\"port\":443,\"domain-strategy\":\"%s\"}",
+                          "{\"mode\":\"%s\",\"target-address\":\"127.0.0.1\",\"port\":443,\"dns-behaviour\":%s}",
                           http ? "http" : "connect",
-                          strategies[i]);
+                          dns_policies[i]);
             tunnel_t *t = config(json);
             require((t != NULL) == (! http || i == 0), "strategy/mode matrix");
             if (t)
@@ -127,7 +127,26 @@ static void dnsTests(void)
     {
         char json[512];
         stringNPrintf(json, sizeof(json), "{\"target-address\":\"x\",\"port\":443,\"domain-strategy\":%s}", bad[i]);
-        require(! config(json), "invalid strategy accepted");
+        require(! config(json), "removed domain-strategy accepted");
+    }
+    const char *bad_policies[] = {"null",
+                                  "1",
+                                  "true",
+                                  "{}",
+                                  "[]",
+                                  "\"prefer-ipv4\"",
+                                  "{\"strategy\":\"prefer-ipv4\"}",
+                                  "{\"resolve\":1}",
+                                  "{\"resolve\":true,\"strategy\":1}",
+                                  "{\"resolve\":true,\"strategy\":\"PREFER-IPV4\"}",
+                                  "{\"resolve\":true,\"strategy\":\"resolve-domains-and-prefer-ipv4\"}",
+                                  "{\"resolve\":false,\"strategy\":\"prefer-ipv4\"}"};
+    for (size_t i = 0; i < ARRAY_SIZE(bad_policies); ++i)
+    {
+        char json[512];
+        stringNPrintf(
+            json, sizeof(json), "{\"target-address\":\"x\",\"port\":443,\"dns-behaviour\":%s}", bad_policies[i]);
+        require(! config(json), "invalid DNS policy accepted");
     }
     defer_start = true;
     lookups     = 0;
@@ -143,12 +162,13 @@ static void dnsTests(void)
     closeLine();
 
     fail_child = true;
-    require(! config("{\"target-address\":\"x\",\"port\":443,\"domain-strategy\":\"resolve-domains-and-prefer-ipv4\"}"),
+    require(! config("{\"target-address\":\"x\",\"port\":443,"
+                     "\"dns-behaviour\":{\"resolve\":true,\"strategy\":\"prefer-ipv4\"}}"),
             "helper construction rollback");
     fail_child                 = false;
     dns_resolved_addr_t both[] = {answer("2001:db8::20"), answer("192.0.2.20")};
     GSTATE.domain_strategy     = kDsOnlyIpV4;
-    for (unsigned strategy = 1; strategy < ARRAY_SIZE(strategies); ++strategy)
+    for (unsigned strategy = 1; strategy < ARRAY_SIZE(dns_policies); ++strategy)
         for (unsigned set = 0; set < 3; ++set)
             for (unsigned mixed = 0; mixed < 4; ++mixed)
             {

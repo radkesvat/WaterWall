@@ -69,17 +69,10 @@ static bool tcpudpconnectorCreateChildTunnels(tunnel_t *t, node_t *node)
 
 static bool tcpudpconnectorCreateDnsProvider(tunnel_t *t, node_t *node)
 {
-    tcpudpconnector_tstate_t *ts              = tunnelGetState(t);
-    enum domain_strategy      legacy_strategy = GSTATE.domain_strategy;
-    if (! getDomainStrategyFromJsonObjectOrDefault(
-            &legacy_strategy, node->node_settings_json, "domain-strategy", GSTATE.domain_strategy))
-    {
-        LOGF("JSON Error: TcpUdpConnector->settings->domain-strategy is invalid");
-        return false;
-    }
+    tcpudpconnector_tstate_t   *ts       = tunnelGetState(t);
     const dns_policy_defaults_t defaults = {
         .resolve          = true,
-        .strategy         = legacy_strategy,
+        .strategy         = GSTATE.domain_strategy,
         .core_strategy    = GSTATE.domain_strategy,
         .require_dns_next = true,
     };
@@ -109,7 +102,6 @@ static bool tcpudpconnectorCreateDnsProvider(tunnel_t *t, node_t *node)
      * duplicate explicit branches or direct-mode connector trees. */
     ts->child_settings = cJSON_Duplicate(node->node_settings_json, true);
     cJSON_DeleteItemFromObjectCaseSensitive(ts->child_settings, "dns-behaviour");
-    cJSON_DeleteItemFromObjectCaseSensitive(ts->child_settings, "domain-strategy");
     cJSON *child_policy = cJSON_AddObjectToObject(ts->child_settings, "dns-behaviour");
     cJSON_AddBoolToObject(child_policy, "resolve", ts->dns_policy.resolve);
     if (ts->dns_policy.resolve)
