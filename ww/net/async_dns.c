@@ -30,13 +30,15 @@ void asyncdnsOptionsSetDefaults(asyncdns_options_t *options)
     assert(options != NULL);
 
     memoryZero(options, sizeof(*options));
-    options->defaults_initialized            = true;
-    options->query_cache_max_ttl             = kAsyncDnsQueryCacheMaxTtlSeconds;
-    options->timeout_ms                      = kAsyncDnsInitialTimeoutMs;
-    options->max_timeout_ms                  = kAsyncDnsMaxTimeoutMs;
-    options->tries                           = kAsyncDnsTries;
-    options->server_failover_retry_chance    = kAsyncDnsServerFailoverRetryChance;
-    options->server_failover_retry_delay_ms  = kAsyncDnsServerFailoverRetryDelayMs;
+    options->defaults_initialized           = true;
+    options->query_cache_max_ttl            = kAsyncDnsQueryCacheMaxTtlSeconds;
+    options->timeout_ms                     = kAsyncDnsInitialTimeoutMs;
+    options->max_timeout_ms                 = kAsyncDnsMaxTimeoutMs;
+    options->tries                          = kAsyncDnsTries;
+    options->flags_set                      = true;
+    options->flags                          = ARES_FLAG_EDNS | ARES_FLAG_STAYOPEN;
+    options->server_failover_retry_chance   = kAsyncDnsServerFailoverRetryChance;
+    options->server_failover_retry_delay_ms = kAsyncDnsServerFailoverRetryDelayMs;
 }
 
 static dns_watch_t *asyncdnsFindWatch(dns_resolver_t *r, ares_socket_t fd)

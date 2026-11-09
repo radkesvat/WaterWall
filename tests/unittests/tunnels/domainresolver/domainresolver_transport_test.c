@@ -1,8 +1,9 @@
 /*
  * Covers: c-ares virtual socket transport, with real owner-worker pools and a
  * synchronous fake egress. Checks pending TCP establishment, copied/short writes,
- * independent receive/send pressure, input bounds, stale handles, Finish and
- * synchronous DNS responses deferred until the enclosing c-ares call returns.
+ * independent receive/send pressure, input bounds, stale handles, Finish,
+ * default UDP/TCP connection reuse, explicit idle retirement, and synchronous
+ * DNS responses deferred until the enclosing c-ares call returns.
  * CTest: waterwall.domainresolver_transport_unit
  */
 #include "DomainResolver/structure.h"
@@ -14,7 +15,7 @@
 static tunnel_t *resolver;
 static line_t   *observed_line;
 static sbuf_t   *retained_write;
-static unsigned  writes, finishes, pauses, resumes, results, cancellations;
+static unsigned  inits, writes, finishes, pauses, resumes, results, cancellations;
 static unsigned  preparations, preparation_cleanups;
 static bool      preparation_refuses;
 static bool      init_establishes, init_finishes, init_pauses, answer_queries, submitting;
@@ -47,6 +48,7 @@ static void observeInit(tunnel_t *next, line_t *line)
 {
     discard next;
     twfRequire(observed_line == NULL, "previous owned line was not released by fixture");
+    ++inits;
     observed_line = line;
     lineRef(line);
     twfRequire(addresscontextIsResolverDns(lineGetDestinationAddressContext(line)), "DNS marker missing at Init");
@@ -94,27 +96,25 @@ static sbuf_t *makeInput(line_t *line, size_t length, int fill)
     return buf;
 }
 
-static void observeWrite(tunnel_t *next, line_t *line, sbuf_t *buf)
+static void answerQuery(line_t *line, const uint8_t *query, size_t query_length, bool tcp)
 {
-    discard next;
-    ++writes;
-    if (! answer_queries)
-    {
-        twfRequire(retained_write == NULL, "fixture retained two writes");
-        retained_write = buf;
-        return;
-    }
-    const uint8_t *query        = sbufGetRawPtr(buf);
-    const size_t   query_length = sbufGetLength(buf);
-    size_t         end          = 12;
+    size_t end = 12;
     twfRequire(query_length > 16, "short DNS query");
     while (end < query_length && query[end] != 0)
         end += (size_t) query[end] + 1;
     end += 5;
     twfRequire(end <= query_length, "invalid DNS question");
-    const bool ipv4   = query[end - 4] == 0 && query[end - 3] == 1;
-    sbuf_t    *answer = makeInput(line, end + (ipv4 ? 16 : 0), 0);
-    uint8_t   *wire   = sbufGetMutablePtr(answer);
+    const bool   ipv4          = query[end - 4] == 0 && query[end - 3] == 1;
+    const size_t answer_length = end + (ipv4 ? 16 : 0);
+    const size_t prefix        = tcp ? 2 : 0;
+    sbuf_t      *answer        = makeInput(line, prefix + answer_length, 0);
+    uint8_t     *wire          = sbufGetMutablePtr(answer);
+    if (tcp)
+    {
+        wire[0] = (uint8_t) (answer_length >> 8);
+        wire[1] = (uint8_t) answer_length;
+        wire += prefix;
+    }
     memoryCopy(wire, query, end);
     wire[2] = 0x81;
     wire[3] = 0x80;
@@ -126,8 +126,38 @@ static void observeWrite(tunnel_t *next, line_t *line, sbuf_t *buf)
         const uint8_t record[] = {0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 42};
         memoryCopy(wire + end, record, sizeof(record));
     }
-    lineReuseBuffer(line, buf);
     domainresolverTransportPayload(resolver, line, answer);
+}
+
+static void observeWrite(tunnel_t *next, line_t *line, sbuf_t *buf)
+{
+    discard next;
+    ++writes;
+    if (! answer_queries)
+    {
+        twfRequire(retained_write == NULL, "fixture retained two writes");
+        retained_write = buf;
+        return;
+    }
+    const uint8_t *query     = sbufGetRawPtr(buf);
+    size_t         remaining = sbufGetLength(buf);
+    if (lineGetDestinationAddressContext(line)->proto_tcp)
+    {
+        // These short fixture questions fit within a transport write chunk;
+        // c-ares may combine multiple length-prefixed questions in one write.
+        while (remaining != 0)
+        {
+            twfRequire(remaining >= 2, "short TCP DNS length prefix");
+            size_t length = ((size_t) query[0] << 8) | query[1];
+            twfRequire(length <= remaining - 2, "incomplete fixture TCP DNS query");
+            answerQuery(line, query + 2, length, true);
+            query += length + 2;
+            remaining -= length + 2;
+        }
+    }
+    else
+        answerQuery(line, query, remaining, false);
+    lineReuseBuffer(line, buf);
 }
 
 static void resolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs, size_t count)
@@ -296,11 +326,109 @@ static void testOwnedPreparation(tunnel_t *next, const asyncdns_options_t *optio
     ts->shared_entry = ts->dns_egress = NULL;
 }
 
+static void resolveUncached(domainresolver_transport_t *transport, const char *name)
+{
+    const unsigned initial_results = results;
+    const unsigned initial_writes  = writes;
+    submitting                     = true;
+    twfRequire(asyncdnsResolve(&transport->resolver, name, NULL, SOCK_STREAM, resolved, NULL) == ARES_SUCCESS,
+               "connection reuse lookup submission failed");
+    submitting = false;
+    for (unsigned i = 0; i < 8 && results == initial_results; ++i)
+        dnsTransportProcess(transport);
+    twfRequire(results == initial_results + 1 && writes > initial_writes,
+               "uncached query did not exchange DNS data and complete");
+    twfRequire(ares_queue_active_queries(transport->resolver.channel) == 0,
+               "connection reuse check ran while a query was still active");
+}
+
+static void testConnectionReuse(tunnel_t *next, const asyncdns_options_t *options, bool tcp, bool stay_open)
+{
+    twfSetCase(stay_open ? (tcp ? "default TCP DNS connection reuse" : "default UDP DNS connection reuse")
+                         : (tcp ? "explicit TCP DNS idle retirement" : "explicit UDP DNS idle retirement"));
+    asyncdns_options_t configured = *options;
+    if (! stay_open)
+    {
+        configured.flags_set = true;
+        configured.flags     = ARES_FLAG_EDNS;
+    }
+    if (tcp)
+    {
+        configured.flags_set = true;
+        configured.flags |= ARES_FLAG_USEVC;
+    }
+    domainresolver_transport_t *transport = domainresolverTransportCreate(resolver, next, 0, &configured);
+    twfRequire(transport != NULL, "connection reuse transport construction failed");
+    const unsigned initial_inits    = inits;
+    const unsigned initial_finishes = finishes;
+    resolveUncached(transport, "reuse-first.test");
+    twfRequire(inits == initial_inits + 1 && observed_line != NULL &&
+                   lineGetDestinationAddressContext(observed_line)->proto_tcp == tcp,
+               "first lookup did not use the intended DNS transport");
+    if (stay_open)
+    {
+        line_t *first_line = observed_line;
+        twfRequire(lineIsAlive(first_line) && transport->socket_count == 1 && finishes == initial_finishes,
+                   "default DNS connection closed when its first lookup became idle");
+        const ares_socket_t first_handle = transport->sockets->handle;
+        resolveUncached(transport, "reuse-second.test");
+        twfRequire(observed_line == first_line && lineIsAlive(first_line) && inits == initial_inits + 1 &&
+                       transport->socket_count == 1 && transport->sockets->handle == first_handle &&
+                       finishes == initial_finishes,
+                   "sequential uncached lookup did not reuse the idle DNS connection");
+        domainresolverTransportQuiesce(transport);
+        twfRequire(finishes == initial_finishes + 1, "quiescence did not close the reused DNS line once");
+        releaseObserved();
+    }
+    else
+    {
+        twfRequire(transport->socket_count == 0 && finishes == initial_finishes + 1,
+                   "explicit flags without stay-open retained an idle DNS connection");
+        releaseObserved();
+        resolveUncached(transport, "reuse-second.test");
+        twfRequire(inits == initial_inits + 2 && transport->socket_count == 0 && finishes == initial_finishes + 2,
+                   "explicit idle retirement did not open and close a fresh connection for the next lookup");
+        releaseObserved();
+        domainresolverTransportQuiesce(transport);
+    }
+    twfRequire(transport->sockets == NULL && transport->resolver.channel == NULL && transport->resolver.timer == NULL,
+               "DNS connection lifetime test left channel, socket or timer state after quiescence");
+    const unsigned quiesced_finishes = finishes;
+    domainresolverTransportDestroy(transport);
+    twfRequire(finishes == quiesced_finishes, "destroy repeated idle DNS connection cleanup");
+}
+
+static void testNativeChannelFlags(const asyncdns_options_t *options)
+{
+    twfSetCase("native DNS honors default stay-open and explicit flag replacement");
+    for (unsigned explicit_flags = 0; explicit_flags < 2; ++explicit_flags)
+    {
+        asyncdns_options_t configured = *options;
+        if (explicit_flags)
+        {
+            configured.flags_set = true;
+            configured.flags     = ARES_FLAG_EDNS;
+        }
+        dns_resolver_t native;
+        twfRequire(asyncdnsInit(&native, getWorkerLoop(0), &configured) == ARES_SUCCESS,
+                   "native channel flag check failed to initialize");
+        struct ares_options saved = {0};
+        int                 mask  = 0;
+        twfRequire(ares_save_options(native.channel, &saved, &mask) == ARES_SUCCESS,
+                   "native channel effective flags could not be read");
+        twfRequire((saved.flags & ARES_FLAG_EDNS) != 0 && ((saved.flags & ARES_FLAG_STAYOPEN) != 0) == ! explicit_flags,
+                   "native channel changed default EDNS/stay-open or ignored explicit flag replacement");
+        ares_destroy_options(&saved);
+        asyncdnsCleanup(&native);
+    }
+}
+
 int main(int argc, char **argv)
 {
     const char *selected = argc == 2 ? argv[1] : NULL;
-    twfRequire(argc <= 2 && (selected == NULL || strcmp(selected, "udp-resume") == 0 ||
-                             strcmp(selected, "wake-deadline") == 0 || strcmp(selected, "pending-tcp") == 0),
+    twfRequire(argc <= 2 &&
+                   (selected == NULL || strcmp(selected, "udp-resume") == 0 || strcmp(selected, "wake-deadline") == 0 ||
+                    strcmp(selected, "pending-tcp") == 0 || strcmp(selected, "connection-reuse") == 0),
                "unknown transport test case");
     twfSetCase("DomainResolver virtual socket semantics and callback deferral");
     twf_worker_env_t env;
@@ -428,6 +556,13 @@ int main(int argc, char **argv)
     if (selected == NULL || strcmp(selected, "pending-tcp") == 0)
         testPendingTcpQuiesce(next, &options);
     testOwnedPreparation(next, &options);
+    if (selected == NULL || strcmp(selected, "connection-reuse") == 0)
+    {
+        for (unsigned tcp = 0; tcp < 2; ++tcp)
+            for (unsigned stay_open = 0; stay_open < 2; ++stay_open)
+                testConnectionReuse(next, &options, tcp != 0, stay_open != 0);
+        testNativeChannelFlags(&options);
+    }
     chain->line_pools[0] = NULL;
     tunnelchainDestroy(chain);
     twfLinePoolTeardown(&lines);

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
@@ -95,7 +95,7 @@ selected core file's directory.
     "socket-receive-buffer-size": 262144,
     "edns-packet-size": 1232,
     "udp-max-queries": 0,
-    "flags": ["edns", "dns0x20"],
+    "flags": ["edns", "stayopen", "dns0x20"],
     "rotate": true,
     "domains": ["example.com"],
     "lookups": "bf",
@@ -505,6 +505,8 @@ nodes.
 
 If `dns` is omitted or empty, the resolver uses Waterwall's c-ares defaults and
 `dns.domain-strategy` defaults to `"prefer-ipv4"`.
+The default flags are `["edns", "stayopen"]`, enabling EDNS and reuse of idle
+DNS connections.
 
 ### `dns.domain-strategy`
 
@@ -645,6 +647,17 @@ Example:
 
 ### `dns.flags`
 
+When `flags` is omitted, WaterWall enables `["edns", "stayopen"]`. `stayopen`
+keeps idle UDP and TCP DNS connections available for later queries. This applies
+to native DNS sockets and to the DNS lines used by `direct` and `chain` providers.
+Errors, downstream closure, server or connection rotation, and shutdown can
+still close a connection; a later query opens another when needed.
+
+An explicit `flags` value replaces the entire default set; it does not add to it.
+For example, `"flags": ["edns"]` keeps EDNS but disables idle connection reuse,
+and `"flags": 0` disables all flags. To add a flag while preserving the defaults,
+include both `edns` and `stayopen` in the explicit value.
+
 `flags` configures supported c-ares flags. It can be written as:
 
 1. A numeric bitmask.
@@ -657,7 +670,7 @@ Examples:
 ```json
 {
   "dns": {
-    "flags": ["edns", "dns0x20"]
+    "flags": ["edns", "stayopen", "dns0x20"]
   }
 }
 ```
@@ -667,6 +680,7 @@ Examples:
   "dns": {
     "flags": {
       "edns": true,
+      "stayopen": true,
       "dns0x20": true,
       "use-vc": false
     }

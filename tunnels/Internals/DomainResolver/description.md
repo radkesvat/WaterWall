@@ -1,5 +1,5 @@
 <!--
-Documentation version: 163
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
@@ -72,6 +72,10 @@ c-ares uses native sockets; the query does not enter a DNS branch selected by
 this node. Core DNS settings determine servers, lookup sources, retries and cache
 behavior. Without an explicit core server list, c-ares uses its normal system
 resolver configuration.
+
+Core enables `edns` and `stayopen` by default, keeping idle native DNS sockets
+available for later queries. An explicit `dns.flags` value replaces that default
+set.
 
 Set `mode` to `native`, or omit it. Configure DNS options in `core.json`, not in
 this node's `servers` or `dns-next` fields. Both fields are rejected in native
@@ -629,7 +633,15 @@ server list replaces core server discovery. Configured core
 `resolvconf-path` are rejected because this backend does not support those
 requirements.
 
-Each explicit resolver instance has a reusable channel and cache per worker.
+Each direct/chain provider, whether standalone or embedded, keeps a reusable
+channel and cache per worker across queries. With the default core flags
+`["edns", "stayopen"]`, c-ares also retains idle UDP and TCP DNS connections so
+later queries can reuse their DNS lines and transport connections. Errors,
+downstream closure, server or connection rotation, and shutdown can still close
+those connections; a later query opens another when needed. Setting core
+`"dns": {"flags": ["edns"]}` disables idle connection reuse without changing the
+provider's channel lifetime.
+
 A failed query may retry another configured server, but never switches to native
 DNS or another mode. Closing one application request does not cancel other
 requests sharing the channel.
