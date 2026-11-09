@@ -261,7 +261,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `ram-profile` | string or integer | `"server"` | Memory sizing profile for pools and profile-aware node defaults. A number must be a whole number in `0..6`; `0` and `1` are legacy aliases for the smallest profile. |
 | `mtu` | integer | `1500` | Construction-time default for per-node MTUs. Must be a whole number in `68..65535` - RFC 791's minimum IPv4 MTU up to what the field can hold. |
 | `splice` | boolean | `true` | Allow splice on eligible stream chains. `false` disables splice for every chain. Platform support and support from every node are still required; packet chains remain ineligible. |
-| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning with 128 MiB socket ceilings and TCP autotuning maxima; also raises RAM-based TCP memory thresholds when `splice` is enabled. |
+| `tcp-tune` | boolean | `true` on Linux; `false` otherwise | Best-effort core startup tuning that raises RAM-based TCP memory thresholds when `splice` is enabled. |
 | `tcp-stack-receive-budget` | integer | `33554432` (32 MiB) | Per-worker userspace TCP receive-window target. `0` disables adaptation; otherwise accepts whole byte counts from `65536` to `1073741824`. |
 | `lwip-memory-budget` | integer | `536870912` (512 MiB) | Process-wide byte ceiling for growable userspace stack pools and charged retained packet storage. Accepts whole numbers from `1048576` to the smaller of the platform's `SIZE_MAX` and `9223372036854775807`. |
 | `lwip-max-tcp-flows` | integer | `65536` | Process-wide maximum TCP connection-state objects, including handshakes and closing connections. |
@@ -356,23 +356,13 @@ queueing disciplines already attached to network interfaces.
 `tcp-tune` defaults to `true` on native Linux and `false` on other platforms,
 including Android and Cygwin. Omitted or empty `misc` blocks use the same default.
 Only a JSON boolean is accepted. Set `"tcp-tune": false` to skip this core startup
-phase. The four fixed socket/TCP buffer settings apply even when `splice` is
-disabled; the RAM-based `tcp_mem` step requires both flags to be enabled.
+phase. The RAM-based `tcp_mem` tuning requires `splice` to be enabled as well.
 `try-enabling-bbr` remains independent. On other platforms, explicit `true` is
 accepted but performs no tuning.
 
-After runtime logging is ready and before loading node configurations, WaterWall
-attempts these four fixed live sysctl writes, independent of the memory profile:
-
-| Setting | Value |
-| --- | --- |
-| `net.core.rmem_max` | `134217728` (128 MiB) |
-| `net.core.wmem_max` | `134217728` (128 MiB) |
-| `net.ipv4.tcp_rmem` | `4096 87380 134217728` |
-| `net.ipv4.tcp_wmem` | `4096 87380 134217728` |
-
-When both `tcp-tune` and `splice` are enabled, it also tries to increase the
-system-wide `net.ipv4.tcp_mem` thresholds using total host physical RAM and the
+After runtime logging is ready and before loading node configurations, when both
+`tcp-tune` and `splice` are enabled, WaterWall tries to increase the system-wide
+`net.ipv4.tcp_mem` thresholds using total host physical RAM and the
 system page size. Setting `"splice": false` skips this step. With
 `unit = floor(floor(total_ram_bytes / page_size) / 16)`, the target is
 `3 * unit`, `4 * unit`, `6 * unit` pages. This preserves the `3:4:6` ratio:
@@ -383,9 +373,9 @@ preallocate memory and do not override cgroup limits.
 WaterWall reads the current triple first and preserves it if any target value
 would lower an existing threshold. A changed triple is read back before success
 is logged. Invalid or unavailable memory/page-size information, unreadable
-settings, failed writes, and verification failures are nonfatal and do not skip
-the other tuning commands. This host-wide target does not use the RAM profile,
-current free RAM, or a container's memory quota.
+settings, failed writes, and verification failures are nonfatal. This host-wide
+target does not use the RAM profile, current free RAM, or a container's memory
+quota.
 
 This phase does not change `net.core.netdev_max_backlog` or `net.core.somaxconn`.
 A chain containing either MuxClient or MuxServer activates TcpListener's and
@@ -394,14 +384,12 @@ TcpConnector's 16 MiB send/receive defaults for omitted options, independently o
 Explicit `large-send-buffer` and `large-recv-buffer` settings always take precedence,
 including connector destination overrides.
 
-Each failed command logs a warning, and the remaining commands are still
-attempted; permission denial or a missing `sysctl` never fails startup. Successful
-writes change the live kernel settings and are not restored on exit. WaterWall
-does not persist them in `/etc/sysctl.conf`.
+Failures log a warning; permission denial or a missing `sysctl` never fails
+startup. Successful writes change the live kernel settings and are not restored
+on exit. WaterWall does not persist them in `/etc/sysctl.conf`.
 
 RawSocket's separate tuning batch, controlled by `skip-sysctl`, tunes backlogs and
-other TCP parameters. The buffer and `tcp_mem` writes above belong exclusively to the core
-`tcp-tune` phase.
+other TCP parameters. The `tcp_mem` tuning belongs to the core `tcp-tune` phase.
 
 ### Userspace stack capacity (`lwip-*`)
 

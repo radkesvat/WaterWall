@@ -1,9 +1,8 @@
 /*
  * Covers: native Linux best-effort startup TCP tuning through an isolated sysctl fixture.
- * Cases: fixed socket targets across RAM profiles; tcp_mem host RAM/page conversion, exact
- * 3:4:6 rounding, no lowering, invalid/overflow inputs, memory failures, denied writes,
- * failed verification, and mismatched readback; disabled splice skips tcp_mem entirely.
- * All failures preserve the other four attempts.
+ * Cases: tcp_mem host RAM/page conversion independent of RAM profile, exact 3:4:6 rounding,
+ * no lowering, invalid/overflow inputs, memory failures, denied writes, failed verification,
+ * and mismatched readback; only tcp_mem is read or written and disabled splice skips sysctl.
  * Setup: shell builtins only with PATH restricted to a temporary fixture; linker-wrapped
  * sysinfo/sysconf provide deterministic host RAM and page sizes. No host sysctl is reachable.
  * Limits: Does not establish throughput improvement or real kernel permission behavior.
@@ -32,9 +31,6 @@ static int           test_sysinfo_status;
 static long          test_page_size;
 
 static const char *initial_limits = "786432 1048576 1572864";
-static const char *fixed_commands = "-w net.core.rmem_max=134217728\n-w net.core.wmem_max=134217728\n"
-                                    "-w net.ipv4.tcp_rmem=4096 87380 134217728\n"
-                                    "-w net.ipv4.tcp_wmem=4096 87380 134217728\n";
 
 int __wrap_sysinfo(struct sysinfo *info);
 int __wrap_sysinfo(struct sysinfo *info)
@@ -92,10 +88,6 @@ static void createFakeSysctl(void)
           "      exit \"$WW_TCP_TUNE_TEST_WRITE_EXIT\"\n"
           "    fi\n"
           "    : > \"$WW_TCP_TUNE_TEST_STATE\";;\n"
-          "  '-w '*)\n"
-          "    case \"$2\" in\n"
-          "      \"$WW_TCP_TUNE_TEST_FAIL_KEY\"=*) echo 'permission denied' >&2; exit 1;;\n"
-          "    esac;;\n"
           "  *) exit 64;;\n"
           "esac\n",
           script);
@@ -127,7 +119,6 @@ static void resetScenario(void)
     selectSetting("WW_TCP_TUNE_TEST_READ_EXIT", "0");
     selectSetting("WW_TCP_TUNE_TEST_WRITE_EXIT", "0");
     selectSetting("WW_TCP_TUNE_TEST_VERIFY_EXIT", "0");
-    selectSetting("WW_TCP_TUNE_TEST_FAIL_KEY", "");
 }
 
 static void checkCommands(const char *target, bool verify)
@@ -149,19 +140,18 @@ static void checkCommands(const char *target, bool verify)
             snprintf(expected + offset, sizeof(expected) - offset, "-n net.ipv4.tcp_mem\n");
         }
     }
-    size_t offset = strlen(expected);
-    snprintf(expected + offset, sizeof(expected) - offset, "%s", fixed_commands);
-    require(strcmp(commands, expected) == 0, "incorrect tuning values, argument quoting or continuation after failure");
+    require(strcmp(commands, expected) == 0, "incorrect TCP memory commands, values or argument quoting");
 }
 
-static void testProfile(unsigned int profile, const char *fail_key)
+static void testProfile(unsigned int profile)
 {
+    testCaseSet("TCP memory tuning is independent of RAM profile");
     resetScenario();
-    selectSetting("WW_TCP_TUNE_TEST_FAIL_KEY", fail_key);
+    selectSetting("WW_TCP_TUNE_TEST_INITIAL", "1 2 3");
     GSTATE.ram_profile = profile;
     tryTuneTcp(true);
-    checkCommands(NULL, false);
-    require(warnings == (fail_key[0] == '\0' ? 0U : 1U), "failed tuning did not log exactly one warning");
+    checkCommands(initial_limits, true);
+    require(warnings == 0 && verified_success, "RAM profile changed host TCP memory tuning");
 }
 
 static void testMemoryArithmetic(void)
@@ -324,13 +314,7 @@ static void testSpliceDisabled(void)
     selectSetting("WW_TCP_TUNE_TEST_READ_EXIT", "1");
     tryTuneTcp(false);
 
-    FILE *log = fopen(log_path, "r");
-    require(log != NULL, "disabled splice skipped fixed socket tuning");
-    char         commands[1024] = {0};
-    const size_t length         = fread(commands, 1, sizeof(commands) - 1, log);
-    require(! ferror(log) && length < sizeof(commands) - 1, "could not read complete command log");
-    fclose(log);
-    require(strcmp(commands, fixed_commands) == 0, "disabled splice probed or wrote TCP memory limits");
+    require(access(log_path, F_OK) != 0, "disabled splice invoked sysctl");
     require(warnings == 0 && ! verified_success, "disabled splice ran TCP memory tuning");
 }
 
@@ -342,15 +326,12 @@ int main(void)
     require(logger != NULL, "failed to create core logger");
     loggerSetHandler(logger, captureLog);
 
-    testProfile(kRamProfileS1Memory, "");
-    testProfile(kRamProfileS2Memory, "");
-    testProfile(kRamProfileM1Memory, "");
-    testProfile(kRamProfileM2Memory, "");
-    testProfile(kRamProfileL1Memory, "");
-    testProfile(kRamProfileL2Memory, "");
-    const char *keys[] = {"net.core.rmem_max", "net.core.wmem_max", "net.ipv4.tcp_rmem", "net.ipv4.tcp_wmem"};
-    for (size_t i = 0; i < ARRAY_SIZE(keys); ++i)
-        testProfile(kRamProfileS2Memory, keys[i]);
+    testProfile(kRamProfileS1Memory);
+    testProfile(kRamProfileS2Memory);
+    testProfile(kRamProfileM1Memory);
+    testProfile(kRamProfileM2Memory);
+    testProfile(kRamProfileL1Memory);
+    testProfile(kRamProfileL2Memory);
     testMemoryArithmetic();
     testExistingLimits();
     testFailures();
@@ -361,7 +342,7 @@ int main(void)
     require(unlink(script_path) == 0, "could not remove fake sysctl");
     resetScenario();
     tryTuneTcp(true);
-    require(warnings == 5 && access(log_path, F_OK) != 0, "missing sysctl was not a nonfatal best-effort failure");
+    require(warnings == 1 && access(log_path, F_OK) != 0, "missing sysctl was not a nonfatal best-effort failure");
     coreloggerDestroy();
     rmdir(test_dir);
     return 0;

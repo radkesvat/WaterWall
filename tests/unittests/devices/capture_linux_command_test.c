@@ -785,7 +785,7 @@ static void testSysctlUsesDirectArgvWithGroupedValues(void)
         for (size_t setting = 0; setting < ARRAY_SIZE(buffer_settings); ++setting)
         {
             require(strncmp(call->argv[2], buffer_settings[setting], strlen(buffer_settings[setting])) != 0,
-                    "Capture must leave socket and TCP buffer tuning to the core tcp-tune setting");
+                    "Capture must not change global socket or TCP buffer settings");
         }
 
         if (strcmp(call->argv[2], "net.ipv4.ip_local_port_range=10000 65535") == 0)

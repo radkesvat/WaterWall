@@ -300,15 +300,9 @@ static void tryIncreaseTcpMemory(void)
          confirmed[1],
          confirmed[2]);
 }
-#endif
 
-void tryTuneTcp(bool splice_enabled)
+static inline void tryTuneTcpSocketBuffers(void)
 {
-#if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
-    if (splice_enabled)
-    {
-        tryIncreaseTcpMemory();
-    }
     const char *commands[] = {
         "sysctl -w net.core.rmem_max=134217728 2>&1",
         "sysctl -w net.core.wmem_max=134217728 2>&1",
@@ -332,6 +326,17 @@ void tryTuneTcp(bool splice_enabled)
         ++applied;
     }
     LOGI("Core: TCP socket-buffer tuning applied %zu/%zu settings", applied, ARRAY_SIZE(commands));
+}
+#endif
+
+void tryTuneTcp(bool splice_enabled)
+{
+#if ! defined(OS_ANDROID) && ! defined(OS_CYGWIN)
+    if (splice_enabled)
+    {
+        tryIncreaseTcpMemory();
+    }
+    // tryTuneTcpSocketBuffers();
 #else
     discard(splice_enabled);
 #endif

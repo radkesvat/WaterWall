@@ -431,8 +431,8 @@ Windows applies the same protocol selection in its WinDivert filter.
 
 By default the Linux capture backend applies best-effort `sysctl` tuning for
 backlogs and other TCP parameters before creating NFQUEUE resources. The core
-`misc.tcp-tune` setting owns writes to `net.core.rmem_max`, `net.core.wmem_max`,
-`net.ipv4.tcp_rmem`, and `net.ipv4.tcp_wmem`. `"skip-sysctl": true` suppresses
+`misc.tcp-tune` setting controls separate `net.ipv4.tcp_mem` tuning when
+`misc.splice` is also enabled. `"skip-sysctl": true` suppresses
 only Capture's sysctl tuning batch. Per-device `kernel-queue-tune`, the netlink
 operations and iptables commands needed to configure NFQUEUE remain independent.
 
