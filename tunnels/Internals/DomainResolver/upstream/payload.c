@@ -3,6 +3,7 @@
 void domainresolverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     domainresolver_lstate_t *ls = lineGetState(l, t);
+    assert(ls->chain_query == NULL);
 
     if (ls->phase == kDomainResolverPhaseResolving || ls->init_dispatching || ls->draining ||
         bufferqueueGetEntryCount(&ls->pending) != 0)

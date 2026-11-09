@@ -3,9 +3,10 @@
 #include "loggers/network_logger.h"
 
 static const router_protocol_descriptor_t kRouterProtocolDescriptors[] = {
-    {"http1", kAddressContextProtocolHttp1, genericsnifferSniffHttp1Request},
-    {"tls", kAddressContextProtocolTls, genericsnifferSniffTlsClientHello},
-    {"bittorrent", kAddressContextProtocolBittorrent, genericsnifferSniffBittorrentHandshake},
+    {"http1", kAddressContextProtocolHttp1, genericsnifferSniffHttp1Request, false},
+    {"tls", kAddressContextProtocolTls, genericsnifferSniffTlsClientHello, false},
+    {"bittorrent", kAddressContextProtocolBittorrent, genericsnifferSniffBittorrentHandshake, false},
+    {"dns", kAddressContextProtocolDns, genericsnifferSniffDnsQuery, true},
 };
 
 const router_protocol_descriptor_t *routerProtocolDescriptors(uint32_t *out_count)
@@ -31,6 +32,21 @@ const router_protocol_descriptor_t *routerProtocolFindDescriptorByName(const cha
     return NULL;
 }
 
+uint32_t routerProtocolDatagramOnlyMask(void)
+{
+    uint32_t                            count       = 0;
+    const router_protocol_descriptor_t *descriptors = routerProtocolDescriptors(&count);
+    uint32_t                            mask        = 0;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        if (descriptors[i].datagram_only)
+        {
+            mask |= descriptors[i].flag;
+        }
+    }
+    return mask;
+}
+
 static router_field_parse_t routerProtocolValueToFlag(const char *value, uint32_t *out_flag)
 {
     if (routerStringEqualsIgnoreCase(value, "http"))
@@ -48,7 +64,7 @@ static router_field_parse_t routerProtocolValueToFlag(const char *value, uint32_
     }
 
     LOGF("JSON Error: Router->settings->rules[]->protocol : unsupported value \"%s\" (expected \"http1\", "
-         "\"tls\", or \"bittorrent\")",
+         "\"tls\", \"bittorrent\", or \"dns\")",
          value);
     return kRouterFieldError;
 }
@@ -98,6 +114,11 @@ bool routerProtocolMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
     }
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
+    if ((rule->protocol.wanted_flags & kAddressContextProtocolDns) != 0 && addresscontextIsResolverOrigin(dest))
+    {
+        // Router Init clears detected bits; the route-control flag carries the injected query's DNS identity.
+        return true;
+    }
     return (dest->optional_flags.detected_protocols & rule->protocol.wanted_flags) != 0;
 }
 

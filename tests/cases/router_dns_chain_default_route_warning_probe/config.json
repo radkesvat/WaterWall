@@ -1,0 +1,67 @@
+{
+  "name": "router-dns-chain-default-route-warning-probe",
+  "nodes": [
+    {
+      "name": "socks-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 27610,
+        "nodelay": true
+      },
+      "next": "socks-server"
+    },
+    {
+      "name": "socks-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true,
+        "connect": true,
+        "udp": false
+      },
+      "next": "router"
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "settings": {
+        "resolve-domains": true,
+        "dns": {
+          "mode": "chain",
+          "servers": [
+            "127.0.0.1:27612"
+          ],
+          "timeout-ms": 1000,
+          "tries": 3
+        },
+        "rules": [
+          {
+            "destination-port": 9,
+            "target": "reject-connector"
+          }
+        ]
+      },
+      "next": "default-connector"
+    },
+    {
+      "name": "reject-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "default-connector",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

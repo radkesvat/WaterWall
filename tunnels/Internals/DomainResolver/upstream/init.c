@@ -4,6 +4,8 @@ void domainresolverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     domainresolver_lstate_t *ls = lineGetState(l, t);
 
+    // Chain-mode query lines enter at the injection point after this resolver, never here.
+    assert(ls->chain_query == NULL);
     domainresolverLinestateInitialize(t, ls);
 
     domainresolver_tstate_t *ts = tunnelGetState(t);

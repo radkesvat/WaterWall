@@ -140,13 +140,11 @@ static bool routerLineIsTcpOnly(line_t *line)
 }
 #endif
 
-#ifdef ROUTER_ENABLE_QUIC_SNIFFING
 static bool routerLineIsUdpOnly(line_t *line)
 {
     const address_context_t *dest = lineGetDestinationAddressContext(line);
     return dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp && ! dest->proto_packet;
 }
-#endif
 
 static generic_sniffer_result_t routerSniffAdapterHttp1Host(const uint8_t *payload, uint32_t payload_len,
                                                             uint8_t         scratch[kGenericSnifferMaxWindowBytes],
@@ -249,14 +247,34 @@ static bool routerSniffDetectProtocols(router_tstate_t *ts, router_match_ctx_t *
     address_context_t *dest              = lineGetDestinationAddressContext(mctx->line);
     uint32_t           missing_protocols = needed_protocols & ~dest->optional_flags.detected_protocols;
     bool               need_more         = false;
+    const bool         udp_only          = routerLineIsUdpOnly(mctx->line);
+
+    /* A datagram-only protocol (DNS) is judged on the first datagram once. When another sniffer asks for more,
+     * the window grows by concatenating later datagrams, and a short first datagram plus a second one must not
+     * read as one DNS query. */
+    router_lstate_t *ls                = mctx->line_state;
+    const bool       datagram_sniffed  = ls != NULL && ls->datagram_protocols_sniffed;
+    bool             datagram_attempted = false;
 
     uint32_t                            protocol_count = 0;
     const router_protocol_descriptor_t *protocols      = routerProtocolDescriptors(&protocol_count);
     for (uint32_t i = 0; i < protocol_count; ++i)
     {
         uint32_t flag = protocols[i].flag;
-        if ((missing_protocols & flag) == 0)
+        // A datagram-only protocol (DNS) is never sniffed on stream lines: it is simply absent there.
+        if ((missing_protocols & flag) == 0 || (protocols[i].datagram_only && (! udp_only || datagram_sniffed)))
         {
+            continue;
+        }
+
+        if (protocols[i].datagram_only)
+        {
+            datagram_attempted = true;
+            // A DNS query is complete in one datagram: a NeedMore here is simply not a match.
+            if (protocols[i].sniff(mctx->payload, mctx->payload_len) == kGenericSnifferFound)
+            {
+                dest->optional_flags.detected_protocols |= flag;
+            }
             continue;
         }
 
@@ -274,6 +292,10 @@ static bool routerSniffDetectProtocols(router_tstate_t *ts, router_match_ctx_t *
         }
     }
 
+    if (datagram_attempted && ls != NULL)
+    {
+        ls->datagram_protocols_sniffed = true;
+    }
     return need_more;
 }
 
@@ -330,6 +352,15 @@ static bool routerSniffDetectDomain(router_tstate_t *ts, router_match_ctx_t *mct
 
 router_sniff_result_t routerSniffRun(router_tstate_t *ts, router_match_ctx_t *mctx)
 {
+    /* A resolver-generated DNS query line is classified during Init: its
+     * protocol is known from the route-control flag and its payload is not
+     * client data. Nothing is sniffed, so every payload-dependent condition
+     * (other protocols, sniffed domain, attributes) is simply not satisfied. */
+    if (addresscontextIsResolverOrigin(lineGetDestinationAddressContext(mctx->line)))
+    {
+        return kRouterSniffDone;
+    }
+
     bool need_more = routerSniffDetectProtocols(ts, mctx);
 
     if (ts->sniffing_modes == 0)

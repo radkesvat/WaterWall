@@ -43,6 +43,11 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     t->fnPauseD   = &domainresolverTunnelDownStreamPause;
     t->fnResumeD  = &domainresolverTunnelDownStreamResume;
 
+    t->onPrepare       = &domainresolverTunnelOnPrepare;
+    t->onWorkerQuiesce = &domainresolverTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &domainresolverTunnelOnWorkerStop;
+    t->onDestroy       = &domainresolverTunnelOnDestroy;
+
     domainresolver_tstate_t *ts       = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
 
@@ -58,6 +63,44 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     {
         tunnelDestroy(t);
         return NULL;
+    }
+
+    /* Flat DNS keys at this node's settings level. Embedded resolvers receive
+     * only a strategy object, so they always stay in core mode. The DNS keys
+     * are validated only when mode is "chain": without it this node behaves
+     * exactly as before, even if an existing config reuses one of the names. */
+    const cJSON *mode_json = settings != NULL ? cJSON_GetObjectItemCaseSensitive(settings, "mode") : NULL;
+    const bool   wants_chain =
+        mode_json != NULL && (! cJSON_IsString(mode_json) || stringCompare(mode_json->valuestring, "core") != 0);
+    ts->mode = kDnsLineClientModeCore;
+    if (wants_chain && ! dnslineclientConfigParse(settings, "DomainResolver->settings", &ts->mode, &ts->chain_cfg))
+    {
+        tunnelDestroy(t);
+        return NULL;
+    }
+
+    if (ts->mode != kDnsLineClientModeChain && settings != NULL)
+    {
+        /* Chain-only keys without mode "chain" do nothing; say so, because the
+         * user most likely meant chain DNS and is getting core DNS instead. */
+        static const char *const kChainOnlyKeys[] = {"servers", "timeout-ms", "tries", "cache-size",
+                                                     "min-ttl", "max-ttl", "fallback-to-core"};
+        for (size_t i = 0; i < sizeof(kChainOnlyKeys) / sizeof(kChainOnlyKeys[0]); ++i)
+        {
+            if (cJSON_GetObjectItemCaseSensitive(settings, kChainOnlyKeys[i]) != NULL)
+            {
+                LOGW("DomainResolver: settings->%s is ignored because settings->mode is not \"chain\"; DNS uses "
+                     "the core resolver",
+                     kChainOnlyKeys[i]);
+            }
+        }
+    }
+
+    if (ts->mode == kDnsLineClientModeChain)
+    {
+        // Standalone chain mode: the user's chain after this node routes the query lines.
+        ts->inject_owner = t;
+        ts->inject       = &domainresolverChainInjectNext;
     }
 
     return t;

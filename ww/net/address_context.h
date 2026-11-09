@@ -42,6 +42,7 @@ enum connection_context_type
 #define kAddressContextProtocolHttp1      (UINT32_C(1) << 0U)
 #define kAddressContextProtocolTls        (UINT32_C(1) << 1U)
 #define kAddressContextProtocolBittorrent (UINT32_C(1) << 2U)
+#define kAddressContextProtocolDns        (UINT32_C(1) << 3U)
 
 /* Stored with optional metadata so an already-negotiated endpoint can survive
  * middle tunnels without changing the line_t ABI. It is not a sniffed
@@ -49,12 +50,21 @@ enum connection_context_type
  * out of the enum because ISO C requires enumerator values to fit in int. */
 #define kAddressContextRouteFlagPinnedDestination (UINT32_C(1) << 31U)
 
+/* Set by the line creator on an internally generated DNS query line (the
+ * DomainResolver "chain" mode). Router clears observed protocols at Init, so
+ * this route-control bit carries the DNS origin through that reset; Router's
+ * "protocol": "dns" matcher treats it as DNS. A resolver must never start a
+ * chain resolution for a line carrying it. */
+#define kAddressContextRouteFlagResolverOrigin (UINT32_C(1) << 30U)
+
 /* Optional metadata has two independent owners. Router/sniffers may clear
  * only observed application protocols; protocol tunnels may carry one-shot
  * route-control data through those middle nodes. */
 #define kAddressContextDetectedProtocolMask                                                                            \
-    (kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent)
-#define kAddressContextRouteControlMask (kAddressContextRouteFlagPinnedDestination)
+    (kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent |                   \
+     kAddressContextProtocolDns)
+#define kAddressContextRouteControlMask                                                                                \
+    (kAddressContextRouteFlagPinnedDestination | kAddressContextRouteFlagResolverOrigin)
 
 /*
  * Optional routing metadata. These flags are not intrinsic endpoint identity.
@@ -149,6 +159,26 @@ static inline void addresscontextSetDestinationPinned(address_context_t *ctx, bo
 static inline bool addresscontextDestinationIsPinned(const address_context_t *ctx)
 {
     return (ctx->optional_flags.detected_protocols & kAddressContextRouteFlagPinnedDestination) != 0;
+}
+
+/**
+ * @brief Mark a line as an internally generated resolver query line.
+ */
+static inline void addresscontextSetResolverOrigin(address_context_t *ctx, bool resolver_origin)
+{
+    if (resolver_origin)
+    {
+        ctx->optional_flags.detected_protocols |= kAddressContextRouteFlagResolverOrigin;
+    }
+    else
+    {
+        ctx->optional_flags.detected_protocols &= ~kAddressContextRouteFlagResolverOrigin;
+    }
+}
+
+static inline bool addresscontextIsResolverOrigin(const address_context_t *ctx)
+{
+    return (ctx->optional_flags.detected_protocols & kAddressContextRouteFlagResolverOrigin) != 0;
 }
 
 /**

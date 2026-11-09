@@ -21,6 +21,23 @@ void domainresolverTunnelAllowMissingDestination(tunnel_t *t, bool enabled)
     ts->allow_missing_destination = enabled;
 }
 
+void domainresolverTunnelSetChainResolver(tunnel_t *t, const dnslineclient_config_t *cfg, tunnel_t *inject_owner,
+                                          domainresolver_inject_fn inject)
+{
+    if (UNLIKELY(t->chain != NULL))
+    {
+        LOGF("DomainResolver: chain resolver must be configured before chaining");
+        abortProgramNow(1);
+    }
+    assert(cfg != NULL && cfg->servers_count > 0 && inject_owner != NULL && inject != NULL);
+
+    domainresolver_tstate_t *ts = tunnelGetState(t);
+    ts->mode                    = kDnsLineClientModeChain;
+    ts->chain_cfg               = *cfg;
+    ts->inject_owner            = inject_owner;
+    ts->inject                  = inject;
+}
+
 void domainresolverTunnelSetPrepareHook(tunnel_t *t, tunnel_t *owner, uint32_t user_lstate_size,
                                         domainresolver_prepare_fn             prepare,
                                         domainresolver_user_lstate_destroy_fn destroy)
