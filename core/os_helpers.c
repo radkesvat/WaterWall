@@ -218,7 +218,7 @@ static void tryIncreaseTcpMemory(void)
         return;
     }
     const uint64_t total_bytes = (uint64_t) memory.totalram * (uint64_t) memory.mem_unit;
-    const uint64_t unit        = (total_bytes / (uint64_t) page_size) / 16;
+    const uint64_t unit        = (total_bytes / (uint64_t) page_size) / 40;
     // tcp_mem stores signed native longs, although its sysctl handler accepts unsigned values.
     if (unit == 0 || unit > (uint64_t) LONG_MAX / 6)
     {

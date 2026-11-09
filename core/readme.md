@@ -364,10 +364,10 @@ After runtime logging is ready and before loading node configurations, when both
 `tcp-tune` and `splice` are enabled, WaterWall tries to increase the system-wide
 `net.ipv4.tcp_mem` thresholds using total host physical RAM and the
 system page size. Setting `"splice": false` skips this step. With
-`unit = floor(floor(total_ram_bytes / page_size) / 16)`, the target is
+`unit = floor(floor(total_ram_bytes / page_size) / 40)`, the target is
 `3 * unit`, `4 * unit`, `6 * unit` pages. This preserves the `3:4:6` ratio:
-approximately 18.75% of RAM for leaving pressure mode, 25% for entering it,
-and 37.5% for the maximum TCP-accounting threshold. These values do not
+approximately 7.5% of RAM for leaving pressure mode, 10% for entering it,
+and 15% for the maximum TCP-accounting threshold, rounded down. These values do not
 preallocate memory and do not override cgroup limits.
 
 WaterWall reads the current triple first and preserves it if any target value

@@ -1,8 +1,9 @@
 /*
  * Covers: native Linux best-effort startup TCP tuning through an isolated sysctl fixture.
- * Cases: tcp_mem host RAM/page conversion independent of RAM profile, exact 3:4:6 rounding,
- * no lowering, invalid/overflow inputs, memory failures, denied writes, failed verification,
- * and mismatched readback; only tcp_mem is read or written and disabled splice skips sysctl.
+ * Cases: tcp_mem host RAM/page conversion independent of RAM profile, 15% high target with
+ * exact 3:4:6 rounding, no lowering, invalid/overflow inputs, memory failures, denied writes,
+ * failed verification, and mismatched readback; only tcp_mem is read or written and disabled
+ * splice skips sysctl.
  * Setup: shell builtins only with PATH restricted to a temporary fixture; linker-wrapped
  * sysinfo/sysconf provide deterministic host RAM and page sizes. No host sysctl is reachable.
  * Limits: Does not establish throughput improvement or real kernel permission behavior.
@@ -30,7 +31,7 @@ static unsigned int  test_mem_unit;
 static int           test_sysinfo_status;
 static long          test_page_size;
 
-static const char *initial_limits = "786432 1048576 1572864";
+static const char *initial_limits = "314571 419428 629142";
 
 int __wrap_sysinfo(struct sysinfo *info);
 int __wrap_sysinfo(struct sysinfo *info)
@@ -165,12 +166,14 @@ static void testMemoryArithmetic(void)
         const char   *target;
         bool          valid;
     } cases[] = {
-        {"16 GiB / 4 KiB", 16UL * 1024UL * 1024UL, 1024, 4096, "786432 1048576 1572864", true},
-        {"16 GiB / 64 KiB", 16UL * 1024UL * 1024UL, 1024, 65536, "49152 65536 98304", true},
-        {"memory unit scaling", 16UL * 1024UL, 1024UL * 1024UL, 4096, "786432 1048576 1572864", true},
-        {"round incomplete pages and ratio", 16UL * 4096UL + 4095UL, 1, 4096, "3 4 6", true},
-        {"round incomplete ratio unit", 31UL * 4096UL + 4095UL, 1, 4096, "3 4 6", true},
-        {"too few pages", 15UL * 4096UL + 4095UL, 1, 4096, NULL, false},
+        {"16 GiB / 4 KiB", 16UL * 1024UL * 1024UL, 1024, 4096, "314571 419428 629142", true},
+        {"16 GiB / 64 KiB", 16UL * 1024UL * 1024UL, 1024, 65536, "19659 26212 39318", true},
+        {"memory unit scaling", 16UL * 1024UL, 1024UL * 1024UL, 4096, "314571 419428 629142", true},
+        {"first complete ratio unit", 40UL * 4096UL, 1, 4096, "3 4 6", true},
+        {"round incomplete page", 40UL * 4096UL + 4095UL, 1, 4096, "3 4 6", true},
+        {"round incomplete ratio unit", 79UL * 4096UL + 4095UL, 1, 4096, "3 4 6", true},
+        {"two complete ratio units", 80UL * 4096UL, 1, 4096, "6 8 12", true},
+        {"too few pages", 39UL * 4096UL + 4095UL, 1, 4096, NULL, false},
         {"zero host RAM", 0, 1024, 4096, NULL, false},
         {"zero memory unit", 1024, 0, 4096, NULL, false},
         {"page query failure", 1024, 1024, -1, NULL, false},
@@ -181,7 +184,7 @@ static void testMemoryArithmetic(void)
          ULONG_MAX,
          1,
          1,
-         "3458764513820540925 4611686018427387900 6917529027641081850",
+         "1383505805528216370 1844674407370955160 2767011611056432740",
          true},
 #else
         {"native signed sysctl overflow", ULONG_MAX, UINT_MAX, 4096, NULL, false},
@@ -207,11 +210,11 @@ static void testMemoryArithmetic(void)
 static void testExistingLimits(void)
 {
     const char *preserve[] = {
-        "786432 1048576 1572864",  /* Already the target. */
+        "314571 419428 629142",    /* Already the target. */
         "1000000 2000000 3000000", /* All higher. */
-        "786433 800000 900000",    /* Only minimum higher. */
-        "1 1048577 1200000",       /* Only pressure higher. */
-        "1 2 1572865",             /* Only maximum higher. */
+        "314572 350000 400000",    /* Only minimum higher. */
+        "1 419429 500000",         /* Only pressure higher. */
+        "1 2 629143",              /* Only maximum higher. */
     };
     for (size_t i = 0; i < ARRAY_SIZE(preserve); ++i)
     {
@@ -223,7 +226,7 @@ static void testExistingLimits(void)
         require(warnings == 0 && ! verified_success, "preserved limits attempted tuning or emitted warnings");
     }
     resetScenario();
-    selectSetting("WW_TCP_TUNE_TEST_INITIAL", "786432 1048576 1572863");
+    selectSetting("WW_TCP_TUNE_TEST_INITIAL", "314571 419428 629141");
     tryTuneTcp(true);
     checkCommands(initial_limits, true);
     require(warnings == 0 && verified_success, "a useful increase with unchanged earlier thresholds was skipped");
@@ -282,7 +285,7 @@ static void testFailures(void)
     checkCommands(initial_limits, false);
     require(warnings == 1 && ! verified_success, "write denial was not nonfatal");
 
-    const char *readbacks[] = {"0 0 0", "1 2", "786432 1048576 1572864"};
+    const char *readbacks[] = {"0 0 0", "1 2", "314571 419428 629142"};
     for (size_t i = 0; i < ARRAY_SIZE(readbacks); ++i)
     {
         testCaseSet("readback failure or mismatch");
