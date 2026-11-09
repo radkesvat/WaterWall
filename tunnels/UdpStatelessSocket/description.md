@@ -1,5 +1,5 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpStatelessSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpStatelessSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -8,45 +8,6 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `UdpStatelessSocket` is a UDP chain-head adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
 
 It exists primarily to support components such as `WireGuardDevice`, which need one UDP socket that can both send to configured peers and accept packets from peers that contact the socket first.
-
-## DNS behaviour
-
-Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Without this object, native lookups retain the destination-context strategy, including returned order when unspecified.
-
-```json
-{
-  "dns-behaviour": {
-    "resolve": true,
-    "mode": "direct",
-    "strategy": "prefer-ipv4",
-    "servers": ["203.0.113.53:53"]
-  }
-}
-```
-
-The address is a documentation placeholder; replace it with your resolver.
-
-| Field | Meaning |
-| --- | --- |
-| `resolve` | Required boolean whenever the object is present. |
-| `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
-| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
-| `dns-next` | Nonempty DNS-entry name for chain only. |
-
-`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
-
-In `chain` mode, an explicit `dns-next` naming a separate, otherwise unbound DNS branch is required.
-An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
-
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
-
-With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
-
-The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry. WireGuard hostname peer endpoints still use separate synchronous startup resolution.
-
-See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
 
 ## What It Does
 
@@ -144,6 +105,65 @@ Head-only placement is the current design decision, not a temporary restriction.
   Enables per-packet debug logs for UDP datagrams received from and sent to peers.
   Default: `false`
 
+## DNS behaviour
+
+Resolving a hostname means looking up the IP address to which a datagram will be
+sent. Replies on an incoming peer's line use that peer's stored IP and port, so
+they need no DNS lookup. Other outbound datagrams use the line's destination.
+Only an unresolved hostname needs resolution; literal IPs and already-resolved
+destinations are sent without it. A cached answer can also avoid a new lookup.
+
+Without `dns-behaviour`, local resolution is enabled in `native` mode and uses
+the destination-context address preference, including returned order when no
+preference is set. With resolution disabled, an unresolved outbound hostname
+causes that datagram to be dropped.
+
+Configure this lookup with `settings.dns-behaviour`:
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses core DNS settings and the worker's shared resolver. It is the default
+DNS transport when local resolution is enabled.
+
+`direct` sends DNS queries through a private WaterWall TCP/UDP connector to the
+servers you specify.
+
+`chain` sends DNS queries through a selected chain. Use a path with encryption,
+such as your VPN, to protect those queries; the mode alone does not encrypt them.
+The DNS path must carry both UDP queries and TCP fallback. A route or lookup
+failure does not switch to native DNS or another mode.
+
+For `chain`, set `dns-next` to the name of a separate DNS branch that supports
+both UDP and TCP. The branch must not already belong to another node. This node
+has no default DNS branch; naming this node itself is not allowed.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
+
+The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry. WireGuard hostname peer endpoints still use separate synchronous startup resolution.
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
+
 ## Detailed Behavior
 
 ### Peer receive path
@@ -163,7 +183,8 @@ When payload is sent through `UdpStatelessSocket`:
 
 - if the line was created for an inbound peer, the datagram is sent back to that stored peer endpoint
 - otherwise, the tunnel reads the destination address from `l->routing_context.dest_ctx`
-- unresolved routing-context domains are resolved asynchronously
+- with local resolution enabled, an unresolved hostname is looked up asynchronously if no cached answer is available;
+  with resolution disabled, that datagram is dropped
 - async results are cached by domain, port, and strategy for 30 minutes in a fixed 256-entry FIFO. Existing keys
   refresh in place, expired entries are reclaimed before insertion, and the oldest entry is evicted when the cap is full
 - the destination IP and port are converted to a socket address and sent through the bound socket

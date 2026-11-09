@@ -1,5 +1,5 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -51,43 +51,6 @@ it (`username`, `password`). The full list is in the
 - **Across conditions in one rule** → `AND` (every condition must match).
 - **Across rules** → first match wins, in JSON order; later rules are skipped.
 - **No match anywhere** → the default `next` route.
-
-## DNS behaviour
-
-Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Local resolution remains disabled when this object is omitted.
-
-```json
-{
-  "dns-behaviour": {
-    "resolve": true,
-    "mode": "direct",
-    "strategy": "prefer-ipv4",
-    "servers": ["203.0.113.53:53"]
-  }
-}
-```
-
-The address is a documentation placeholder; replace it with your resolver.
-
-| Field | Meaning |
-| --- | --- |
-| `resolve` | Required boolean whenever the object is present. |
-| `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
-| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
-| `dns-next` | Nonempty DNS-entry name for chain only. |
-
-`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
-
-In `chain` mode, omission of `dns-next` uses this node's logical inlet, after owned-DNS preparation and without re-entering its resolver.
-An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
-
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
-
-Resolution completes before rule classification. With `resolve: false`, Router can still evaluate domains and other available metadata, including lines without a destination. For Iran split routing, put `resolver-dns: true -> VPN` first, then `destination-ip: "geoip:ir" -> direct`, and use VPN as `next`. No root sniffing is needed. Resolving only inside a later proxy is too late for this GeoIP decision. See the [complete protected-DNS example](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx#chain-example-shared-router-and-vless-over-tls).
-
-See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
 
 ## How a connection is routed
 
@@ -144,7 +107,7 @@ Router forwards each signal along that path without storing consumer-pause state
 or delaying ready replay until Resume. Before selection there is no initialized
 upstream recipient. Downstream signals continue toward the previous node.
 
-With `resolve-domains` enabled, an internal `DomainResolver` runs before step 1
+With DNS resolution enabled, an internal `DomainResolver` runs before step 1
 and hands the line to Router only after the destination is usable — see
 [Resolving domains before routing](#resolving-domains-before-routing).
 
@@ -169,6 +132,11 @@ Consequences worth knowing:
 
 ## Settings
 
+A destination may be an IP address or a hostname supplied by the previous node.
+Matching a hostname with `destination-domain` needs no DNS lookup. To match an
+unresolved hostname against IP or GeoIP rules, first resolve it to an IP; an
+existing IP needs no lookup. See [DNS resolution before routing](#resolving-domains-before-routing).
+
 The node must define a top-level `next` (the **default route**) and a `settings`
 object:
 
@@ -177,7 +145,8 @@ object:
 | `rules` | array | no | ordered list of routing rule objects (see [Rules](#rules)). Omitted → everything goes to `next`; present but empty → configuration error |
 | `sniffing` | array | no | domain-sniffing modes: `http1`, `http2`, `http`, `tls`, `quic`, `http3` (see [Domain sniffing](#domain-sniffing)). Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false` (see [When domain sniffing runs](#when-domain-sniffing-runs)) |
-| `resolve-domains` | boolean | no | default `false`. Resolve an unresolved domain destination before Router classifies (see [Resolving domains before routing](#resolving-domains-before-routing)) |
+| `dns-behaviour` | object | no | Optional [DNS resolution before routing](#resolving-domains-before-routing); disabled by default. Resolve an unresolved hostname when rules need its IP. |
+| `resolve-domains` | boolean | no | Default `false`. Enables native DNS before routing; cannot be combined with `dns-behaviour`. |
 | `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` (see [GeoIP](#geoip)) |
 | `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database used by `geosite:<list>` (see [GeoSite](#geosite)) |
 
@@ -206,7 +175,7 @@ are ignored with a warning.
 | `source-ips` | string or array | Match the line **source** IP against single IPs, CIDR ranges, or `geoip:<cc>` country tokens (e.g. `["10.0.0.0/8", "geoip:ir"]`). A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined. |
 | `source-port` | integer or array of integers | Match `src_ctx.port` — the local/inbound port the peer connected to (resolved per-connection, even on multiport backends; i.e. the destination port in the peer's packets) — against exact ports, e.g. `53` or `[80, 443]`. |
 | `source-port-range` | two-integer array | Match `src_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `source-port`, the exact ports and range are OR-combined. |
-| `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match; combine with `resolve-domains` when needed. |
+| `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match; enable [DNS resolution](#resolving-domains-before-routing) when needed. |
 | `destination-port` | integer or array of integers | Match `dest_ctx.port` against exact ports, e.g. `53` or `[80, 443]`. |
 | `destination-port-range` | two-integer array | Match `dest_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `destination-port`, the exact ports and range are OR-combined. |
 | `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or GeoSite lists (`geosite:cn`, see [GeoSite](#geosite)). The domain may come from an earlier tunnel or from [domain sniffing](#domain-sniffing). |
@@ -221,8 +190,9 @@ are ignored with a warning.
 
 ### `resolver-dns`
 
-`resolver-dns` matches the origin marker on UDP and TCP DNS lines created by an
-explicit `DomainResolver` in `direct` or `chain` mode. Use `true` for those lines
+`resolver-dns` matches the origin marker on UDP and TCP DNS lines created by a
+`DomainResolver` in `direct` or `chain` mode, including the internal resolver
+created by `dns-behaviour` on Router or another node. Use `true` for those lines
 and `false` for lines without the marker. Only JSON booleans are accepted.
 
 This condition reads existing metadata; it neither inspects DNS payload nor
@@ -457,25 +427,219 @@ connections that end up matching that rule.
 
 ## Resolving domains before routing
 
-When `resolve-domains` is `true`, Router creates an internal `DomainResolver`
-placed before itself in the chain. That resolver receives upstream `Init`
-first and uses the core DNS strategy to resolve the destination when — and only
-when — it is an unresolved domain. Router's own `Init`, first-payload
-buffering, sniffing, and rule classification run only after that resolution has
-succeeded.
+Resolving a destination means looking up a hostname, such as `example.com`, to
+obtain an IP address. Router only needs this when it receives an unresolved
+hostname and must make a decision using the destination IP.
 
-Use it when an earlier node supplies a **domain** destination but your rules
-need an **IP** fact — `destination-ip`, including its `geoip:` tokens.
+A connection can already arrive with an IP address. For example, an application
+may resolve the hostname itself before opening a SOCKS connection, or an earlier
+`DomainResolver` may have resolved it. Enabling Router's DNS policy does not
+repeat that lookup.
 
-Notes:
+| Destination when the connection reaches Router | With resolution enabled |
+| --- | --- |
+| An IP address, such as `192.0.2.10:443` | Route using that IP; no DNS lookup. |
+| An unresolved hostname, such as `example.com:443` | Resolve the hostname, select an IP, then evaluate the rules. The port remains 443. |
+| A hostname with an already-resolved IP | Keep the existing IP and hostname; no new lookup. |
+| No destination yet | Continue with the other available metadata; there is no hostname to resolve. |
 
-- Destinations that are already IP-typed or already marked domain-resolved pass
-  through the resolver unchanged.
-- The resolver runs before Router's own domain sniffing, so it never
-  re-resolves a domain that Router sniffs later. A domain sniffed on a
-  concrete-IP line is stored for matching only — the original IP remains the
-  connection endpoint (see
-  [What a sniffed domain changes](#what-a-sniffed-domain-changes)).
+Choose whether to resolve based on your rules:
+
+- `destination-domain` and GeoSite rules compare a known hostname directly. They
+  do not need its IP address and do not perform DNS themselves.
+- `destination-ip` and destination GeoIP rules need an IP address. They cannot
+  match a domain-only destination until it has been resolved.
+- Source IP, port, network and authenticated-user rules do not require
+  destination DNS.
+
+DNS resolution does not recover a hostname from an IP address. If only an IP is
+available, use IP rules, or use [domain sniffing](#domain-sniffing) when the
+application protocol exposes a hostname. Sniffing reads application traffic;
+resolution asks DNS for an address. They are separate operations.
+
+### Configure resolution
+
+Use `settings.dns-behaviour` for lookups performed by this Router. `resolve: true`
+means **resolve an unresolved hostname when needed**, not “look up every
+connection.” The `mode` chooses the path for DNS traffic; `strategy` chooses an
+address from the results.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `resolve` | Required in the object | `true` enables resolution when needed; `false` disables this Router's lookups. |
+| `mode` | `native` | `native`, `direct`, or `chain`, as explained below. |
+| `strategy` | `core-settings` | Use the core address preference, or choose `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`. This does not choose the DNS transport. |
+| `servers` | Unset | Required for `direct` and `chain`; not allowed for `native`. Accepts 1–32 numeric IP, IP:port or [IPv6]:port endpoints. The default port is 53. |
+| `dns-next` | This Router's rules in `chain` mode | Optional separate DNS-entry node name; only allowed for `chain`. Omit it to use this Router's existing branches. |
+
+The examples below are individual Router nodes. Their named `next` and `target`
+branches must exist in the same node configuration. Replace documentation IPs
+with your own endpoints.
+
+### Resolution disabled
+
+By default Router does not perform DNS. Domain rules still work when a hostname
+is supplied, and IP rules still work when an IP is supplied. A later connector
+or remote proxy can resolve a hostname, but that happens after this Router's
+decision and cannot help its destination IP or GeoIP rules.
+
+This example routes a known hostname without resolving it at Router:
+
+```json
+{
+  "name": "router",
+  "type": "Router",
+  "settings": {
+    "dns-behaviour": { "resolve": false },
+    "rules": [
+      { "destination-domain": "*.example.org", "target": "vpn-client" }
+    ]
+  },
+  "next": "direct-out"
+}
+```
+
+When `resolve` is `false`, it must be the only field in `dns-behaviour`.
+
+### Native mode
+
+Use `native` to resolve through the DNS configuration in `core.json`. The shared
+worker resolver uses native sockets; these DNS queries do not pass through
+Router's rules or its VPN branch. Without an explicit core server list, the
+resolver uses the system's DNS configuration. This mode adds no DNS encryption.
+
+Here, an unresolved hostname is resolved before the destination subnet is tested:
+
+```json
+{
+  "name": "router",
+  "type": "Router",
+  "settings": {
+    "dns-behaviour": {
+      "resolve": true,
+      "mode": "native",
+      "strategy": "prefer-ipv4"
+    },
+    "rules": [
+      { "destination-ip": "192.0.2.0/24", "target": "direct-out" }
+    ]
+  },
+  "next": "vpn-client"
+}
+```
+
+Configure native DNS servers in `core.json`, not in this policy's `servers`
+field. Sending the application through `vpn-client` does not also send native
+DNS through it.
+
+### Direct mode
+
+Use `direct` to choose explicit DNS servers and reach them through a private
+WaterWall TCP/UDP connector. Router creates that connector internally. The DNS
+traffic goes directly to those servers, without following Router's rules or
+`next`, and this mode adds no encryption.
+
+```json
+{
+  "name": "router",
+  "type": "Router",
+  "settings": {
+    "dns-behaviour": {
+      "resolve": true,
+      "mode": "direct",
+      "servers": ["203.0.113.53:53"],
+      "strategy": "prefer-ipv4"
+    },
+    "rules": [
+      { "destination-ip": "192.0.2.0/24", "target": "direct-out" }
+    ]
+  },
+  "next": "vpn-client"
+}
+```
+
+In this example only the application's route is selected by the rules. DNS
+always uses the private connector to `203.0.113.53:53`. No `dns-next` is needed
+or allowed in direct mode.
+
+### Chain mode: use the existing VPN path
+
+Use `chain` when DNS should follow a WaterWall path such as
+`VlessClient -> TlsClient -> TcpConnector`. With no `dns-next`, Router sends its
+generated DNS connections through its own rules, using the configured DNS-server
+IP and port as their destination. The application connection waits for the DNS
+result, then goes through the rules with its resolved destination. These are
+separate connections: the application's destination is never the DNS server.
+
+For Iran split routing, put the DNS rule first so DNS always uses the VPN, then
+send application destinations in Iran directly:
+
+```json
+{
+  "name": "router",
+  "type": "Router",
+  "settings": {
+    "dns-behaviour": {
+      "resolve": true,
+      "mode": "chain",
+      "servers": ["203.0.113.53:53"],
+      "strategy": "prefer-ipv4"
+    },
+    "geoip-db-path": "/var/lib/waterwall/GeoLite2-Country.mmdb",
+    "rules": [
+      { "resolver-dns": true, "target": "vpn-client" },
+      { "destination-ip": "geoip:ir", "target": "direct-out" }
+    ]
+  },
+  "next": "vpn-client"
+}
+```
+
+Here `vpn-client` is a VLESS client with a TLS transport, and `direct-out` is a
+`TcpUdpConnector`. The DNS server must be reachable through the remote VPN
+endpoint. See the [complete Router-owned protected-DNS configuration](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx#router-owned-protected-dns)
+for the listener, SOCKS server and outbound nodes.
+
+The `resolver-dns` rule matches DNS generated by WaterWall's resolver; it does
+not identify every client packet sent to port 53. Keep it before any rule that
+needs payload inspection and leave root `sniffing` unset on this Router so DNS
+can be routed immediately. The VPN path must support both UDP queries and TCP
+fallback. Encryption comes from the chosen transport, such as TLS, not from
+`chain` mode or plain VLESS alone.
+
+To give DNS its own path, set `dns-next` to a separate branch entry. That branch
+must not already belong to another node. Do not set it to this Router's name or
+to an already-bound VPN branch; omit it to reuse the routing shown above. Use a
+numeric VPN-server endpoint, or an independent way to resolve that endpoint,
+so opening the DNS path does not depend on the same DNS path already being open.
+
+### Lookup timing and failures
+
+Router resolves before evaluating its rules and before its own domain sniffing.
+The original hostname remains available for domain matching after resolution.
+A hostname discovered later by sniffing does not trigger another lookup by this
+Router. An earlier explicit `DomainResolver` can perform the lookup instead;
+Router then uses the already-resolved destination.
+
+A failed lookup closes the application connection. It does not try another DNS
+mode or send the unresolved connection to Router's default `next`.
+
+This policy controls only lookups performed by this Router. It does not configure
+application DNS, the operating system, or lookups performed by other nodes. See
+[DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for shared DNS options, caching and
+connection reuse.
+
+### `resolve-domains`
+
+`"resolve-domains": true` also enables Router's internal resolver, using native
+DNS and the core address strategy. Its default is `false`. If you use
+`dns-behaviour`, omit `resolve-domains`; the two settings cannot be combined.
+Use `dns-behaviour` to select direct or chain transport or an address strategy.
+
+The policy must be a nonempty object with the fields listed above. Unknown
+fields, numeric strategies and a same-scope `domain-strategy` alongside
+`dns-behaviour` are rejected.
+
 
 ## GeoIP & GeoSite databases
 

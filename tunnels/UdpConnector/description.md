@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -15,50 +15,11 @@ node. Use `StreamToPackets` on the receiving side when the remote payload must
 return to a layer-3 packet chain. For direct packet-line UDP endpoint behavior,
 use a packet-capable adapter such as `UdpStatelessSocket` instead.
 
-## DNS behaviour
-
-Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Without this object, native resolution and existing core/legacy address preferences remain in effect.
-
-```json
-{
-  "dns-behaviour": {
-    "resolve": true,
-    "mode": "direct",
-    "strategy": "prefer-ipv4",
-    "servers": ["203.0.113.53:53"]
-  }
-}
-```
-
-The address is a documentation placeholder; replace it with your resolver.
-
-| Field | Meaning |
-| --- | --- |
-| `resolve` | Required boolean whenever the object is present. |
-| `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
-| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
-| `dns-next` | Nonempty DNS-entry name for chain only. |
-
-`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
-
-In `chain` mode, an explicit `dns-next` naming a separate, otherwise unbound DNS branch is required.
-An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
-
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
-
-With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
-
-The policy covers Init and later packet-balanced destination lookups. Each request retains its domain, port and effective strategy before mutable routing context can change.
-
-See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
-
 ## What It Does
 
 - Manages outbound UDP sockets in worker-local state.
 - Chooses a destination address and destination port.
-- Resolves a domain name if needed through an internal `DomainResolver`.
+- Resolves unresolved hostnames when local DNS is enabled.
 - Forwards upstream payload from the previous node to the remote UDP peer.
 - Forwards datagrams received from the remote UDP peer back downstream.
 - Routes received datagrams back to the originating line and drops datagrams from unregistered peers.
@@ -229,6 +190,64 @@ need a `next` node.
   - `3`: only IPv4
   - `4`: only IPv6
 
+## DNS behaviour
+
+Resolving a hostname means looking up its IP address before sending a datagram.
+`UdpConnector` first selects its destination from the address and port settings.
+It looks up that destination only if it is an unresolved hostname and local
+resolution is enabled. A literal IP address or an already-resolved destination
+needs no lookup.
+
+The policy applies both at connection setup and when packet balancing later
+selects another destination. Without `dns-behaviour`, local resolution is enabled
+in `native` mode, using the existing core or legacy `domain-strategy` preference.
+
+Configure this lookup with `settings.dns-behaviour`:
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses core DNS settings and the worker's shared resolver. It is the default
+DNS transport when local resolution is enabled.
+
+`direct` sends DNS queries through a private WaterWall TCP/UDP connector to the
+servers you specify.
+
+`chain` sends DNS queries through a selected chain. Use a path with encryption,
+such as your VPN, to protect those queries; the mode alone does not encrypt them.
+The DNS path must carry both UDP queries and TCP fallback. A route or lookup
+failure does not switch to native DNS or another mode.
+
+For `chain`, set `dns-next` to the name of a separate DNS branch that supports
+both UDP and TCP. The branch must not already belong to another node. This node
+has no default DNS branch; naming this node itself is not allowed.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
+
+The policy covers Init and later packet-balanced destination lookups. Each request retains its domain, port and effective strategy before mutable routing context can change.
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
+
 ## Detailed Behavior
 
 ### Socket setup
@@ -237,7 +256,7 @@ During upstream `init`, `UdpConnector`:
 
 - computes the destination address and port for this line
 - maps `domain-strategy` onto the line destination context
-- resolves the domain if needed through its internal `DomainResolver`
+- resolves an unresolved hostname if local DNS is enabled; IP destinations need no lookup
 - prepares worker-local UDP resources for the resolved destination
 - applies the configured buffers, source IP, interface, `fwmark`, and egress pin
   to any socket it creates
@@ -280,9 +299,9 @@ In `"packet"` balance mode, the weighted choice happens for every upstream paylo
 
 ### Domain resolution
 
-If the selected address is a domain name, the internal `DomainResolver` submits asynchronous DNS on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in the resolver's bounded pending queue. If resolution fails, the line is finished immediately.
+If local resolution is enabled and the selected address is an unresolved hostname, the internal `DomainResolver` submits asynchronous DNS on the line's worker during upstream `init`. Payloads that arrive before resolution completes are kept in the resolver's bounded pending queue. If resolution fails, the line is finished immediately.
 
-In `"packet"` balance mode, domain names inside packet-balanced destination objects are resolved lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. Destination resources are prepared before that queue is flushed; failure drops only the affected destination queue. Static destination contexts are cached, while destinations sourced from mutable line context are rebuilt before use. If mutable context changes while an earlier DNS request for the same destination slot is still pending, the new packet is dropped instead of being queued for the obsolete request. There is no time-based DNS cache and no per-packet DNS request.
+With local resolution enabled, `"packet"` balance mode resolves additional hostnames lazily per destination object on each WaterWall line. The first packet that selects an unresolved domain starts one async DNS request for that destination and packets for that destination wait in a bounded queue. Destination resources are prepared before that queue is flushed; failure drops only the affected destination queue. Static destination contexts are cached, while destinations sourced from mutable line context are rebuilt before use. If mutable context changes while an earlier DNS request for the same destination slot is still pending, the new packet is dropped instead of being queued for the obsolete request. There is no time-based DNS cache and no per-packet DNS request.
 
 ### Establishment semantics
 

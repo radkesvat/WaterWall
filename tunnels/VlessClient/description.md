@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -13,43 +13,6 @@ It supports TCP command `0x01` and UDP command `0x02` with the base VLESS UDP le
 
 This node implements plain VLESS only. It does not create TLS, REALITY, XTLS Vision, flow addons, mux, XUDP, WebSocket,
 gRPC, or other transport wrappers.
-
-## DNS behaviour
-
-Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Local resolution remains disabled when this object is omitted.
-
-```json
-{
-  "dns-behaviour": {
-    "resolve": true,
-    "mode": "direct",
-    "strategy": "prefer-ipv4",
-    "servers": ["203.0.113.53:53"]
-  }
-}
-```
-
-The address is a documentation placeholder; replace it with your resolver.
-
-| Field | Meaning |
-| --- | --- |
-| `resolve` | Required boolean whenever the object is present. |
-| `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
-| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
-| `dns-next` | Nonempty DNS-entry name for chain only. |
-
-`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
-
-In `chain` mode, omission of `dns-next` uses this node's logical inlet, after owned-DNS preparation and without re-entering its resolver.
-An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
-
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
-
-`resolve: false` lets a supported proxy request retain its hostname. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
-
-See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
 
 ## Typical Placement
 
@@ -220,11 +183,68 @@ back to IPv6.
   - `"resolve-domains-with-core-settings"`
     Resolve domain targets using the DNS settings and result preference configured in `core.json` under `dns`.
 
-  When local resolution is enabled, `VlessClient` creates an internal `DomainResolver` whose prepare hook applies the
+  When local resolution is enabled, `VlessClient` uses an internal `DomainResolver` whose prepare hook applies the
   configured target before DNS resolution.
-  Resolution is applied when the final VLESS target address is a domain. This includes both fixed JSON addresses and
-  `"dest_context->address"`. Literal IP addresses are left unchanged. While DNS is pending, the internal resolver queues
+  Resolution is applied when the final VLESS target address is an unresolved hostname. This includes both fixed JSON addresses and
+  `"dest_context->address"`. Literal IPs and already-resolved targets need no lookup. While DNS is pending, the internal resolver queues
   payloads before the VLESS request starts.
+
+## DNS behaviour
+
+Resolving a hostname means looking up its IP address. `VlessClient` can send
+the final target's hostname in the VLESS request, or resolve it locally and
+send the selected IP instead. Local resolution runs only for an unresolved
+hostname when enabled. Literal IPs and already-resolved targets need no lookup.
+
+This setting concerns the final target reached through the proxy. The following
+connector selects the proxy server's address and has its own DNS settings.
+Without `dns-behaviour`, local resolution is disabled by default; an existing
+`domain-strategy` setting can still enable it.
+
+Configure this lookup with `settings.dns-behaviour`:
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses core DNS settings and the worker's shared resolver. It is the default
+DNS transport when local resolution is enabled.
+
+`direct` sends DNS queries through a private WaterWall TCP/UDP connector to the
+servers you specify.
+
+`chain` sends DNS queries through a selected chain. Use a path with encryption,
+such as your VPN, to protect those queries; the mode alone does not encrypt them.
+The DNS path must carry both UDP queries and TCP fallback. A route or lookup
+failure does not switch to native DNS or another mode.
+
+In `chain` mode, omitting `dns-next` sends DNS requests through this proxy client
+and its following transport. To use another path, set `dns-next` to a separate
+DNS branch that does not already belong to another node. Leave the field omitted
+to use this node; do not set it to this node's own name.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+`resolve: false` keeps the hostname in requests that support it. The following connector still selects the independent proxy/VPN endpoint and has its own DNS policy. Use a numeric outer endpoint or an independent bootstrap path.
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
 ## Protocol Behavior
 

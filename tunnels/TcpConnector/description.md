@@ -1,5 +1,5 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpConnector.mdx, and all files must keep the same documentation version.
 -->
 
@@ -9,49 +9,10 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used at the end of a chain.
 
-## DNS behaviour
-
-Use `settings.dns-behaviour` to choose local lookup, address selection and DNS transport independently. Without this object, native resolution and existing core/legacy address preferences remain in effect.
-
-```json
-{
-  "dns-behaviour": {
-    "resolve": true,
-    "mode": "direct",
-    "strategy": "prefer-ipv4",
-    "servers": ["203.0.113.53:53"]
-  }
-}
-```
-
-The address is a documentation placeholder; replace it with your resolver.
-
-| Field | Meaning |
-| --- | --- |
-| `resolve` | Required boolean whenever the object is present. |
-| `mode` | `native` (default when enabled), `direct`, or `chain`. |
-| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
-| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
-| `dns-next` | Nonempty DNS-entry name for chain only. |
-
-`native` uses the worker's shared resolver and core DNS options. `direct` uses a private WaterWall TCP/UDP branch to the explicit servers. `chain` sends generated DNS lines through the selected tunnel entry; encryption depends on that path. Both UDP and TCP fallback must work. A route or lookup failure never switches modes or takes an application fallback route.
-
-In `chain` mode, an explicit `dns-next` naming a separate, otherwise unbound DNS branch is required.
-An explicit branch must be otherwise unbound. Naming this embedding owner or reusing another owner's branch is rejected; use a supported omitted entry or a separate branch.
-
-The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
-
-With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
-
-A weighted `destinations[]` entry may use `"dns-behaviour": {"strategy": "only-ipv4"}` as a strategy-only override; `addresses` remains accepted. It inherits node transport, servers and DNS branch. Other policy fields there, a same-entry legacy `domain-strategy`, or any explicit override with node resolution disabled are rejected. The destination is selected once; its socket options and strategy survive DNS.
-
-See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
-
-
 ## What It Does
 
 - Chooses a destination address and port.
-- Resolves a domain name if needed through an internal `DomainResolver`.
+- Resolves unresolved hostnames when local DNS is enabled.
 - Opens an outbound TCP socket.
 - Forwards upstream payloads from the previous node to the remote socket.
 - Forwards remote socket payloads back downstream to the previous node.
@@ -251,6 +212,65 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 When `addresses` is used, these optional fields can be set at the top level as defaults and overridden independently by each address object.
 For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient` or `MuxServer`, independently of core `misc.tcp-tune`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
 
+## DNS behaviour
+
+Resolving a hostname means looking up its IP address. `TcpConnector` first chooses
+the destination from its address and port settings, including any weighted
+selection. It then looks up the selected address only if it is an unresolved
+hostname and local resolution is enabled. A literal IP address or an already-resolved
+destination needs no lookup.
+
+The lookup concerns the server this connector will dial. After a proxy client,
+that is the proxy server; in a direct connection, it is the application's target.
+Without `dns-behaviour`, local resolution is enabled in `native` mode, using the
+existing core or legacy `domain-strategy` address preference.
+
+Configure this lookup with `settings.dns-behaviour`:
+
+```json
+{
+  "dns-behaviour": {
+    "resolve": true,
+    "mode": "direct",
+    "strategy": "prefer-ipv4",
+    "servers": ["203.0.113.53:53"]
+  }
+}
+```
+
+The address is a documentation placeholder; replace it with your resolver.
+
+| Field | Meaning |
+| --- | --- |
+| `resolve` | Required boolean: `true` allows lookup of unresolved hostnames; `false` disables local lookup. |
+| `mode` | `native` (default when enabled), `direct`, or `chain`. |
+| `strategy` | `core-settings`, `accept-dns-returned-order`, `prefer-ipv4`, `prefer-ipv6`, `only-ipv4`, or `only-ipv6`; omission retains this consumer's existing selection default. |
+| `servers` | 1–32 numeric IP, IP:port or [IPv6]:port endpoints; required for direct/chain and rejected for native. |
+| `dns-next` | Nonempty DNS-entry name for chain only. |
+
+`native` uses core DNS settings and the worker's shared resolver. It is the default
+DNS transport when local resolution is enabled.
+
+`direct` sends DNS queries through a private WaterWall TCP/UDP connector to the
+servers you specify.
+
+`chain` sends DNS queries through a selected chain. Use a path with encryption,
+such as your VPN, to protect those queries; the mode alone does not encrypt them.
+The DNS path must carry both UDP queries and TCP fallback. A route or lookup
+failure does not switch to native DNS or another mode.
+
+For `chain`, set `dns-next` to the name of a separate DNS branch that supports
+both UDP and TCP. The branch must not already belong to another node. This node
+has no default DNS branch; naming this node itself is not allowed.
+
+The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `mode`, `strategy`, `servers` and `dns-next`. Empty/null/non-object policies, unknown fields, numeric strategies and simultaneous same-scope legacy `domain-strategy` or `resolve-domains` are rejected. Existing legacy settings remain supported when this object is absent. `core-settings` chooses address preference only and never changes DNS transport.
+
+With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
+
+A weighted `destinations[]` entry may use `"dns-behaviour": {"strategy": "only-ipv4"}` as a strategy-only override; `addresses` remains accepted. It inherits node transport, servers and DNS branch. Other policy fields there, a same-entry legacy `domain-strategy`, or any explicit override with node resolution disabled are rejected. The destination is selected once; its socket options and strategy survive DNS.
+
+See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
+
 ## Detailed Behavior
 
 ### Chain behavior
@@ -261,7 +281,7 @@ The normal flow is:
 
 - previous node creates or passes a line
 - `TcpConnector` selects destination address and port
-- internal `DomainResolver` resolves the selected domain when needed
+- internal `DomainResolver` looks up an unresolved selected hostname when local DNS is enabled
 - outbound socket is created
 - asynchronous connect begins
 - after connect succeeds, the previous node receives downstream `est`
@@ -285,7 +305,7 @@ This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite
 
 ### Domain resolution
 
-If the selected destination is a domain name, `TcpConnector` maps its `domain-strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
+If local DNS is enabled and the selected destination is an unresolved hostname, `TcpConnector` maps its `domain-strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
 
 ### Subnet randomization on constant IP addresses
 
