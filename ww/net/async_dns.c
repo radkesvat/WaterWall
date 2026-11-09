@@ -237,6 +237,27 @@ static uint32_t asyncdnsTimeoutMs(dns_resolver_t *r)
     return (uint32_t) timeout_ms;
 }
 
+static void asyncdnsArmTimer(dns_resolver_t *r, uint32_t timeout_ms)
+{
+    if (r->timer == NULL)
+    {
+        r->timer = wtimerAdd(r->loop, asyncdnsTimerCallback, timeout_ms, 1);
+        if (r->timer != NULL)
+            weventSetUserData(r->timer, r);
+        return;
+    }
+
+    /* Repeated virtual readiness or lookup submissions must not debounce an
+     * earlier wake, including an expiration already waiting for dispatch.
+     * The custom callback detaches its timer slot before processing, so this
+     * comparison never mistakes the executing one-shot for future work. */
+    if (r->transport_process != NULL && r->timer->next_timeout <= r->loop->cur_hrtime + (uint64_t) timeout_ms * 1000)
+        return;
+
+    if (! wtimerReset(r->timer, timeout_ms))
+        r->timer = NULL;
+}
+
 static void asyncdnsRefreshTimer(dns_resolver_t *r)
 {
     if (r->shutting_down || r->channel == NULL)
@@ -254,12 +275,12 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
         return;
     }
 
-    uint32_t timeout_ms = asyncdnsTimeoutMs(r);
+    uint32_t timeout_ms = r->transport_pending ? 1 : asyncdnsTimeoutMs(r);
 #ifdef EVENT_IOCP
     // Progress is driven by polling, so the tick must be short enough to bound
     // response latency, and a zero c-ares timeout must not leave the resolver
     // with no timer at all.
-    if (timeout_ms == 0 || timeout_ms > (uint32_t) kAsyncDnsIocpPollIntervalMs)
+    if (r->transport_process == NULL && (timeout_ms == 0 || timeout_ms > (uint32_t) kAsyncDnsIocpPollIntervalMs))
     {
         timeout_ms = (uint32_t) kAsyncDnsIocpPollIntervalMs;
     }
@@ -270,21 +291,7 @@ static void asyncdnsRefreshTimer(dns_resolver_t *r)
     }
 #endif
 
-    if (r->timer == NULL)
-    {
-        r->timer = wtimerAdd(r->loop, asyncdnsTimerCallback, timeout_ms, 1);
-        if (r->timer != NULL)
-        {
-            weventSetUserData(r->timer, r);
-        }
-    }
-    else
-    {
-        if (! wtimerReset(r->timer, timeout_ms))
-        {
-            r->timer = NULL;
-        }
-    }
+    asyncdnsArmTimer(r, timeout_ms);
 }
 
 #ifdef EVENT_IOCP
@@ -471,12 +478,33 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
         return;
     }
 
+    if (r->transport_process != NULL)
+    {
+        /* The loop reclaims this expired one-shot after dispatch. New work
+         * needs its own armed timer, not the old expiration's deadline. */
+        r->timer             = NULL;
+        r->transport_pending = false;
+        r->transport_process(r->transport_userdata);
+    }
+    else
+    {
 #ifdef EVENT_IOCP
-    discard asyncdnsPollWatchedFds(r);
+        discard asyncdnsPollWatchedFds(r);
 #else
-    discard ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
+        discard ares_process_fds(r->channel, NULL, 0, ARES_PROCESS_FLAG_NONE);
 #endif
+    }
     asyncdnsRefreshTimer(r);
+}
+
+void asyncdnsWakeTransport(dns_resolver_t *r)
+{
+    if (r->shutting_down || r->channel == NULL)
+        return;
+    r->transport_pending = true;
+    /* Do not ask ares_timeout()/ares_queue_active_queries() here: this wake
+     * may originate in a socket-state callback under a c-ares operation. */
+    asyncdnsArmTimer(r, 1);
 }
 
 static bool asyncdnsAddrNodeUsable(const struct ares_addrinfo_node *node, size_t max_addrlen)
@@ -594,7 +622,9 @@ static void asyncdnsAddrInfoCallback(void *arg, int status, int timeouts, struct
     asyncdnsRequestDestroy(req);
 }
 
-int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns_options)
+static int asyncdnsInitInternal(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns_options,
+                                const struct ares_socket_functions_ex *functions, ares_sock_state_cb state_callback,
+                                void (*process)(void *), void                                       *userdata)
 {
     if (r == NULL || loop == NULL)
     {
@@ -609,19 +639,21 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns
     }
 
     memoryZero(r, sizeof(*r));
-    r->loop = loop;
+    r->loop               = loop;
+    r->transport_process  = process;
+    r->transport_userdata = userdata;
 
     struct ares_options options;
     memoryZero(&options, sizeof(options));
-    options.sock_state_cb      = asyncdnsSockStateCallback;
-    options.sock_state_cb_data = r;
+    options.sock_state_cb      = functions != NULL ? state_callback : asyncdnsSockStateCallback;
+    options.sock_state_cb_data = functions != NULL ? userdata : r;
     options.qcache_max_ttl     = dns_options->query_cache_max_ttl;
     options.timeout            = dns_options->timeout_ms;
     options.maxtimeout         = dns_options->max_timeout_ms;
     options.tries              = dns_options->tries;
 
-    int optmask = ARES_OPT_SOCK_STATE_CB | ARES_OPT_QUERY_CACHE | ARES_OPT_TIMEOUTMS | ARES_OPT_MAXTIMEOUTMS |
-                  ARES_OPT_TRIES;
+    int optmask =
+        ARES_OPT_SOCK_STATE_CB | ARES_OPT_QUERY_CACHE | ARES_OPT_TIMEOUTMS | ARES_OPT_MAXTIMEOUTMS | ARES_OPT_TRIES;
 
     if (dns_options->flags_set)
     {
@@ -702,6 +734,17 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns
         return rc;
     }
 
+    if (functions != NULL)
+    {
+        rc = ares_set_socket_functions_ex(r->channel, functions, userdata);
+        if (rc != ARES_SUCCESS)
+        {
+            ares_destroy(r->channel);
+            memoryZero(r, sizeof(*r));
+            return rc;
+        }
+    }
+
     if (dns_options->servers_csv != NULL)
     {
         rc = ares_set_servers_ports_csv(r->channel, dns_options->servers_csv);
@@ -725,6 +768,19 @@ int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *dns
     }
 
     return ARES_SUCCESS;
+}
+
+int asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *options)
+{
+    return asyncdnsInitInternal(r, loop, options, NULL, NULL, NULL, NULL);
+}
+
+int asyncdnsInitCustom(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *options,
+                       const struct ares_socket_functions_ex *functions, ares_sock_state_cb state_callback,
+                       void (*process)(void *), void                                       *userdata)
+{
+    assert(functions != NULL && state_callback != NULL && process != NULL);
+    return asyncdnsInitInternal(r, loop, options, functions, state_callback, process, userdata);
 }
 
 void asyncdnsCleanup(dns_resolver_t *r)
@@ -793,6 +849,8 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
     memoryZero(&hints, sizeof(hints));
     hints.ai_family   = AF_UNSPEC;
     hints.ai_socktype = socktype;
+    if (r->transport_process != NULL)
+        hints.ai_flags |= ARES_AI_NOSORT;
 
     ares_getaddrinfo(r->channel, req->host, req->service, &hints, asyncdnsAddrInfoCallback, req);
     asyncdnsRefreshTimer(r);

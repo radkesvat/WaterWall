@@ -360,6 +360,31 @@ static void caseHealthyGeoipStillRoutes(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseInitMetadataErrorBeforeProtocol(void)
+{
+    twfSetCase("metadata evaluation error closes before a later protocol rule");
+    router_fixture_t fixture;
+    fixtureSetup(&fixture);
+    useGeoipRule(&fixture);
+    fixture.rules[1].protocol.present      = true;
+    fixture.rules[1].protocol.wanted_flags = kAddressContextProtocolTls;
+    router_tstate_t *ts                    = tunnelGetState(fixture.router);
+    ts->needed_protocols                   = kAddressContextProtocolTls;
+
+    line_t        *line               = makeIpv4Line(&fixture);
+    const uint32_t initial_references = twfLineRefCount(line);
+    g_injection                       = kInjectLookupError;
+    routerTunnelUpStreamInit(fixture.router, line);
+    g_injection = kInjectNothing;
+    twfRequireEqualText(fixture.trace.seq, "f", "Init metadata failure did not finish only the previous side");
+    twfRequireEqualU32(fixture.trace.next_init, 0, "Init metadata failure opened an outgoing branch");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "Init metadata failure finished an unopened branch");
+    twfRequireLineStateZeroed(line, fixture.router, "Init metadata failure left Router state alive");
+    twfRequireEqualU32(twfLineRefCount(line), initial_references, "Init metadata failure leaked a line reference");
+    twfLineDestroy(line);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseClassificationStopsAtEvaluationError(kInjectLookupError, false, "MMDB_lookup_sockaddr generic error");
@@ -369,6 +394,7 @@ int main(void)
 
     caseUndecidedLineIsClosedSafely();
     caseHealthyGeoipStillRoutes();
+    caseInitMetadataErrorBeforeProtocol();
 
     printf("router_evaluation_failure_test: all cases passed\n");
     return 0;

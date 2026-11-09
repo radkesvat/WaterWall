@@ -34,11 +34,9 @@ static void setAddress(address_context_t *context, unsigned form, bool configure
                 "resolved IP setup failed");
         context->domain_resolved = true;
     }
-    context->port            = configured ? 443 : 5353;
-    context->domain_strategy = configured ? kDsPreferIpV6 : kDsOnlyIpV4;
-    context->optional_flags.detected_protocols =
-        configured ? kAddressContextProtocolTls
-                   : kAddressContextProtocolHttp1 | kAddressContextRouteFlagPinnedDestination;
+    context->port                              = configured ? 443 : 5353;
+    context->domain_strategy                   = configured ? kDsPreferIpV6 : kDsOnlyIpV4;
+    context->optional_flags.detected_protocols = configured ? kAddressContextProtocolTls : kAddressContextProtocolHttp1;
     addresscontextSetOnlyProtocol(context, configured ? IP_PROTO_TCP : IP_PROTO_UDP);
 }
 
@@ -187,6 +185,39 @@ static void testMissingPort(void)
     }
 }
 
+static void testPinnedEndpoint(void)
+{
+    for (unsigned form = 0; form < 5; ++form)
+        for (unsigned udp = 0; udp < 2; ++udp)
+        {
+            address_context_t target = {0}, destination = {0}, expected = {0};
+            setAddress(&target, form, true);
+            setAddress(&destination, form, false);
+            addresscontextSetOnlyProtocol(&destination, udp ? IP_PROTO_UDP : IP_PROTO_TCP);
+            addresscontextSetResolverDns(&destination, true);
+            addresscontextCopy(&expected, &destination);
+            addresscontextSetDestinationPinned(&destination, true);
+            proxy_client_destination_t selection = {
+                .target = &target, .protocol = udp ? kProxyClientProtocolTcp : kProxyClientProtocolUdp};
+            require(proxyClientApplyDestination(&destination, &selection, "TestClient"),
+                    "pinned logical DNS endpoint refused");
+            requireAddress(&destination, &expected);
+            require(destination.port == 5353 && addresscontextIsResolverDns(&destination),
+                    "configured proxy endpoint replaced the DNS peer");
+            requireProtocol(&destination, udp != 0);
+            require(! addresscontextDestinationIsPinned(&destination), "logical proxy did not consume the pin");
+            // The next independent selector must retain its fixed endpoint.
+            require(proxyClientApplyDestination(&destination, &selection, "OuterClient"),
+                    "outer carrier target selection failed");
+            requireAddress(&destination, &target);
+            require(destination.port == 443 && ! addresscontextIsResolverDns(&destination),
+                    "logical DNS pin leaked to the independent outer endpoint");
+            addresscontextReset(&expected);
+            addresscontextReset(&destination);
+            addresscontextReset(&target);
+        }
+}
+
 int main(void)
 {
     initWLibc();
@@ -197,6 +228,7 @@ int main(void)
     TEST_RUN_CASE(testProtocolFlags);
     TEST_RUN_CASE(testMissingAddress);
     TEST_RUN_CASE(testMissingPort);
+    TEST_RUN_CASE(testPinnedEndpoint);
     networkloggerDestroy();
     return 0;
 }

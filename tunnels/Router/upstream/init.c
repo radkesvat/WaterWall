@@ -2,14 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool routerCanCommitRouteDuringInit(const router_tstate_t *ts)
-{
-    /* Protocol, attribute, and configured domain sniffing rules need the
-     * first payload window. Every remaining matcher is fully determined by
-     * line metadata already present at Init. */
-    return ts->needed_protocols == 0 && ts->sniffing_modes == 0 && ! ts->needs_http_upgrade_attribute;
-}
-
 void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     router_tstate_t *ts = tunnelGetState(t);
@@ -20,11 +12,6 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
     ls->datagram_input            = dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp && ! dest->proto_packet;
     addresscontextClearDetectedProtocols(lineGetDestinationAddressContext(l));
 
-    if (! routerCanCommitRouteDuringInit(ts))
-    {
-        return;
-    }
-
     router_match_ctx_t mctx = {
         .router_state = ts,
         .line         = l,
@@ -32,7 +19,11 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
         .payload      = NULL,
         .payload_len  = 0,
     };
-    const router_match_t match = routerClassify(ts, &mctx);
+    const router_match_t match = routerClassifyDuringInit(ts, &mctx);
+    if (match.result == kRouterClassifyNeedMore)
+    {
+        return;
+    }
     if (match.result == kRouterClassifyError)
     {
         LOGE("Router: static rule evaluation failed during Init, closing this line");
@@ -40,9 +31,6 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
-
-    /* Metadata-only rules cannot request payload. */
-    assert(match.result != kRouterClassifyNeedMore);
 
     routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, NULL);
 }

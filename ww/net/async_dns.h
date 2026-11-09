@@ -84,6 +84,12 @@ struct dns_resolver_s
     wtimer_t       *timer;
     dns_watch_t    *watches;
     int             shutting_down;
+    /* Custom transports own readiness; their virtual handles must never reach
+     * the native watcher or IOCP descriptor probe. Processing is timer-deferred
+     * so socket-state and synchronous tunnel callbacks cannot reenter c-ares. */
+    void (*transport_process)(void *userdata);
+    void *transport_userdata;
+    bool  transport_pending;
 #ifdef EVENT_IOCP
     // Reused across polls so the 50 Hz readiness probe does not allocate per
     // tick. Grows to the watch count and is never shrunk.
@@ -94,6 +100,12 @@ struct dns_resolver_s
 
 void asyncdnsOptionsSetDefaults(asyncdns_options_t *options);
 int  asyncdnsInit(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *options);
+int  asyncdnsInitCustom(dns_resolver_t *r, wloop_t *loop, const asyncdns_options_t *options,
+                        const struct ares_socket_functions_ex *functions, ares_sock_state_cb state_callback,
+                        void (*process)(void *), void                                       *userdata);
+/* Owner-worker only. Queue readiness without calling c-ares, including when
+ * invoked synchronously from one of its socket functions. */
+void asyncdnsWakeTransport(dns_resolver_t *r);
 void asyncdnsCleanup(dns_resolver_t *r);
 
 static inline bool asyncdnsStatusIsShutdown(int status)

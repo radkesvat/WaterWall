@@ -43,20 +43,26 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
     t->fnPauseD   = &domainresolverTunnelDownStreamPause;
     t->fnResumeD  = &domainresolverTunnelDownStreamResume;
 
+    t->onChain         = &domainresolverTunnelOnChain;
+    t->onIndex         = &domainresolverTunnelOnIndex;
+    t->onWorkerQuiesce = &domainresolverTunnelOnWorkerQuiesce;
+    t->onWorkerStop    = &domainresolverTunnelOnWorkerStop;
+    t->onDestroy       = &domainresolverTunnelDestroy;
+
     domainresolver_tstate_t *ts       = tunnelGetState(t);
     const cJSON             *settings = node->node_settings_json;
 
     if (settings != NULL && ! cJSON_IsObject(settings))
     {
         LOGF("JSON Error: DomainResolver->settings must be an object when provided");
-        tunnelDestroy(t);
+        domainresolverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
     getBoolFromJsonObjectOrDefault(&ts->verbose, settings, "verbose", false);
-    if (! domainresolverParseStrategy(ts, settings))
+    if (! domainresolverParseStrategy(ts, settings) || ! domainresolverConfigureTransport(t, settings))
     {
-        tunnelDestroy(t);
+        domainresolverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 

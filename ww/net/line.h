@@ -690,6 +690,12 @@ int lineResolveDomainAsync(line_t *const line, const char *domain, LineDnsResolv
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
                                   LineDnsResolveFn cb, tunnel_t *t, void *userdata);
 
+/* Same completion/lifetime guards as lineResolveDomainServiceAsync(), using
+ * the supplied owner-worker resolver. NULL preserves the native worker path. */
+int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
+                                     const char *service, int socktype, LineDnsResolveFn cb, tunnel_t *t,
+                                     void *userdata);
+
 /**
  * @brief Acquire, hold, and release a temporary line reference around a task.
  *

@@ -202,6 +202,58 @@ static void testBuffers(bool tune_enabled, bool client, bool server, unsigned se
     tunnelDestroy(t);
 }
 
+static void testPinnedDnsDestination(void)
+{
+    testCaseSet("TcpConnector preserves a pinned DNS peer and rejects UDP");
+    for (unsigned weighted = 0; weighted < 2; ++weighted)
+    {
+        tunnel_t *connector = tunnelCreate(NULL, sizeof(tcpconnector_tstate_t), 0);
+        require(connector != NULL, "failed to create pinned connector fixture");
+        tcpconnector_tstate_t *state     = tunnelGetState(connector);
+        state->outbound_ip_range         = 256;
+        state->send_buffer_size          = 65536;
+        state->domain_strategy           = kDsPreferIpV4;
+        state->dest_addr_selected.status = kDvsConstant;
+        state->dest_port_selected.status = kDvsConstant;
+        require(addresscontextSetIpAddress(&state->constant_dest_addr, "192.0.2.1"), "configured target setup failed");
+        addresscontextSetPort(&state->constant_dest_addr, 443);
+        tcpconnector_destination_t destination = {
+            .weight = 1, .outbound_ip_range = 128, .send_buffer_size = 131072, .domain_strategy = kDsPreferIpV6};
+        if (weighted)
+        {
+            state->destinations              = &destination;
+            state->destinations_count        = 1;
+            state->destinations_weight_total = 1;
+        }
+        line_t             line = {0};
+        address_context_t *peer = lineGetDestinationAddressContext(&line);
+        require(addresscontextSetIpAddress(peer, "203.0.113.53"), "DNS target setup failed");
+        const ip_addr_t expected = peer->ip_address;
+        addresscontextSetPort(peer, 5353);
+        addresscontextSetOnlyProtocol(peer, IP_PROTO_TCP);
+        addresscontextSetResolverDns(peer, true);
+        addresscontextSetDestinationPinned(peer, true);
+        tcpconnector_prepared_connection_t prepared = {0};
+        require(tcpconnectorDomainResolverPrepare(NULL, connector, &line, &prepared), "pinned TCP target refused");
+        require(ip_addr_cmp(&peer->ip_address, &expected) && peer->port == 5353 && peer->proto_tcp && ! peer->proto_udp,
+                "static connector settings replaced the pinned DNS endpoint");
+        require(! addresscontextDestinationIsPinned(peer) && addresscontextIsResolverDns(peer),
+                "TCP pin was not consumed or DNS origin was erased");
+        require(prepared.outbound_ip_range == 0, "CIDR randomization still applies to the pinned DNS endpoint");
+        require(prepared.socket_options.send_buffer_size == (weighted ? 131072 : 65536),
+                "pinned DNS target lost the selected socket options");
+        addresscontextSetOnlyProtocol(peer, IP_PROTO_UDP);
+        addresscontextSetDestinationPinned(peer, true);
+        require(! tcpconnectorDomainResolverPrepare(NULL, connector, &line, &prepared),
+                "TCP connector silently converted pinned UDP DNS to TCP");
+        require(peer->proto_udp && ! peer->proto_tcp && peer->port == 5353 && ip_addr_cmp(&peer->ip_address, &expected),
+                "refused UDP peer was rewritten");
+        addresscontextReset(peer);
+        addresscontextReset(&state->constant_dest_addr);
+        tunnelDestroy(connector);
+    }
+}
+
 int main(void)
 {
     testCaseSet("tcpconnector_mux_buffers_test");
@@ -225,6 +277,7 @@ int main(void)
     GSTATE.workers_count    = 1;
     GSTATE.domain_strategy  = kDsPreferIpV4;
     testAddressSettings();
+    testPinnedDnsDestination();
 #ifdef TCP_CONNECTOR_TEST_RANDOM_WRAP
     testFreeBindBoundaries();
 #endif

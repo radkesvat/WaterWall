@@ -21,11 +21,11 @@
  *     "next" (the default route).
  *
  * Rule targets are folded into the same chain during onChain so they get per-line
- * state slots and so their downstream traffic returns through us. A rule set
- * with no payload-dependent matcher commits during Init, so handshake clients
- * can establish their downstream transport before producing payload. Rules that
- * need protocol/domain/attribute sniffing remain deferred to the first payload,
- * whose buffered bytes are replayed to the chosen branch with no loss.
+ * state slots and so their downstream traffic returns through us. Without root
+ * domain sniffing, Init evaluates the ordered metadata-only rule prefix and can
+ * commit before later payload-dependent rules. An earlier protocol/attribute
+ * rule or configured domain sniffing defers classification to payload, whose
+ * buffered bytes are replayed to the chosen branch with no loss.
  *
  * Each supported rule field has its own matcher/parser module under modules/.
  * Each module owns its config struct (stored inside router_rule_t) and exposes a
@@ -109,6 +109,7 @@ WW_EXPORT api_result_t routerTunnelApi(tunnel_t *instance, sbuf_t *message);
 bool           routerRuleTableLoad(router_tstate_t *ts, node_t *node, const cJSON *settings);
 void           routerRuleTableDestroy(router_tstate_t *ts);
 router_match_t routerClassify(router_tstate_t *ts, router_match_ctx_t *mctx);
+router_match_t routerClassifyDuringInit(router_tstate_t *ts, router_match_ctx_t *mctx);
 
 // --- geoip / geosite helpers that need router_tstate_t ---
 /**

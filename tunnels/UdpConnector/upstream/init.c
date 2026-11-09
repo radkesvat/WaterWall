@@ -118,16 +118,15 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
     ls->route_destination_pinned = addresscontextDestinationIsPinned(dest_ctx);
     if (ls->route_destination_pinned)
     {
-        /* A protocol tunnel (currently SOCKS5 UDP ASSOCIATE) negotiated this
-         * endpoint. Preserve it through the ordinary connector path instead
-         * of applying a static proxy destination a second time. */
-        addresscontextSetDestinationPinned(dest_ctx, false);
-        addresscontextSetOnlyProtocol(dest_ctx, IP_PROTO_UDP);
-        if (! addresscontextHasPort(dest_ctx))
+        /* A protocol tunnel or resolver made this endpoint authoritative.
+         * Preserve it, including its exact transport, through this adapter. */
+        if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
+            addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportUdp)
         {
-            LOGE("UdpConnector: negotiated destination has no port");
+            LOGE("UdpConnector: pinned destination requires an address, port and exact UDP transport");
             return false;
         }
+        addresscontextSetDestinationPinned(dest_ctx, false);
         addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
         return true;
     }

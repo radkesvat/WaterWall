@@ -326,6 +326,22 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         socket_options     = getDestinationSocketOptions(selected_destination);
     }
 
+    if (addresscontextDestinationIsPinned(dest_ctx))
+    {
+        if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
+            addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportTcp)
+        {
+            LOGE("TcpConnector: pinned destination requires an address, port and exact TCP transport");
+            return false;
+        }
+        addresscontextSetDestinationPinned(dest_ctx, false);
+        // Socket/interface options remain selected, but neither a configured
+        // endpoint nor CIDR host randomization may rewrite this logical peer.
+        prepared->outbound_ip_range = 0;
+        prepared->socket_options    = socket_options;
+        return true;
+    }
+
     address_context_t original_dest_ctx = {0};
     addresscontextCopy(&original_dest_ctx, dest_ctx);
 
@@ -366,8 +382,8 @@ void tcpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
         abortProgramNow(1);
     }
 
-    ls->tunnel       = t;
-    ls->line         = l;
+    ls->tunnel = t;
+    ls->line   = l;
 
     if (! addresscontextCanConvertToSockAddr(dest_ctx) || ! addresscontextHasPort(dest_ctx))
     {

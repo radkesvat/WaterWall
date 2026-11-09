@@ -9,6 +9,7 @@
 #include "modules/network/network.h"
 #include "modules/password/password.h"
 #include "modules/protocol/protocol.h"
+#include "modules/resolver_dns/resolver_dns.h"
 #include "modules/source_ips/source_ips.h"
 #include "modules/source_port/source_port.h"
 #include "modules/username/username.h"
@@ -38,6 +39,7 @@ static const router_matcher_t kRouterMatchers[] = {
     {"source-port", routerSourcePortParse, routerSourcePortMatch, routerSourcePortDestroy},
     {"network", routerNetworkParse, routerNetworkMatch, routerNetworkDestroy},
     {"protocol", routerProtocolParse, routerProtocolMatch, routerProtocolDestroy},
+    {"resolver-dns", routerResolverDnsParse, routerResolverDnsMatch, routerResolverDnsDestroy},
     {"attributes", routerAttributesParse, routerAttributesMatch, routerAttributesDestroy},
     {"destination-ip", routerDestinationIpParse, routerDestinationIpMatch, routerDestinationIpDestroy},
     {"destination-domain", routerDestinationDomainParse, routerDestinationDomainMatch, routerDestinationDomainDestroy},

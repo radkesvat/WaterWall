@@ -77,6 +77,27 @@ add_waterwall_isolated_test(waterwall.dns_slow_answer
 set_tests_properties(waterwall.dns_slow_answer PROPERTIES TIMEOUT 60)
 add_waterwall_test_labels(waterwall.dns_slow_answer "integration" "tunnels" "socks" "dns")
 add_waterwall_case_resource_lock(waterwall.dns_slow_answer dns_slow_answer)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET DomainResolver AND TARGET TcpUdpConnector AND TARGET Socks5Server AND TARGET Router)
+  add_waterwall_isolated_test(waterwall.domainresolver_configuration
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_configuration_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+  set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.domainresolver_configuration "integration" "tunnels" "dns")
+  add_waterwall_case_resource_lock(waterwall.domainresolver_configuration domainresolver_transport)
+  foreach(mode IN ITEMS omitted native direct direct6 chain chain-sniff chain-default shared shared-explicit shared-vless vless isolation rejected pinned vless-pinned)
+    if(mode MATCHES "vless" AND NOT (TARGET VlessClient AND TARGET VlessServer AND TARGET TlsClient AND TARGET TlsServer))
+      continue()
+    endif()
+    set(resolver_case waterwall.domainresolver_transport_${mode})
+    add_waterwall_isolated_test(${resolver_case}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_transport_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${mode}")
+    set_tests_properties(${resolver_case} PROPERTIES TIMEOUT 60)
+    add_waterwall_test_labels(${resolver_case} "integration" "tunnels" "dns")
+    add_waterwall_case_resource_lock(${resolver_case} domainresolver_transport)
+  endforeach()
+endif()
 # The protocol peer is socket-connected, so ordinary server/TLS nodes cannot
 # mask TrojanClient capability. strace checks actual positive splice transfers.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)

@@ -49,7 +49,7 @@ enum connection_context_type
  * out of the enum because ISO C requires enumerator values to fit in int. */
 #define kAddressContextRouteFlagPinnedDestination (UINT32_C(1) << 31U)
 
-/* Optional metadata has two independent owners. Router/sniffers may clear
+/* Optional metadata has independent owners. Router/sniffers may clear
  * only observed application protocols; protocol tunnels may carry one-shot
  * route-control data through those middle nodes. */
 #define kAddressContextDetectedProtocolMask                                                                            \
@@ -87,6 +87,9 @@ typedef struct address_context_s
     uint8_t proto_packet : 1;    // Raw packet protocol enabled
     uint8_t domain_constant : 1; // True if domain points to constant memory, will not free it
     uint8_t domain_resolved : 1; // True if domain has been resolved and we have its address
+    /* Logical resolver origin, independent of transport and sniff observations.
+     * Use the existing flags byte's spare bit to retain the context layout. */
+    uint8_t resolver_dns : 1;
 
 } address_context_t;
 
@@ -115,14 +118,15 @@ static inline void addresscontextReset(address_context_t *ctx)
 static inline void addresscontextClearOptionalFlags(address_context_t *ctx)
 {
     ctx->optional_flags = (address_context_optional_flags_t) {0};
+    ctx->resolver_dns   = false;
 }
 
 /**
  * @brief Clear only Router/sniffer-owned application-protocol observations.
  *
- * Route-control metadata intentionally survives this narrow reset so a Router
- * cannot erase an already-negotiated endpoint before the outbound adapter sees
- * it. Use addresscontextClearOptionalFlags() when replacing the whole context.
+ * Route-control and resolver metadata intentionally survive this narrow reset.
+ * Router must preserve negotiated endpoints and logical resolver origin. Use
+ * addresscontextClearOptionalFlags() when replacing the whole context.
  */
 static inline void addresscontextClearDetectedProtocols(address_context_t *ctx)
 {
@@ -130,9 +134,32 @@ static inline void addresscontextClearDetectedProtocols(address_context_t *ctx)
 }
 
 /**
- * @brief Mark an internally negotiated destination as authoritative for the
- * next outbound adapter, bypassing that adapter's configured destination
- * selector exactly once.
+ * @brief Identify a logical DNS flow created by an explicit resolver transport.
+ *
+ * This is origin metadata, not a DNS payload classification. Set it after
+ * constructing the DNS endpoint. Full context copies preserve it; context reset,
+ * endpoint replacement, and addresscontextClearOptionalFlags() clear it. Sniffed
+ * protocol resets and transport selection leave it intact. Copy it only when a
+ * companion represents the same logical DNS flow, never onto a separate outer
+ * proxy/VPN carrier or the application line whose destination is being resolved.
+ */
+static inline void addresscontextSetResolverDns(address_context_t *ctx, bool resolver_dns)
+{
+    ctx->resolver_dns = resolver_dns;
+}
+
+static inline bool addresscontextIsResolverDns(const address_context_t *ctx)
+{
+    return ctx->resolver_dns;
+}
+
+/**
+ * @brief Make an internal endpoint and transport authoritative for the first
+ * logical proxy destination selector or outbound adapter, bypassing its
+ * configured destination selection exactly once.
+ *
+ * This covers negotiated relay endpoints and resolver-generated DNS peers.
+ * The consumer clears the pin before initializing any independent outer carrier.
  */
 static inline void addresscontextSetDestinationPinned(address_context_t *ctx, bool pinned)
 {
@@ -634,6 +661,7 @@ static inline void addresscontextCopy(address_context_t *dest, const address_con
     dest->domain_resolved = source->domain_resolved;
     dest->port            = source->port;
     dest->optional_flags  = source->optional_flags;
+    dest->resolver_dns    = source->resolver_dns;
 }
 
 /**

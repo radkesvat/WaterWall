@@ -592,8 +592,9 @@ line_task_submit_result_e lineScheduleDelayedTaskWithBuf(line_t *const line, Lin
     return mapped;
 }
 
-int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
-                                  LineDnsResolveFn cb, tunnel_t *t, void *userdata)
+int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
+                                     const char *service, int socktype, LineDnsResolveFn cb, tunnel_t *t,
+                                     void *userdata)
 {
     if (line == NULL || domain == NULL || domain[0] == '\0' || cb == NULL)
     {
@@ -612,6 +613,8 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
         return ARES_ENOTINITIALIZED;
     }
 
+    assert(resolver == NULL || resolver->loop == getWorkerLoop(lineGetWID(line)));
+
     lineRef(line);
 
     line_dns_resolve_msg_t *msg = memoryAllocate(sizeof(*msg));
@@ -623,7 +626,10 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
         .userdata = userdata,
     };
 
-    int rc = workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
+    int rc =
+        resolver != NULL
+            ? asyncdnsResolve(resolver, domain, service, socktype, lineDnsResolveResult, msg)
+            : workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
     if (rc != ARES_SUCCESS)
     {
         lineUnref(line);
@@ -632,6 +638,12 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
     }
 
     return ARES_SUCCESS;
+}
+
+int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
+                                  LineDnsResolveFn cb, tunnel_t *t, void *userdata)
+{
+    return lineResolveDomainOnResolverAsync(line, NULL, domain, service, socktype, cb, t, userdata);
 }
 
 int lineResolveDomainAsync(line_t *const line, const char *domain, LineDnsResolveFn cb, tunnel_t *t, void *userdata)

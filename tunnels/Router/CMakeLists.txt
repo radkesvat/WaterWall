@@ -15,6 +15,7 @@ add_library(Router STATIC
     modules/network/network.c
     modules/password/password.c
     modules/protocol/protocol.c
+    modules/resolver_dns/resolver_dns.c
     modules/attributes/attributes.c
     modules/destination_ip/destination_ip.c
     modules/destination_domain/destination_domain.c

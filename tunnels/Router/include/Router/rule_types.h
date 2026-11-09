@@ -86,6 +86,12 @@ typedef struct router_match_protocol_s
     uint32_t             wanted_flags;
 } router_match_protocol_t;
 
+typedef struct router_match_resolver_dns_s
+{
+    bool present;
+    bool wanted;
+} router_match_resolver_dns_t;
+
 typedef struct router_match_attributes_s
 {
     bool     present;
@@ -138,6 +144,7 @@ typedef struct router_rule_s
     router_match_source_port_t        source_port;
     router_match_network_t            network;
     router_match_protocol_t           protocol;
+    router_match_resolver_dns_t       resolver_dns;
     router_match_attributes_t         attributes;
     router_match_destination_ip_t     destination_ip;
     router_match_destination_domain_t destination_domain;

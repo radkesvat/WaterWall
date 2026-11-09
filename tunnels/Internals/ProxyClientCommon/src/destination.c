@@ -32,6 +32,21 @@ bool proxyClientApplyDestination(address_context_t *destination, const proxy_cli
     assert(selection->protocol == kProxyClientProtocolTcp || selection->protocol == kProxyClientProtocolUdp ||
            selection->protocol == kProxyClientProtocolDestContext);
 
+    if (addresscontextDestinationIsPinned(destination))
+    {
+        const address_context_transport_t transport = addresscontextClassifyTransport(destination);
+        if (! addresscontextIsValid(destination) || ! addresscontextHasPort(destination) ||
+            (transport != kAddressContextTransportTcp && transport != kAddressContextTransportUdp))
+        {
+            LOGE("%s: pinned destination requires an address, port and exact TCP or UDP transport", client_name);
+            return false;
+        }
+        // This proxy encodes the logical endpoint. Its independent outer
+        // carrier must still select the configured VPN/proxy server normally.
+        addresscontextSetDestinationPinned(destination, false);
+        return true;
+    }
+
     address_context_t current = {0};
     if (selection->address_from_context || selection->port_from_context ||
         selection->protocol == kProxyClientProtocolDestContext)
