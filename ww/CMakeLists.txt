@@ -1859,7 +1859,9 @@ if(NOT MSVC)
 endif()
 
 if(APPLE)
-    target_compile_options(ww PRIVATE -Wno-shorten-64-to-32 -Wno-unused-command-line-argument)
+    # AppleClang consumers need the same narrowing-warning suppression as Clang consumers.
+    target_compile_options(ww PUBLIC -Wno-shorten-64-to-32)
+    target_compile_options(ww PRIVATE -Wno-unused-command-line-argument)
     # Disable precompiled headers on Apple platforms due to clang issues with C/C++ mixed compilation
     set_target_properties(ww PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 endif()
