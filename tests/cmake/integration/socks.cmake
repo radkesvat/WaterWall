@@ -89,7 +89,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
   add_waterwall_isolated_test(waterwall.domainresolver_configuration
     "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/domainresolver_configuration_test.py"
     "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" ${dns_behaviour_config_consumers})
-  set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 180)
+  # The full consumer matrix launches 320 processes sequentially. Allow cumulative
+  # packed startup cost under CI load; each case keeps its 8-second deadlines.
+  set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 600)
   add_waterwall_test_labels(waterwall.domainresolver_configuration "integration" "tunnels" "dns")
   add_waterwall_case_resource_lock(waterwall.domainresolver_configuration domainresolver_transport)
   foreach(mode IN ITEMS omitted native direct direct6 chain chain-sniff chain-default shared shared-explicit shared-vless vless isolation rejected pinned vless-pinned)
