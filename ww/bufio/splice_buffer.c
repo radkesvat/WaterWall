@@ -239,10 +239,10 @@ static size_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, size_t bytes)
     size_t                         moved  = 0;
     while (moved < bytes)
     {
-        const size_t resident = sbufGetResidentPrefixLength(source);
-        ssize_t      result;
-        if (resident != 0)
-            result = write(target.pipefd[1], sbufGetRawPtr(source), min(resident, bytes - moved));
+        const sbuf_read_view_t view = sbufGetResidentView(source);
+        ssize_t                result;
+        if (view.length != 0)
+            result = write(target.pipefd[1], view.data, min(view.length, bytes - moved));
         else
         {
             const splice_buffer_metadata_t origin = sbufSpliceMetadata(source);
@@ -251,7 +251,7 @@ static size_t spliceAppendAvailable(sbuf_t *source, sbuf_t *dest, size_t bytes)
         if (result > 0)
         {
             const size_t count = (size_t) result;
-            if (resident != 0)
+            if (view.length != 0)
                 sbufShiftRight(source, count);
             else
             {
@@ -314,8 +314,9 @@ sbuf_t *sbufMoveRangeTo(buffer_pool_t *pool, sbuf_t *source, sbuf_t *dest, size_
 void sbufReadRangeToMemory(sbuf_t *source, void *destination, size_t bytes)
 {
     assert(bytes <= sbufGetLength(source));
-    const size_t prefix = min(bytes, sbufGetResidentPrefixLength(source));
-    sbufByteCopy(destination, sbufGetRawPtr(source), prefix);
+    const sbuf_read_view_t view   = sbufGetResidentView(source);
+    const size_t           prefix = min(bytes, view.length);
+    sbufByteCopy(destination, view.data, prefix);
     sbufShiftRight(source, prefix);
     if (bytes != prefix)
     {

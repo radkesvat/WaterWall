@@ -130,6 +130,70 @@ static void testBufferStreamSettleRetained(void)
     poolFixtureDestroy(&fixture);
 }
 
+static void testBufferStreamInspectionBoundaries(void)
+{
+    static const struct
+    {
+        const char *bytes;
+        bool        has_crlf;
+        size_t      crlf_at;
+        bool        has_double_crlf;
+        size_t      double_crlf_end;
+    } cases[] = {
+        {"", false, 0, false, 0},
+        {"\r", false, 0, false, 0},
+        {"line\r\nrest", true, 4, false, 0},
+        {"a\r\r\n\r\nz", true, 2, true, 6},
+        {"x\r\nx\r\n", true, 1, false, 0},
+        {"a\r\n\r\nz", true, 1, true, 5},
+        {"\r\n\r\n", true, 0, true, 4},
+        {"\r\n\n\r\n", true, 0, false, 0},
+    };
+    pool_fixture_t fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
+    for (size_t test = 0; test < ARRAY_SIZE(cases); ++test)
+    {
+        buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
+        const size_t    length = strlen(cases[test].bytes);
+        /* Every byte occupies a separate, consumed allocation. Interleaved
+         * empty entries ensure searches keep delimiter state across both. */
+        for (size_t i = 0; i <= length; ++i)
+        {
+            bufferstreamPush(&stream, makePooledBuffer(fixture.pool, false, 0, kTestSmallBufferSize, 0));
+            if (i != length)
+                bufferstreamPush(
+                    &stream,
+                    makePooledBuffer(fixture.pool, false, 1, kTestSmallBufferSize - 1, (uint8_t) cases[test].bytes[i]));
+        }
+        const size_t charge  = bufferstreamGetCharge(&stream);
+        const size_t entries = bufferstreamGetEntryCount(&stream);
+        for (size_t i = 0; i < length; ++i)
+            require(bufferstreamViewByteAt(&stream, i) == (uint8_t) cases[test].bytes[i],
+                    "stream byte view skipped a consumed or empty entry boundary");
+        if (length > 2)
+        {
+            uint8_t copied[32];
+            memorySet(copied, 0xa5, sizeof(copied));
+            bufferstreamCopyBytesAt(&stream, 1, copied + 1, length - 2);
+            require(copied[0] == 0xa5 && copied[length - 1] == 0xa5 &&
+                        memoryEqual(copied + 1, cases[test].bytes + 1, length - 2),
+                    "stream copy changed its bounds or cross-entry byte order");
+        }
+        size_t line_end   = SIZE_MAX;
+        size_t header_end = SIZE_MAX;
+        require(bufferstreamFindCRLF(&stream, &line_end) == cases[test].has_crlf &&
+                    line_end == (cases[test].has_crlf ? cases[test].crlf_at : SIZE_MAX),
+                "CRLF search changed its split-delimiter offset or no-match output");
+        require(bufferstreamFindDoubleCRLF(&stream, &header_end) == cases[test].has_double_crlf &&
+                    header_end == (cases[test].has_double_crlf ? cases[test].double_crlf_end : SIZE_MAX),
+                "double-CRLF search changed its split-delimiter offset or no-match output");
+        require(bufferstreamGetLength(&stream) == length && bufferstreamGetCharge(&stream) == charge &&
+                    bufferstreamGetEntryCount(&stream) == entries,
+                "stream inspection consumed input or changed retained storage");
+        bufferstreamDestroy(&stream);
+    }
+    poolFixtureDestroy(&fixture);
+}
+
 static void testBufferStreamSettleChargeAndPadding(void)
 {
     /* The small tier cannot provide the full large-tier padding. The compacted
@@ -171,21 +235,48 @@ static void testBufferStreamSettleChargeAndPadding(void)
 static void testBufferStreamRejectsSplice(void)
 {
     pool_fixture_t  fixture = poolFixtureCreate(kTestLargeBufferSize, kTestSmallBufferSize, 64, 64);
-    buffer_stream_t stream;
-    bufferstreamInitEmpty(&stream, fixture.pool, 0);
-    sbuf_t     *input = sbufCreateSplice(64);
-    const pid_t child = fork();
-    require(child >= 0, "failed to fork ordinary-stream representation test");
-    if (child == 0)
+    for (unsigned test = 0; test < 5; ++test)
     {
-        bufferstreamPush(&stream, input);
-        _Exit(kChildReturned);
+        buffer_stream_t stream = bufferstreamCreate(fixture.pool, 0);
+        sbuf_t         *input  = test == 0 ? sbufCreateSplice(64) : sbufCreate(64);
+        if (test != 0)
+        {
+            sbufSetLength(input, 4);
+            memoryCopy(input->data, "\r\n\r\n", 4);
+            bufferstreamPush(&stream, input);
+        }
+        const pid_t child = fork();
+        require(child >= 0, "failed to fork ordinary-stream representation test");
+        if (child == 0)
+        {
+            if (test == 0)
+                bufferstreamPush(&stream, input);
+            else
+            {
+                /* The test corrupts representation after valid admission to
+                 * exercise each inspection boundary's own ordinary check. */
+                input->flags |= kSbufFlagSplice;
+                uint8_t output[4];
+                size_t  at = SIZE_MAX;
+                if (test == 1)
+                    discard bufferstreamViewByteAt(&stream, 0);
+                else if (test == 2)
+                    bufferstreamCopyBytesAt(&stream, 0, output, sizeof(output));
+                else if (test == 3)
+                    discard bufferstreamFindCRLF(&stream, &at);
+                else
+                    discard bufferstreamFindDoubleCRLF(&stream, &at);
+            }
+            _Exit(kChildReturned);
+        }
+        int status = 0;
+        require(waitpid(child, &status, 0) == child, "failed to wait for representation test");
+        require(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+                "ordinary stream admission or inspection accepted a splice entry");
+        if (test == 0)
+            sbufDestroy(input);
+        bufferstreamDestroy(&stream);
     }
-    int status = 0;
-    require(waitpid(child, &status, 0) == child, "failed to wait for representation test");
-    require(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT, "ordinary stream accepted an empty splice wrapper");
-    sbufDestroy(input);
-    bufferstreamDestroy(&stream);
     poolFixtureDestroy(&fixture);
 }
 #endif

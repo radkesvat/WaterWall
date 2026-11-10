@@ -24,17 +24,6 @@ static inline void sbufSpliceSetMetadata(sbuf_t *buf, splice_buffer_metadata_t m
     sbufByteCopy(buf->head + buf->initial_headroom, &metadata, sizeof(metadata));
 }
 
-/** Proven addressable prefix of a valid buffer; never reads or materializes a pipe. */
-static inline size_t sbufGetResidentPrefixLength(const sbuf_t *buf)
-{
-    assert(buf != NULL);
-    if (! sbufIsSplice(buf))
-        return sbufGetLength(buf);
-    const size_t headroom = sbufGetHeadroom(buf);
-    assert(headroom <= buf->initial_headroom && (size_t) buf->initial_headroom - headroom <= sbufGetLength(buf));
-    return (size_t) buf->initial_headroom - headroom;
-}
-
 /** Account for body bytes already removed from the private pipe by successful I/O.
  * Performs no I/O; reduces length and logical capacity without moving the cursor
  * into metadata or consuming any resident prefix. */

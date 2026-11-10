@@ -394,6 +394,8 @@ sbuf_t *sbufDuplicate(const sbuf_t *b)
 
 sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
 {
+    assert(root != NULL && buf != NULL && root != buf);
+    assert(! sbufIsSplice(root) && ! sbufIsSplice(buf));
     size_t root_length   = sbufGetLength(root);
     size_t append_length = sbufGetLength(buf);
 
@@ -404,9 +406,9 @@ sbuf_t *sbufConcat(sbuf_t *restrict root, const sbuf_t *restrict const buf)
     }
 
     root = sbufReserveSpace(root, root_length + append_length);
-    sbufSetLength(root, root_length + append_length);
-
-    memoryCopyLarge(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
+    uint8_t *tail = sbufAppendSpaceInPlace(root, append_length);
+    if (append_length != 0)
+        memoryCopyLarge(tail, sbufGetRawPtr(buf), append_length);
 
     return root;
 }

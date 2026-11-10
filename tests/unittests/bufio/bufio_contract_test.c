@@ -43,6 +43,16 @@ static_assert(_Generic(&sbufGetRawPtr, const uint8_t *(*) (const sbuf_t *): true
               "raw access must expose const bytes");
 static_assert(_Generic(&sbufGetMutablePtr, uint8_t *(*) (sbuf_t *): true, default: false),
               "mutable access must require a mutable buffer");
+static_assert(_Generic(&sbufGetResidentView, sbuf_read_view_t (*)(const sbuf_t *): true, default: false),
+              "resident views must accept a const source");
+static_assert(_Generic(&sbufAppendSpaceInPlace, uint8_t *(*) (sbuf_t *, size_t): true, default: false),
+              "append-space counts must retain size_t width");
+static_assert(_Generic(&sbufTryAppendSpaceInPlace, uint8_t *(*) (sbuf_t *, size_t): true, default: false),
+              "checked append-space counts must retain size_t width");
+static_assert(_Generic(&sbufAppendBytesInPlace, void (*)(sbuf_t *, const void *, size_t): true, default: false),
+              "append-copy must accept const source bytes and size_t counts");
+static_assert(_Generic(&sbufTryAppendBytesInPlace, bool (*)(sbuf_t *, const void *, size_t): true, default: false),
+              "checked append-copy must accept const source bytes and size_t counts");
 static_assert(_Generic(&sbufDuplicate, sbuf_t *(*) (const sbuf_t *): true, default: false),
               "duplicate must accept a const source");
 static_assert(_Generic(&sbufDuplicateByPool, sbuf_t *(*) (buffer_pool_t *, const sbuf_t *): true, default: false),
@@ -369,6 +379,16 @@ static void testChecksumRequestReserveSpace(void)
                 "growth changed payload geometry, padding or alignment");
         require(sbufGetRecalculateChecksum(buffer) == (requested != 0), "growth lost checksum request state");
         requirePatternRange(buffer, 0, 39, 0x60, "growth changed existing packet bytes");
+        const uintptr_t replacement = (uintptr_t) buffer;
+        sbufAppendBytesInPlace(buffer, "tail", 4);
+        uint8_t *last = sbufAppendSpaceInPlace(buffer, 1);
+        *last         = '!';
+        require((uintptr_t) buffer == replacement && last == buffer->data + 43 && sbufGetLength(buffer) == 44 &&
+                    sbufGetHeadroom(buffer) == 64 && sbufGetInitialHeadroom(buffer) == 64 &&
+                    sbufGetRecalculateChecksum(buffer) == (requested != 0),
+                "append after explicit growth replaced storage or changed restored padding and flags");
+        requirePatternRange(buffer, 0, 39, 0x60, "append after growth changed the original payload");
+        require(memoryEqual(buffer->data + 39, "tail!", 5), "append after growth used the wrong tail");
         sbufDestroy(buffer);
     }
 }
@@ -564,6 +584,211 @@ static void testOrdinaryTailCapacity(void)
 
     buffer = sbufCreateWithPadding(0, 32);
     require(sbufGetTailroom(buffer) == 0, "padding-only allocation exposed padding as writable tail capacity");
+    sbufDestroy(buffer);
+}
+
+static void requireAppendRefusalUnchanged(sbuf_t *buffer, size_t bytes)
+{
+    const sbuf_t before = *buffer;
+    uint8_t      storage[512];
+    require(buffer->capacity <= sizeof(storage), "append refusal snapshot is too small");
+    memoryCopy(storage, buffer->head, buffer->capacity);
+    require(sbufTryAppendSpaceInPlace(buffer, bytes) == NULL, "checked space append accepted insufficient tailroom");
+    require(buffer->data == before.data && buffer->len == before.len && buffer->capacity == before.capacity &&
+                buffer->initial_headroom == before.initial_headroom && buffer->flags == before.flags &&
+                memoryEqual(buffer->head, storage, before.capacity),
+            "refused space append changed fields or physical storage");
+    /* The source is intentionally too short for the refused request: no copy
+     * may occur before the complete tailroom check, including SIZE_MAX. */
+    require(! sbufTryAppendBytesInPlace(buffer, "x", bytes), "checked copy append accepted insufficient tailroom");
+    require(buffer->data == before.data && buffer->len == before.len && buffer->capacity == before.capacity &&
+                buffer->initial_headroom == before.initial_headroom && buffer->flags == before.flags &&
+                memoryEqual(buffer->head, storage, before.capacity),
+            "refused copy append changed fields or physical storage");
+}
+
+static void requireZeroAppendUnchanged(sbuf_t *buffer)
+{
+    const sbuf_t before = *buffer;
+    uint8_t      storage[512];
+    require(buffer->capacity <= sizeof(storage), "zero append snapshot is too small");
+    memoryCopy(storage, buffer->head, buffer->capacity);
+    uint8_t *tail = buffer->data + buffer->len;
+    require(sbufAppendSpaceInPlace(buffer, 0) == tail, "zero space append returned the wrong tail");
+    require(sbufTryAppendSpaceInPlace(buffer, 0) == tail, "zero checked space append refused or misplaced the tail");
+    sbufAppendBytesInPlace(buffer, NULL, 0);
+    require(sbufTryAppendBytesInPlace(buffer, NULL, 0), "zero checked copy append refused a null source");
+    require(buffer->data == before.data && buffer->len == before.len && buffer->capacity == before.capacity &&
+                buffer->initial_headroom == before.initial_headroom && buffer->flags == before.flags &&
+                memoryEqual(buffer->head, storage, before.capacity),
+            "zero append changed fields or physical storage");
+}
+
+static void testAppendInPlaceContracts(void)
+{
+    for (unsigned requested = 0; requested < 2; ++requested)
+    {
+        sbuf_t *buffer = sbufCreateWithPadding(128, 64);
+        memorySet(buffer->head, 0xa5, buffer->capacity);
+        sbufSetLength(buffer, 8);
+        fillPattern(buffer, 0x40);
+        sbufShiftRight(buffer, 3);
+        uint8_t *prefix = sbufShiftLeft(buffer, 7);
+        memoryCopy(prefix, "prefix!", 7);
+        buffer->flags = (uint16_t) (1U << 9);
+        sbufSetRecalculateChecksum(buffer, requested != 0);
+        const uintptr_t allocation = (uintptr_t) buffer;
+        const sbuf_t    before     = *buffer;
+        require(((uintptr_t) buffer->data % kSbufAllocationAlignment) != 0,
+                "append cursor fixture unexpectedly stayed aligned");
+        requireZeroAppendUnchanged(buffer);
+        requireAppendRefusalUnchanged(buffer, sbufGetTailroom(buffer) + 1);
+        requireAppendRefusalUnchanged(buffer, SIZE_MAX);
+
+        const uint8_t source[] = {'a', 'b'};
+        sbufAppendBytesInPlace(buffer, source, sizeof(source));
+        require(sbufGetLength(buffer) == before.len + 2 && sbufGetTailroom(buffer) == before.capacity - 60 - 14,
+                "copy append changed the wrong amount of payload or tailroom");
+        uint8_t *space = sbufAppendSpaceInPlace(buffer, 3);
+        memoryCopy(space, "cde", 3);
+        require(space == before.data + before.len + 2 && sbufGetLength(buffer) == before.len + 5,
+                "space append returned the wrong start or length");
+        require(sbufTryAppendBytesInPlace(buffer, "fg", 2), "checked copy append refused a partial fit");
+        const size_t remaining = sbufGetTailroom(buffer);
+        space                  = sbufTryAppendSpaceInPlace(buffer, remaining);
+        require(space != NULL, "checked space append refused an exact fit");
+        memorySet(space, 0xdb, remaining);
+        require(space == before.data + before.len + 7 && sbufGetTailroom(buffer) == 0 &&
+                    buffer->len == before.len + 7 + remaining,
+                "exact space append misplaced its start or length");
+        require((uintptr_t) buffer == allocation && buffer->data == before.data &&
+                    buffer->capacity == before.capacity && buffer->initial_headroom == before.initial_headroom &&
+                    buffer->flags == before.flags && sbufGetHeadroom(buffer) == 60,
+                "in-place append replaced storage or changed cursor, padding, capacity or flags");
+        require(memoryEqual(buffer->data, "prefix!", 7), "append changed prepended payload");
+        requirePatternRange(buffer, 7, 5, 0x43, "append changed the unconsumed original payload");
+        require(memoryEqual(buffer->data + before.len, "abcdefg", 7), "append changed byte order");
+        require(source[0] == 'a' && source[1] == 'b', "append changed caller-owned source bytes");
+        for (size_t i = 0; i < remaining; ++i)
+            require(space[i] == 0xdb, "space append lost initialized tail bytes");
+        requireAppendRefusalUnchanged(buffer, 1);
+        requireAppendRefusalUnchanged(buffer, SIZE_MAX);
+        requireZeroAppendUnchanged(buffer);
+
+        sbufShiftRight(buffer, buffer->len);
+        require(buffer->data == buffer->head + buffer->capacity && buffer->len == 0,
+                "append fixture did not reach an empty one-past cursor");
+        requireZeroAppendUnchanged(buffer);
+        requireAppendRefusalUnchanged(buffer, 1);
+        sbufDestroy(buffer);
+    }
+
+    /* Exercise the checked copy's exact-fit path independently of the space
+     * helper, including ordinary storage with no padding. */
+    sbuf_t *buffer = sbufCreate(64);
+    uint8_t source[256];
+    require(buffer->capacity <= sizeof(source), "exact-copy source is too small");
+    memorySet(source, 0x7c, buffer->capacity);
+    uint8_t *cursor = buffer->data;
+    require(sbufTryAppendBytesInPlace(buffer, source, buffer->capacity), "checked copy append refused an exact fit");
+    require(buffer->data == cursor && buffer->len == buffer->capacity && sbufGetTailroom(buffer) == 0 &&
+                memoryEqual(buffer->data, source, buffer->len),
+            "exact copy append changed allocation geometry or payload");
+    sbufDestroy(buffer);
+}
+
+#ifndef NDEBUG
+static void testAppendPreconditionAssertions(void)
+{
+    for (unsigned test = 0; test < 8; ++test)
+    {
+        const pid_t child = fork();
+        require(child >= 0, "failed to fork append precondition test");
+        if (child == 0)
+        {
+            sbuf_t  *buffer = test < 4 ? sbufCreateSplice(64) : sbufCreate(64);
+            uint8_t *space  = NULL;
+            bool     copied = false;
+            if (test == 0)
+                space = sbufAppendSpaceInPlace(buffer, 0);
+            else if (test == 1)
+                space = sbufTryAppendSpaceInPlace(buffer, 0);
+            else if (test == 2)
+                sbufAppendBytesInPlace(buffer, NULL, 0);
+            else if (test == 3)
+                copied = sbufTryAppendBytesInPlace(buffer, NULL, 0);
+            else if (test == 4)
+                space = sbufAppendSpaceInPlace(buffer, sbufGetTailroom(buffer) + 1);
+            else if (test == 5)
+                sbufAppendBytesInPlace(buffer, "x", sbufGetTailroom(buffer) + 1);
+            else if (test == 6)
+                sbufAppendBytesInPlace(buffer, NULL, 1);
+            else
+                copied = sbufTryAppendBytesInPlace(buffer, NULL, 1);
+            discard space;
+            discard copied;
+            _Exit(kChildReturned);
+        }
+        int status = 0;
+        require(waitpid(child, &status, 0) == child, "failed to wait for append precondition test");
+        require(WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT,
+                "invalid append precondition did not assert before accessing storage");
+    }
+}
+#endif
+
+static void testOrdinaryResidentViews(void)
+{
+    sbuf_t          *buffer = sbufCreateWithPadding(128, 32);
+    sbuf_read_view_t view   = sbufGetResidentView(buffer);
+    require(view.data == buffer->data && view.length == 0, "empty ordinary view changed its cursor or length");
+    sbufSetLength(buffer, sbufGetWritableCapacity(buffer));
+    fillPattern(buffer, 0x40);
+    view = sbufGetResidentView(buffer);
+    require(view.data == buffer->head + 32 && view.length == sbufGetLength(buffer),
+            "ordinary view did not expose the complete payload");
+    require(memoryEqual(view.data, buffer->data, view.length), "ordinary view changed payload bytes");
+    sbufShiftRight(buffer, 5);
+    view = sbufGetResidentView(buffer);
+    require(view.data == buffer->head + 37 && view.length == sbufGetWritableCapacity(buffer) && view.data[0] == 0x45,
+            "partially consumed ordinary view did not follow its cursor");
+    uint8_t *prefix = sbufShiftLeft(buffer, 7);
+    memoryCopy(prefix, "prefix!", 7);
+    view = sbufGetResidentView(buffer);
+    require(view.data == prefix && view.length == sbufGetLength(buffer) && memoryEqual(view.data, "prefix!", 7) &&
+                view.data[7] == 0x45,
+            "prepended ordinary view did not expose prefix and remaining payload together");
+    sbufShiftRight(buffer, sbufGetLength(buffer));
+    view = sbufGetResidentView(buffer);
+    require(view.data == buffer->head + buffer->capacity && view.length == 0,
+            "fully consumed ordinary view did not preserve its one-past cursor");
+    sbufDestroy(buffer);
+}
+
+static void testPureSpliceResidentViews(void)
+{
+    /* Empty and resident-only wrappers require no pipe operations, so these
+     * representation checks also run in the WW_HAVE_SPLICE=0 target. */
+    sbuf_t                        *buffer   = sbufCreateSplice(64);
+    const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
+    sbuf_read_view_t               view     = sbufGetResidentView(buffer);
+    require(view.data == buffer->head + 64 && view.length == 0, "empty splice view exposed private metadata");
+    uint8_t *prefix = sbufShiftLeft(buffer, 7);
+    memoryCopy(prefix, "prefix!", 7);
+    view = sbufGetResidentView(buffer);
+    require(view.data == prefix && view.length == 7 && memoryEqual(view.data, "prefix!", 7),
+            "resident-only splice view did not expose its complete prefix");
+    sbufShiftRight(buffer, 3);
+    view = sbufGetResidentView(buffer);
+    require(view.data == prefix + 3 && view.length == 4 && memoryEqual(view.data, "fix!", 4),
+            "partially consumed splice view lost the remaining prefix");
+    sbufShiftRight(buffer, 4);
+    view                                 = sbufGetResidentView(buffer);
+    const splice_buffer_metadata_t after = sbufSpliceMetadata(buffer);
+    require(view.data == buffer->head + 64 && view.length == 0 && sbufGetLength(buffer) == 0 &&
+                after.pipefd[0] == metadata.pipefd[0] && after.pipefd[1] == metadata.pipefd[1] &&
+                after.pipe_capacity == metadata.pipe_capacity,
+            "resident-only splice view or prefix consumption changed metadata");
     sbufDestroy(buffer);
 }
 
@@ -1372,6 +1597,50 @@ static void requireResidentPayload(const sbuf_t *buf, const void *expected, uint
     require(memoryEqual(sbufGetRawPtr(buf), expected, length), message);
 }
 
+static void testSpliceBodyResidentViews(void)
+{
+    pool_fixture_t fixture = poolFixtureCreate(1024, 128, 64, 64);
+    for (unsigned with_prefix = 0; with_prefix < 2; ++with_prefix)
+    {
+        const uint32_t prefix_length = with_prefix ? 7 : 0;
+        sbuf_t        *buffer =
+            makeSpliceTestBuffer(fixture.pool, (const uint8_t *) "prefix!", prefix_length, (const uint8_t *) "BODY", 4);
+        const splice_buffer_metadata_t metadata = sbufSpliceMetadata(buffer);
+        const sbuf_t                   before   = *buffer;
+        sbuf_read_view_t               view     = sbufGetResidentView(buffer);
+        require(view.data == before.data && view.length == prefix_length && buffer->data == before.data &&
+                    buffer->len == before.len && buffer->capacity == before.capacity && buffer->flags == before.flags &&
+                    buffer->initial_headroom == before.initial_headroom,
+                "splice body view changed source fields or exposed logical body bytes");
+        if (with_prefix)
+        {
+            require(memoryEqual(view.data, "prefix!", prefix_length), "splice view changed the resident prefix");
+            sbufShiftRight(buffer, 3);
+            view = sbufGetResidentView(buffer);
+            require(view.data == before.data + 3 && view.length == 4 && sbufGetLength(buffer) == 8 &&
+                        memoryEqual(view.data, "fix!", 4),
+                    "partially consumed splice body view lost prefix bounds or logical body accounting");
+            sbufShiftRight(buffer, 4);
+        }
+        view = sbufGetResidentView(buffer);
+        require(view.data == buffer->head + 64 && view.length == 0 && sbufGetLength(buffer) == 4,
+                "nonempty splice body did not produce a zero-length resident view at metadata");
+        const splice_buffer_metadata_t after = sbufSpliceMetadata(buffer);
+        require(after.pipefd[0] == metadata.pipefd[0] && after.pipefd[1] == metadata.pipefd[1] &&
+                    after.pipe_capacity == metadata.pipe_capacity,
+                "splice body views or prefix consumption changed private metadata");
+        uint8_t body[4];
+        sbufReadRangeToMemory(buffer, body, sizeof(body));
+        require(memoryEqual(body, "BODY", sizeof(body)) && sbufGetLength(buffer) == 0,
+                "resident views read, consumed or changed private pipe bytes");
+        view = sbufGetResidentView(buffer);
+        require(view.data == buffer->head + 64 && view.length == 0,
+                "pipe-body recovery changed the empty resident cursor");
+        bufferpoolReuseBuffer(fixture.pool, buffer);
+    }
+    poolFixtureDestroy(&fixture);
+}
+
 static void testSpliceMaterializationClearsPacketIntent(void)
 {
     pool_fixture_t fixture = poolFixtureCreate(1024, 128, 64, 64);
@@ -1616,10 +1885,15 @@ static void testContextPayloadOwnership(void)
 int main(void)
 {
     testCaseSet("bufio_contract_test");
+    testAppendInPlaceContracts();
+    testOrdinaryResidentViews();
+    testPureSpliceResidentViews();
     testBufferStreamAccessors();
+    testBufferStreamInspectionBoundaries();
     testBufferStreamSettleRetained();
     testBufferStreamSettleChargeAndPadding();
 #ifndef NDEBUG
+    testAppendPreconditionAssertions();
     testBufferStreamRejectsSplice();
 #endif
     testContextPayloadOwnership();
@@ -1632,6 +1906,7 @@ int main(void)
 #endif
     }
 #if WW_HAVE_SPLICE
+    testSpliceBodyResidentViews();
     testTryEnsureOrdinaryRefusalPreservesSource();
     testSpliceMaterializationClearsPacketIntent();
 #endif

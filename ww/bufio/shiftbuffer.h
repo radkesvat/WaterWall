@@ -72,6 +72,13 @@ struct sbuf_s
 
 typedef struct sbuf_s sbuf_t;
 
+/** Borrowed snapshot of immediately readable payload, excluding private splice metadata/body. */
+typedef struct sbuf_read_view_s
+{
+    const uint8_t *data;
+    size_t         length;
+} sbuf_read_view_t;
+
 #define SIZEOF_STRUCT_SBUF (sizeof(struct sbuf_s))
 
 static_assert(SIZEOF_STRUCT_SBUF == 32, "sbuf_s size should be 32 bytes, head array is flexible");
@@ -500,6 +507,7 @@ static inline uint16_t sbufGetInitialHeadroom(const sbuf_t *const b)
  * Requires enough current headroom. The borrowed pointer does not extend the
  * buffer's lifetime or transfer ownership; reacquire it after storage replacement.
  * Neither alignment nor resident splice-body storage is implied by the result.
+ * Initialize all exposed bytes synchronously before inspection or handoff.
  */
 static inline uint8_t *sbufShiftLeft(sbuf_t *const b, const size_t bytes)
 {
@@ -572,6 +580,98 @@ static inline const uint8_t *sbufGetRawPtr(const sbuf_t *const b)
 static inline uint8_t *sbufGetMutablePtr(sbuf_t *const b)
 {
     return b->data;
+}
+
+/** Proven addressable prefix of a valid buffer; never reads or materializes a pipe. */
+static inline size_t sbufGetResidentPrefixLength(const sbuf_t *buf)
+{
+    assert(buf != NULL);
+    const size_t headroom = sbufGetHeadroom(buf);
+    assert(headroom <= buf->capacity && buf->len <= buf->capacity - headroom);
+    if (! sbufIsSplice(buf))
+        return sbufGetLength(buf);
+    assert(headroom <= buf->initial_headroom && (size_t) buf->initial_headroom - headroom <= sbufGetLength(buf));
+    return (size_t) buf->initial_headroom - headroom;
+}
+
+/**
+ * Observe current resident payload without copying, consuming, I/O or mutation.
+ * Ordinary buffers expose their full active length; splice buffers expose only
+ * the prefix before metadata. An empty view can still have a nonempty pipe body
+ * and must not be dereferenced. Logical length remains sbufGetLength().
+ * Reacquire this borrowed snapshot after mutation; discard it before replacement,
+ * destruction, recycling or ownership transfer. Const access grants neither
+ * lifetime, synchronization nor alignment guarantees. Works without splice I/O support.
+ */
+static inline sbuf_read_view_t sbufGetResidentView(const sbuf_t *buf)
+{
+    const size_t length = sbufGetResidentPrefixLength(buf);
+    return (sbuf_read_view_t) {.data = sbufGetRawPtr(buf), .length = length};
+}
+
+/**
+ * Append operations require valid, exclusively mutable ordinary storage, even
+ * for zero bytes. They never allocate, recenter, replace, recycle or transfer
+ * ownership, and preserve the cursor, capacity, headroom, existing payload and
+ * every flag. Append addresses have no additional alignment guarantee.
+ *
+ * Space forms extend length before returning uninitialized storage. Immediately
+ * fill the entire region synchronously, without a partial/failure path, before
+ * any inspection, publication, callback or ownership handoff. Partial or failing
+ * producers must instead reserve storage and commit only actual successful output.
+ * Returned pointers are borrowed; discard before replacement, destruction,
+ * recycling or transfer. Zero bytes returns the current tail, possibly one-past.
+ *
+ * Bytes forms require a readable source outside the destination allocation for
+ * positive bytes; self-appending is not supported. They copy with memoryCopy
+ * before extending length. Zero bytes permits NULL and skips the copy primitive.
+ * Copying retains source ownership and does not copy source flags/checksum intent.
+ */
+
+/** Append uninitialized space; sufficient ordinary tailroom is a precondition. */
+WW_MUST_USE static inline uint8_t *sbufAppendSpaceInPlace(sbuf_t *buf, size_t bytes)
+{
+    assert(bytes <= sbufGetTailroom(buf));
+    uint8_t *tail = buf->data + buf->len;
+    buf->len += bytes;
+    return tail;
+}
+
+/** Return NULL on insufficient tailroom, leaving all fields and storage unchanged. */
+WW_MUST_USE static inline uint8_t *sbufTryAppendSpaceInPlace(sbuf_t *buf, size_t bytes)
+{
+    if (bytes > sbufGetTailroom(buf))
+        return NULL;
+    uint8_t *tail = buf->data + buf->len;
+    buf->len += bytes;
+    return tail;
+}
+
+/** Copy then extend length; sufficient ordinary tailroom is a precondition. */
+static inline void sbufAppendBytesInPlace(sbuf_t *restrict buf, const void *restrict source, size_t bytes)
+{
+    assert(bytes <= sbufGetTailroom(buf));
+    assert(bytes == 0 || source != NULL);
+    if (bytes != 0)
+    {
+        memoryCopy(buf->data + buf->len, source, bytes);
+        buf->len += bytes;
+    }
+}
+
+/** Return false on insufficient tailroom, before any copy or mutation. */
+WW_MUST_USE static inline bool sbufTryAppendBytesInPlace(sbuf_t *restrict buf, const void *restrict source,
+                                                         size_t bytes)
+{
+    assert(bytes == 0 || source != NULL);
+    if (bytes > sbufGetTailroom(buf))
+        return false;
+    if (bytes != 0)
+    {
+        memoryCopy(buf->data + buf->len, source, bytes);
+        buf->len += bytes;
+    }
+    return true;
 }
 
 /**
@@ -652,11 +752,9 @@ WW_MUST_USE static inline sbuf_t *sbufReserveSpace(sbuf_t *const b, const size_t
  */
 static inline void sbufConcatNoCheck(sbuf_t *restrict root, const sbuf_t *restrict buf)
 {
-    size_t root_length   = sbufGetLength(root);
-    size_t append_length = sbufGetLength(buf);
-    assert(append_length <= sbufGetTailroom(root));
-    sbufSetLength(root, root_length + append_length);
-    memoryCopy(sbufGetMutablePtr(root) + root_length, sbufGetRawPtr(buf), append_length);
+    assert(root != NULL && buf != NULL && root != buf);
+    assert(! sbufIsSplice(root) && ! sbufIsSplice(buf));
+    sbufAppendBytesInPlace(root, sbufGetRawPtr(buf), sbufGetLength(buf));
 }
 
 /**

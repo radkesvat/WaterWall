@@ -225,13 +225,13 @@ static inline bool bufferstreamFindCRLF(const buffer_stream_t *stream, size_t *l
 
     c_foreach(qi, bs_doublequeue_t, stream->q)
     {
-        const sbuf_t  *b      = *qi.ref;
-        const size_t   b_size = sbufGetLength(b);
-        const uint8_t *b_data = sbufGetRawPtr(b);
+        const sbuf_t *b = *qi.ref;
+        assert(! sbufIsSplice(b));
+        const sbuf_read_view_t view = sbufGetResidentView(b);
 
-        for (size_t i = 0; i < b_size; ++i)
+        for (size_t i = 0; i < view.length; ++i)
         {
-            uint8_t c = b_data[i];
+            uint8_t c = view.data[i];
 
             if (state == 0)
             {
@@ -258,7 +258,7 @@ static inline bool bufferstreamFindCRLF(const buffer_stream_t *stream, size_t *l
                 }
             }
         }
-        cur_offset += b_size;
+        cur_offset += view.length;
     }
 
     return false;
@@ -277,13 +277,13 @@ static inline bool bufferstreamFindDoubleCRLF(const buffer_stream_t *stream, siz
 
     c_foreach(qi, bs_doublequeue_t, stream->q)
     {
-        const sbuf_t  *b      = *qi.ref;
-        const size_t   b_size = sbufGetLength(b);
-        const uint8_t *b_data = sbufGetRawPtr(b);
+        const sbuf_t *b = *qi.ref;
+        assert(! sbufIsSplice(b));
+        const sbuf_read_view_t view = sbufGetResidentView(b);
 
-        for (size_t i = 0; i < b_size; ++i)
+        for (size_t i = 0; i < view.length; ++i)
         {
-            uint8_t c = b_data[i];
+            uint8_t c = view.data[i];
 
             if (state == 0)
             {
@@ -337,7 +337,7 @@ static inline bool bufferstreamFindDoubleCRLF(const buffer_stream_t *stream, siz
                 }
             }
         }
-        cur_offset += b_size;
+        cur_offset += view.length;
     }
 
     return false;

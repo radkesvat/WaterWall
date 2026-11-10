@@ -170,13 +170,8 @@ void bufferstreamPush(buffer_stream_t *self, sbuf_t *buf)
 
         if (tail != buf)
         {
-            const size_t tail_len   = sbufGetLength(tail);
-            const size_t tail_spare = sbufGetTailroom(tail);
-
-            if (incoming_len <= tail_spare)
+            if (sbufTryAppendBytesInPlace(tail, sbufGetRawPtr(buf), incoming_len))
             {
-                memoryCopy(sbufGetMutablePtr(tail) + tail_len, sbufGetRawPtr(buf), incoming_len);
-                sbufSetLength(tail, tail_len + incoming_len);
                 self->size += incoming_len;
                 bufferpoolReuseBuffer(self->pool, buf);
                 return;
@@ -321,15 +316,16 @@ uint8_t bufferstreamViewByteAt(const buffer_stream_t *self, size_t at)
     size_t offset = at;
     c_foreach(i, bs_doublequeue_t, self->q)
     {
-        const sbuf_t *b    = *i.ref;
-        const size_t  blen = sbufGetLength(b);
+        const sbuf_t *b = *i.ref;
+        assert(! sbufIsSplice(b));
+        const sbuf_read_view_t view = sbufGetResidentView(b);
 
-        if (offset < blen)
+        if (offset < view.length)
         {
-            return sbufGetRawPtr(b)[offset];
+            return view.data[offset];
         }
 
-        offset -= blen;
+        offset -= view.length;
     }
 
     printError("BufferStream: size accounting is inconsistent while viewing byte %zu of %zu", at, self->size);
@@ -353,21 +349,22 @@ void bufferstreamCopyBytesAt(const buffer_stream_t *self, size_t at, uint8_t *bu
 
     c_foreach(qi, bs_doublequeue_t, self->q)
     {
-        const sbuf_t *b    = *qi.ref;
-        const size_t  blen = sbufGetLength(b);
+        const sbuf_t *b = *qi.ref;
+        assert(! sbufIsSplice(b));
+        const sbuf_read_view_t view = sbufGetResidentView(b);
 
         // Skip buffers that are entirely before our starting position
-        if (remaining_offset >= blen)
+        if (remaining_offset >= view.length)
         {
-            remaining_offset -= blen;
+            remaining_offset -= view.length;
             continue;
         }
 
         // Copy what we can from this buffer
         size_t copy_start = remaining_offset;
-        size_t copy_len   = min(len - buf_i, blen - copy_start);
+        size_t copy_len   = min(len - buf_i, view.length - copy_start);
 
-        memoryCopy(buf + buf_i, sbufGetRawPtr(b) + copy_start, copy_len);
+        memoryCopy(buf + buf_i, view.data + copy_start, copy_len);
         buf_i += copy_len;
         remaining_offset = 0; // For subsequent buffers, start from beginning
 
