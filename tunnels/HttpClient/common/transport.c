@@ -1465,9 +1465,7 @@ static sbuf_t *httpclientCollectHttp2Startup(line_t *l, httpclient_lstate_t *ls)
         {
             return startup;
         }
-        uint32_t offset = sbufGetLength(startup);
-        sbufSetLength(startup, offset + (uint32_t) len);
-        memoryCopy(sbufGetMutablePtr(startup) + offset, data, (size_t) len);
+        sbufAppendBytesInPlace(startup, data, (size_t) len);
     }
 }
 
