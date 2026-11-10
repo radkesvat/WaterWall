@@ -151,9 +151,7 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
     {
         mux_wire_header_t open_frame;
         muxSetMuxFrameHeader(&open_frame, 0, cid, kMuxFlagOpen);
-        const uint32_t offset = sbufGetLength(encoded);
-        memoryCopy(sbufGetMutablePtr(encoded) + offset, &open_frame, kMuxFrameLength);
-        sbufSetLength(encoded, offset + kMuxFrameLength);
+        sbufAppendBytesInPlace(encoded, &open_frame, kMuxFrameLength);
     }
 
     uint32_t remaining = payload_length;
@@ -163,9 +161,7 @@ mux_encode_result_t muxEncodeChildPayload(buffer_pool_t *pool, sbuf_t *input, mu
 
         mux_wire_header_t data_frame;
         muxSetMuxFrameHeader(&data_frame, chunk, cid, kMuxFlagData);
-        const uint32_t offset = sbufGetLength(encoded);
-        memoryCopy(sbufGetMutablePtr(encoded) + offset, &data_frame, kMuxFrameLength);
-        sbufSetLength(encoded, offset + kMuxFrameLength);
+        sbufAppendBytesInPlace(encoded, &data_frame, kMuxFrameLength);
         sbufMoveTo(encoded, input, chunk);
         remaining -= chunk;
     }
