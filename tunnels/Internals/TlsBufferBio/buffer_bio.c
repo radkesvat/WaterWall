@@ -105,13 +105,15 @@ static int tlsbufferbioWrite(BIO *bio, const char *data, int length)
         return -1;
 
     sbuf_t *buf = ww_sbuffer_queue_t_is_empty(&state->buffers) ? NULL : *ww_sbuffer_queue_t_back(&state->buffers);
-    if (buf != NULL && (size_t) length <= sbufGetTailroom(buf))
+    if (buf != NULL)
     {
-        const size_t previous = sbufGetLength(buf);
-        memoryCopyLarge(sbufGetMutablePtr(buf) + previous, data, (size_t) length);
-        sbufSetLength(buf, previous + (size_t) length);
-        state->pending += (size_t) length;
-        return length;
+        uint8_t *tail = sbufTryAppendSpaceInPlace(buf, (size_t) length);
+        if (tail != NULL)
+        {
+            memoryCopyLarge(tail, data, (size_t) length);
+            state->pending += (size_t) length;
+            return length;
+        }
     }
 
     buf = bufferpoolGetLargeBuffer(state->pool);

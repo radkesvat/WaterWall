@@ -8,7 +8,7 @@
  * notes.txt`](../../../../tunnels/TlsClient/my%20notes.txt).
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: caseOutputReservation, caseOwnedBuffers, caseBoundsAndReset, caseTlsRoundtrip
+ * Cases: caseOutputReservation, caseOwnedBuffers, checkTailAppendBoundaries, caseBoundsAndReset, caseTlsRoundtrip
  * Checks: Assertion labels include: new record body is aligned; reservation does not publish bytes; commit
  * transfers the encryption destination with onward padding; new cancelable reservation
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -191,11 +191,62 @@ static void caseOwnedBuffers(SSL_CTX *ctx, buffer_pool_t *pool)
     twfRequireNoLeakedBuffers();
 }
 
+static void checkTailAppendBoundaries(BIO *bio, buffer_pool_t *pool)
+{
+    twfSetCase("BIO exact and insufficient tailroom after a partial read");
+    for (size_t spare = 0; spare <= 2; ++spare)
+    {
+        sbuf_t      *first    = twfTrackAcquired(sbufCreateWithPadding(64, 64));
+        const size_t capacity = sbufGetTotalCapacity(first);
+        const size_t cursor   = sbufGetHeadroom(first);
+        const size_t length   = sbufGetWritableCapacity(first) - spare;
+        memorySet(sbufGetMutablePtr(first), 'P', length);
+        sbufSetLength(first, length);
+        twfRequire(sbufGetTailroom(first) == spare, "BIO fixture did not force actual tailroom");
+        twfRequire(tlsbufferbioFeed(bio, first), "admit the bounded tail fixture");
+
+        char consumed[3];
+        twfRequire(BIO_read(bio, consumed, sizeof(consumed)) == sizeof(consumed) &&
+                       memoryCompare(consumed, "PPP", sizeof(consumed)) == 0 &&
+                       BIO_ctrl_pending(bio) == length - sizeof(consumed),
+                   "partial read did not preserve unread tail accounting");
+        twfRequire(BIO_write(bio, "XY", 2) == 2 && BIO_ctrl_pending(bio) == length - sizeof(consumed) + 2,
+                   "tail append did not count its bytes exactly once");
+
+        const size_t unread = length - sizeof(consumed);
+        sbuf_t      *taken  = tlsbufferbioTake(bio);
+        twfRequire(taken == first && sbufGetTotalCapacity(taken) == capacity &&
+                       sbufGetHeadroom(taken) == cursor + sizeof(consumed) && sbufGetInitialHeadroom(taken) == 64 &&
+                       sbufGetLength(taken) == unread + (spare == 2 ? 2 : 0),
+                   "tail reuse or refusal changed the first allocation, cursor, padding or length");
+        for (size_t i = 0; i < unread; ++i)
+            twfRequire(sbufGetRawPtr(taken)[i] == 'P', "tail append changed the unread prefix");
+        if (spare == 2)
+            twfRequire(memoryCompare(sbufGetRawPtr(taken) + unread, "XY", 2) == 0 && sbufGetTailroom(taken) == 0,
+                       "exact-fit tail append misplaced its suffix");
+        twfRequire(BIO_ctrl_pending(bio) == (spare == 2 ? 0 : 2), "taking the first entry miscounted pending bytes");
+        if (spare != 2)
+        {
+            sbuf_t *next = tlsbufferbioTake(bio);
+            twfRequire(next != NULL && next != taken && sbufGetLength(next) == 2 && sbufGetHeadroom(next) >= 64 &&
+                           memoryCompare(sbufGetRawPtr(next), "XY", 2) == 0,
+                       "tail refusal did not preserve the new-buffer FIFO fallback");
+            bufferpoolReuseBuffer(pool, next);
+        }
+        bufferpoolReuseBuffer(pool, taken);
+        twfRequire(BIO_ctrl_pending(bio) == 0 && tlsbufferbioTake(bio) == NULL,
+                   "tail boundary output did not settle exactly once");
+        twfRequireNoLeakedBuffers();
+    }
+}
+
 static void caseBoundsAndReset(SSL_CTX *ctx, buffer_pool_t *pool)
 {
     twfSetCase("BIO byte/charge bounds, refusal ownership, reset and EOF");
     BIO *bio = tlsbufferbioNew(ctx, pool);
     twfRequire(bio != NULL, "create BIO");
+    checkTailAppendBoundaries(bio, pool);
+    twfSetCase("BIO byte/charge bounds, refusal ownership, reset and EOF");
     uint8_t block[65536];
     memorySet(block, 0x37, sizeof(block));
     for (size_t i = 0; i < kTlsBufferBioMaxBytes / sizeof(block); ++i)
