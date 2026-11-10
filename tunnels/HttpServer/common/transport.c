@@ -825,14 +825,7 @@ bool httpserverTransportSendHttp1ChunkedPayload(tunnel_t *t, line_t *l, sbuf_t *
         }
     }
 
-    bool     appended_tail = false;
-    uint32_t old_len       = sbufGetLength(payload);
-    if (sbufGetWritableCapacity(payload) >= old_len + 2)
-    {
-        sbufSetLength(payload, old_len + 2);
-        memoryCopy(sbufGetMutablePtr(payload) + old_len, "\r\n", 2);
-        appended_tail = true;
-    }
+    bool appended_tail = sbufTryAppendBytesInPlace(payload, "\r\n", 2);
 
     if (! lineCallWithRefWithBuf(l, tunnelPrevDownStreamPayload, t, payload))
     {

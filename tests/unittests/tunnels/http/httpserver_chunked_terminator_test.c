@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes,
  * caseBodylessRequestStaysOpenForResponse, caseHeaderLimitExcludesDeliveredBody,
- * caseCustomUpgradeBypassesAfterReentrantTails
+ * caseCustomUpgradeBypassesAfterReentrantTails, caseChunkedSuffixTailroom
  * Checks: Assertion labels include: HttpServer destroyed its state at HTTP body end; HttpServer completed a
  * partial trailer block; HttpServer did not forward exactly one body chunk; HttpServer forwarded the
  * wrong body length
@@ -367,6 +367,92 @@ static void caseEmptyResponsePayloadDoesNotTerminate(bool queued)
     fixtureTeardown(&fixture);
 }
 
+static sbuf_t *chunked_payload;
+static size_t  chunked_payload_capacity, chunked_payload_headroom;
+static bool    chunked_payload_seen, chunked_close_after_payload;
+
+static void chunkedPayloadSink(tunnel_t *prev, line_t *line, sbuf_t *buf)
+{
+    const bool payload = buf == chunked_payload;
+    if (payload)
+    {
+        twfRequire(! chunked_payload_seen, "HTTP chunk payload was delivered twice");
+        chunked_payload_seen = true;
+        chunked_payload      = NULL;
+        twfRequire(sbufGetTotalCapacity(buf) == chunked_payload_capacity,
+                   "HTTP chunk suffix changed the payload allocation capacity");
+        twfRequire(sbufGetHeadroom(buf) == chunked_payload_headroom,
+                   "HTTP chunk suffix changed the expected payload cursor");
+        twfRequire(sbufGetRecalculateChecksum(buf), "HTTP chunk suffix lost the payload checksum request");
+    }
+    twfPrevPayload(prev, line, buf);
+    if (payload && chunked_close_after_payload)
+        tunnelUpStreamFin(prev->next, line);
+}
+
+static void caseChunkedSuffixTailroom(size_t tailroom, bool shifted, bool separate_prefix, bool close_after_payload)
+{
+    twfSetCase("HttpServer chunk suffix preserves exact tailroom and callback closure");
+    httpserver_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    uint8_t wire[kTestLargeBufferSize + 32] = {0};
+    fixture.trace.capture                   = wire;
+    fixture.trace.capture_capacity          = sizeof(wire) - 1;
+    fixture.prev->fnPayloadD                = chunkedPayloadSink;
+
+    sbuf_t *payload = bufferpoolGetBestFit(fixture.env.pool, 64, separate_prefix ? 0 : 32);
+    if (shifted)
+    {
+        sbufWrite(payload, "discard", 7);
+        sbufSetLength(payload, 7);
+        sbufShiftRight(payload, 7);
+    }
+    const size_t payload_length = sbufGetWritableCapacity(payload) - tailroom;
+    memorySet(sbufGetMutablePtr(payload), 'B', payload_length);
+    sbufSetLength(payload, payload_length);
+    sbufSetRecalculateChecksum(payload, true);
+    twfRequire(sbufGetTailroom(payload) == tailroom, "HTTP chunk fixture did not force exact actual tailroom");
+
+    char prefix[32];
+    int  prefix_length = snprintf(prefix, sizeof(prefix), "%x\r\n", (unsigned) payload_length);
+    twfRequire(prefix_length > 0 && (size_t) prefix_length < sizeof(prefix), "HTTP chunk fixture prefix overflow");
+    twfRequire((sbufGetHeadroom(payload) < (size_t) prefix_length) == separate_prefix,
+               "HTTP chunk fixture did not force the selected prefix path");
+
+    chunked_payload                = payload;
+    chunked_payload_capacity       = sbufGetTotalCapacity(payload);
+    chunked_payload_headroom       = sbufGetHeadroom(payload) - (separate_prefix ? 0 : (size_t) prefix_length);
+    chunked_payload_seen           = false;
+    chunked_close_after_payload    = close_after_payload;
+    const uint32_t recycled_before = twfRecycleCount();
+    const bool     sent            = httpserverTransportSendHttp1ChunkedPayload(fixture.http, fixture.line, payload);
+    fixture.retired                = close_after_payload;
+    twfRequire(sent == ! close_after_payload, "HTTP chunk send ignored downstream callback closure");
+    twfRequire(chunked_payload_seen && chunked_payload == NULL, "HTTP chunk replaced or did not transfer its payload");
+
+    uint8_t expected[kTestLargeBufferSize + 32] = {0};
+    size_t  expected_length                     = (size_t) prefix_length + payload_length;
+    memoryCopy(expected, prefix, (size_t) prefix_length);
+    memorySet(expected + prefix_length, 'B', payload_length);
+    if (! close_after_payload)
+    {
+        memoryCopy(expected + expected_length, "\r\n", 2);
+        expected_length += 2;
+    }
+    twfRequire(fixture.trace.capture_len == expected_length && memoryEqual(wire, expected, expected_length),
+               "HTTP chunk suffix changed wire bytes or escaped after callback closure");
+    const uint32_t callbacks = 1 + (separate_prefix ? 1 : 0) + (! close_after_payload && tailroom < 2 ? 1 : 0);
+    twfRequireEqualU32(fixture.trace.prev_payload, callbacks, "HTTP chunk used the wrong suffix fallback");
+    twfRequireEqualU32(twfRecycleCount() - recycled_before, callbacks, "HTTP chunk buffers did not settle once");
+    twfRequireEqualU32(fixture.trace.next_finish,
+                       close_after_payload ? 1 : 0,
+                       "HTTP chunk callback closure did not finish next exactly once");
+    twfRequireEqualU32(fixture.trace.prev_finish, 0, "HTTP chunk reflected Finish toward the closed downstream side");
+    twfRequire(lineIsAlive(fixture.line), "HttpServer destroyed its borrowed chunk transport line");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), 1, "HTTP chunk callback guard leaked a line reference");
+    fixtureTeardown(&fixture);
+}
+
 static bool submitWaitingPayload(httpserver_chunked_fixture_t *fixture, unsigned mode, sbuf_t *buf)
 {
     httpserver_lstate_t *ls = lineGetState(fixture->line, fixture->http);
@@ -497,6 +583,12 @@ static void casePendingDrainReentry(unsigned mode)
 
 int main(void)
 {
+    caseChunkedSuffixTailroom(2, false, false, false);
+    caseChunkedSuffixTailroom(1, true, false, false);
+    caseChunkedSuffixTailroom(0, false, false, false);
+    caseChunkedSuffixTailroom(0, false, true, false);
+    caseChunkedSuffixTailroom(1, true, false, true);
+    caseChunkedSuffixTailroom(0, false, true, true);
     for (unsigned mode = 0; mode < 4; ++mode)
         casePendingDrainReentry(mode);
     for (unsigned mode = 0; mode < 5; ++mode)
