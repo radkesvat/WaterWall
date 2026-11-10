@@ -401,6 +401,143 @@ static void resetClient(tunnel_chain_t *chain)
             "server chose read preferences before request selection");
 }
 
+static void inputAccumulatorCases(tunnel_chain_t *chain)
+{
+    hps_tstate_t  *settings    = tunnelGetState(proxy);
+    const uint32_t saved_limit = settings->max_pending;
+    settings->max_pending      = 65536;
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        resetClient(chain);
+        hps_session_t         *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+        hps_direction_state_t *dir     = &session->directions[direction];
+        buffer_pool_t         *pool    = lineGetBufferPool(client);
+        require(hpsAppendInput(session, direction, NULL, 0), "empty initial accumulator append refused");
+        sbuf_t *initial = dir->input;
+        require(initial && ! sbufIsSplice(initial) && sbufGetLength(initial) == 0 &&
+                    sbufGetHeadroom(initial) >= bufferpoolGetLargeBufferPadding(pool),
+                "empty initial append skipped ordinary allocation or lost onward padding");
+
+        dir->incoming    = makeInput(client, "prefix!", 0);
+        sbuf_t *incoming = dir->incoming;
+        require(hpsAppendInput(session, direction, sbufGetRawPtr(incoming), sbufGetLength(incoming)) &&
+                    dir->input == initial && sbufGetLength(initial) == 7 &&
+                    memoryEqual(sbufGetRawPtr(initial), "prefix!", 7),
+                "initial accumulator copy replaced available storage or changed incoming bytes");
+        require(dir->incoming == incoming && sbufGetLength(incoming) == 7 &&
+                    memoryEqual(sbufGetRawPtr(incoming), "prefix!", 7),
+                "accumulator copy consumed or changed its distinct active source");
+        hpsDiscardBuffer(session, &dir->incoming);
+        require(hpsAppendInput(session, direction, (const unsigned char *) "tail", 4) && dir->input == initial &&
+                    sbufGetLength(initial) == 11,
+                "accumulator tail reuse replaced storage or published the wrong length");
+        sbufShiftRight(initial, 3);
+        const size_t shifted_headroom = sbufGetHeadroom(initial);
+        require(hpsAppendInput(session, direction, NULL, 0) && dir->input == initial &&
+                    sbufGetHeadroom(initial) == shifted_headroom && sbufGetLength(initial) == 8 &&
+                    memoryEqual(sbufGetRawPtr(initial), "fix!tail", 8),
+                "empty existing append changed shifted cursor, storage or pending bytes");
+
+        /* Force replacement by one actual tail byte, independently of tier
+         * rounding. Deferred source storage remains separately owned. */
+        const size_t append_length = sbufGetTailroom(initial) + 1;
+        dir->deferred              = bufferpoolGetBestFit(pool, append_length, bufferpoolGetLargeBufferPadding(pool));
+        sbuf_t *deferred           = dir->deferred;
+        sbufSetLength(deferred, append_length);
+        for (size_t i = 0; i < append_length; ++i)
+            sbufGetMutablePtr(deferred)[i] = (uint8_t) (0x20U + i);
+        const uint8_t  *source_data     = sbufGetRawPtr(deferred);
+        const uintptr_t initial_address = (uintptr_t) initial;
+        require(hpsAppendInput(session, direction, source_data, append_length),
+                "accumulator replacement refused bounded deferred input");
+        sbuf_t *replacement = dir->input;
+        require((uintptr_t) replacement != initial_address && ! sbufIsSplice(replacement) &&
+                    sbufGetLength(replacement) == 8 + append_length &&
+                    sbufGetHeadroom(replacement) == sbufGetInitialHeadroom(replacement) &&
+                    sbufGetHeadroom(replacement) >= bufferpoolGetLargeBufferPadding(pool) &&
+                    memoryEqual(sbufGetRawPtr(replacement), "fix!tail", 8),
+                "replacement append overwrote the preserved prefix length or lost onward padding");
+        require(dir->deferred == deferred && sbufGetRawPtr(deferred) == source_data &&
+                    sbufGetLength(deferred) == append_length,
+                "replacement retired or consumed its distinct deferred source");
+        for (size_t i = 0; i < append_length; ++i)
+            require(sbufGetRawPtr(replacement)[8 + i] == (uint8_t) (0x20U + i) &&
+                        source_data[i] == (uint8_t) (0x20U + i),
+                    "replacement append changed preserved/new byte order or deferred source contents");
+
+        const sbuf_t before         = *replacement;
+        const size_t refused_length = settings->max_pending - hpsPendingBytes(session) + 1;
+        dir->incoming               = bufferpoolGetBestFit(pool, refused_length, bufferpoolGetLargeBufferPadding(pool));
+        incoming                    = dir->incoming;
+        sbufSetLength(incoming, refused_length);
+        memorySet(sbufGetMutablePtr(incoming), 0x6e, refused_length);
+        require(! hpsAppendInput(session, direction, sbufGetRawPtr(incoming), refused_length),
+                "accumulator accepted input beyond its logical pending budget");
+        require(dir->input == replacement && replacement->data == before.data && replacement->len == before.len &&
+                    replacement->capacity == before.capacity &&
+                    replacement->initial_headroom == before.initial_headroom && replacement->flags == before.flags &&
+                    memoryEqual(replacement->data, "fix!tail", 8) && dir->incoming == incoming &&
+                    sbufGetLength(incoming) == refused_length,
+                "pending-budget refusal replaced or consumed existing input/source storage");
+        for (size_t i = 0; i < append_length; ++i)
+            require(replacement->data[8 + i] == (uint8_t) (0x20U + i),
+                    "pending-budget refusal changed previously accumulated bytes");
+        for (size_t i = 0; i < refused_length; ++i)
+            require(sbufGetRawPtr(incoming)[i] == 0x6e, "pending-budget refusal changed incoming source bytes");
+        require(! child && lineIsAlive(client), "local accumulator operation dispatched or closed a line");
+        clientClose();
+        lineUnref(client);
+    }
+
+    resetClient(chain);
+    hps_session_t         *session = ((hps_lstate_t *) lineGetState(client, proxy))->session;
+    hps_direction_state_t *up      = &session->directions[kHpsUpstream];
+    hps_direction_state_t *down    = &session->directions[kHpsDownstream];
+    buffer_pool_t         *pool    = lineGetBufferPool(client);
+    up->input                      = makeInput(client, "old", 0);
+    sbuf_t **other_slots[]         = {&up->output, &down->input, &down->output};
+    uint64_t other_charge          = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(other_slots); ++i)
+    {
+        *other_slots[i] = sbufCreateWithPadding(settings->max_pending, bufferpoolGetLargeBufferPadding(pool));
+        sbufSetLength(*other_slots[i], 1);
+        sbufWriteUI8(*other_slots[i], 'x');
+        other_charge += sbufGetAllocationCharge(*other_slots[i]);
+    }
+    /* Existing four-buffer charge is legal. Replacing the small input with a
+     * P-sized candidate would cross 4P after allocation overhead is included. */
+    buffer_pool_fit_t fit;
+    require(bufferpoolQueryBestFit(pool, settings->max_pending, bufferpoolGetLargeBufferPadding(pool), &fit) &&
+                other_charge + sbufGetAllocationCharge(up->input) <= (uint64_t) settings->max_pending * 4 &&
+                other_charge + fit.allocation_charge > (uint64_t) settings->max_pending * 4,
+            "accumulator allocation-refusal setup did not straddle the charge budget");
+    const size_t append_length = settings->max_pending / 2;
+    up->deferred               = bufferpoolGetBestFit(pool, append_length, bufferpoolGetLargeBufferPadding(pool));
+    sbuf_t *source             = up->deferred;
+    sbufSetLength(source, append_length);
+    memorySet(sbufGetMutablePtr(source), 0x3c, append_length);
+    sbuf_t      *original = up->input;
+    const sbuf_t before   = *original;
+    require(append_length <= settings->max_pending - hpsPendingBytes(session) &&
+                append_length > sbufGetTailroom(original),
+            "allocation-refusal setup did not require replacement within its logical budget");
+    require(! hpsAppendInput(session, kHpsUpstream, sbufGetRawPtr(source), append_length),
+            "accumulator accepted replacement beyond the allocation-charge budget");
+    require(up->input == original && original->data == before.data && original->len == before.len &&
+                original->capacity == before.capacity && original->initial_headroom == before.initial_headroom &&
+                original->flags == before.flags && memoryEqual(original->data, "old", 3) && up->deferred == source &&
+                sbufGetLength(source) == append_length && hpsPendingBytes(session) == 6,
+            "allocation-charge refusal changed accumulated input or distinct source ownership");
+    for (size_t i = 0; i < append_length; ++i)
+        require(sbufGetRawPtr(source)[i] == 0x3c, "allocation-charge refusal changed deferred source bytes");
+    for (size_t i = 0; i < ARRAY_SIZE(other_slots); ++i)
+        require(sbufGetLength(*other_slots[i]) == 1 && sbufReadUI8(*other_slots[i]) == 'x',
+                "allocation-charge refusal changed another working buffer");
+    clientClose();
+    lineUnref(client);
+    settings->max_pending = saved_limit;
+}
+
 static void childEof(void)
 {
     line_t *l = child;
@@ -1665,6 +1802,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     proxy->chain_index    = 1;
     next->chain_index     = 2;
     fallback->chain_index = 3;
+    inputAccumulatorCases(chain);
     bypassChildEntry(chain);
 #if WW_HAVE_SPLICE
     spliceRelayCases(chain, 1);

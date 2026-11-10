@@ -101,12 +101,11 @@ bool hpsAppendInput(hps_session_t *s, hps_direction_t direction, const unsigned 
             return false;
         }
         if (length)
-            memoryCopy(sbufGetMutablePtr(b), sbufGetRawPtr(old), length);
+            sbufAppendBytesInPlace(b, sbufGetRawPtr(old), length);
         hpsDiscardBuffer(s, &dir->input);
         dir->input = old = b;
     }
-    memoryCopy(sbufGetMutablePtr(old) + length, data, n);
-    sbufSetLength(old, (length + n));
+    sbufAppendBytesInPlace(old, data, n);
     return true;
 }
 
