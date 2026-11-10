@@ -306,13 +306,14 @@ static int nioWriteBuffer(wio_t *io, sbuf_t *buf, bool more_after, int *error)
 #if WW_HAVE_SPLICE
     if (sbufIsSplice(buf))
     {
-        const uint32_t prefix  = sbufGetResidentPrefixLength(buf);
-        const uint32_t body    = sbufGetLength(buf) - prefix;
-        int            written = 0;
+        const sbuf_read_view_t view    = sbufGetResidentView(buf);
+        const uint32_t         prefix  = (uint32_t) view.length;
+        const uint32_t         body    = sbufGetLength(buf) - prefix;
+        int                    written = 0;
         if (prefix != 0)
         {
             // The private pipe already holds the body that follows this prefix.
-            written = __nio_write(io, sbufGetRawPtr(buf), (int) prefix, body != 0 || more_after);
+            written = __nio_write(io, view.data, (int) prefix, body != 0 || more_after);
             if (written < 0)
             {
                 *error = socketERRNO();
