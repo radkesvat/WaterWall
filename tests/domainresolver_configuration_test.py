@@ -20,7 +20,8 @@ from wwtest.run_directory import RunDirectory
 from domainresolver_transport_integration import config, connector, node, UUID
 
 
-def run(binary, label, nodes, valid=False, dns_options=None, diagnostic_name="DomainResolver"):
+def run(binary, label, nodes, valid=False, dns_options=None, diagnostic_name="DomainResolver",
+        shared_dns_warning=None):
     with RunDirectory("ww-resolver-config-") as root:
         core = core_config()
         if dns_options:
@@ -33,6 +34,9 @@ def run(binary, label, nodes, valid=False, dns_options=None, diagnostic_name="Do
             while process.poll() is None and time.monotonic() < deadline:
                 output = process.log_path.read_text(errors="replace")
                 if valid and STARTED_MARKER in output:
+                    if shared_dns_warning is not None:
+                        warned = "Router: shared DNS TCP fallback" in output
+                        assert warned == shared_dns_warning, f"{label}: unexpected shared DNS diagnostic\n{output}"
                     process.send_signal(signal.SIGTERM)
                     assert process.wait(timeout=8) == 128 + signal.SIGTERM, f"{label}: shutdown failed"
                     return
@@ -127,6 +131,23 @@ def embedded_configuration(binary, consumers):
         run(binary, "ctp-family-restriction", consumer_config("ConnectionToPackets", {"resolve": True,
                                                                                     "strategy": "prefer-ipv4"}),
             diagnostic_name="ConnectionToPackets")
+
+    if "Router" in consumers:
+        shared = {"resolve": True, "mode": "chain", "servers": ["127.0.0.1:53"]}
+        dns_rule = {"resolver-dns": True, "target": "app-out"}
+        payload_rule = {"protocol": "http1", "target": "app-out"}
+        cases = (
+            ("root-sniff", shared, {"sniffing": ["http1"], "rules": [dns_rule]}, True),
+            ("payload-first", shared, {"rules": [payload_rule, dns_rule]}, True),
+            ("metadata-first", shared, {"rules": [dns_rule, payload_rule]}, False),
+            ("udp-only-prefix", shared, {"rules": [dict(dns_rule, network="udp"), payload_rule]}, True),
+            ("separate-branch", dict(shared, **{"dns-next": "dns-out"}),
+             {"sniffing": ["http1"], "rules": [payload_rule]}, False),
+            ("native", {"resolve": True}, {"sniffing": ["http1"], "rules": [payload_rule]}, False),
+        )
+        for label, policy, extra, warning in cases:
+            run(binary, "router-dns-diagnostic-" + label, consumer_config("Router", policy, extra), True,
+                shared_dns_warning=warning)
 
     if "VmessClient" in consumers:
         for framing, settings, valid in (

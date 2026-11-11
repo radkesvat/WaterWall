@@ -49,6 +49,41 @@ static bool routerCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     return true;
 }
 
+static void routerWarnSharedDnsSniffing(const router_tstate_t *ts)
+{
+    if (! ts->resolve_domains || ts->dns_policy.mode != kDnsPolicyModeChain || ts->dns_policy.dns_next != NULL)
+        return;
+
+    if (ts->sniffing_modes != 0)
+    {
+        LOGW("Router: shared DNS TCP fallback waits for transport establishment before sending payload, but root "
+             "sniffing delays route selection; remove root sniffing or configure a separate dns-next branch");
+        return;
+    }
+
+    for (uint32_t i = 0; i < ts->rules_count; ++i)
+    {
+        const router_rule_t *rule = &ts->rules[i];
+        if (rule->protocol.present || rule->attributes.present)
+        {
+            LOGW("Router: shared DNS TCP fallback may stall at payload-dependent rule %u before route selection; "
+                 "place an unconditional resolver-dns rule first or configure a separate dns-next branch",
+                 (unsigned) (i + 1));
+            return;
+        }
+
+        /* A metadata-only rule that certainly accepts generated TCP DNS makes
+         * later payload rules harmless. More selective rules may not match all
+         * configured DNS servers, so they cannot establish that guarantee. */
+        if ((! rule->resolver_dns.present || rule->resolver_dns.wanted) &&
+            (! rule->network.present || (rule->network.wanted & kRouterNetworkTcp) != 0) &&
+            ! rule->source_ips.present && ! rule->source_port.present && ! rule->destination_ip.present &&
+            ! rule->destination_domain.present && ! rule->destination_port.present && ! rule->username.present &&
+            ! rule->password.present)
+            return;
+    }
+}
+
 tunnel_t *routerTunnelCreate(node_t *node)
 {
     tunnel_t *t = tunnelCreate(node, sizeof(router_tstate_t), sizeof(router_lstate_t));
@@ -130,5 +165,6 @@ tunnel_t *routerTunnelCreate(node_t *node)
         LOGW("Router: no routing rules configured; all connections use the default \"next\" route");
     }
 
+    routerWarnSharedDnsSniffing(ts);
     return t;
 }

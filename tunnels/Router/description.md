@@ -606,6 +606,11 @@ can be routed immediately. The VPN path must support both UDP queries and TCP
 fallback. Encryption comes from the chosen transport, such as TLS, not from
 `chain` mode or plain VLESS alone.
 
+When this Router owns a shared chain DNS policy, startup warns if root sniffing
+or an earlier payload-dependent rule may delay TCP DNS route selection. Place an
+unconditional `resolver-dns` rule first and leave root sniffing unset, or use a
+separate DNS branch. The warning preserves the configured rule order.
+
 To give DNS its own path, set `dns-next` to a separate branch entry. That branch
 must not already belong to another node. Do not set it to this Router's name or
 to an already-bound VPN branch; omit it to reuse the routing shown above. Use a
