@@ -487,6 +487,51 @@ static void testValidationAndZeroProgress(void)
     deviceDestroy(&rdev);
 }
 
+static void testDiscardDiagnostics(void)
+{
+    resetFixture();
+    raw_device_t rdev;
+    deviceInit(&rdev, "raw-discard-diagnostics");
+    require(rawdeviceBringUp(&rdev), "raw discard diagnostic fixture start failed");
+    const injected_send_t expected[] = {{-1, EMSGSIZE, 1, 0}, {-1, EMSGSIZE, 1, 2}};
+    armSends(expected, ARRAY_SIZE(expected));
+
+    queuePacket(&rdev, 0, 0, 1400);
+    runAllMessages();
+    require(countLogSubstring("RawDevice: discarded") == 0, "raw first discard bypassed aggregation");
+
+    /* Expire the existing window without sleeping or changing the production clock. */
+    rdev.writer_states[0].discard_log_limiter.window_started_ms = 0;
+    queuePacket(&rdev, 1, 0, kMaxAllowedPacketLength + 1);
+    runAllMessages();
+    require(countLogSubstring("RawDevice: discarded 2 packet(s) over") == 1,
+            "raw periodic report lost aggregated discards");
+    require(countLogSubstring("last_reason=policy_size_limit, last_packet_bytes=1501, policy_limit_bytes=1500") == 1,
+            "raw periodic report omitted the rejected size, reason or policy limit");
+    require(countLogSubstring("last errno=0") == 1, "raw size rejection retained an unrelated send errno");
+
+    resetLogCapture();
+    /* A new first-event window leaves this sample pending for the stop report. */
+    rdev.writer_states[0].discard_log_limiter.window_started = false;
+    queuePacket(&rdev, 2, 0, kMaxAllowedPacketLength);
+    runAllMessages();
+    require(countLogSubstring("RawDevice: discarded") == 0, "raw pending discard logged before its window");
+    require(send_calls == 2 && shutdown_calls == 0 && rawdeviceIsUp(&rdev),
+            "raw discard diagnostics changed the packet size or send failure policy");
+    require(rawdeviceBringDown(&rdev), "raw discard diagnostic fixture stop failed");
+    require(countLogSubstring("RawDevice: discarded 1 packet(s) before worker output stops") == 1,
+            "raw stop did not flush the pending discard");
+    require(
+        countLogSubstring("last_reason=kernel_message_too_large, last_packet_bytes=1500, policy_limit_bytes=1500") == 1,
+        "raw stop report lost the actual send size or confused EMSGSIZE with the policy limit");
+    require(countLogSubstring("total=3, oversized_total=1, EMSGSIZE_total=2") == 1,
+            "raw discard diagnostics lost cumulative reason counts");
+    char expected_error[32];
+    snprintf(expected_error, sizeof(expected_error), "last errno=%u", (unsigned int) EMSGSIZE);
+    require(countLogSubstring(expected_error) == 1, "raw stop report lost the matching send errno");
+    deviceDestroy(&rdev);
+}
+
 static void testTerminalReadinessFailure(void)
 {
     resetFixture();
@@ -739,6 +784,7 @@ int main(void)
     testPartialAndBlockedFifo();
     testSendErrorPolicy();
     testValidationAndZeroProgress();
+    testDiscardDiagnostics();
     testTerminalReadinessFailure();
     testNotrackLifecycle();
     testBlockedStopAndLateCancellation();

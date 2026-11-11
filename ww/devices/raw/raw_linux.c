@@ -43,28 +43,31 @@ static void rawdeviceLogSocketBufferSize(int socket_fd, int option, const char *
     LOGD("RawDevice: actual %s is %d bytes", name, actual);
 }
 
-static void rawdeviceRecordDiscard(raw_linux_writer_state_t *state, rawdevice_discard_reason_t reason, int send_error)
+static void rawdeviceRecordDiscard(raw_linux_writer_state_t *state, rawdevice_discard_reason_t reason,
+                                   size_t packet_bytes, int send_error)
 {
     if (reason == kRawDeviceDiscardOversized)
     {
         state->oversized_packet_total++;
+        state->last_discard_reason = "policy_size_limit";
     }
     else if (reason == kRawDeviceDiscardMessageTooLarge)
     {
         state->message_too_large_packet_total++;
+        state->last_discard_reason = "kernel_message_too_large";
     }
     else if (reason == kRawDeviceDiscardPacketLocalSendError)
     {
         state->packet_local_send_error_total++;
+        state->last_discard_reason = "packet_local_send_error";
     }
     else
     {
         state->transient_send_error_total++;
+        state->last_discard_reason = "transient_send_error";
     }
-    if (send_error != 0)
-    {
-        state->last_discard_error = (uint32_t) send_error;
-    }
+    state->last_packet_bytes  = packet_bytes;
+    state->last_discard_error = (uint32_t) send_error;
 
     log_rate_limiter_report_t report = logRateLimiterRecord(&state->discard_log_limiter, kRawDiscardReportIntervalMs);
     if (! report.should_log)
@@ -73,12 +76,15 @@ static void rawdeviceRecordDiscard(raw_linux_writer_state_t *state, rawdevice_di
     }
 
     LOGW("RawDevice: discarded %llu packet(s) over %llums "
-         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, EMSGSIZE=%llu, "
+         "(last_reason=%s, last_packet_bytes=%zu, policy_limit_bytes=%u, "
+         "total=%llu, oversized_total=%llu, EMSGSIZE_total=%llu, "
          "other packet-local send errors=%llu, transient send errors=%llu, last errno=%u)",
          LLU(report.events),
          LLU(report.elapsed_ms),
-         LLU(report.total),
+         state->last_discard_reason,
+         state->last_packet_bytes,
          (unsigned int) kMaxAllowedPacketLength,
+         LLU(report.total),
          LLU(state->oversized_packet_total),
          LLU(state->message_too_large_packet_total),
          LLU(state->packet_local_send_error_total),
@@ -95,11 +101,14 @@ static void rawdeviceReportPendingDiscards(raw_linux_writer_state_t *state)
     }
 
     LOGW("RawDevice: discarded %llu packet(s) before worker output stops "
-         "(total=%llu, exceeding kMaxAllowedPacketLength=%u: %llu, EMSGSIZE=%llu, "
+         "(last_reason=%s, last_packet_bytes=%zu, policy_limit_bytes=%u, "
+         "total=%llu, oversized_total=%llu, EMSGSIZE_total=%llu, "
          "other packet-local send errors=%llu, transient send errors=%llu, last errno=%u)",
          LLU(report.events),
-         LLU(report.total),
+         state->last_discard_reason,
+         state->last_packet_bytes,
          (unsigned int) kMaxAllowedPacketLength,
+         LLU(report.total),
          LLU(state->oversized_packet_total),
          LLU(state->message_too_large_packet_total),
          LLU(state->packet_local_send_error_total),
@@ -150,7 +159,7 @@ raw_writer_batch_result_t rawLinuxWriteBatch(void *context, worker_t *worker, ra
     for (; prepared < count; ++prepared)
     {
         sbuf_t            *buffer    = buffers[prepared];
-        const uint32_t     length    = sbufGetLength(buffer);
+        const size_t       length    = sbufGetLength(buffer);
         ipv4_packet_view_t packet    = {0};
         const bool         oversized = length > kMaxAllowedPacketLength;
         if (oversized || ! ipv4packetviewParse(sbufGetRawPtr(buffer), length, &packet) ||
@@ -162,6 +171,7 @@ raw_writer_batch_result_t rawLinuxWriteBatch(void *context, worker_t *worker, ra
                 break;
             rawdeviceRecordDiscard(state,
                                    oversized ? kRawDeviceDiscardOversized : kRawDeviceDiscardPacketLocalSendError,
+                                   length,
                                    oversized ? 0 : EINVAL);
             bufferpoolReuseBuffer(worker->buffer_pool, buffer);
             return (raw_writer_batch_result_t) {.consumed = 1, .status = kRawWriterBatchContinue};
@@ -203,7 +213,7 @@ raw_writer_batch_result_t rawLinuxWriteBatch(void *context, worker_t *worker, ra
                                                       : rawLinuxSendErrorIsResourcePressure(error)
                                                           ? kRawDeviceDiscardTransientSendError
                                                           : kRawDeviceDiscardPacketLocalSendError;
-            rawdeviceRecordDiscard(state, reason, error);
+            rawdeviceRecordDiscard(state, reason, sbufGetLength(buffers[0]), error);
             bufferpoolReuseBuffer(worker->buffer_pool, buffers[0]);
             return (raw_writer_batch_result_t) {.consumed = 1, .status = kRawWriterBatchContinue};
         }

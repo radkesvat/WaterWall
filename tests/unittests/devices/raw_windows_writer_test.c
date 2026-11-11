@@ -1,10 +1,13 @@
 /* Exercises the production RawSocket Windows backend and shared worker FIFO
  * with real Windows threadpool notifications and substituted driver I/O. No
  * WinDivert driver is loaded. Covers pending ownership, per-worker FIFO,
- * independent workers, completion refusal, stop/restart and terminal failure.
+ * independent workers, completion refusal, stop/restart, terminal failure and
+ * rate-limited discard diagnostics with exact packet sizes.
  * CTest: waterwall.raw_windows_writer_unit */
 #include "devices/raw/raw_writer.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 #include "managers/windivert_manager.h"
 #include "test_assert.h"
 #include "wwapi.h"
@@ -45,6 +48,24 @@ static atomic_uint        foreign_notifications;
 static atomic_uint        refused_notifications;
 static bool               reject_next;
 static bool               fail_wait_create;
+static uint64_t           discard_clock_ms;
+static unsigned           discard_log_count;
+static char               last_discard_log[2048];
+
+static void captureLog(int level, const char *text, int length)
+{
+    if (level != LOG_LEVEL_WARN || text == NULL || length <= 0)
+        return;
+    const size_t copy = min((size_t) length, sizeof(last_discard_log) - 1);
+    memoryCopy(last_discard_log, text, copy);
+    last_discard_log[copy] = 0;
+    discard_log_count++;
+}
+
+static log_rate_limiter_report_t fixtureDiscardRecord(log_rate_limiter_t *limiter, uint64_t interval_ms)
+{
+    return logRateLimiterRecordAt(limiter, interval_ms, discard_clock_ms);
+}
 
 static worker_message_submit_result_e fixtureQueue(wid_t wid, WorkerMessageCallback callback,
                                                    WorkerMessageCleanupCallback cleanup, void *arg1, void *arg2,
@@ -226,6 +247,7 @@ static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
 #define CancelIoEx                   fixtureCancel
 #define CreateThreadpoolWait         fixtureCreateWait
 #define bufferpoolReuseBuffer        fixtureReuseBuffer
+#define logRateLimiterRecord         fixtureDiscardRecord
 #include "../../../ww/devices/raw/raw_windows.c"
 #undef windivertManagerEnsureLoaded
 #undef windivertOpen
@@ -236,6 +258,7 @@ static void fixtureReuseBuffer(buffer_pool_t *pool, sbuf_t *buffer)
 #undef CancelIoEx
 #undef CreateThreadpoolWait
 #undef bufferpoolReuseBuffer
+#undef logRateLimiterRecord
 
 static size_t tokenCount(void)
 {
@@ -289,6 +312,9 @@ static raw_device_t *startDevice(void)
     require(tokenCount() == 0, "previous fixture retained worker tokens");
     memoryZero(outcomes, sizeof(outcomes));
     observed_count       = 0;
+    discard_clock_ms     = 1000;
+    discard_log_count    = 0;
+    last_discard_log[0]  = 0;
     raw_device_t *device = rawdeviceCreate("fixture", 0, false, NULL);
     require(device != NULL && rawdeviceBringUp(device), "worker-output startup failed");
     return device;
@@ -359,6 +385,55 @@ static void testStopAndStaleCompletion(void)
     rawdeviceDestroy(device);
     runAll();
 }
+static void testDiscardLogging(void)
+{
+    raw_device_t  *device = startDevice();
+    const unsigned before = disposals;
+    outcomes[30]          = ERROR_HOST_UNREACHABLE;
+    submit(device, 0, 30);
+    runAll();
+    require(discard_log_count == 0, "first discard bypassed the existing report interval");
+
+    const size_t oversized_length = (size_t) kMaxAllowedPacketLength + 1;
+    sbuf_t      *oversized        = sbufCreate(oversized_length);
+    sbufSetLength(oversized, oversized_length);
+    discard_clock_ms += kRawDiscardReportIntervalMs;
+    require(rawdeviceWrite(device, oversized), "oversized fixture failed enqueue");
+    runAll();
+    char expected_size[64];
+    snprintf(expected_size, sizeof(expected_size), "last_packet_bytes=%zu", oversized_length);
+    char expected_limit[64];
+    snprintf(expected_limit, sizeof(expected_limit), "policy_limit_bytes=%u", (unsigned int) kMaxAllowedPacketLength);
+    require(discard_log_count == 1 && strstr(last_discard_log, "discarded 2 packet(s)") != NULL &&
+                strstr(last_discard_log, "last_reason=policy_size_limit") != NULL &&
+                strstr(last_discard_log, expected_size) != NULL && strstr(last_discard_log, expected_limit) != NULL &&
+                strstr(last_discard_log, "total=2, oversized_total=1") != NULL &&
+                strstr(last_discard_log, "packet-local WinDivertSendEx errors=1, last error=0") != NULL,
+            "oversized discard report lost its exact size, limit, count or matching reason/error");
+    require(observed_count == 1 && disposals == before + 2 && rawdeviceIsUp(device),
+            "discard diagnostics changed native submission or packet settlement");
+
+    outcomes[31] = ERROR_IO_PENDING;
+    submit(device, 0, 31);
+    runAll();
+    complete(0, ERROR_HOST_UNREACHABLE);
+    waitForToken();
+    runAll();
+    require(discard_log_count == 1 && disposals == before + 3 && rawdeviceIsUp(device),
+            "asynchronous packet-local failure bypassed reporting limits or changed ownership");
+    require(rawdeviceBringDown(device), "discard-log fixture stop failed");
+    char expected_error[64];
+    snprintf(expected_error, sizeof(expected_error), "last error=%u", (unsigned int) ERROR_HOST_UNREACHABLE);
+    require(discard_log_count == 2 && strstr(last_discard_log, "discarded 1 packet(s)") != NULL &&
+                strstr(last_discard_log, "last_reason=packet_local_send_error") != NULL &&
+                strstr(last_discard_log, "last_packet_bytes=24") != NULL &&
+                strstr(last_discard_log, "total=3, oversized_total=1") != NULL &&
+                strstr(last_discard_log, "packet-local WinDivertSendEx errors=2") != NULL &&
+                strstr(last_discard_log, expected_error) != NULL,
+            "stop flush lost the asynchronous rejected packet's size, reason or error");
+    rawdeviceDestroy(device);
+    require(discard_log_count == 2, "stopped writer emitted its pending diagnostics twice");
+}
 static void testCompletionRefusalAndFailure(void)
 {
     raw_device_t *device = startDevice();
@@ -403,12 +478,15 @@ int main(void)
 {
     testCaseSet("raw_windows_writer");
     InitializeCriticalSection(&capture_lock);
-    require(createInternalLogger(NULL, false) != NULL, "cannot initialize fixture logger");
+    logger_t *logger = createInternalLogger(NULL, false);
+    require(logger != NULL, "cannot initialize fixture logger");
+    loggerSetHandler(logger, captureLog);
     test_worker_registry_t registry = {0};
     GSTATE.workers_count            = 2;
     testWorkerRegistryInstall(&registry);
     testWorkerBindWID(0);
     testImmediateAndPendingFifo();
+    testDiscardLogging();
     testStopAndStaleCompletion();
     testCompletionRefusalAndFailure();
     testStartupRefusal();

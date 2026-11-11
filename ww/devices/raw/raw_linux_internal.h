@@ -15,6 +15,8 @@ struct raw_native_writer_s
     uint64_t           message_too_large_packet_total;
     uint64_t           packet_local_send_error_total;
     uint64_t           transient_send_error_total;
+    size_t             last_packet_bytes;
+    const char        *last_discard_reason;
     uint32_t           last_discard_error;
 };
 typedef raw_native_writer_t raw_linux_writer_state_t;
