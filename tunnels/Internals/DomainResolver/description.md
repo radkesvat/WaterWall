@@ -696,6 +696,18 @@ cannot overtake older bytes. Overflow or resolution failure closes only the
 already-initialized directions. Finish destroys local state first and never
 reflects a callback toward the side that sent Finish.
 
+Failed hard-limit admission is reported through the DNS logger: `ERROR` when
+application retention or incoming DNS transport limits close a connection, and
+`WARN` when a socket-open or outgoing DNS send limit refuses an operation.
+Messages identify the node, worker, application destination or known DNS peer,
+specific limit, current and incoming usage, allowed value, and resulting action.
+The first failure logs immediately. Repeated failures are limited separately
+per node, worker and reason to one report every five seconds, triggered by the
+next failure after that interval; the report includes the suppressed count.
+There is no timer-driven summary. These diagnostics do not require `verbose`;
+the DNS logger must enable the corresponding level. Normal Pause/Resume and
+cache operations do not produce these warnings or errors.
+
 Resolution fails if the destination is neither a valid IP nor a domain, submission
 fails, or no returned address satisfies the chosen strategy. `direct` and `chain`
 retain their no-native-fallback behavior on transport errors and timeouts.

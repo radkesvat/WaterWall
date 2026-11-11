@@ -194,6 +194,15 @@ Pending DNS sends have a separate limit per socket instance and submitting worke
 A send exceeding any limit drops that whole datagram. Completion, errors and
 shutdown release its allowance; the completed-answer cache does not consume it.
 
+Refusal by a pending-DNS limit emits a DNS `WARN` identifying the node, submitting
+worker, destination, specific limit, current and incoming usage, allowed value,
+and whole-datagram drop. The first failure logs immediately; repeated failures
+are limited per node, worker and reason to one report every five seconds. The
+next failure after the interval triggers that report and includes the suppressed
+count; there is no timer-driven summary. The line remains open. These warnings
+require the DNS logger's WARN level, not `verbose`. Normal cache operations do
+not produce them.
+
 This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.
 
 ### Listener and connector role

@@ -3,7 +3,9 @@
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testAggregateWindow, testAggregateWindowsStayIndependent, testFlushDrainsAndRearms,
- * testClockRollbackRearmsWindow, testCountersSaturate, testAtomicGate
+ * testClockRollbackRearmsWindow, testCountersSaturate, testImmediateAggregateWindows,
+ * testImmediateLimitersStayIndependent, testImmediateRollbackAndFlush, testImmediateCountersSaturate,
+ * testAtomicGate
  * Checks: Assertion labels include: first event emitted a report; first event did not increment total;
  * first event did not increment pending; event inside window emitted a report
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -94,6 +96,81 @@ static void testCountersSaturate(void)
     require(report.total == UINT64_MAX, "lifetime counter wrapped");
 }
 
+static void testImmediateAggregateWindows(void)
+{
+    log_rate_limiter_t limiter = {0};
+
+    log_rate_limiter_report_t first = logRateLimiterRecordImmediateAt(&limiter, 1000, 0);
+    require(first.should_log, "first immediate event was suppressed");
+    require(first.events == 1 && first.total == 1, "first immediate report returned incorrect counts");
+    require(first.elapsed_ms == 0, "first immediate report returned nonzero elapsed time");
+    require(limiter.pending == 0, "first immediate report did not drain pending events");
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 0).should_log, "same timestamp emitted another report");
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 999).should_log, "immediate limiter reported early");
+
+    log_rate_limiter_report_t report = logRateLimiterRecordImmediateAt(&limiter, 1000, 1000);
+    require(report.should_log, "immediate limiter did not report at interval boundary");
+    require(report.events == 3 && report.total == 4, "immediate report lost suppressed events or counted first twice");
+    require(report.elapsed_ms == 1000 && limiter.pending == 0, "immediate report did not settle its window");
+
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 1001).should_log,
+            "second immediate window reported early");
+    report = logRateLimiterRecordImmediateAt(&limiter, 1000, 3000);
+    require(report.should_log && report.events == 2 && report.total == 6, "second immediate window had wrong counts");
+    require(report.elapsed_ms == 2000, "second immediate window returned wrong elapsed time");
+}
+
+static void testImmediateLimitersStayIndependent(void)
+{
+    log_rate_limiter_t first  = {0};
+    log_rate_limiter_t second = {0};
+
+    require(logRateLimiterRecordImmediateAt(&first, 1000, 0).should_log, "first limiter did not report immediately");
+    require(logRateLimiterRecordImmediateAt(&second, 1000, 10).should_log,
+            "second limiter did not report independently");
+    require(! logRateLimiterRecordImmediateAt(&first, 1000, 500).should_log, "first limiter reported early");
+    require(! logRateLimiterRecordImmediateAt(&second, 1000, 1000).should_log,
+            "second limiter borrowed first deadline");
+
+    log_rate_limiter_report_t report = logRateLimiterRecordImmediateAt(&first, 1000, 1000);
+    require(report.should_log && report.events == 2 && report.total == 3, "first limiter shared counts or deadline");
+    report = logRateLimiterRecordImmediateAt(&second, 1000, 1010);
+    require(report.should_log && report.events == 2 && report.total == 3, "second limiter shared counts or deadline");
+}
+
+static void testImmediateRollbackAndFlush(void)
+{
+    log_rate_limiter_t limiter = {0};
+
+    require(logRateLimiterRecordImmediateAt(&limiter, 1000, 5000).should_log, "first immediate event was suppressed");
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 4000).should_log,
+            "immediate clock rollback emitted report");
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 4999).should_log,
+            "immediate rollback window reported early");
+    log_rate_limiter_report_t report = logRateLimiterRecordImmediateAt(&limiter, 1000, 5000);
+    require(report.should_log && report.events == 3 && report.total == 4, "immediate rollback lost pending events");
+    require(report.elapsed_ms == 1000, "immediate rollback did not re-arm the window");
+
+    require(! logRateLimiterRecordImmediateAt(&limiter, 1000, 5500).should_log,
+            "immediate limiter reported before flush");
+    report = logRateLimiterFlush(&limiter);
+    require(report.should_log && report.events == 1 && report.total == 5, "flush lost immediate limiter counts");
+    require(! logRateLimiterFlush(&limiter).should_log, "empty immediate limiter flush emitted report");
+    report = logRateLimiterRecordImmediateAt(&limiter, 1000, 8000);
+    require(report.should_log && report.events == 1 && report.total == 6, "first event after flush was not immediate");
+    require(report.elapsed_ms == 0, "first immediate event after flush retained old elapsed time");
+}
+
+static void testImmediateCountersSaturate(void)
+{
+    log_rate_limiter_t limiter = {.total = UINT64_MAX, .pending = UINT64_MAX};
+
+    log_rate_limiter_report_t report = logRateLimiterRecordImmediateAt(&limiter, 1000, 0);
+    require(report.should_log && report.events == UINT64_MAX && report.total == UINT64_MAX,
+            "immediate report wrapped saturated counters");
+    require(limiter.pending == 0, "saturated immediate report did not drain pending events");
+}
+
 static void testAtomicGate(void)
 {
     atomic_log_rate_limiter_t limiter;
@@ -118,6 +195,10 @@ int main(void)
     testFlushDrainsAndRearms();
     testClockRollbackRearmsWindow();
     testCountersSaturate();
+    testImmediateAggregateWindows();
+    testImmediateLimitersStayIndependent();
+    testImmediateRollbackAndFlush();
+    testImmediateCountersSaturate();
     testAtomicGate();
     return 0;
 }

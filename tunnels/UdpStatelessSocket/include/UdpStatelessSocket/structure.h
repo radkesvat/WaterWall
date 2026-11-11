@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DomainResolver/interface.h"
+#include "loggers/log_rate_limiter.h"
 #include "wwapi.h"
 
 enum
@@ -19,8 +20,11 @@ typedef struct udpstatelesssocket_send_request_s    udpstatelesssocket_send_requ
 
 typedef struct udpstatelesssocket_dns_pending_s
 {
-    buffer_budget_t budget;
-    size_t          requests;
+    buffer_budget_t    budget;
+    size_t             requests;
+    log_rate_limiter_t request_limit_log;
+    log_rate_limiter_t byte_limit_log;
+    log_rate_limiter_t charge_limit_log;
 } udpstatelesssocket_dns_pending_t;
 
 struct udpstatelesssocket_dns_cache_entry_s

@@ -8,6 +8,7 @@
  */
 #include "DomainResolver/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "loggers/dns_logger.h"
 
 /* Exercise the private socket boundary without exposing test-only runtime APIs. */
 #include "../../../../tunnels/Internals/DomainResolver/common/transport.c"
@@ -21,6 +22,37 @@ static bool      preparation_refuses;
 static bool      init_establishes, init_finishes, init_pauses, answer_queries, submitting;
 static bool      answer_ipv6, inject_empty_tcp;
 static unsigned  a_questions, aaaa_questions;
+static char      limit_log[1024];
+static unsigned  limit_log_count;
+static int       limit_log_level;
+
+static void captureLimitLog(int level, const char *text, int length)
+{
+    twfRequire(length > 0 && (size_t) length < sizeof(limit_log), "transport limit diagnostic exceeds fixture storage");
+    memoryCopy(limit_log, text, (size_t) length);
+    limit_log[length] = '\0';
+    if (strstr(limit_log, "action=closing-dns-transport") != NULL)
+        twfRequire(observed_line != NULL && lineIsAlive(observed_line),
+                   "transport limit diagnostic followed line destruction");
+    limit_log_level = level;
+    ++limit_log_count;
+}
+
+static void requireLimitLog(unsigned count, int level, const char *reason, const char *action, bool peer_known)
+{
+    char expected_reason[96], expected_action[96];
+    snprintf(expected_reason, sizeof(expected_reason), "reason=%s", reason);
+    snprintf(expected_action, sizeof(expected_action), "action=%s", action);
+    twfRequire(limit_log_count == count && limit_log_level == level &&
+                   strstr(limit_log, "node=dns-transport-limit-test") != NULL &&
+                   strstr(limit_log, "worker=0") != NULL && strstr(limit_log, expected_reason) != NULL &&
+                   strstr(limit_log, expected_action) != NULL && strstr(limit_log, "used=") != NULL &&
+                   strstr(limit_log, "incoming=") != NULL && strstr(limit_log, "limit=") != NULL &&
+                   strstr(limit_log, "suppressed=0") != NULL &&
+                   (! peer_known ||
+                    (strstr(limit_log, "peer=127.0.0.53:53") != NULL && strstr(limit_log, "transport=") != NULL)),
+               "transport limit diagnostic lost severity, cause, endpoint, action or counters");
+}
 
 static bool prepareOwned(tunnel_t *helper, tunnel_t *owner, line_t *line, void *storage)
 {
@@ -532,6 +564,110 @@ static void testQueryFamilies(tunnel_t *next, const asyncdns_options_t *options)
     domainresolverTunnelDestroy(helper, wwLifecycleStartupRollback());
 }
 
+static void testLimitLogging(tunnel_t *next, const asyncdns_options_t *options)
+{
+    twfSetCase("DNS transport limit diagnostics identify refusal and aggregate across sockets");
+    logger_t *logger = createDnsLogger(NULL, false);
+    twfRequire(logger != NULL, "failed to create transport limit logger");
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
+    loggerSetHandler(logger, captureLimitLog);
+    limit_log_count                       = 0;
+    node_t *node                          = tunnelGetNode(resolver);
+    char   *saved_name                    = node->name;
+    node->name                            = (char *) "dns-transport-limit-test";
+    domainresolver_transport_t *transport = domainresolverTransportCreate(resolver, next, 0, options);
+    twfRequire(transport != NULL, "failed to create logging transport");
+    ares_socket_t handles[kDnsTransportMaxSockets];
+    for (unsigned i = 0; i < ARRAY_SIZE(handles); ++i)
+    {
+        handles[i] = dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport);
+        twfRequire(handles[i] != ARES_SOCKET_BAD, "socket capacity refused before its advertised limit");
+    }
+    twfRequire(dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport) == ARES_SOCKET_BAD && errno == ENOBUFS,
+               "socket capacity did not refuse the next socket");
+    requireLimitLog(1, LOG_LEVEL_WARN, "socket-count", "refusing-dns-socket", false);
+    twfRequire(strstr(limit_log, "limit=128") != NULL, "socket count diagnostic omitted its bound");
+    twfRequire(dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport) == ARES_SOCKET_BAD && limit_log_count == 1,
+               "repeated socket refusal flooded the logger");
+    for (unsigned i = 0; i < ARRAY_SIZE(handles); ++i)
+        twfRequire(dnsTransportClose(handles[i], transport) == 0, "unconnected fixture socket cleanup failed");
+    const uint32_t saved_handle = transport->next_handle;
+    transport->next_handle      = INT_MAX;
+    twfRequire(dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport) == ARES_SOCKET_BAD,
+               "handle exhaustion was accepted");
+    requireLimitLog(2, LOG_LEVEL_WARN, "socket-id", "refusing-dns-socket", false);
+    transport->next_handle = saved_handle;
+
+    sockaddr_u peer          = {0};
+    peer.sin.sin_family      = AF_INET;
+    peer.sin.sin_port        = htons(53);
+    peer.sin.sin_addr.s_addr = htonl(0x7f000035U);
+    ares_socket_t handle     = dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport);
+    twfRequire(dnsTransportConnect(handle, &peer.sa, sizeof(peer.sin), 0, transport) == 0,
+               "log fixture UDP connect failed");
+    char datagram[kDnsTransportMaxDatagram + 1] = {0};
+    twfRequire(dnsTransportSend(handle, datagram, sizeof(datagram), 0, NULL, 0, transport) == -1 &&
+                   lineIsAlive(observed_line),
+               "oversized DNS send was accepted or closed its line");
+    requireLimitLog(3, LOG_LEVEL_WARN, "send-datagram-size", "rejecting-dns-send", true);
+    twfRequire(strstr(limit_log, "incoming=65536") != NULL && strstr(limit_log, "limit=65535") != NULL,
+               "datagram send diagnostic omitted actual size or limit");
+    domainresolverTransportPayload(resolver, observed_line, makeInput(observed_line, sizeof(datagram), 0));
+    twfRequire(! lineIsAlive(observed_line), "oversized DNS receive left the transport alive");
+    requireLimitLog(4, LOG_LEVEL_ERROR, "receive-datagram-size", "closing-dns-transport", true);
+    dnsTransportClose(handle, transport);
+    releaseObserved();
+
+    for (unsigned attempt = 0; attempt < 3; ++attempt)
+    {
+        if (attempt == 2)
+            transport->limit_logs[kDnsTransportLogInputEntries].window_started_ms -= 5000;
+        handle = dnsTransportOpen(AF_INET, SOCK_DGRAM, 0, transport);
+        twfRequire(dnsTransportConnect(handle, &peer.sa, sizeof(peer.sin), 0, transport) == 0,
+                   "entry-limit logging fixture connect failed");
+        for (unsigned i = 0; i <= kDnsTransportMaxInputEntries; ++i)
+            domainresolverTransportPayload(resolver, observed_line, makeInput(observed_line, 0, 0));
+        twfRequire(! lineIsAlive(observed_line) && limit_log_count == (attempt < 2 ? 5U : 6U),
+                   "entry limit logs did not aggregate across distinct DNS lines");
+        if (attempt == 0)
+            requireLimitLog(5, LOG_LEVEL_ERROR, "input-entries", "closing-dns-transport", true);
+        if (attempt == 2)
+            twfRequire(strstr(limit_log, "reason=input-entries") != NULL && strstr(limit_log, "suppressed=1") != NULL,
+                       "entry-limit summary lost the suppressed event");
+        dnsTransportClose(handle, transport);
+        releaseObserved();
+    }
+
+    const char *reasons[] = {"input-bytes", "input-buffer-charge", "worker-input-bytes", "worker-input-buffer-charge"};
+    for (unsigned reason = 0; reason < ARRAY_SIZE(reasons); ++reason)
+    {
+        handle = dnsTransportOpen(AF_INET, SOCK_STREAM, 0, transport);
+        twfRequire(dnsTransportConnect(handle, &peer.sa, sizeof(peer.sin), 0, transport) == 0,
+                   "budget-limit logging fixture connect failed");
+        /* Model independently retained worker input with a real reservation,
+         * then release it after this socket's admission failure settles. */
+        buffer_budget_cost_t reservation = reason == 2   ? (buffer_budget_cost_t) {kDnsTransportWorkerBytes, 0}
+                                           : reason == 3 ? (buffer_budget_cost_t) {0, kDnsTransportWorkerCharge}
+                                                         : (buffer_budget_cost_t) {0};
+        twfRequire(bufferbudgetTryAcquire(&transport->input_budget, reservation), "worker budget reservation failed");
+        size_t  capacity = reason == 0   ? kDnsTransportMaxInputBytes + 1U
+                           : reason == 1 ? kDnsTransportMaxInputCharge + 1U
+                                         : 1U;
+        sbuf_t *buf      = makeInput(observed_line, capacity, 0);
+        if (reason != 0)
+            sbufSetLength(buf, 1);
+        domainresolverTransportPayload(resolver, observed_line, buf);
+        twfRequire(! lineIsAlive(observed_line), "transport budget overflow survived diagnostic reporting");
+        requireLimitLog(7U + reason, LOG_LEVEL_ERROR, reasons[reason], "closing-dns-transport", true);
+        bufferbudgetRelease(&transport->input_budget, reservation);
+        dnsTransportClose(handle, transport);
+        releaseObserved();
+    }
+    domainresolverTransportDestroy(transport);
+    node->name = saved_name;
+    dnsloggerDestroy();
+}
+
 int main(int argc, char **argv)
 {
     const char *selected = argc == 2 ? argv[1] : NULL;
@@ -682,11 +818,12 @@ int main(int argc, char **argv)
         testNativeChannelFlags(&options);
     }
     testQueryFamilies(next, &options);
+    testLimitLogging(next, &options);
     chain->line_pools[0] = NULL;
     tunnelchainDestroy(chain);
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);
-    tunnelDestroy(resolver);
+    domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
     ares_library_cleanup();
     twfWorkerEnvTeardown(&env);
     return 0;

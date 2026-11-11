@@ -7,6 +7,8 @@
  * caseSpliceOwnerDispatch, casePendingDnsBounds, caseProtectedDnsProvider.
  * Pending DNS checks cover count/byte/allocation admission, synchronous completion,
  * submission refusal, timeout, shutdown and completion after borrowed-line death.
+ * Limit diagnostics cover WARN context, independent reasons, exact-boundary silence
+ * and suppression counts without waiting for a reporting window.
  * Checks: Assertion labels include: UdpStatelessSocket must advertise only the head role;
  * UdpStatelessSocket must reject a previous neighbor; an idle item expired; these cases close their line
  * first; the owner must detach its idle-table entry before destroying the line
@@ -32,6 +34,7 @@
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 #include "fixtures/protocols/udp_splice_fixture.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/dns_logger.h"
 
 extern node_t nodeUdpStatelessSocketGet(void);
 
@@ -463,11 +466,33 @@ static void requirePendingDnsEmpty(udpstateless_fixture_t *fixture, uint32_t ref
     twfRequireNoLeakedBuffers();
 }
 
+static unsigned dns_limit_log_count;
+static char     dns_limit_log[1024];
+
+static void captureDnsLimitLog(int level, const char *data, int length)
+{
+    if (strstr(data, "UdpStatelessSocket: DNS pending limit exceeded") == NULL)
+        return;
+    twfRequire(level == LOG_LEVEL_WARN, "UDP DNS admission refusal must log WARN");
+    ++dns_limit_log_count;
+    const size_t copied = min((size_t) length, sizeof(dns_limit_log) - 1);
+    memoryCopy(dns_limit_log, data, copied);
+    dns_limit_log[copied] = '\0';
+}
+
 static void casePendingDnsBounds(void)
 {
     twfSetCase("stateless pending DNS bounds count, payload and allocation across borrowed lines");
     udpstateless_fixture_t fixture;
     fixtureSetup(&fixture, false);
+    node_t socket_node = {.name = (char *) "stateless-limit-test"};
+    fixture.uss->node  = &socket_node;
+    const bool own_log = getDnsLogger() == NULL;
+    logger_t  *logger  = own_log ? createDnsLogger(NULL, false) : getDnsLogger();
+    twfRequire(logger != NULL, "DNS limit logger setup failed");
+    logger_handler previous_handler = getDnsLoggerHandle();
+    loggerSetHandler(logger, captureDnsLimitLog);
+    dns_limit_log_count                = 0;
     udpstatelesssocket_tstate_t *state = tunnelGetState(fixture.uss);
     state->dns_policy                  = (dns_policy_t) {.resolve = true, .strategy = kDsOnlyIpV4};
     state->dns_strategy_override       = true;
@@ -487,11 +512,24 @@ static void casePendingDnsBounds(void)
     twfRequire(fixture.dns_pending.requests == kUdpStatelessSocketDnsPendingRequests &&
                    native_dns_queries == kUdpStatelessSocketDnsPendingRequests,
                "empty datagrams did not fill the request-count allowance");
+    twfRequire(dns_limit_log_count == 0, "accepted request boundary emitted a DNS limit warning");
     line_t *other = twfLinePoolCreateLine(&fixture.lines);
     submitPendingDnsDatagram(&fixture, other, 1, 1);
     twfRequire(lineIsAlive(other) && twfLineRefCount(other) == 1 &&
                    native_dns_queries == kUdpStatelessSocketDnsPendingRequests,
                "another borrowed line bypassed the worker request cap or was closed");
+    twfRequire(dns_limit_log_count == 1 && strstr(dns_limit_log, "node=stateless-limit-test worker=0") != NULL &&
+                   strstr(dns_limit_log, "destination=pending-") != NULL && strstr(dns_limit_log, ".test:53") != NULL &&
+                   strstr(dns_limit_log, "reason=pending-requests used=256 incoming=1 limit=256") != NULL &&
+                   strstr(dns_limit_log, "action=dropping-datagram suppressed=0") != NULL,
+               "request refusal warning lost node, worker, destination, limit or action context");
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, 1);
+    twfRequire(dns_limit_log_count == 1 && fixture.dns_pending.request_limit_log.pending == 1,
+               "repeated request refusal was not suppressed across borrowed lines");
+    fixture.dns_pending.request_limit_log.window_started_ms = getTimeOfDayMS() - 5000;
+    submitPendingDnsDatagram(&fixture, other, 1, 1);
+    twfRequire(dns_limit_log_count == 2 && strstr(dns_limit_log, "suppressed=1") != NULL,
+               "next request warning omitted the suppressed refusal count");
     completeNativeDns(0, ARES_ETIMEOUT);
     submitPendingDnsDatagram(&fixture, other, 1, 1);
     twfRequire(fixture.dns_pending.requests == kUdpStatelessSocketDnsPendingRequests && twfLineRefCount(other) == 2,
@@ -514,10 +552,16 @@ static void casePendingDnsBounds(void)
     }
     twfRequire(fixture.dns_pending.budget.used.bytes == kUdpStatelessSocketDnsPendingBytes,
                "pending DNS failed admission at the logical-byte boundary");
+    twfRequire(dns_limit_log_count == 2, "accepted payload boundary emitted a DNS limit warning");
     unsigned submitted = native_dns_queries;
     submitPendingDnsDatagram(&fixture, fixture.line, 1, 1);
     twfRequire(native_dns_queries == submitted && lineIsAlive(fixture.line),
                "logical-byte overflow submitted DNS or closed its borrowed line");
+    twfRequire(dns_limit_log_count == 3 &&
+                   strstr(dns_limit_log, "reason=pending-payload-bytes used=2097152 incoming=1 limit=2097152") !=
+                       NULL &&
+                   strstr(dns_limit_log, "suppressed=0") != NULL,
+               "payload refusal was hidden by another reason or omitted byte usage");
     completeAllNativeDns(ARES_ETIMEOUT);
     requirePendingDnsEmpty(&fixture, refs);
 
@@ -527,9 +571,14 @@ static void casePendingDnsBounds(void)
     twfRequire(fixture.dns_pending.requests == 1 &&
                    fixture.dns_pending.budget.used.charge == kUdpStatelessSocketDnsPendingCharge,
                "pending DNS failed admission at the allocation-charge boundary");
+    twfRequire(dns_limit_log_count == 3, "accepted charge boundary emitted a DNS limit warning");
     submitted = native_dns_queries;
     submitPendingDnsDatagram(&fixture, fixture.line, 0, 0);
     twfRequire(native_dns_queries == submitted, "empty datagram escaped the allocation-charge cap");
+    twfRequire(dns_limit_log_count == 4 &&
+                   strstr(dns_limit_log, "reason=pending-buffer-charge used=4194304 incoming=") != NULL &&
+                   strstr(dns_limit_log, "limit=4194304") != NULL && strstr(dns_limit_log, "suppressed=0") != NULL,
+               "charge refusal was hidden by another reason or omitted allocation usage");
     completeAllNativeDns(ARES_ECANCELLED);
     requirePendingDnsEmpty(&fixture, refs);
     submitPendingDnsDatagram(&fixture, fixture.line, 1, kUdpStatelessSocketDnsPendingCharge);
@@ -551,6 +600,9 @@ static void casePendingDnsBounds(void)
     mutexDestroy(&state->dns_cache_mutex);
     tunnelOwnedChildDestroy(state->dns_provider);
     fixtureTeardown(&fixture);
+    loggerSetHandler(logger, previous_handler);
+    if (own_log)
+        dnsloggerDestroy();
 }
 
 static void protectedDnsInit(tunnel_t *egress, line_t *line)

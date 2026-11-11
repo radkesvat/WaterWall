@@ -31,6 +31,15 @@ WW_EXPORT log_rate_limiter_report_t logRateLimiterRecord(log_rate_limiter_t *lim
 WW_EXPORT log_rate_limiter_report_t logRateLimiterRecordAt(log_rate_limiter_t *limiter, uint64_t interval_ms,
                                                            uint64_t now_ms);
 
+/*
+ * Reports the first event immediately, then aggregates subsequent events over
+ * each interval. Reports include the triggering event and suppressed events.
+ * The first report has elapsed_ms == 0; clock rollback re-arms as above.
+ */
+WW_EXPORT log_rate_limiter_report_t logRateLimiterRecordImmediate(log_rate_limiter_t *limiter, uint64_t interval_ms);
+WW_EXPORT log_rate_limiter_report_t logRateLimiterRecordImmediateAt(log_rate_limiter_t *limiter, uint64_t interval_ms,
+                                                                    uint64_t now_ms);
+
 /* Drains pending events once and starts a fresh reporting window. */
 WW_EXPORT log_rate_limiter_report_t logRateLimiterFlush(log_rate_limiter_t *limiter);
 

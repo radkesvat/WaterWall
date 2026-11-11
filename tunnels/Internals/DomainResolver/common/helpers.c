@@ -201,6 +201,67 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
     return true;
 }
 
+static void domainresolverLogPendingRefusal(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls, const sbuf_t *buf)
+{
+    assert(lineIsOnCurrentWorker(l));
+    domainresolver_tstate_t *ts  = tunnelGetState(t);
+    const wid_t              wid = lineGetWID(l);
+    assert(ts->pending_logs != NULL && wid < getWorkersCount());
+    const buffer_budget_cost_t used         = bufferbudgetGetUsage(&ls->pending_budget);
+    const buffer_budget_cost_t limits       = bufferbudgetGetLimits(&ls->pending_budget);
+    const size_t               length       = sbufGetLength(buf);
+    size_t                     charge       = 0;
+    const bool                 charge_valid = sbufTryGetQueueCharge(buf, &charge);
+    unsigned                   reason       = kDomainResolverLogPendingAdmission;
+    const char                *name         = "application-queue-admission";
+    size_t                     current = used.bytes, incoming = length, limit = limits.bytes;
+    if (length > limits.bytes - used.bytes)
+    {
+        reason = kDomainResolverLogPendingBytes;
+        name   = "application-payload-bytes";
+    }
+    else if (charge_valid && charge > limits.charge - used.charge)
+    {
+        reason   = kDomainResolverLogPendingCharge;
+        name     = "application-buffer-charge";
+        current  = used.charge;
+        incoming = charge;
+        limit    = limits.charge;
+    }
+    const log_rate_limiter_report_t report =
+        logRateLimiterRecordImmediate(&ts->pending_logs[wid].limits[reason], kDomainResolverLimitLogIntervalMs);
+    if (! report.should_log)
+        return;
+
+    const address_context_t *dest = lineGetDestinationAddressContext(l);
+    char                     address[SOCKADDR_STRLEN];
+    const char              *destination = "unavailable";
+    if (addresscontextIsDomain(dest))
+        destination = dest->domain;
+    else if (addresscontextCanConvertToSockAddr(dest))
+    {
+        const sockaddr_u peer = addresscontextToSockAddr(dest);
+        destination           = SOCKADDR_STR(&peer, address);
+    }
+    const int socktype = addresscontextGetSockType(dest);
+    loggerPrint(getDnsLogger(),
+                LOG_LEVEL_ERROR,
+                "DomainResolver: node=%s worker=%u destination=%s port=%u transport=%s reason=%s "
+                "used=%zu incoming=%zu limit=%zu action=closing-application-path suppressed=%llu",
+                t->node->name != NULL ? t->node->name : "<unnamed>",
+                (unsigned) wid,
+                destination,
+                (unsigned) dest->port,
+                socktype == SOCK_STREAM  ? "tcp"
+                : socktype == SOCK_DGRAM ? "udp"
+                                         : "unknown",
+                name,
+                current,
+                incoming,
+                limit,
+                (unsigned long long) (report.events - 1));
+}
+
 bool domainresolverQueuePayload(tunnel_t *t, line_t *l, domainresolver_lstate_t *ls, sbuf_t *buf)
 {
     if (LIKELY(bufferqueueTryPushBack(&ls->pending, &buf)))
@@ -208,8 +269,8 @@ bool domainresolverQueuePayload(tunnel_t *t, line_t *l, domainresolver_lstate_t 
         ls->pending_source_hold = true;
         return domainresolverUpdateSourcePressure(t, l);
     }
+    domainresolverLogPendingRefusal(t, l, ls, buf);
     lineReuseBuffer(l, buf);
-    loggerPrint(getDnsLogger(), LOG_LEVEL_ERROR, "DomainResolver: pending payload retention overflow");
     domainresolverCloseLine(t, l);
     return false;
 }

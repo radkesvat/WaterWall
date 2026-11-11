@@ -24,5 +24,6 @@ void domainresolverTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *cont
     memoryFree(ts->dns_next);
     memoryFree(ts->dns_workers);
     memoryFree(ts->dns_worker_closed);
+    memoryFree(ts->pending_logs);
     tunnelDestroy(t);
 }

@@ -45,5 +45,6 @@ tunnel_t *domainresolverTunnelCreate(node_t *node)
         return NULL;
     }
 
+    ts->pending_logs = memoryCalloc(getWorkersCount(), sizeof(*ts->pending_logs));
     return t;
 }

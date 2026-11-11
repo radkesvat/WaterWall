@@ -13,6 +13,7 @@
  */
 #include "DomainResolver/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "loggers/dns_logger.h"
 
 static tunnel_t        *resolver;
 static LineDnsResolveFn dns_callback;
@@ -27,6 +28,20 @@ static unsigned         held_pause_count, held_resume_count, pressure_action;
 static bool             pressure_only, initiating_source_paused;
 static bool             use_prepare_state;
 static unsigned         prepare_destroy_count;
+static char             limit_log[1024];
+static unsigned         limit_log_count;
+static int              limit_log_level;
+
+static void captureLimitLog(int level, const char *text, int length)
+{
+    twfRequire(length > 0 && (size_t) length < sizeof(limit_log),
+               "application limit diagnostic exceeds fixture storage");
+    memoryCopy(limit_log, text, (size_t) length);
+    limit_log[length] = '\0';
+    twfRequire(dns_line != NULL && lineIsAlive(dns_line), "application limit diagnostic followed line destruction");
+    limit_log_level = level;
+    ++limit_log_count;
+}
 
 static bool prepareLine(tunnel_t *t, tunnel_t *owner, line_t *l, void *state)
 {
@@ -360,7 +375,7 @@ static void run(bool close_now, bool literal)
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);
     tunnelDestroy(prev);
-    tunnelDestroy(resolver);
+    domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
     twfWorkerEnvTeardown(&env);
 }
 static void runPressure(unsigned action)
@@ -454,7 +469,7 @@ static void runPressure(unsigned action)
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);
     tunnelDestroy(prev);
-    tunnelDestroy(resolver);
+    domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
     twfWorkerEnvTeardown(&env);
 }
 
@@ -578,7 +593,78 @@ static void runBudget(bool overflow, bool resolve_first)
     twfLinePoolTeardown(&lines);
     tunnelDestroy(next);
     tunnelDestroy(prev);
-    tunnelDestroy(resolver);
+    domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
+    twfWorkerEnvTeardown(&env);
+}
+
+static void runLimitLogging(void)
+{
+    twfSetCase("application DNS limits report distinct causes and aggregate across closed lines");
+    twf_worker_env_t env;
+    twfWorkerEnvSetup(&env, 4096, 32);
+    logger_t *logger = createDnsLogger(NULL, false);
+    twfRequire(logger != NULL, "failed to create application limit logger");
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
+    loggerSetHandler(logger, captureLimitLog);
+    limit_log_count = 0;
+    node_t node     = {.type = (char *) "DomainResolver", .name = (char *) "dns-app-limit-test"};
+    resolver        = domainresolverTunnelCreate(&node);
+    tunnel_t *prev = tunnelCreate(NULL, 0, 0), *next = tunnelCreate(NULL, 0, 0);
+    twfRequire(resolver != NULL && prev != NULL && next != NULL, "failed to create application limit fixture");
+    tunnelBind(prev, resolver);
+    tunnelBind(resolver, next);
+    prev->chain_index     = 0;
+    resolver->chain_index = 1;
+    next->chain_index     = 2;
+    prev->fnFinD          = ownerFinish;
+    prev->fnPauseD = prev->fnResumeD = noop;
+    domainresolver_tstate_t *ts      = tunnelGetState(resolver);
+    ts->strategy                     = kDsOnlyIpV4;
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, resolver->lstate_size, 1);
+    for (unsigned attempt = 0; attempt < 5; ++attempt)
+    {
+        /* Same reason on distinct owned application lines shares one limiter;
+         * a different reason must still report immediately in that window. */
+        const bool bytes = attempt < 2 || attempt == 4;
+        if (attempt == 4)
+            ts->pending_logs[0].limits[kDomainResolverLogPendingBytes].window_started_ms -= 5000;
+        line_t *line = twfLinePoolCreateLine(&lines);
+        lineRef(line);
+        address_context_t *dest = lineGetDestinationAddressContext(line);
+        addresscontextDomainSet(dest, "limit.invalid", 13);
+        addresscontextSetPort(dest, 443);
+        addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+        tunnelUpStreamInit(resolver, line);
+        sbuf_t *buf = bufferpoolGetBestFit(lineGetBufferPool(line), kDomainResolverMaxPendingBytes + 1U, 32);
+        sbufSetLength(buf, bytes ? kDomainResolverMaxPendingBytes + 1U : 0);
+        tunnelUpStreamPayload(resolver, line, buf);
+        twfRequire(! lineIsAlive(line), "application retention refusal failed to close its owned source line");
+        const unsigned expected = attempt < 2 ? 1 : attempt < 4 ? 2 : 3;
+        twfRequire(limit_log_count == expected, "application limit logs did not aggregate by instance and reason");
+        if (attempt == 0 || attempt == 2 || attempt == 4)
+        {
+            twfRequire(
+                limit_log_level == LOG_LEVEL_ERROR && strstr(limit_log, "node=dns-app-limit-test") != NULL &&
+                    strstr(limit_log, "worker=0") != NULL && strstr(limit_log, "destination=limit.invalid") != NULL &&
+                    strstr(limit_log, "port=443") != NULL && strstr(limit_log, "transport=tcp") != NULL &&
+                    strstr(limit_log,
+                           bytes ? "reason=application-payload-bytes" : "reason=application-buffer-charge") != NULL &&
+                    strstr(limit_log, "used=0") != NULL && strstr(limit_log, "incoming=") != NULL &&
+                    strstr(limit_log, "limit=2097152") != NULL &&
+                    strstr(limit_log, "action=closing-application-path") != NULL &&
+                    strstr(limit_log, attempt == 4 ? "suppressed=1" : "suppressed=0") != NULL,
+                "application limit diagnostic lost severity, cause, endpoint, action or suppression count");
+        }
+        lineUnref(dns_line);
+        twfRequireLineStateZeroed(line, resolver, "application limit logging retained destroyed line state");
+        lineUnref(line);
+    }
+    twfLinePoolTeardown(&lines);
+    tunnelDestroy(next);
+    tunnelDestroy(prev);
+    domainresolverTunnelDestroy(resolver, wwLifecycleStartupRollback());
+    dnsloggerDestroy();
     twfWorkerEnvTeardown(&env);
 }
 
@@ -592,5 +678,6 @@ int main(void)
     for (unsigned close_now = 0; close_now < 2; ++close_now)
         for (unsigned literal = 0; literal < 2; ++literal)
             run(close_now, literal);
+    runLimitLogging();
     return 0;
 }

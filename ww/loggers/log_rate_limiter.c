@@ -60,6 +60,28 @@ log_rate_limiter_report_t logRateLimiterRecordAt(log_rate_limiter_t *limiter, ui
     return report;
 }
 
+log_rate_limiter_report_t logRateLimiterRecordImmediate(log_rate_limiter_t *limiter, uint64_t interval_ms)
+{
+    return logRateLimiterRecordImmediateAt(limiter, interval_ms, logRateLimiterNowMs());
+}
+
+log_rate_limiter_report_t logRateLimiterRecordImmediateAt(log_rate_limiter_t *limiter, uint64_t interval_ms,
+                                                          uint64_t now_ms)
+{
+    assert(limiter != NULL);
+
+    const bool                first  = ! limiter->window_started;
+    log_rate_limiter_report_t report = logRateLimiterRecordAt(limiter, interval_ms, now_ms);
+    if (first)
+    {
+        report.should_log = true;
+        report.events     = limiter->pending;
+        report.total      = limiter->total;
+        limiter->pending  = 0;
+    }
+    return report;
+}
+
 log_rate_limiter_report_t logRateLimiterFlush(log_rate_limiter_t *limiter)
 {
     assert(limiter != NULL);

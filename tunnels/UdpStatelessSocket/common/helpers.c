@@ -646,6 +646,30 @@ static int udpstatelesssocketEffectiveDnsStrategy(const udpstatelesssocket_tstat
     return state->dns_strategy_override ? state->dns_policy.strategy : dest_ctx->domain_strategy;
 }
 
+static void udpstatelesssocketLogDnsLimit(tunnel_t *t, line_t *line, const address_context_t *destination,
+                                          log_rate_limiter_t *limiter, const char *reason, size_t used, size_t incoming,
+                                          size_t limit)
+{
+    const log_rate_limiter_report_t report = logRateLimiterRecordImmediate(limiter, 5000);
+    if (! report.should_log)
+        return;
+
+    const node_t *node = tunnelGetNode(t);
+    loggerPrint(getDnsLogger(),
+                LOG_LEVEL_WARN,
+                "UdpStatelessSocket: DNS pending limit exceeded node=%s worker=%u destination=%s:%u "
+                "reason=%s used=%zu incoming=%zu limit=%zu action=dropping-datagram suppressed=%llu",
+                node != NULL && node->name != NULL ? node->name : "<unnamed>",
+                (unsigned) lineGetWID(line),
+                destination->domain,
+                (unsigned) destination->port,
+                reason,
+                used,
+                incoming,
+                limit,
+                (unsigned long long) (report.events - 1));
+}
+
 static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *buf, const address_context_t *dest_ctx)
 {
     assert(addresscontextIsDomain(dest_ctx));
@@ -661,11 +685,43 @@ static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     assert(state->dns_pending != NULL);
     udpstatelesssocket_dns_pending_t *pending  = &state->dns_pending[lineGetWID(l)];
     const buffer_budget_cost_t        retained = {sbufGetLength(buf), sbufGetAllocationCharge(buf)};
-    if (pending->requests >= kUdpStatelessSocketDnsPendingRequests ||
-        ! bufferbudgetTryAcquire(&pending->budget, retained))
+    if (pending->requests >= kUdpStatelessSocketDnsPendingRequests)
     {
+        udpstatelesssocketLogDnsLimit(t,
+                                      l,
+                                      dest_ctx,
+                                      &pending->request_limit_log,
+                                      "pending-requests",
+                                      pending->requests,
+                                      1,
+                                      kUdpStatelessSocketDnsPendingRequests);
         // These are independent datagrams on a borrowed line: drop only the
         // refused input, preserving other pending sends and the line itself.
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    if (! bufferbudgetTryAcquire(&pending->budget, retained))
+    {
+        const buffer_budget_cost_t used   = bufferbudgetGetUsage(&pending->budget);
+        const buffer_budget_cost_t limits = bufferbudgetGetLimits(&pending->budget);
+        if (retained.bytes > limits.bytes - used.bytes)
+            udpstatelesssocketLogDnsLimit(t,
+                                          l,
+                                          dest_ctx,
+                                          &pending->byte_limit_log,
+                                          "pending-payload-bytes",
+                                          used.bytes,
+                                          retained.bytes,
+                                          limits.bytes);
+        else
+            udpstatelesssocketLogDnsLimit(t,
+                                          l,
+                                          dest_ctx,
+                                          &pending->charge_limit_log,
+                                          "pending-buffer-charge",
+                                          used.charge,
+                                          retained.charge,
+                                          limits.charge);
         lineReuseBuffer(l, buf);
         return;
     }
