@@ -15,36 +15,16 @@ static bool socks5serverFieldHasNul(const uint8_t *field, size_t len)
     return false;
 }
 
-
-static void socks5serverSanitizeUsername(const uint8_t *username, uint8_t username_len, char out[UINT8_MAX + 1U])
-{
-    assert(username != NULL && username_len > 0);
-    for (uint8_t i = 0; i < username_len; ++i)
-    {
-        uint8_t ch = username[i];
-        out[i]     = (ch >= 0x20U && ch <= 0x7EU && ch != '"') ? (char) ch : '?';
-    }
-    out[username_len] = '\0';
-}
-
 void socks5serverLogAuthRejected(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,
                                  const char *reason)
 {
     assert(l != NULL && reason != NULL);
-    socks5server_tstate_t *ts = tunnelGetState(t);
-
-    if (ts->verbose && username != NULL && username_len > 0)
-    {
-        char username_text[UINT8_MAX + 1U];
-        socks5serverSanitizeUsername(username, username_len, username_text);
-        LOGW("Socks5Server: rejected SOCKS5 authentication for user \"%s\" on worker %d: %s",
-             username_text,
-             workerWIDForLog(lineGetWID(l)),
-             reason);
-        return;
-    }
-
-    LOGW("Socks5Server: rejected SOCKS5 authentication: %s", reason);
+    discard t;
+    discard username;
+    LOGW("Socks5Server: rejected SOCKS5 authentication on worker %d: %s (username_bytes=%u)",
+         workerWIDForLog(lineGetWID(l)),
+         reason,
+         (unsigned) username_len);
 }
 
 bool socks5serverAuthUserFromClient(tunnel_t *t, line_t *l, const uint8_t *username, uint8_t username_len,

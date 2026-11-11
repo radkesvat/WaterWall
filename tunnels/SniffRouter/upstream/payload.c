@@ -44,7 +44,24 @@ static bool queueDatagram(tunnel_t *t, line_t *l, sniffrouter_lstate_t *ls, sbuf
         bufferqueueGetCharge(&ls->datagrams) > kSniffRouterMaxDatagramCharge - charge ||
         bufferqueueGetEntryCount(&ls->datagrams) >= kSniffRouterMaxDatagrams)
     {
-        LOGE("SniffRouter: pending datagrams exceeded their retention limit, closing this line");
+        LOGE("SniffRouter: closing connection: pending datagram %s limit exceeded "
+             "(queued_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, queued_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, charge_limit_bytes=%u, queued_datagrams=%zu, datagram_limit=%u)",
+             bytes > kSniffRouterMaxReplayBytes ||
+                     bufferqueueGetLength(&ls->datagrams) > kSniffRouterMaxReplayBytes - bytes
+                 ? "byte"
+             : charge > kSniffRouterMaxDatagramCharge ||
+                     bufferqueueGetCharge(&ls->datagrams) > kSniffRouterMaxDatagramCharge - charge
+                 ? "storage charge"
+                 : "count",
+             bufferqueueGetLength(&ls->datagrams),
+             bytes,
+             (unsigned) kSniffRouterMaxReplayBytes,
+             bufferqueueGetCharge(&ls->datagrams),
+             charge,
+             (unsigned) kSniffRouterMaxDatagramCharge,
+             bufferqueueGetEntryCount(&ls->datagrams),
+             (unsigned) kSniffRouterMaxDatagrams);
         lineReuseBuffer(l, *buf);
         closePendingRoute(t, l, ls);
         return false;
@@ -153,7 +170,11 @@ void sniffrouterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             uint32_t pending_len = ls->pending != NULL ? sbufGetLength(ls->pending) : 0;
             if (sbufGetLength(buf) > kSniffRouterMaxReplayBytes - pending_len)
             {
-                LOGE("SniffRouter: initial replay backlog exceeded its limit, closing this line");
+                LOGE("SniffRouter: closing connection: initial replay backlog limit exceeded "
+                     "(pending_bytes=%u, incoming_bytes=%zu, limit_bytes=%u)",
+                     pending_len,
+                     sbufGetLength(buf),
+                     (unsigned) kSniffRouterMaxReplayBytes);
                 lineReuseBuffer(l, buf);
                 closePendingRoute(t, l, ls);
                 return;

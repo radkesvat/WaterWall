@@ -125,7 +125,13 @@ static sbuf_t *authenticationclientCreateRequestMessage(line_t *l, uint8_t reque
     if (UNLIKELY(request_data_len > kAuthenticationClientMaxRequestData ||
                  frame_len > kAuthenticationClientMaxMessagePayload))
     {
-        LOGW("AuthenticationClient: refused oversized request type %u", (unsigned int) request_type);
+        LOGW("AuthenticationClient: refusing oversized request (request_type=%u, data_bytes=%u, "
+             "data_limit_bytes=%u, frame_bytes=%u, frame_limit_bytes=%u)",
+             (unsigned) request_type,
+             request_data_len,
+             (unsigned) kAuthenticationClientMaxRequestData,
+             frame_len,
+             (unsigned) kAuthenticationClientMaxMessagePayload);
         return NULL;
     }
 
@@ -184,8 +190,14 @@ bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const ui
 
     if (UNLIKELY(! authenticationclientPendingAppend(ts, correlation_id, request_type, now_ms)))
     {
+        const uint32_t pending_count = ts->pending_count;
+        const uint32_t pending_limit = ts->max_pending_requests;
         mutexUnlock(&ts->control_mutex);
-        LOGW("AuthenticationClient: pending request storage is unavailable");
+        LOGW("AuthenticationClient: refusing request: pending request admission failed "
+             "(request_type=%u, pending_requests=%u, max_pending_requests=%u)",
+             (unsigned) request_type,
+             pending_count,
+             pending_limit);
         return false;
     }
     authenticationclientMarkRequestInFlightLocked(ts, request_type, true);
@@ -303,7 +315,10 @@ static bool authenticationclientValidateResponsePayload(sbuf_t *payload)
     {
         if (UNLIKELY(remaining < kAuthenticationClientResponseHeaderSize))
         {
-            LOGW("AuthenticationClient: response frame has trailing bytes smaller than a frame header");
+            LOGW("AuthenticationClient: rejecting response: truncated frame header (remaining_bytes=%u, "
+                 "header_bytes=%u)",
+                 remaining,
+                 (unsigned) kAuthenticationClientResponseHeaderSize);
             return false;
         }
 
@@ -312,12 +327,18 @@ static bool authenticationclientValidateResponsePayload(sbuf_t *payload)
             authenticationclientReadNetworkUI32(frame + 1 + kAuthenticationClientCorrelationIdSize);
         if (UNLIKELY(response_data_len > kAuthenticationClientMaxResponsePayload))
         {
-            LOGW("AuthenticationClient: response frame is oversized");
+            LOGW("AuthenticationClient: rejecting response: frame data exceeds protocol limit "
+                 "(declared_data_bytes=%u, limit_bytes=%u)",
+                 response_data_len,
+                 (unsigned) kAuthenticationClientMaxResponsePayload);
             return false;
         }
         if (UNLIKELY(response_data_len > remaining - kAuthenticationClientResponseHeaderSize))
         {
-            LOGW("AuthenticationClient: response frame is incomplete");
+            LOGW("AuthenticationClient: rejecting response: incomplete frame data "
+                 "(declared_data_bytes=%u, available_data_bytes=%u)",
+                 response_data_len,
+                 remaining - kAuthenticationClientResponseHeaderSize);
             return false;
         }
 
@@ -347,6 +368,10 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
 
         if (UNLIKELY(message_body_len < kAuthenticationClientRevisionHeaderSize))
         {
+            LOGW("AuthenticationClient: reconnecting: response body smaller than protocol minimum "
+                 "(body_bytes=%u, minimum_bytes=%u)",
+                 message_body_len,
+                 (unsigned) kAuthenticationClientRevisionHeaderSize);
             authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
             return false;
@@ -354,6 +379,10 @@ bool authenticationclientProcessResponses(tunnel_t *t, line_t *l, authentication
         if (UNLIKELY(message_body_len >
                      kAuthenticationClientMaxResponsePayload + kAuthenticationClientRevisionHeaderSize))
         {
+            LOGW("AuthenticationClient: reconnecting: response body exceeds protocol limit "
+                 "(body_bytes=%u, limit_bytes=%u)",
+                 message_body_len,
+                 (unsigned) (kAuthenticationClientMaxResponsePayload + kAuthenticationClientRevisionHeaderSize));
             authenticationclientRecordFailure(t, kAuthenticationClientFailureInvalidResponse, 0);
             authenticationclientRecoverControlLine(t, l, true);
             return false;

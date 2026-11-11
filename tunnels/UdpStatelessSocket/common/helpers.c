@@ -217,17 +217,22 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
             if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
             {
                 char peeraddrstr[SOCKADDR_STRLEN] = {0};
-                LOGD("UdpStatelessSocket: dropped datagram to [%s]: %s",
+                LOGD("UdpStatelessSocket: dropped datagram to [%s]: %s (packet_bytes=%u, socket_error=%d)",
                      SOCKADDR_STR(peer_addr, peeraddrstr),
-                     socketStrError(err));
+                     socketStrError(err),
+                     length,
+                     err);
             }
         }
         else if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_ERROR))
         {
             char peeraddrstr[SOCKADDR_STRLEN] = {0};
-            LOGE("UdpStatelessSocket: sendto failed for [%s]: %s",
+            LOGE("UdpStatelessSocket: dropping datagram: sendto failed for [%s]: %s "
+                 "(packet_bytes=%u, socket_error=%d)",
                  SOCKADDR_STR(peer_addr, peeraddrstr),
-                 socketStrError(err));
+                 socketStrError(err),
+                 length,
+                 err);
         }
     }
     else if (UNLIKELY((uint32_t) nwrite != length))
@@ -321,6 +326,10 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
         udpstatelesssocket_lstate_t *existing = idle->userdata;
         if (! udpstatelesssocketIdleLineMatchesPacket(existing, t, &peer_addr, &local_addr))
         {
+            LOGW("UdpStatelessSocket: dropping datagram: peer idle-key collision "
+                 "(worker=%u, packet_bytes=%zu)",
+                 (unsigned) wid,
+                 sbufGetLength(buf));
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
             return;
         }
@@ -332,6 +341,10 @@ static void udpstatelesssocketHandleRecvFrom(tunnel_t *t, wio_t *io, sbuf_t *buf
             table, idle_key, NULL, udpstatelesssocketOnIdleConnectionExpire, kUdpStatelessSocketInitExpireTime);
         if (idle == NULL)
         {
+            LOGW("UdpStatelessSocket: dropping datagram: peer idle registration refused "
+                 "(worker=%u, packet_bytes=%zu)",
+                 (unsigned) wid,
+                 sbufGetLength(buf));
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
             return;
         }

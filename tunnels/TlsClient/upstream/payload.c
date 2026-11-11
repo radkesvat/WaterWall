@@ -13,8 +13,23 @@ static bool tlsclientQueuePlaintext(tunnel_t *t, line_t *l, sbuf_t *buf)
     tlsclient_lstate_t *ls    = lineGetState(l, t);
     if (UNLIKELY(! bufferqueueTryPushBack(&ls->bq, &buf)))
     {
+        const buffer_budget_cost_t used            = bufferbudgetGetUsage(&ls->pending_budget);
+        const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->pending_budget);
+        const size_t               incoming_bytes  = sbufGetLength(buf);
+        const size_t               incoming_charge = sbufGetQueueCharge(buf);
+        LOGW("TlsClient: closing connection: pending plaintext %s "
+             "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+             incoming_bytes > limits.bytes - used.bytes      ? "byte budget exceeded"
+             : incoming_charge > limits.charge - used.charge ? "storage charge budget exceeded"
+                                                             : "queue admission failed",
+             used.bytes,
+             incoming_bytes,
+             limits.bytes,
+             used.charge,
+             incoming_charge,
+             limits.charge);
         lineReuseBuffer(l, buf);
-        LOGW("TlsClient: pending plaintext limit or queue admission failure");
         tlsclientCloseLineBidirectional(t, l);
         return false;
     }

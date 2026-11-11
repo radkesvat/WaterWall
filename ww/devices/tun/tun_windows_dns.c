@@ -147,12 +147,14 @@ static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, HANDLE ownershi
     written                                = swprintf(environment, capacity, L"SystemRoot=%ls", windows_directory);
     if (written < 0 || (size_t) written + 2 >= capacity)
     {
+        dnsError("SystemRoot environment construction", ERROR_INSUFFICIENT_BUFFER);
         return kTunWindowsDnsFailed;
     }
     size_t offset = (size_t) written + 1;
     written       = swprintf(environment + offset, capacity - offset - 1, L"WINDIR=%ls", windows_directory);
     if (written < 0 || (size_t) written >= capacity - offset - 1)
     {
+        dnsError("WINDIR environment construction", ERROR_INSUFFICIENT_BUFFER);
         return kTunWindowsDnsFailed;
     }
 
@@ -191,7 +193,11 @@ static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, HANDLE ownershi
         CloseHandle(child.hProcess);
         if (! queried || exit_code != 0)
         {
-            dnsError("exit", error);
+            if (queried)
+                fprintf(
+                    stderr, "TunDevice: DNS helper exited unsuccessfully (exit_code=%lu)\n", (unsigned long) exit_code);
+            else
+                dnsError("exit-status query", error);
             return kTunWindowsDnsFailed;
         }
         return kTunWindowsDnsSuccess;
@@ -200,7 +206,15 @@ static tun_windows_dns_result_e dnsRun(const wchar_t *arguments, HANDLE ownershi
     bool cancelled = wait < WAIT_OBJECT_0 + process_index;
     if (! cancelled)
     {
-        dnsError("wait", wait == WAIT_FAILED ? GetLastError() : ERROR_TIMEOUT);
+        if (wait == WAIT_FAILED)
+            dnsError("wait", GetLastError());
+        else
+            fprintf(stderr,
+                    "TunDevice: DNS helper wait expired (wait_result=%lu, operation_budget_ms=%u, "
+                    "reserved_reap_budget_ms=%u)\n",
+                    (unsigned long) wait,
+                    install ? kDnsInstallBudgetMs : kDnsCleanupBudgetMs,
+                    kDnsReapBudgetMs);
     }
     if (! dnsReap(child.hProcess, deadline))
     {
@@ -238,6 +252,10 @@ tun_windows_dns_result_e tunWindowsDnsSet(const wchar_t *adapter, HANDLE ownersh
         }
         if (servers[i][j] != '\0')
         {
+            fprintf(stderr,
+                    "TunDevice: refusing DNS server argument: address exceeds fixed IPv4 text capacity "
+                    "(observed_characters>%zu, limit_characters=15)\n",
+                    j);
             return kTunWindowsDnsFailed;
         }
         server[j] = L'\0';

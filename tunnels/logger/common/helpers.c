@@ -4,7 +4,8 @@
 
 enum
 {
-    kLoggerTunnelPerPayloadPathMax = 1024
+    kLoggerTunnelPerPayloadPathMax = 1024,
+    kLoggerTunnelDiagnosticPathMax = 1024
 };
 
 char *loggertunnelBuildStaticPath(const char *prefix, const char *suffix)
@@ -110,25 +111,73 @@ static bool loggertunnelExtractIpv4TcpPayload(const sbuf_t *buf, const uint8_t *
     return true;
 }
 
+static void loggertunnelLogFileError(const char *path, const char *action, int error, uint32_t requested,
+                                     size_t written)
+{
+    const size_t path_bytes = stringLength(path);
+    const bool   truncated  = path_bytes > kLoggerTunnelDiagnosticPathMax;
+    const size_t start      = truncated ? path_bytes - kLoggerTunnelDiagnosticPathMax : 0;
+    char         escaped[4 * kLoggerTunnelDiagnosticPathMax + 4];
+    size_t       used = 0;
+    if (truncated)
+    {
+        /* Preserve generated direction/sequence suffixes when the path is too long. */
+        escaped[used++] = '.';
+        escaped[used++] = '.';
+        escaped[used++] = '.';
+    }
+    static const char hex[] = "0123456789abcdef";
+    for (size_t i = start; i < path_bytes; ++i)
+    {
+        const unsigned char byte = (unsigned char) path[i];
+        if (byte >= 0x20 && byte < 0x7f && byte != '"' && byte != '\\')
+        {
+            escaped[used++] = (char) byte;
+        }
+        else
+        {
+            escaped[used++] = '\\';
+            escaped[used++] = 'x';
+            escaped[used++] = hex[byte >> 4];
+            escaped[used++] = hex[byte & 0x0f];
+        }
+    }
+    escaped[used] = '\0';
+    LOGE("LoggerTunnel: %s (path=\"%s\", path_bytes=%zu, path_truncated=%u, requested_bytes=%u, "
+         "written_bytes=%zu, errno=%d, error=%s)",
+         action,
+         escaped,
+         path_bytes,
+         (unsigned) truncated,
+         requested,
+         written,
+         error,
+         strerror(error));
+}
+
 static bool loggertunnelWriteBytesToPath(const char *path, const uint8_t *data, uint32_t len, bool append)
 {
     FILE *file = fopen(path, append ? "ab" : "wb");
     if (file == NULL)
     {
-        LOGE("LoggerTunnel: failed to open output file %s: %s", path, strerror(errno));
+        const int error = errno;
+        loggertunnelLogFileError(path, "failed to open output file", error, len, 0);
         return false;
     }
 
-    if (len > 0U && fwrite(data, 1, len, file) != len)
+    const size_t written = len > 0U ? fwrite(data, 1, len, file) : 0;
+    if (len > 0U && written != len)
     {
-        LOGE("LoggerTunnel: failed to write output file %s", path);
+        const int error = errno;
+        loggertunnelLogFileError(path, "incomplete output-file write", error, len, written);
         fclose(file);
         return false;
     }
 
     if (fclose(file) != 0)
     {
-        LOGE("LoggerTunnel: failed to close output file %s", path);
+        const int error = errno;
+        loggertunnelLogFileError(path, "failed to close output file", error, len, written);
         return false;
     }
 

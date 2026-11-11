@@ -2,6 +2,9 @@
 
 #include "loggers/network_logger.h"
 
+static atomic_log_rate_limiter_t kcpserver_session_limit_log;
+static atomic_ullong             kcpserver_session_limit_refusals;
+
 void kcpserverRetireService(kcpserver_session_t *session, bool notify_service)
 {
     line_t *service = session->service;
@@ -104,11 +107,7 @@ static void sessionTerminal(void *user, tou_result_t result)
     assert(carrier->session_count > 0);
     --carrier->session_count;
     kcpserverRetireService(session, true);
-    if (result == kTouUnconfirmed)
-    {
-        LOGW("KcpServer: close delivery unconfirmed at fixed deadline");
-    }
-    else if (result != kTouConfirmed && result != kTouPeerDrained && result != kTouAborted)
+    if (result != kTouConfirmed && result != kTouPeerDrained && result != kTouAborted)
     {
         LOGD("KcpServer: session aborted (result %d)", (int) result);
     }
@@ -369,6 +368,14 @@ static void processControl(kcpserver_carrier_t *carrier, const tou_wire_t *wire,
         {
             if (carrier->session_count >= kTouMaximumSessions)
             {
+                const uint64_t refusals = atomicIncU64Relaxed(&kcpserver_session_limit_refusals) + 1;
+                /* Repeated unauthenticated HELLO packets can hit a full carrier at packet rate. */
+                if (atomicLogRateLimiterShouldLog(&kcpserver_session_limit_log, 5000))
+                    LOGW("KcpServer: refusing HELLO: carrier session limit reached "
+                         "(last_carrier_sessions=%zu, session_limit=%u, process_refusals_total=%" PRIu64 ")",
+                         carrier->session_count,
+                         (unsigned) kTouMaximumSessions,
+                         refusals);
                 return;
             }
             memcpy(carrier->client_nonce, wire->client_nonce, kTouNonceSize);
@@ -416,6 +423,23 @@ void kcpserverCarrierInput(kcpserver_carrier_t *carrier, sbuf_t *buf)
     }
     if (! bufferqueueTryPushBack(&carrier->input, &buf))
     {
+        const buffer_budget_cost_t used   = bufferbudgetGetUsage(&carrier->input_budget);
+        const buffer_budget_cost_t limits = bufferbudgetGetLimits(&carrier->input_budget);
+        size_t                     charge;
+        if (sbufTryGetQueueCharge(buf, &charge))
+            LOGW("KcpServer: closing carrier: input retention admission refused "
+                 "(worker=%u, retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, "
+                 "retained_charge_bytes=%zu, incoming_charge_bytes=%zu, charge_limit_bytes=%zu)",
+                 (unsigned) carrier->wid,
+                 used.bytes,
+                 sbufGetLength(buf),
+                 limits.bytes,
+                 used.charge,
+                 charge,
+                 limits.charge);
+        else
+            LOGW("KcpServer: closing carrier: input allocation charge is unrepresentable (incoming_bytes=%zu)",
+                 sbufGetLength(buf));
         lineReuseBuffer(carrier->line, buf);
         kcpserverCarrierClose(carrier, true);
         return;

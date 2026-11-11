@@ -131,7 +131,12 @@ bool tunSetMtuByName(const char *name, uint16_t mtu)
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0)
     {
-        LOGE("TunDevice: failed to create socket for MTU setting");
+        const int error = errno;
+        LOGE("TunDevice: failed to create MTU configuration socket for %s (mtu_bytes=%u, errno=%d: %s)",
+             name,
+             (unsigned) mtu,
+             error,
+             strerror(error));
         return false;
     }
 
@@ -157,7 +162,12 @@ bool tunSetStateByName(const char *name, bool up)
     int sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock_fd < 0)
     {
-        LOGE("TunDevice: failed to create socket for interface state setting");
+        const int error = errno;
+        LOGE("TunDevice: failed to create interface-state socket for %s (requested_up=%u, errno=%d: %s)",
+             name,
+             (unsigned) up,
+             error,
+             strerror(error));
         return false;
     }
 
@@ -474,7 +484,10 @@ static bool tunWriteReversePathFilterValue(const char *path, int value)
 
         if (nwrite == 0)
         {
-            LOGE("TunDevice: short write while updating %s", path);
+            LOGE("TunDevice: short write while updating %s (written_bytes=%zd, requested_bytes=%zu)",
+                 path,
+                 nwrite,
+                 left);
             ok = false;
             break;
         }

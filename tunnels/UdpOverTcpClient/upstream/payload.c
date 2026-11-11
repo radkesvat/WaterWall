@@ -18,6 +18,7 @@ void udpovertcpclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     const uint32_t length = sbufGetLength(buf);
     if (length == 0 || length > kMaxAllowedUDPPacketLength)
     {
+        udpovertcpclientLogSizeDrop(lineGetState(l, t), length);
         lineReuseBuffer(l, buf);
         return;
     }

@@ -43,6 +43,22 @@ bool socks5clientQueuePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     socks5client_lstate_t *ls = lineGetState(l, t);
     if (UNLIKELY(! bufferqueueTryPushBack(&ls->pending_up, &buf)))
     {
+        const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&ls->pending_budget);
+        const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->pending_budget);
+        const size_t               incoming_bytes  = sbufGetLength(buf);
+        const size_t               incoming_charge = sbufGetQueueCharge(buf);
+        LOGW("Socks5Client: closing connection: pending application data refused: %s "
+             "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+             incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+             : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                              : "queue admission failed",
+             usage.bytes,
+             incoming_bytes,
+             limits.bytes,
+             usage.charge,
+             incoming_charge,
+             limits.charge);
         lineReuseBuffer(l, buf);
         socks5clientCloseLineBidirectional(t, l);
         return false;

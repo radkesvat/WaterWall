@@ -14,6 +14,11 @@ bool apiserverReserve(apiserver_lstate_t *ls, size_t charge)
     }
     if (! bufferbudgetTryAcquire(&ls->budget, (buffer_budget_cost_t) {.charge = charge}))
     {
+        LOGW("APIServer: refusing session storage: per-line memory budget exceeded "
+             "(retained_charge_bytes=%zu, incoming_charge_bytes=%zu, max_line_memory=%zu)",
+             bufferbudgetGetUsage(&ls->budget).charge,
+             charge,
+             ts->limits.max_line_memory);
         nodeApiDomainRelease(ts->domain, charge);
         if (! ls->authenticated)
             nodeApiDomainRelease(ts->unauthenticated_domain, charge);
@@ -127,6 +132,11 @@ bool apiserverLinestateInitialize(tunnel_t *t, line_t *line)
         }
     if (! admitted || ! apiserverReserve(ls, sizeof(*ls)))
     {
+        if (! admitted && count >= ts->limits.max_sessions)
+            LOGW("APIServer: rejecting session: session limit reached "
+                 "(observed_sessions=%zu, max_sessions=%zu)",
+                 (size_t) count,
+                 ts->limits.max_sessions);
         if (admitted)
             atomic_fetch_sub(&ts->session_count, 1);
         memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));

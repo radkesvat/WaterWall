@@ -38,9 +38,17 @@ char *configPolicyRead(FILE *input, size_t limit, size_t *length)
     {
         if (*length == limit)
         {
-            if (fgetc(input) != EOF || ferror(input))
+            const int extra_byte = fgetc(input);
+            if (extra_byte != EOF || ferror(input))
             {
-                rejectInput("input limit or read failure", *length);
+                if (extra_byte != EOF)
+                    printError("Restricted config: refusing input: size limit exceeded "
+                               "(accepted_bytes=%zu, incoming_bytes=1, limit_bytes=%zu) at byte %zu\n",
+                               *length,
+                               limit,
+                               *length);
+                else
+                    rejectInput("read failure", *length);
                 memoryFree(buffer);
                 return NULL;
             }

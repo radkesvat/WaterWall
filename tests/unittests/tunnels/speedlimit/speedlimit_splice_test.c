@@ -10,6 +10,7 @@
 #include "SpeedLimit/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/protocols/splice_source.h"
+#include "loggers/internal_logger.h"
 
 #include <unistd.h>
 
@@ -31,6 +32,16 @@ static unsigned         payloads, pauses, resumes, finishes;
 static bool upstream, measuring, expect_splice, expect_ordinary, pause_output, close_output, close_resume, inject_input;
 static sbuf_t *expected_identity;
 static bool    independent_sources;
+
+static char admission_log[4096];
+
+static void captureAdmissionLog(int level, const char *bytes, int length)
+{
+    discard      level;
+    const size_t count = length > 0 ? min((size_t) length, sizeof(admission_log) - 1) : 0;
+    memoryCopy(admission_log, bytes, count);
+    admission_log[count] = '\0';
+}
 
 #if WW_HAVE_SPLICE
 ssize_t __real_read(int fd, void *destination, size_t bytes);
@@ -367,12 +378,15 @@ static void testBudgetedSpliceFallback(bool up)
     // splice wrapper and ordinary fallback cannot enter the retained turn.
     bufferbudgetInit(budget, limits);
     submit(source);
+    admission_log[0] = '\0';
     expect_ordinary = measuring = true;
     tokens(2048);
     tick();
     twfRequire(lineIsAlive(line) && received_length == 2048 && payloads == 1,
                "refused temporary wrapper budget prevented ordinary partial progress");
     twfRequire(materialized == 2048 - 7, "budget fallback did not consume the exact granted pipe range");
+    twfRequire(strstr(admission_log, "TrafficShaper: refusing") == NULL,
+               "successful ordinary fallback was incorrectly reported as an input refusal");
     const buffer_budget_cost_t usage = bufferbudgetGetUsage(budget);
     twfRequire(usage.bytes == 2048 && bufferqueueGetEntryCount(queue()) == 1 &&
                    usage.charge == sbufGetQueueCharge(bufferqueueFront(queue())),
@@ -455,8 +469,22 @@ static void testLimits(bool up, unsigned dimension)
         twfRequire(lineIsAlive(line) && bufferqueueGetCharge(queue()) == kExpectedCharge,
                    "refused exact retained-capacity limit");
     }
+    admission_log[0] = '\0';
     submit(input("X", 1, WW_HAVE_SPLICE, 0));
     twfRequire(! lineIsAlive(line) && finishes == 2 && payloads == 0, "overflow did not close and discard owned data");
+    twfRequire(strstr(admission_log, "TrafficShaper: refusing retained input") &&
+                   strstr(admission_log, "last_incoming_bytes=1") && strstr(admission_log, "charge_basis=queue"),
+               "retention refusal omitted action, attempted bytes or charge basis");
+    if (dimension == 0)
+        twfRequire(strstr(admission_log, "last_reason=local byte budget exceeded") &&
+                       strstr(admission_log, "last_used_bytes=16777216") &&
+                       strstr(admission_log, "limit_bytes=16777216"),
+                   "byte-limit refusal was not paired with its exact usage and bound");
+    else
+        twfRequire(strstr(admission_log, "last_reason=local charge budget exceeded") &&
+                       strstr(admission_log, "last_used_charge_bytes=33554432") &&
+                       strstr(admission_log, "limit_charge_bytes=33554432"),
+                   "charge-limit refusal was not paired with its exact usage and bound");
     teardown();
 }
 
@@ -618,6 +646,9 @@ static void testQuiesce(bool up)
 
 int main(void)
 {
+    logger_t *logger = createInternalLogger(NULL, false);
+    twfRequire(logger != NULL, "could not create admission diagnostic logger");
+    loggerSetHandler(logger, captureAdmissionLog);
     testSharedRateArithmetic();
     testRateSettings();
     testRetryRounding();
@@ -655,6 +686,7 @@ int main(void)
     metadata = nodeSpeedLimitGet();
     twfRequire(metadata.flags & kNodeFlagSupportsSplice, "SpeedLimit lacks splice capability");
     memoryFree(metadata.type);
+    internaloggerDestroy();
     puts("SpeedLimit splice, flow control and bounded retention passed");
     return 0;
 }

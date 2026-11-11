@@ -14,10 +14,14 @@ void obfuscatorclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     obfuscatorApplyXor(buf, ts->skip, ts->xor_key);
     if (ts->tls_record_header)
     {
+        const uint32_t packet_bytes = sbufGetLength(buf);
         buf = obfuscatorWrapRecord(lineGetBufferPool(l), buf);
         if (! buf)
         {
-            LOGW("ObfuscatorClient: oversized TLS-like packet dropped");
+            LOGW("ObfuscatorClient: dropping TLS-like packet: record body exceeds protocol limit "
+                 "(packet_bytes=%u, protocol_body_limit_bytes=%u)",
+                 packet_bytes,
+                 (unsigned) UINT16_MAX);
             return;
         }
     }

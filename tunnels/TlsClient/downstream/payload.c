@@ -11,12 +11,11 @@ static void logHandshakeComplete(line_t *l, tlsclient_lstate_t *ls)
 
     if (alpn_len > 0)
     {
-        LOGD("TlsClient: worker %u TLS handshake complete (version=%s, cipher=%s, alpn=\"%.*s\")",
+        LOGD("TlsClient: worker %u TLS handshake complete (version=%s, cipher=%s, alpn_bytes=%u)",
              (unsigned int) lineGetWID(l),
              SSL_get_version(ls->ssl),
              SSL_get_cipher_name(ls->ssl),
-             (int) alpn_len,
-             (const char *) alpn);
+             alpn_len);
         return;
     }
 

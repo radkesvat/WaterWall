@@ -1,4 +1,16 @@
+#include "loggers/network_logger.h"
 #include "structure.h"
+
+static void usercontrollerLogOversize(const usercontroller_direction_t *direction, log_rate_limiter_report_t report)
+{
+    if (report.should_log)
+        LOGW("UserController: dropping datagrams: payload policy limit exceeded "
+             "(direction=%s, drops=%llu, total_drops=%llu, last_packet_bytes=%zu, policy_limit_bytes=65535)",
+             direction->upstream ? "upstream" : "downstream",
+             (unsigned long long) report.events,
+             (unsigned long long) report.total,
+             direction->last_oversize_bytes);
+}
 
 #include "loggers/network_logger.h"
 
@@ -199,7 +211,10 @@ void usercontrollerBandwidthQuiesce(usercontroller_lstate_t *ls)
 void usercontrollerBandwidthDestroy(usercontroller_lstate_t *ls)
 {
     for (unsigned i = 0; i < 2; ++i)
+    {
+        usercontrollerLogOversize(&ls->directions[i], logRateLimiterFlush(&ls->directions[i].oversize_drops));
         trafficshaperDestroy(&ls->directions[i].shaper);
+    }
     bufferbudgetAssertEmpty(&ls->budget);
 }
 
@@ -215,6 +230,9 @@ void usercontrollerBandwidthSubmit(tunnel_t *t, line_t *l, sbuf_t *buf, bool ups
     }
     if (ls->payload_mode == kUserControllerPayloadDatagram && sbufGetLength(buf) > 65535U)
     {
+        direction->last_oversize_bytes = sbufGetLength(buf);
+        /* Oversized datagrams may arrive in every packet of a receive burst. */
+        usercontrollerLogOversize(direction, logRateLimiterRecordImmediate(&direction->oversize_drops, 1000));
         lineReuseBuffer(l, buf);
         return;
     }

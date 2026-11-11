@@ -33,7 +33,8 @@ void increaseFileLimit(void)
     // Get the current limit
     if (getrlimit(RLIMIT_NOFILE, &rlim) == -1)
     {
-        LOGF("Core: getrlimit failed");
+        const int error = errno;
+        LOGF("Core: cannot read RLIMIT_NOFILE (error=%d: %s)", error, strerror(error));
         exit(EXIT_FAILURE);
     }
     if ((unsigned long) rlim.rlim_max < 8192)
@@ -53,7 +54,11 @@ void increaseFileLimit(void)
     // Apply the new limit
     if (setrlimit(RLIMIT_NOFILE, &rlim) == -1)
     {
-        LOGF("Core: setrlimit failed");
+        const int error = errno;
+        LOGF("Core: cannot raise RLIMIT_NOFILE (requested_descriptors=%llu, error=%d: %s)",
+             (unsigned long long) rlim.rlim_cur,
+             error,
+             strerror(error));
         exit(EXIT_FAILURE);
     }
 }
@@ -422,14 +427,16 @@ uint32_t splicePipeCountLimit(uint64_t capacity_limit)
     struct rlimit limit;
     if (getrlimit(RLIMIT_NOFILE, &limit) != 0)
     {
-        LOGW("Core: Could not read the descriptor limit; splice inventory will be empty");
+        const int error = errno;
+        LOGW("Core: Could not read RLIMIT_NOFILE; splice inventory will be empty (error=%d)", error);
         return 0;
     }
 
     DIR *descriptors = opendir("/proc/self/fd");
     if (descriptors == NULL)
     {
-        LOGW("Core: Could not inspect open descriptors; splice inventory will be empty");
+        const int error = errno;
+        LOGW("Core: Could not inspect /proc/self/fd; splice inventory will be empty (error=%d)", error);
         return 0;
     }
     rlim_t         open_count = 0;
@@ -443,10 +450,15 @@ uint32_t splicePipeCountLimit(uint64_t capacity_limit)
             ++open_count;
     }
     const bool scan_succeeded  = errno == 0;
+    const int  scan_error      = errno;
     const bool close_succeeded = closedir(descriptors) == 0;
+    const int  close_error     = close_succeeded ? 0 : errno;
     if (! scan_succeeded || ! close_succeeded)
     {
-        LOGW("Core: Could not finish inspecting open descriptors; splice inventory will be empty");
+        LOGW("Core: Could not finish inspecting open descriptors; splice inventory will be empty "
+             "(scan_error=%d, close_error=%d)",
+             scan_error,
+             close_error);
         return 0;
     }
 

@@ -1,4 +1,5 @@
 #include "APIServer/structure.h"
+#include "loggers/network_logger.h"
 
 void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
 {
@@ -23,6 +24,23 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
     if (charge > SIZE_MAX - sizeof(api_input_t) || bytes > ts->limits.max_input_bytes - ls->input_bytes ||
         ls->input_fragments >= ts->limits.max_input_fragments || ! apiserverReserve(ls, charge + sizeof(api_input_t)))
     {
+        /* Reserve reports domain/line memory failures at their decision. */
+        if (charge > SIZE_MAX - sizeof(api_input_t))
+            LOGW("APIServer: closing session: input allocation charge is unrepresentable "
+                 "(allocation_charge_bytes=%zu, fragment_metadata_bytes=%zu)",
+                 charge,
+                 sizeof(api_input_t));
+        else if (bytes > ts->limits.max_input_bytes - ls->input_bytes)
+            LOGW("APIServer: closing session: input byte limit exceeded "
+                 "(input_bytes=%zu, incoming_bytes=%zu, max_input_bytes=%zu)",
+                 ls->input_bytes,
+                 bytes,
+                 ts->limits.max_input_bytes);
+        else if (ls->input_fragments >= ts->limits.max_input_fragments)
+            LOGW("APIServer: closing session: input fragment limit reached "
+                 "(input_fragments=%zu, incoming_fragments=1, max_input_fragments=%zu)",
+                 ls->input_fragments,
+                 ts->limits.max_input_fragments);
         memorySecureZero(sbufGetMutablePtr(payload), bytes);
         lineReuseBuffer(line, payload);
         apiserverCloseSession(t, line);

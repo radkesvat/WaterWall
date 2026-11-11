@@ -5,11 +5,26 @@
 
 #include "devices/tun/tun_writer.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/internal_logger.h"
 #include "test_assert.h"
 
 #include <pthread.h>
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+
+static char   diagnostic_log[4096];
+static size_t diagnostic_length;
+
+static void captureDiagnostic(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t copied = min((size_t) length, sizeof(diagnostic_log) - diagnostic_length - 1);
+    memoryCopy(diagnostic_log + diagnostic_length, bytes, copied);
+    diagnostic_length += copied;
+    diagnostic_log[diagnostic_length] = '\0';
+}
 
 typedef struct captured_s
 {
@@ -194,14 +209,24 @@ static void testAdmissionAndRefusal(void)
     testWorkerBindWID(1);
     require(tunWriterTrySend(&writer, packet(1, 64)) == kTunWriterSendOk, "worker one admission");
     require(tunWriterTrySend(&writer, refused) == kTunWriterSendFull, "global packet cap multiplied by workers");
+    require(strstr(diagnostic_log, "last_reason=packet_count") != NULL &&
+                strstr(diagnostic_log, "last_usage=2") != NULL && strstr(diagnostic_log, "last_requested=1") != NULL &&
+                strstr(diagnostic_log, "last_limit=2") != NULL && strstr(diagnostic_log, "last_packet_bytes=4") != NULL,
+            "TUN output packet refusal lost its exact usage, request, limit or packet size");
     require(captured_count == 2, "each worker needs one independent drain");
     runAll();
     require(output.counts[0] == 1 && output.counts[1] == 1, "worker-local drain output");
     tunWriterDestroy(&writer);
 
     require(tunWriterOpen(&writer, 4, charge, &output, writeBatch), "open charge-limited writer");
+    diagnostic_length = 0;
+    diagnostic_log[0] = '\0';
     require(tunWriterTrySend(&writer, packet(2, 64)) == kTunWriterSendOk, "first charge reservation");
     require(tunWriterTrySend(&writer, refused) == kTunWriterSendFull, "charge cap ignored");
+    char expected[128];
+    snprintf(expected, sizeof(expected), "last_usage=%zu, last_requested=%zu, last_limit=%zu", charge, charge, charge);
+    require(strstr(diagnostic_log, "last_reason=allocation_bytes") != NULL && strstr(diagnostic_log, expected) != NULL,
+            "TUN output allocation refusal lost its accounting unit or confused payload with retained storage");
     runAll();
     reject_next = true;
     require(tunWriterTrySend(&writer, refused) == kTunWriterSendClosed, "synchronous queue refusal not reported");
@@ -355,6 +380,9 @@ static void testFailureAndContinuationCancellation(void)
 
 int main(void)
 {
+    logger_t *logger = loggerCreate();
+    loggerSetHandler(logger, captureDiagnostic);
+    setInternalLogger(logger);
     test_worker_registry_t registry = {0};
     GSTATE.workers_count            = 2;
     testWorkerRegistryInstall(&registry);
@@ -368,5 +396,6 @@ int main(void)
     require(captured_count == 0, "test left owned drain tokens");
     testWorkerRegistryRestore(&registry);
     testWorkerUnbindWID();
+    internaloggerDestroy();
     return 0;
 }

@@ -599,7 +599,11 @@ void packetgeneratorPrepareRuntime(tunnel_t *t)
 
     if (state->packets_per_ip > 1U && state->bytes_per_source_repeat > (SIZE_MAX / (size_t) state->packets_per_ip))
     {
-        LOGF("PacketGenerator: generated packet store exceeds addressable memory");
+        LOGF("PacketGenerator: refusing packet store: per-source allocation geometry overflows "
+             "(bytes_per_repeat=%zu, packets_per_ip=%u, allocation_limit_bytes=%zu)",
+             state->bytes_per_source_repeat,
+             (unsigned) state->packets_per_ip,
+             SIZE_MAX);
         startupFailureRecord(1);
         return;
     }
@@ -609,7 +613,11 @@ void packetgeneratorPrepareRuntime(tunnel_t *t)
 
     if (state->source_count > 0 && bytes_per_source > (SIZE_MAX / (size_t) state->source_count))
     {
-        LOGF("PacketGenerator: generated packet store exceeds addressable memory");
+        LOGF("PacketGenerator: refusing packet store: total allocation geometry overflows "
+             "(bytes_per_source=%zu, source_count=%" PRIu64 ", allocation_limit_bytes=%zu)",
+             bytes_per_source,
+             (uint64_t) state->source_count,
+             SIZE_MAX);
         startupFailureRecord(1);
         return;
     }
@@ -623,7 +631,11 @@ void packetgeneratorPrepareRuntime(tunnel_t *t)
         {
             if (packets_per_source > (UINT64_MAX / kPacketGeneratorProtocolsPerSource))
             {
-                LOGF("PacketGenerator: total packet count would overflow");
+                LOGF("PacketGenerator: total packet count would overflow "
+                     "(packets_per_source=%" PRIu64 ", protocols_per_source=%u, count_limit=%" PRIu64 ")",
+                     packets_per_source,
+                     (unsigned) kPacketGeneratorProtocolsPerSource,
+                     UINT64_MAX);
                 startupFailureRecord(1);
                 return;
             }
@@ -633,7 +645,11 @@ void packetgeneratorPrepareRuntime(tunnel_t *t)
 
         if (state->source_count > (UINT64_MAX / packets_per_source))
         {
-            LOGF("PacketGenerator: total packet count would overflow");
+            LOGF("PacketGenerator: total packet count would overflow "
+                 "(source_count=%" PRIu64 ", packets_per_source=%" PRIu64 ", count_limit=%" PRIu64 ")",
+                 (uint64_t) state->source_count,
+                 packets_per_source,
+                 UINT64_MAX);
             startupFailureRecord(1);
             return;
         }

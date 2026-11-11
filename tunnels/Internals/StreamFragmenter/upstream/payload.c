@@ -18,6 +18,7 @@ static bool commitHello(tunnel_t *t, line_t *l)
     buffer_budget_reservation_t replacement_reservation = {0};
     if (! bufferbudgetTryReserve(&ls->budget, replacement, &replacement_reservation))
     {
+        streamfragmenterLogRetentionRefusal(ls, "TLS rewrite", length, sbufGetQueueCharge(replacement));
         lineReuseBuffer(l, replacement);
         return false;
     }
@@ -59,6 +60,7 @@ static bool growCandidate(tunnel_t *t, line_t *l, streamfragmenter_job_t *job, u
     buffer_budget_reservation_t replacement_reservation = {0};
     if (! bufferbudgetTryReserve(&ls->budget, replacement, &replacement_reservation))
     {
+        streamfragmenterLogRetentionRefusal(ls, "TLS candidate growth", length, sbufGetQueueCharge(replacement));
         lineReuseBuffer(l, replacement);
         return false;
     }
@@ -97,7 +99,10 @@ static bool feedCandidate(tunnel_t *t, line_t *l, sbuf_t *input)
         if (! growCandidate(t, l, job, old_length + count))
             return false;
         if (! bufferbudgetTryAcquire(&ls->budget, (buffer_budget_cost_t) {count, 0}))
+        {
+            streamfragmenterLogRetentionRefusal(ls, "TLS candidate bytes", count, 0);
             return false;
+        }
         job->reservation.cost.bytes += count;
         uint8_t *destination = sbufGetMutablePtr(job->buf) + old_length;
         sbufReadRangeToMemory(input, destination, count);
@@ -190,7 +195,6 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             else if (! startCandidate(t, l, getHRTimeUs()))
             {
                 lineReuseBuffer(l, buf);
-                LOGW("StreamFragmenter: TLS candidate retention refused; closing line");
                 streamfragmenterCloseLine(t, l);
                 return;
             }
@@ -200,7 +204,6 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             if (! feedCandidate(t, l, buf))
             {
                 lineReuseBuffer(l, buf);
-                LOGW("StreamFragmenter: TLS candidate conversion refused; closing line");
                 streamfragmenterCloseLine(t, l);
                 return;
             }
@@ -216,7 +219,6 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             else if (! streamfragmenterEnqueue(t, l, buf, 0, kStreamFragmenterJobOrdinary))
             {
                 lineReuseBuffer(l, buf);
-                LOGW("StreamFragmenter: TLS suffix retention refused; closing line");
                 streamfragmenterCloseLine(t, l);
                 return;
             }
@@ -240,7 +242,6 @@ void streamfragmenterTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     if (! streamfragmenterEnqueue(t, l, buf, cuts, kStreamFragmenterJobOrdinary))
     {
         lineReuseBuffer(l, buf);
-        LOGW("StreamFragmenter: upstream retention refused (8 MiB / 1024 jobs); closing line");
         streamfragmenterCloseLine(t, l);
         return;
     }

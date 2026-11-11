@@ -2393,13 +2393,15 @@ static bool wioApplySocketOptions(int sockfd, const char *interface_name, int fw
 {
     if (socketOptionBindToDevice(sockfd, interface_name) != 0)
     {
-        printError("set socket interface failed, call: setsockopt(SO_BINDTODEVICE)");
+        const int error = socketERRNO();
+        printError("socket setup rejected: interface binding failed (fd=%d, error=%d)", sockfd, error);
         return false;
     }
 
     if (fwmark >= 0 && socketOptionSetFwMark(sockfd, fwmark) != 0)
     {
-        printError("set socket fwmark failed, call: setsockopt(SO_MARK)");
+        const int error = socketERRNO();
+        printError("socket setup rejected: SO_MARK failed (fd=%d, fwmark=%d, error=%d)", sockfd, fwmark, error);
         return false;
     }
 
@@ -2421,14 +2423,15 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
 
     if (ret != 0)
     {
-        // printError("unknown host: %s\n", host);
+        printError("socket setup rejected: address resolution failed (port=%d, resolver_error=%d)", port, ret);
         return NULL;
     }
     int sockfd = socketToFd(socket(addr.sa.sa_family, sock_type, 0));
 
     if (sockfd < 0)
     {
-        printError("syscall return error, call: socket , value: %d\n", sockfd);
+        const int error = socketERRNO();
+        printError("socket creation failed (family=%d, type=%d, error=%d)", addr.sa.sa_family, sock_type, error);
         return NULL;
     }
 
@@ -2449,7 +2452,8 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         }
         if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
         {
-            printError("syscall return error , call: bind , value: %d\n", -1);
+            const int error = socketERRNO();
+            printError("socket setup rejected: bind failed (fd=%d, port=%d, error=%d)", sockfd, port, error);
             closesocket(sockfd);
             return NULL;
         }
@@ -2457,7 +2461,9 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         {
             if (listen(sockfd, SOMAXCONN) < 0)
             {
-                printError("listen");
+                const int error = socketERRNO();
+                printError(
+                    "socket setup rejected: listen failed (fd=%d, backlog=%d, error=%d)", sockfd, SOMAXCONN, error);
                 closesocket(sockfd);
                 return NULL;
             }
@@ -2544,14 +2550,22 @@ wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, in
 
     if (! socketOptionApplySendBuffer(wioGetFD(io), send_buffer_size))
     {
-        printError("set socket send buffer failed, call: setsockopt , value: %d\n", send_buffer_size);
+        const int error = socketERRNO();
+        printError("closing UDP socket: SO_SNDBUF failed (fd=%d, requested_bytes=%d, error=%d)",
+                   wioGetFD(io),
+                   send_buffer_size,
+                   error);
         wioClose(io);
         return NULL;
     }
 
     if (! socketOptionApplyRecvBuffer(wioGetFD(io), recv_buffer_size))
     {
-        printError("set socket recv buffer failed, call: setsockopt , value: %d\n", recv_buffer_size);
+        const int error = socketERRNO();
+        printError("closing UDP socket: SO_RCVBUF failed (fd=%d, requested_bytes=%d, error=%d)",
+                   wioGetFD(io),
+                   recv_buffer_size,
+                   error);
         wioClose(io);
         return NULL;
     }
@@ -2569,14 +2583,22 @@ wio_t *wloopCreateUdpClient(wloop_t *loop, const char *host, int port)
 
     if (! socketOptionApplySendBuffer(wioGetFD(io), kDefaultLargeSocketBufferSize))
     {
-        printError("set socket send buffer failed, call: setsockopt , value: %d\n", kDefaultLargeSocketBufferSize);
+        const int error = socketERRNO();
+        printError("closing UDP socket: SO_SNDBUF failed (fd=%d, requested_bytes=%d, error=%d)",
+                   wioGetFD(io),
+                   kDefaultLargeSocketBufferSize,
+                   error);
         wioClose(io);
         return NULL;
     }
 
     if (! socketOptionApplyRecvBuffer(wioGetFD(io), kDefaultLargeSocketBufferSize))
     {
-        printError("set socket recv buffer failed, call: setsockopt , value: %d\n", kDefaultLargeSocketBufferSize);
+        const int error = socketERRNO();
+        printError("closing UDP socket: SO_RCVBUF failed (fd=%d, requested_bytes=%d, error=%d)",
+                   wioGetFD(io),
+                   kDefaultLargeSocketBufferSize,
+                   error);
         wioClose(io);
         return NULL;
     }

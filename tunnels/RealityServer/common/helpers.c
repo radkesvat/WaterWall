@@ -692,6 +692,16 @@ static bool realityserverForwardHandoffTail(tunnel_t *t, line_t *l, sbuf_t *reco
                            len > kRealityServerMaxHandoffTailBytes - ls->handoff_tail_bytes;
     if (ls->destination_up_finished || over_record_limit || over_byte_limit)
     {
+        LOGW("RealityServer: closing connection: authenticated handoff tail refused (%s) "
+             "(tail_records=%u, record_limit=%u, tail_bytes=%u, incoming_record_bytes=%u, byte_limit=%u)",
+             ls->destination_up_finished ? "destination finished"
+             : over_record_limit         ? "record limit"
+                                         : "byte limit",
+             ls->handoff_tail_records,
+             (unsigned) kRealityServerMaxHandoffTailRecords,
+             ls->handoff_tail_bytes,
+             len,
+             (unsigned) kRealityServerMaxHandoffTailBytes);
         bufferpoolReuseBuffer(pool, record);
         bufferstreamEmpty(&ls->read_stream);
         realityserverCloseLineBidirectional(t, l);

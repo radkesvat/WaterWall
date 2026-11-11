@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 uint64_t hpcNow(line_t *l)
 {
@@ -82,6 +83,19 @@ static void timeout(wtimer_t *timer)
         (ts->connect && ls->header_sent && ! ls->accepted && now - ls->connect_at >= ts->connect_timeout) ||
         now - ls->progress_at >= ts->idle_timeout)
     {
+        const bool header = ls->header_started && ! ls->accepted && now - ls->header_at >= ts->header_timeout;
+        const bool connect =
+            ts->connect && ls->header_sent && ! ls->accepted && now - ls->connect_at >= ts->connect_timeout;
+        LOGW("HttpProxyClient: closing connection: %s deadline expired (elapsed_ms=%" PRIu64 ", timeout_ms=%u)",
+             header    ? "response header"
+             : connect ? "CONNECT response"
+                       : "idle",
+             now - (header    ? ls->header_at
+                    : connect ? ls->connect_at
+                              : ls->progress_at),
+             header    ? ts->header_timeout
+             : connect ? ts->connect_timeout
+                       : ts->idle_timeout);
         hpcClose(t, l);
         return;
     }

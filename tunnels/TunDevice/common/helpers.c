@@ -79,7 +79,8 @@ void tundeviceOnIPPacketReceived(tun_device_t *tdev, void *userdata, sbuf_t *buf
     {
         if (atomicLogRateLimiterShouldLog(&tundevice_invalid_packet_log, kTunDeviceChecksumLogIntervalMs))
         {
-            LOGW("TunDevice: dropping malformed or unsupported IP input");
+            LOGW("TunDevice: dropping input packet: expected one exact IPv4 datagram (packet_bytes=%zu)",
+                 sbufGetLength(buf));
         }
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -101,7 +102,9 @@ void tundeviceTunnelWritePayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&tundevice_checksum_failure_log, kTunDeviceChecksumLogIntervalMs))
         {
-            LOGW("TunDevice: dropping malformed, unsupported, or unchecksummable output");
+            LOGW("TunDevice: dropping output packet: exact IPv4 validation or requested checksum repair failed "
+                 "(packet_bytes=%zu)",
+                 sbufGetLength(buf));
         }
         lineReuseBuffer(l, buf);
         return;

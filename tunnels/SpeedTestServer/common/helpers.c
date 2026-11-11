@@ -764,7 +764,13 @@ static void speedtestserverHandleHello(tunnel_t *t, line_t *l, const speedtestse
 
     if (ls->mode == kSpeedTestServerModeUdp && ls->payload_size > kSpeedTestServerMaxUdpPayloadSize)
     {
-        speedtestserverFailLine(t, l, "UDP payload size is too large");
+        char reason[160];
+        snprintf(reason,
+                 sizeof(reason),
+                 "UDP payload exceeds protocol limit (payload_bytes=%u, protocol_limit_bytes=%u)",
+                 ls->payload_size,
+                 (unsigned) kSpeedTestServerMaxUdpPayloadSize);
+        speedtestserverFailLine(t, l, reason);
         return;
     }
 
@@ -875,7 +881,13 @@ static void speedtestserverBoundReceiveStorage(tunnel_t *t, line_t *l, speedtest
 {
     if (! splicestreamSettleCharge(ls->recv_stream, kSpeedTestServerMaxRecvCharge))
     {
-        speedtestserverFailLine(t, l, "receive storage limit exceeded");
+        char reason[192];
+        snprintf(reason,
+                 sizeof(reason),
+                 "receive storage charge limit exceeded (retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 splicestreamCharge(ls->recv_stream),
+                 (unsigned) kSpeedTestServerMaxRecvCharge);
+        speedtestserverFailLine(t, l, reason);
     }
 }
 

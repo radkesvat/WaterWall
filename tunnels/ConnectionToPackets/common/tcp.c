@@ -130,17 +130,22 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     ip_addr_t local_ip;
     ipAddrCopyFromIp4(local_ip, ts->source_ip);
 
-    if (tcp_bind_netif(pcb, &ctx->netif) != ERR_OK)
+    const err_t netif_error = tcp_bind_netif(pcb, &ctx->netif);
+    if (netif_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: virtual netif is being removed");
+        LOGE("ConnectionToPackets: refusing TCP flow: netif binding failed (lwip_error=%d)", (int) netif_error);
         goto done;
     }
 
     // Reserve the complete wire tuple before publishing its return route or
     // sending a SYN. Other destinations can share the same source port.
-    if (wwLwipTcpBindConnected(pcb, &local_ip, dest_ip, dest_port) != ERR_OK)
+    const err_t bind_error = wwLwipTcpBindConnected(pcb, &local_ip, dest_ip, dest_port);
+    if (bind_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: could not bind a local port for the virtual source address");
+        LOGE("ConnectionToPackets: refusing TCP flow: virtual source-port binding failed "
+             "(lwip_error=%d, destination_port=%u)",
+             (int) bind_error,
+             (unsigned) dest_port);
         goto done;
     }
 
@@ -166,9 +171,12 @@ bool ctpTcpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     tcp_err(pcb, ctpTcpErrorCallback);
     tcp_nagle_disable(pcb);
 
-    if (tcp_connect(pcb, dest_ip, dest_port, ctpTcpConnectedCallback) != ERR_OK)
+    const err_t connect_error = tcp_connect(pcb, dest_ip, dest_port, ctpTcpConnectedCallback);
+    if (connect_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: lwIP refused the active TCP open");
+        LOGE("ConnectionToPackets: refusing TCP flow: active open failed (lwip_error=%d, destination_port=%u)",
+             (int) connect_error,
+             (unsigned) dest_port);
         ctpFlowUnregister(t, ls);
         discard ctpTcpDetachCallbacksLocked(ls);
         goto done;

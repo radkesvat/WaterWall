@@ -114,7 +114,33 @@ void quicFail(quic_context_t *context, const char *reason)
     if (strcmp(reason, WW_QUIC_CLOSE_FINISHED) == 0)
         LOGD("%s: association finished", state->client ? "QuicClient" : "QuicServer");
     else
-        LOGW("%s: closing association: %s", state->client ? "QuicClient" : "QuicServer", reason);
+    {
+        const buffer_budget_cost_t application = bufferbudgetGetUsage(&context->application_budget);
+        const buffer_budget_cost_t input       = bufferbudgetGetUsage(&context->input_budget);
+        ww_quic_storage_t          storage;
+        ww_quic_engine_storage(context->engine, &storage);
+        LOGW("%s: closing association on worker %u: %s "
+             "(application_bytes=%zu, application_entries=%zu, application_charge_bytes=%zu, "
+             "send_bytes=%zu, send_entries=%zu, send_charge_bytes=%zu, carrier_queued_bytes=%zu, "
+             "carrier_entries=%zu, carrier_charge_bytes=%zu, carrier_parser_bytes=%zu, "
+             "max-buffered-bytes=%u, max-buffered-buffers=%u, allocation_limit_bytes=%zu)",
+             state->client ? "QuicClient" : "QuicServer",
+             (unsigned) context->wid,
+             reason,
+             application.bytes,
+             quicApplicationEntries(context),
+             application.charge,
+             storage.send_bytes,
+             storage.send_entries,
+             storage.send_allocation,
+             input.bytes,
+             quicInputEntries(context),
+             input.charge,
+             ww_quic_carrier_retained(&context->carrier),
+             state->max_bytes,
+             state->max_buffers,
+             (size_t) state->max_bytes * 2);
+    }
     quicRetire(context);
 }
 

@@ -5,6 +5,8 @@
 typedef struct udpovertcpserver_lstate_s
 {
     splice_frame_reader_t reader;
+    log_rate_limiter_t    size_drop_log;
+    size_t                last_rejected_bytes;
 } udpovertcpserver_lstate_t;
 
 enum
@@ -30,3 +32,4 @@ void udpovertcpserverCloseLine(tunnel_t *t, line_t *l);
 
 void udpovertcpserverLinestateInitialize(udpovertcpserver_lstate_t *ls, buffer_pool_t *pool, bool splice_output);
 void udpovertcpserverLinestateDestroy(udpovertcpserver_lstate_t *ls);
+void udpovertcpserverLogSizeDrop(udpovertcpserver_lstate_t *ls, size_t length);

@@ -4,7 +4,8 @@
 
 void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    udpovertcpclient_lstate_t *ls = lineGetState(l, t);
+    udpovertcpclient_lstate_t *ls             = lineGetState(l, t);
+    const size_t               incoming_bytes = sbufGetLength(buf);
     switch (spliceframereaderAdmit(&ls->reader, buf))
     {
     case kSpliceFrameDrain:
@@ -13,14 +14,26 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     case kSpliceFrameEmpty:
         return;
     case kSpliceFrameByteLimit:
-        LOGW("UdpOverTcpClient: decoder reentry byte limit exceeded");
+        LOGW("UdpOverTcpClient: closing line: decoder reentry byte limit exceeded "
+             "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%u)",
+             spliceframereaderLength(&ls->reader),
+             incoming_bytes,
+             (unsigned) kMaxReentryBytes);
         udpovertcpclientCloseLine(t, l);
         return;
     case kSpliceFrameChargeLimit:
-        LOGW("UdpOverTcpClient: decoder reentry storage limit exceeded");
+        LOGW("UdpOverTcpClient: closing line: decoder reentry storage limit exceeded "
+             "(retained_bytes=%zu, retained_charge_bytes=%zu, charge_limit_bytes=%u)",
+             spliceframereaderLength(&ls->reader),
+             spliceframereaderCharge(&ls->reader),
+             (unsigned) kReadChargeLimit);
         udpovertcpclientCloseLine(t, l);
         return;
     case kSpliceFramePushFailed:
+        LOGW("UdpOverTcpClient: closing line: decoder queue geometry refused "
+             "(retained_bytes=%zu, incoming_bytes=%zu)",
+             spliceframereaderLength(&ls->reader),
+             incoming_bytes);
         udpovertcpclientCloseLine(t, l);
         return;
     }
@@ -55,7 +68,11 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
     assert(spliceframereaderLength(&ls->reader) < kHeaderSize + UINT16_MAX);
     if (! spliceframereaderEndDrain(&ls->reader))
     {
-        LOGW("UdpOverTcpClient: incomplete frame storage limit exceeded");
+        LOGW("UdpOverTcpClient: closing line: incomplete frame storage limit exceeded "
+             "(retained_bytes=%zu, retained_charge_bytes=%zu, charge_limit_bytes=%u)",
+             spliceframereaderLength(&ls->reader),
+             spliceframereaderCharge(&ls->reader),
+             (unsigned) kReadChargeLimit);
         udpovertcpclientCloseLine(t, l);
         lineUnref(l);
         return;

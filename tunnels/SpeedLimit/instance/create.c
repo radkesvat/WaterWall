@@ -220,5 +220,7 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
         return NULL;
     }
 
+    atomicLogRateLimiterInitialize(&state->drop_log_limiter);
+    atomicStoreU64Relaxed(&state->dropped_payloads, 0);
     return t;
 }

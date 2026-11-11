@@ -407,8 +407,12 @@ void connectionfisherclientHandleChildHandshakePayload(tunnel_t *t, line_t *chil
     const size_t limit = kConnectionFisherHandshakeLength + kConnectionFisherMaxPendingUpBytes;
     if (sbufGetLength(buf) > limit - bufferstreamGetLength(&child_ls->read_stream))
     {
+        LOGW("ConnectionFisherClient: closing child connection: reply and coalesced application data exceeded "
+             "the pending limit (retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu)",
+             bufferstreamGetLength(&child_ls->read_stream),
+             sbufGetLength(buf),
+             limit);
         lineReuseBuffer(child_l, buf);
-        LOGW("ConnectionFisherClient: reply and coalesced application data exceeded the pending limit");
         connectionfisherclientCloseChildLine(t, child_l, true);
         return;
     }

@@ -1497,10 +1497,16 @@ void muxserverSendSpliceBatch(tunnel_t *t, line_t *parent_l, sbuf_t *input, muxs
     lineRef(parent_l);
     line_t *writer_l = child->l;
     lineRef(writer_l);
+    const size_t input_bytes   = sbufGetLength(input);
+    const size_t queued_charge = output->charge;
     if (! muxEncodeSpliceBatch(
             lineGetBufferPool(parent_l), input, child->connection_id, false, output, ts->parent_write_limit))
     {
-        LOGE("MuxServer: complete splice batch exceeds parent limit or reservation failed");
+        LOGE("MuxServer: closing parent: complete splice batch admission refused "
+             "(queued_charge_bytes=%zu, incoming_payload_bytes=%zu, parent_write_limit_charge_bytes=%u)",
+             queued_charge,
+             input_bytes,
+             ts->parent_write_limit);
         muxserverHandleParentLoss(t, parent_l, true);
         lineUnref(writer_l);
         lineUnref(parent_l);

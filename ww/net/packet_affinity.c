@@ -4,6 +4,7 @@
 #include "devices/device_frag_affinity.h"
 #include "ipv4_packet_view.h"
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 #include "objects/node.h"
 #include "packet_batch.h"
 #include "packet_tunnel.h"
@@ -37,6 +38,16 @@ typedef struct packet_affinity_queue_s
     bool                      closed;
 } packet_affinity_queue_t;
 
+typedef struct packet_affinity_drop_sample_s
+{
+    size_t   charge;
+    size_t   incoming_charge;
+    size_t   packet_bytes;
+    unsigned packets;
+    wid_t    target;
+    bool     packet_limit;
+} packet_affinity_drop_sample_t;
+
 struct packet_affinity_s
 {
     tunnel_t                     *tunnel;
@@ -48,10 +59,33 @@ struct packet_affinity_s
     size_t                  charge;
     unsigned                packets;
     unsigned                workers;
+    log_rate_limiter_t            capacity_drops;
+    packet_affinity_drop_sample_t last_capacity_drop;
     packet_affinity_queue_t queues[];
 };
 
 static void packetAffinityRun(void *worker, void *arg1, void *arg2, void *arg3);
+
+static void packetAffinityLogCapacityDrop(const packet_affinity_t *affinity, log_rate_limiter_report_t report,
+                                          packet_affinity_drop_sample_t sample)
+{
+    if (report.should_log)
+        LOGW("PacketAffinity: dropping packets: dispatcher capacity exceeded "
+             "(chain_index=%u, drops=%llu, total_drops=%llu, last_reason=%s, last_target_worker=%u, "
+             "last_packet_bytes=%zu, last_queued_packets=%u, packet_limit=%u, "
+             "last_allocation_bytes=%zu, last_incoming_allocation_bytes=%zu, allocation_limit_bytes=%u)",
+             (unsigned) affinity->tunnel->chain_index,
+             (unsigned long long) report.events,
+             (unsigned long long) report.total,
+             sample.packet_limit ? "packet-count limit" : "allocation-byte limit",
+             (unsigned) sample.target,
+             sample.packet_bytes,
+             sample.packets,
+             (unsigned) kPacketAffinityPacketLimit,
+             sample.charge,
+             sample.incoming_charge,
+             (unsigned) kPacketAffinityChargeLimit);
+}
 
 static void packetAffinityReleaseRecord(packet_affinity_t *affinity, packet_affinity_record_t *record)
 {
@@ -212,6 +246,8 @@ void packetAffinityDestroy(packet_affinity_t *affinity)
         }
     }
     assert(affinity->packets == 0 && affinity->charge == 0);
+    packetAffinityLogCapacityDrop(
+        affinity, logRateLimiterFlush(&affinity->capacity_drops), affinity->last_capacity_drop);
     deviceFragAffinityDestroy(affinity->fragments);
     mutexDestroy(&affinity->lock);
     memoryFree(affinity);
@@ -226,7 +262,23 @@ static void packetAffinityPublish(packet_affinity_t *affinity, line_t *source_li
     if (queue->closed || affinity->packets == kPacketAffinityPacketLimit ||
         charge > kPacketAffinityChargeLimit - affinity->charge)
     {
+        log_rate_limiter_report_t     report = {0};
+        packet_affinity_drop_sample_t sample = {0};
+        if (! queue->closed)
+        {
+            sample                       = (packet_affinity_drop_sample_t) {.charge          = affinity->charge,
+                                                                            .incoming_charge = charge,
+                                                                            .packet_bytes    = sbufGetLength(buf),
+                                                                            .packets         = affinity->packets,
+                                                                            .target          = wid,
+                                                                            .packet_limit = affinity->packets == kPacketAffinityPacketLimit};
+            affinity->last_capacity_drop = sample;
+            /* A full dispatcher can reject every packet in a receive batch.
+             * Keep the first report and a final summary without logging under its lock. */
+            report = logRateLimiterRecordImmediate(&affinity->capacity_drops, 1000);
+        }
         mutexUnlock(&affinity->lock);
+        packetAffinityLogCapacityDrop(affinity, report, sample);
         lineReuseBuffer(source_line, buf);
         return;
     }

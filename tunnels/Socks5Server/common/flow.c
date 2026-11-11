@@ -16,6 +16,30 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
                  sbufGetQueueCharge(buf) > kSocks5ServerMaxPendingCharge - charge - bufferqueueGetCharge(queue) ||
                  ! bufferqueueTryPushBack(queue, &buf)))
     {
+        const size_t queued_bytes    = bufferqueueGetLength(queue);
+        const size_t queued_charge   = bufferqueueGetCharge(queue);
+        const size_t incoming_charge = sbufGetQueueCharge(buf);
+        const bool   bytes_full      = length > kSocks5ServerMaxPendingBytes ||
+                                prefix > kSocks5ServerMaxPendingBytes - length ||
+                                queued_bytes > kSocks5ServerMaxPendingBytes - length - prefix;
+        const bool charge_full = charge > kSocks5ServerMaxPendingCharge ||
+                                 queued_charge > kSocks5ServerMaxPendingCharge - charge ||
+                                 incoming_charge > kSocks5ServerMaxPendingCharge - charge - queued_charge;
+        LOGW("Socks5Server: closing connection: %s pending data %s "
+             "(parser_bytes=%zu, queued_bytes=%zu, incoming_bytes=%zu, limit_bytes=%u, parser_charge_bytes=%zu, "
+             "queued_charge_bytes=%zu, incoming_charge_bytes=%zu, limit_charge_bytes=%u)",
+             upstream ? "upstream" : "downstream",
+             bytes_full    ? "byte limit exceeded"
+             : charge_full ? "storage charge limit exceeded"
+                           : "queue admission failed",
+             prefix,
+             queued_bytes,
+             length,
+             (unsigned) kSocks5ServerMaxPendingBytes,
+             charge,
+             queued_charge,
+             incoming_charge,
+             (unsigned) kSocks5ServerMaxPendingCharge);
         lineReuseBuffer(l, buf);
         socks5serverCloseControlLineBidirectional(t, l);
         return false;

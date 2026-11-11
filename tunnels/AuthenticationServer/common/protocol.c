@@ -37,8 +37,11 @@ sbuf_t *authenticationserverCreateResponseFrame(line_t *l, uint8_t response_type
 {
     if (UNLIKELY(response_data_len > kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize))
     {
-        LOGW("AuthenticationServer: refused %u-byte response frame because it exceeds the response payload limit",
-             (unsigned int) response_data_len);
+        LOGW("AuthenticationServer: refusing response frame: payload limit exceeded "
+             "(response_data_bytes=%u, data_limit_bytes=%u, frame_limit_bytes=%u)",
+             response_data_len,
+             (unsigned) (kAuthenticationServerMaxResponsePayload - kAuthenticationServerResponseHeaderSize),
+             (unsigned) kAuthenticationServerMaxResponsePayload);
         return NULL;
     }
 
@@ -142,10 +145,12 @@ bool authenticationserverUserJsonWireGuardAllowedIpsValid(const cJSON *user_json
 
 void authenticationserverCloseLine(tunnel_t *t, line_t *l, authenticationserver_lstate_t *ls, const char *reason)
 {
-    // Internal close paths pass literal reasons; keep that contract for new callers.
-    authenticationserver_tstate_t *ts = tunnelGetState(t);
-    if (ts->verbose)
-        LOGD("AuthenticationServer: closing logical connection: %s", reason);
+    // Reasons contain only local diagnostic text and measured scalars, never peer text or credentials.
+    LOGW("AuthenticationServer: closing logical connection: %s (retained_input_bytes=%zu, "
+         "retained_input_charge_bytes=%zu)",
+         reason,
+         bufferstreamGetLength(&ls->read_stream),
+         bufferstreamGetCharge(&ls->read_stream));
 
     authenticationserverLinestateDestroy(ls);
     tunnelPrevDownStreamFinish(t, l);
@@ -579,13 +584,25 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
 
         if (UNLIKELY(message_body_len < kAuthenticationServerSessionTokenSize))
         {
-            authenticationserverCloseLine(t, l, ls, "message body is smaller than session token");
+            char reason[160];
+            snprintf(reason,
+                     sizeof(reason),
+                     "message body smaller than protocol minimum (body_bytes=%u, minimum_bytes=%u)",
+                     message_body_len,
+                     (unsigned) kAuthenticationServerSessionTokenSize);
+            authenticationserverCloseLine(t, l, ls, reason);
             return false;
         }
 
         if (UNLIKELY(message_body_len > kAuthenticationServerMaxMessagePayload + kAuthenticationServerSessionTokenSize))
         {
-            authenticationserverCloseLine(t, l, ls, "message payload size exceeds limit");
+            char reason[160];
+            snprintf(reason,
+                     sizeof(reason),
+                     "message payload exceeds protocol limit (body_bytes=%u, limit_bytes=%u)",
+                     message_body_len,
+                     (unsigned) (kAuthenticationServerMaxMessagePayload + kAuthenticationServerSessionTokenSize));
+            authenticationserverCloseLine(t, l, ls, reason);
             return false;
         }
 
@@ -598,7 +615,13 @@ bool authenticationserverProcessRequests(tunnel_t *t, line_t *l, authentications
         if (message_body_len > kAuthenticationServerSessionTokenSize + kAuthenticationPreAuthPayloadLimit &&
             ! authenticationserverInputTokenValid(t, &ls->read_stream, NULL))
         {
-            authenticationserverCloseLine(t, l, ls, "unauthenticated message payload size exceeds limit");
+            char reason[160];
+            snprintf(reason,
+                     sizeof(reason),
+                     "unauthenticated message exceeds protocol limit (body_bytes=%u, limit_bytes=%u)",
+                     message_body_len,
+                     (unsigned) (kAuthenticationServerSessionTokenSize + kAuthenticationPreAuthPayloadLimit));
+            authenticationserverCloseLine(t, l, ls, reason);
             return false;
         }
         if (bufferstreamGetLength(&ls->read_stream) < message_len)

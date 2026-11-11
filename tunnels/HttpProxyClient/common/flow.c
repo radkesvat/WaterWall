@@ -1,10 +1,27 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 bool hpcQueue(tunnel_t *t, line_t *l, sbuf_t *b, unsigned direction)
 {
     hpc_lstate_t *ls = lineGetState(l, t);
     if (bufferqueueTryPushBack(&ls->pending[direction], &b))
         return true;
+    const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&ls->budgets[direction]);
+    const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->budgets[direction]);
+    const size_t               incoming_bytes  = sbufGetLength(b);
+    const size_t               incoming_charge = sbufGetQueueCharge(b);
+    LOGW("HttpProxyClient: closing connection: ordering queue refused: %s "
+         "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+         "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+         incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+         : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                          : "queue admission failed",
+         usage.bytes,
+         incoming_bytes,
+         limits.bytes,
+         usage.charge,
+         incoming_charge,
+         limits.charge);
     lineReuseBuffer(l, b);
     hpcClose(t, l);
     return false;

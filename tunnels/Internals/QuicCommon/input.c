@@ -56,9 +56,15 @@ bool quicFeedInput(quic_context_t *context)
     }
     if (result == WW_QUIC_CARRIER_INVALID || result == WW_QUIC_CARRIER_REFUSED)
     {
-        quicFail(context,
+        char reason[192];
+        snprintf(reason,
+                 sizeof(reason),
+                 "%s (declared_packet_bytes=%u, protocol_limit_bytes=%u)",
                  result == WW_QUIC_CARRIER_INVALID ? "invalid stream carrier length"
-                                                   : "carrier storage budget exceeded");
+                                                   : "carrier storage admission refused",
+                 context->carrier.body_length,
+                 (unsigned) WW_QUIC_MAX_DATAGRAM);
+        quicFail(context, reason);
         return true;
     }
     sbufShiftRight(buffer, consumed);
@@ -87,17 +93,6 @@ static bool quicAdmitApplication(quic_context_t *context, sbuf_t *buffer)
         1 + entries + storage.send_entries + marker > state->max_buffers ||
         cost.charge + used.charge + storage.send_allocation > (size_t) state->max_bytes * 2)
     {
-        LOGD("QUIC send admission refused: bytes=%zu+%zu+%zu entries=1+%zu+%zu charge=%zu+%zu+%zu limits=%u/%u",
-             cost.bytes,
-             used.bytes,
-             storage.send_bytes,
-             entries,
-             storage.send_entries,
-             cost.charge,
-             used.charge,
-             storage.send_allocation,
-             state->max_bytes,
-             state->max_buffers);
         return false;
     }
     return bufferqueueTryPushBack(&context->application, &buffer);
@@ -131,8 +126,33 @@ static void quicSubmit(tunnel_t *t, line_t *l, sbuf_t *buffer, quic_input_kind_t
     }
     if (! admitted)
     {
+        char              reason[256];
+        size_t            charge;
+        ww_quic_storage_t storage;
+        ww_quic_engine_storage(context->engine, &storage);
+        const unsigned marker =
+            application && state->client && storage.send_bytes == 0 && ! ww_quic_engine_ready(context->engine) ? 1U
+                                                                                                               : 0U;
+        if (sbufTryGetQueueCharge(buffer, &charge))
+            snprintf(reason,
+                     sizeof(reason),
+                     "%s backlog admission refused "
+                     "(incoming_bytes=%zu, incoming_charge_bytes=%zu, incoming_entries=1, "
+                     "opening_marker_bytes=%u, opening_marker_entries=%u)",
+                     application ? "application" : "carrier",
+                     sbufGetLength(buffer),
+                     charge,
+                     marker,
+                     marker);
+        else
+            snprintf(reason,
+                     sizeof(reason),
+                     "%s input allocation charge is unrepresentable "
+                     "(incoming_bytes=%zu)",
+                     application ? "application" : "carrier",
+                     sbufGetLength(buffer));
         bufferpoolReuseBuffer(context->pool, buffer);
-        quicFail(context, application ? "application backlog budget exceeded" : "carrier backlog budget exceeded");
+        quicFail(context, reason);
     }
     else
     {

@@ -9,12 +9,19 @@ static bool packetTransform(tunnel_t *t, line_t *l, sbuf_t **buf, bool upstream)
     encryptionclient_tstate_t       *ts     = tunnelGetState(t);
     const bool                       encode = upstream;
     const uint8_t                   *key    = upstream ? ts->key : ts->packet_download_key;
+    const size_t                     input_bytes = sbufGetLength(*buf);
     const encryption_packet_result_t result =
         encode ? encryptionEncodePacket(key, buf) : encryptionDecodePacket(key, *buf);
     if (result != kEncryptionPacketOk)
     {
         if (atomicLogRateLimiterShouldLog(&ts->packet_drop_log_limiter, 1000))
-            LOGW("EncryptionClient: dropping packet: %s", encryptionPacketResultName(result));
+            LOGW("EncryptionClient: dropping packet during %s: %s (input_packet_bytes=%zu, "
+                 "protocol_packet_limit_bytes=%u, encryption_overhead_bytes=%u)",
+                 encode ? "encryption" : "decryption",
+                 encryptionPacketResultName(result),
+                 input_bytes,
+                 (unsigned) kEncryptionPacketMaxLength,
+                 (unsigned) kEncryptionPacketOverhead);
         lineReuseBuffer(l, *buf);
         return false;
     }

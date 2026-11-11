@@ -101,6 +101,11 @@ static ptc_write_outcome_t ptcTcpWriteLocked(ptc_tstate_t *ts, ptc_lstate_t *ls,
 
     if (err != ERR_OK && err != ERR_MEM)
     {
+        LOGW("PacketsToConnection: resetting TCP flow: lwIP write refused "
+             "(error=%d, payload_bytes=%u, written_bytes=%u)",
+             (int) err,
+             buf_len,
+             written);
         /* The record already owns `buf`; line destruction releases it. */
         ptcDetachTcpPcbLocked(ls);
         tcp_abort(tpcb);
@@ -155,7 +160,9 @@ static ptc_write_outcome_t ptcUdpSendLocked(ptc_lstate_t *ls, sbuf_t *buf, uint3
     const err_t err = udp_sendfrom(ls->udp_pcb, p, &ls->udp_local_addr, ls->udp_local_port);
     if (UNLIKELY(err != ERR_OK) && atomicLogRateLimiterShouldLog(&udp_send_error_log, kPtcUdpDropLogIntervalMs))
     {
-        LOGW("PacketsToConnection: dropping a UDP payload after lwIP send error %d", err);
+        LOGW("PacketsToConnection: dropping UDP payload: lwIP send refused (error=%d, payload_bytes=%u)",
+             (int) err,
+             buf_len);
     }
     pbuf_free(p);
     return kPtcWriteReuse;
@@ -227,12 +234,15 @@ void ptcTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&tcp_over_limit_log, kPtcOverLimitLogIntervalMs))
         {
-            LOGW("PacketsToConnection: retained payload passed max-pending-bytes (%u budget bytes + %u delivery "
-                 "bytes) or %u entries, "
-                 "closing the flow",
-                 (unsigned int) ts->max_pending_bytes,
-                 (unsigned int) kPtcPendingDeliveryHeadroom,
-                 (unsigned int) ts->max_pending_entries);
+            LOGW("PacketsToConnection: closing TCP flow: retained payload admission refused "
+                 "(pending_bytes=%u, incoming_bytes=%u, max-pending-bytes=%u, delivery_headroom_bytes=%u, "
+                 "pending_entries=%zu, entry_limit=%u)",
+                 (unsigned) ls->pending_bytes,
+                 buf_len,
+                 (unsigned) ts->max_pending_bytes,
+                 (unsigned) kPtcPendingDeliveryHeadroom,
+                 sbuf_ack_queue_t_size(&ls->ack_queue),
+                 (unsigned) ts->max_pending_entries);
         }
         ptcCloseLineOverPendingLimit(t, l);
         return;

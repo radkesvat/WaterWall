@@ -42,7 +42,8 @@ static const char *tunOffloadRejectName(tun_linux_offload_reject_t reject)
     return "unexpected";
 }
 
-static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *reader, tun_linux_offload_reject_t reject)
+static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *reader, tun_linux_offload_reject_t reject,
+                                  size_t record_bytes)
 {
     switch (reject)
     {
@@ -60,7 +61,14 @@ static void tunOffloadCountReject(tun_device_t *tdev, tun_offload_reader_t *read
     }
     if (atomicLogRateLimiterShouldLog(&tun_offload_reject_log, kTunOffloadLogIntervalMs))
     {
-        LOGW("TunDevice: dropping %s TUN offload record on %s", tunOffloadRejectName(reject), tdev->name);
+        LOGW("TunDevice: dropping %s TUN offload record on %s "
+             "(record_bytes=%zu, virtio_header_bytes=%u, device_mtu_bytes=%u, protocol_packet_limit_bytes=%u)",
+             tunOffloadRejectName(reject),
+             tdev->name,
+             record_bytes,
+             (unsigned) kTunVirtioHeaderSize,
+             (unsigned) tdev->mtu,
+             (unsigned) UINT16_MAX);
     }
 }
 
@@ -436,14 +444,19 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
             return false;
         }
         if (nread == 0)
+        {
+            LOGE("TunDevice: stopping reader for %s: native receive returned EOF (worker=%u)",
+                 tdev->name,
+                 (unsigned) worker->wid);
             return false;
+        }
         bytes += (uint32_t) nread;
         sbufSetLength(reader->scratch, nread);
         if (tdev->checksum_offload_enabled)
         {
             if (nread < kTunVirtioHeaderSize)
             {
-                tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed);
+                tunOffloadCountReject(tdev, reader, kTunLinuxOffloadMalformed, (size_t) nread);
                 continue;
             }
             uint8_t metadata[kTunVirtioHeaderSize];
@@ -451,7 +464,7 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
             sbufShiftRight(reader->scratch, kTunVirtioHeaderSize);
             if (! tdev->gso_enabled && metadata[1] != 0)
             {
-                tunOffloadCountReject(tdev, reader, kTunLinuxOffloadUnsupported);
+                tunOffloadCountReject(tdev, reader, kTunLinuxOffloadUnsupported, (size_t) nread);
                 continue;
             }
             uint8_t                         *ip   = sbufGetMutablePtr(reader->scratch);
@@ -461,8 +474,10 @@ static bool tunReaderDrain(tun_worker_reader_t *lane, worker_t *worker)
             if (reject != kTunLinuxOffloadAccept ||
                 (tdev->trusted_checksums && ! tunLinuxOffloadTrustInput(metadata, ip, &plan)))
             {
-                tunOffloadCountReject(
-                    tdev, reader, reject != kTunLinuxOffloadAccept ? reject : kTunLinuxOffloadMalformed);
+                tunOffloadCountReject(tdev,
+                                      reader,
+                                      reject != kTunLinuxOffloadAccept ? reject : kTunLinuxOffloadMalformed,
+                                      (size_t) nread);
                 continue;
             }
             if (plan.action == kTunLinuxOffloadSegment || plan.transport_assured ||
@@ -521,6 +536,10 @@ static void tunReaderRun(tun_worker_reader_t *lane, worker_t *worker)
         wio_t *io = wioGet(worker->loop, lane->fd);
         if (io == NULL || wioGetFD(io) != lane->fd)
         {
+            LOGE("TunDevice: failing reader for %s: cannot attach native receive descriptor (worker=%u, fd=%d)",
+                 tdev->name,
+                 (unsigned) worker->wid,
+                 lane->fd);
             if (io != NULL)
                 wioReleaseNoClose(io);
             failed = true;
@@ -545,8 +564,20 @@ static void tunReaderRun(tun_worker_reader_t *lane, worker_t *worker)
         if (atomicLoadExplicit(&lane->waiting, memory_order_acquire) || failed ||
             ! tunLifecycleIsActive(tunLifecycleLoad(&tdev->lifecycle)) || ! quiescenceGateIsActive(&generation->gate))
             wioDel(lane->io, WW_READ);
-        else if (wioAdd(lane->io, tunReaderOnReady, WW_READ) != 0)
-            failed = true;
+        else
+        {
+            const int result = wioAdd(lane->io, tunReaderOnReady, WW_READ);
+            if (result != 0)
+            {
+                LOGE("TunDevice: failing reader for %s: cannot arm native receive readiness "
+                     "(worker=%u, fd=%d, result=%d)",
+                     tdev->name,
+                     (unsigned) worker->wid,
+                     lane->fd,
+                     result);
+                failed = true;
+            }
+        }
     }
     tun_lifecycle_state_t failed_from;
     const bool            shutdown =

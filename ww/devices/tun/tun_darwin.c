@@ -333,7 +333,10 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
         if (nread <= (int) sizeof(family))
         {
             if (atomicLogRateLimiterShouldLog(&tun_short_frame_log, kTunPacketWarningIntervalMs))
-                LOGW("TunDevice: dropping short utun frame of size %d", nread);
+                LOGW("TunDevice: dropping short utun frame on %s (frame_bytes=%d, required_bytes>%zu)",
+                     tdev->name,
+                     nread,
+                     sizeof(family));
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
             continue;
         }
@@ -345,9 +348,10 @@ static tun_drain_result_t tunDrainPackets(tun_device_t *tdev)
             const log_rate_limiter_report_t report = logRateLimiterRecord(&tdev->oversized_read_discard_limiter, 1000);
             if (report.should_log)
             {
-                LOGW("TunDevice: dropped %llu oversized packets on %s (device MTU %u)",
+                LOGW("TunDevice: dropped %llu oversized packets on %s (last_packet_bytes=%zu, device_mtu_bytes=%u)",
                      (unsigned long long) report.events,
                      tdev->name,
+                     sbufGetLength(bufs[queued_count]),
                      tunDeviceMtu(tdev));
             }
             bufferpoolReuseBuffer(tdev->reader_buffer_pool, bufs[queued_count]);
@@ -396,7 +400,7 @@ static WTHREAD_ROUTINE(routineReadFromTun)
             char    drain_byte;
             ssize_t drain_res = read(tdev->linux_pipe_fds[0], &drain_byte, 1);
             discard drain_res;
-            LOGW("TunDevice: Exit read routine due to pipe event");
+            LOGD("TunDevice: Exit read routine due to stop pipe event");
             break;
         }
 
@@ -498,8 +502,9 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
             if (tunIoErrnoIsTransient(write_errno) || tunWriteErrnoIsPacketLocal(write_errno))
             {
                 if (atomicLogRateLimiterShouldLog(&tun_transient_write_log, kTunPacketWarningIntervalMs))
-                    LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
+                    LOGW("TunDevice: discarded a packet, writing to device %s failed (frame_bytes=%zd, errno=%d: %s)",
                          tdev->name,
+                         expected,
                          write_errno,
                          strerror(write_errno));
                 continue;
@@ -553,7 +558,7 @@ bool tundeviceDisableReversePathFiltering(const char *ifname)
     return true;
 }
 
-/* Full is expected bounded overload. Sample only lifecycle refusals on the
+/* Full is diagnosed by the shared writer. Sample only lifecycle refusals on the
  * failing path so shutdown bursts do not turn into packet-rate logging. */
 static bool tundeviceShouldLogRefusal(void)
 {
@@ -1179,7 +1184,7 @@ tun_device_t *tundeviceCreate(const char *name, bool offload, bool multi_queue_r
     discard multi_queue_requested;
     if (mtu <= 16)
     {
-        LOGE("TunDevice: Invalid MTU size: %u", mtu);
+        LOGE("TunDevice: refusing device creation: invalid MTU (mtu_bytes=%u, minimum_bytes=17)", (unsigned) mtu);
         return NULL;
     }
 

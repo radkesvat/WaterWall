@@ -147,6 +147,18 @@ bool reverseserverRetainPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         (ls->replaying && (ls->replay_admitted + length > kReverseServerPendingBytes ||
                            ls->replay_admitted_buffers >= kReverseServerReplayDeliveries)))
     {
+        LOGW("ReverseServer: closing connection: pending application %s limit exceeded "
+             "(retained_bytes=%zu, incoming_bytes=%u, limit_bytes=%u, replay_admitted_bytes=%" PRIu64 ", "
+             "replay_admitted_buffers=%u, replay_buffer_limit=%u)",
+             length > kReverseServerPendingBytes - used.bytes            ? "byte budget"
+             : ls->replay_admitted + length > kReverseServerPendingBytes ? "replay byte"
+                                                                         : "replay delivery",
+             used.bytes,
+             length,
+             (unsigned) kReverseServerPendingBytes,
+             ls->replay_admitted,
+             ls->replay_admitted_buffers,
+             (unsigned) kReverseServerReplayDeliveries);
         lineReuseBuffer(line, buf);
         reverseserverCloseLine(t, line);
         return false;
@@ -154,7 +166,19 @@ bool reverseserverRetainPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     buf = sbufEnsureOrdinary(lineGetBufferPool(line), buf);
     if (! bufferqueueTryPushBack(&ls->pending, &buf))
     {
-        LOGD("ReverseServer: application backlog exceeds its byte or charge limit");
+        const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->pending_budget);
+        const size_t               incoming_charge = sbufGetQueueCharge(buf);
+        LOGW("ReverseServer: closing connection: application backlog %s "
+             "(retained_bytes=%zu, incoming_bytes=%u, limit_bytes=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+             incoming_charge > limits.charge - used.charge ? "storage charge budget exceeded"
+                                                           : "queue admission failed",
+             used.bytes,
+             length,
+             limits.bytes,
+             used.charge,
+             incoming_charge,
+             limits.charge);
         lineReuseBuffer(line, buf);
         reverseserverCloseLine(t, line);
         return false;

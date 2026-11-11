@@ -86,9 +86,7 @@ static void clientTerminal(void *user, tou_result_t result)
     line_t              *application = session->application;
     tou_session_t       *driver      = session->driver;
 
-    if (result == kTouUnconfirmed)
-        LOGW("KcpClient: close delivery unconfirmed at fixed deadline");
-    else if (result != kTouConfirmed && result != kTouPeerDrained)
+    if (result != kTouConfirmed && result != kTouPeerDrained)
         LOGD("KcpClient: session aborted (reason %d)", (int) result);
 
     lineRef(transport);

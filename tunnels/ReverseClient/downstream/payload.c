@@ -15,6 +15,16 @@ static void queueActivationPayload(reverseclient_pair_t *pair, sbuf_t *buf)
         pair->activation_reentry_buffers >= kReverseClientActivationDeliveries ||
         ! bufferqueueTryPushBack(&pair->activation_pending, &buf))
     {
+        LOGW("ReverseClient: closing pair: activation reentry admission refused "
+             "(admitted_bytes=%u, incoming_bytes=%u, byte_limit=%u, admitted_buffers=%u, delivery_limit=%u, "
+             "queued_charge_bytes=%zu, incoming_charge_bytes=%zu)",
+             pair->activation_reentry_bytes,
+             length,
+             (unsigned) kReverseClientPendingBytes,
+             pair->activation_reentry_buffers,
+             (unsigned) kReverseClientActivationDeliveries,
+             bufferqueueGetCharge(&pair->activation_pending),
+             sbufGetQueueCharge(buf));
         bufferpoolReuseBuffer(pool, buf);
         reverseclientClosePair(pair, kReverseClientCloseInternal);
         return;
@@ -36,7 +46,11 @@ static bool consumeActivation(reverseclient_pair_t *pair, sbuf_t *buf)
         const uint32_t length = reverseActivationReadSize(pair->activation_header);
         if (length < kReverseActivationHeaderSize || length > kReverseActivationMaxSize)
         {
-            LOGD("ReverseClient: invalid activation size, closing reverse connection");
+            LOGW("ReverseClient: closing reverse connection: invalid activation size "
+                 "(activation_bytes=%u, minimum_bytes=%u, protocol_limit_bytes=%u)",
+                 length,
+                 (unsigned) kReverseActivationHeaderSize,
+                 (unsigned) kReverseActivationMaxSize);
             lineReuseBuffer(pair->u, buf);
             reverseclientClosePair(pair, kReverseClientCloseInternal);
             return false;

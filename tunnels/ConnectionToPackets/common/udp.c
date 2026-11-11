@@ -54,23 +54,31 @@ bool ctpUdpOpenFlow(tunnel_t *t, line_t *l, ctp_lstate_t *ls, const ip_addr_t *d
     ip_addr_t local_ip;
     ipAddrCopyFromIp4(local_ip, ts->source_ip);
 
-    if (udp_bind_netif(pcb, &ctx->netif) != ERR_OK)
+    const err_t netif_error = udp_bind_netif(pcb, &ctx->netif);
+    if (netif_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: virtual netif is being removed");
+        LOGE("ConnectionToPackets: refusing UDP flow: netif binding failed (lwip_error=%d)", (int) netif_error);
         goto done;
     }
 
-    if (wwLwipUdpBindConnected(pcb, &local_ip, dest_ip, dest_port) != ERR_OK)
+    const err_t bind_error = wwLwipUdpBindConnected(pcb, &local_ip, dest_ip, dest_port);
+    if (bind_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: could not bind a local port for the virtual source address");
+        LOGE("ConnectionToPackets: refusing UDP flow: virtual source-port binding failed "
+             "(lwip_error=%d, destination_port=%u)",
+             (int) bind_error,
+             (unsigned) dest_port);
         goto done;
     }
 
     // A connected pcb both fixes the destination of udp_send() and filters
     // inbound datagrams down to this one peer.
-    if (udp_connect(pcb, dest_ip, dest_port) != ERR_OK)
+    const err_t connect_error = udp_connect(pcb, dest_ip, dest_port);
+    if (connect_error != ERR_OK)
     {
-        LOGE("ConnectionToPackets: lwIP refused the UDP connect");
+        LOGE("ConnectionToPackets: refusing UDP flow: connect failed (lwip_error=%d, destination_port=%u)",
+             (int) connect_error,
+             (unsigned) dest_port);
         goto done;
     }
 

@@ -3,6 +3,7 @@
  * synchronized reservations. Forked shutdown cases retain queued/running work
  * through both worker-stop orders. Real worker queues/pools; no lines or sockets.
  * CTest: waterwall.api_dispatcher_unit. */
+#include "loggers/internal_logger.h"
 #include "worker_messages.h"
 #include "wwapi.h"
 
@@ -62,6 +63,15 @@ static const uint8_t binary_body[] = {'a', 0, 0xff, 'z'};
 static thread_local bool capture_request_allocation;
 static atomic_uintptr_t  watched_request, watched_response;
 static atomic_uint       secret_releases;
+static thread_local char reservation_diagnostic[2048];
+
+static void captureReservationDiagnostic(int level, const char *bytes, int length)
+{
+    discard      level;
+    const size_t count = length > 0 ? min((size_t) length, sizeof(reservation_diagnostic) - 1) : 0;
+    memoryCopy(reservation_diagnostic, bytes, count);
+    reservation_diagnostic[count] = '\0';
+}
 
 void *__real_memoryAllocate(size_t size);
 void *__wrap_memoryAllocate(size_t size);
@@ -319,9 +329,26 @@ static void testAbandonedAndDeadline(void)
 static void testRefusalAndBudget(void)
 {
     resetProbe(0);
+    logger_t      *logger   = getInternalLogger();
+    logger_handler previous = loggerGetHandle(logger);
+    loggerSetHandler(logger, captureReservationDiagnostic);
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
     require(nodeApiDomainTryReserve(probe.domain, 2 * 1024 * 1024), "exact domain budget refused");
     require(! nodeApiDomainTryReserve(probe.domain, 1), "full budget admitted another byte");
+    require(strstr(reservation_diagnostic, "refusing dispatch-domain memory reservation") &&
+                strstr(reservation_diagnostic, "used_allocation_bytes=2097152") &&
+                strstr(reservation_diagnostic, "requested_allocation_bytes=1") &&
+                strstr(reservation_diagnostic, "limit_allocation_bytes=2097152"),
+            "dispatch reservation refusal omitted its exact decision-time usage, addition or limit");
     require(newJob(&worker_zero_operation, nodeApiNowMs() + 5000) == NULL, "job exceeded aggregate budget");
+    require(strstr(reservation_diagnostic, "refusing dispatch job: dispatch-domain memory limit exceeded") &&
+                strstr(reservation_diagnostic, "active_jobs=0") &&
+                strstr(reservation_diagnostic, "used_allocation_bytes=2097152") &&
+                strstr(reservation_diagnostic, "requested_allocation_bytes=") &&
+                strstr(reservation_diagnostic, "limit_allocation_bytes=2097152"),
+            "dispatch job refusal confused its memory and job-count limits");
+    loggerSetLevel(logger, LOG_LEVEL_SILENT);
+    loggerSetHandler(logger, previous);
     nodeApiDomainRelease(probe.domain, 2 * 1024 * 1024);
     probe.job = newJob(&worker_zero_operation, nodeApiNowMs() + 5000);
     require(probe.job != NULL, "refusal job creation failed");

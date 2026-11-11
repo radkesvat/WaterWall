@@ -28,6 +28,12 @@ typedef struct netfilter_packet_record_s
     uint32_t                  packet_id;
     uint32_t                  verdict;
     int                       error;
+    /* Scalar rejection evidence survives until the native verdict commits. */
+    const char *discard_reason;
+    size_t      discarded_bytes;
+    uint32_t    copied_packet_bytes;
+    bool        discard_is_datagram;
+    bool        discard_has_copy_length;
 } netfilter_packet_record_t;
 
 typedef struct netfilter_batch_workspace_s netfilter_batch_workspace_t;
@@ -79,6 +85,7 @@ netfilter_verdict_result_t netfilterTrySendCumulativeVerdict(int netfilter_socke
  * be published before that result. WouldBlock needs writable readiness, Yield
  * needs a continuation, and the owner enforces its absolute verdict deadline. */
 netfilter_packet_result_t  netfilterReceivePacket(int netfilter_socket, sbuf_t *buf, uint32_t *packet_id);
+netfilter_packet_result_t  netfilterReceivePacketRecord(int netfilter_socket, netfilter_packet_record_t *record);
 netfilter_verdict_result_t netfilterTrySendVerdict(int netfilter_socket, uint16_t qnumber, uint32_t packet_id,
                                                    uint32_t verdict);
 

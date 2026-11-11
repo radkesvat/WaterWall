@@ -87,6 +87,24 @@ void keepaliveclientSendNormalFrameUpstream(tunnel_t *t, line_t *l, sbuf_t *buf)
             sbufGetQueueCharge(buf) > kKeepAliveMaxReentryCharge - active_charge - queued_charge ||
             ! bufferqueueTryPushBack(&ls->write_reentry, &buf))
         {
+            const bool byte_limit = pending > kKeepAliveMaxReentryBytes || length > kKeepAliveMaxReentryBytes - pending;
+            const bool charge_limit =
+                active_charge > kKeepAliveMaxReentryCharge ||
+                queued_charge > kKeepAliveMaxReentryCharge - active_charge ||
+                sbufGetQueueCharge(buf) > kKeepAliveMaxReentryCharge - active_charge - queued_charge;
+            LOGW("KeepAliveClient: closing connection: nested output %s "
+                 "(pending_bytes=%zu, incoming_bytes=%u, byte_limit=%u, active_charge_bytes=%zu, "
+                 "queued_charge_bytes=%zu, incoming_charge_bytes=%zu, charge_limit_bytes=%u)",
+                 byte_limit     ? "byte limit exceeded"
+                 : charge_limit ? "storage charge limit exceeded"
+                                : "queue admission failed",
+                 pending,
+                 length,
+                 (unsigned) kKeepAliveMaxReentryBytes,
+                 active_charge,
+                 queued_charge,
+                 sbufGetQueueCharge(buf),
+                 (unsigned) kKeepAliveMaxReentryCharge);
             lineReuseBuffer(l, buf);
             keepaliveclientCloseLineFromProtocolError(t, l);
             return;
@@ -145,7 +163,11 @@ void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
         {
             if (body_length < kKeepAliveFrameTypeSize || body_length > kKeepAliveMaxFrameBodyLength)
             {
-                LOGW("KeepAliveClient: invalid keepalive frame length");
+                LOGW("KeepAliveClient: closing connection: invalid frame body length "
+                     "(body_bytes=%u, minimum_bytes=%u, protocol_limit_bytes=%u)",
+                     body_length,
+                     (unsigned) kKeepAliveFrameTypeSize,
+                     (unsigned) kKeepAliveMaxFrameBodyLength);
                 keepaliveclientCloseLineFromProtocolError(t, l);
                 lineUnref(l);
                 return;
@@ -193,7 +215,10 @@ void keepaliveclientConsumeDownstreamFrames(tunnel_t *t, line_t *l)
     assert(spliceframereaderLength(&ls->reader) < kKeepAliveMaxPayloadChunkSize + kKeepAliveFramePrefixSize);
     if (! spliceframereaderEndDrain(&ls->reader))
     {
-        LOGW("KeepAliveClient: incomplete frame storage limit exceeded");
+        LOGW("KeepAliveClient: closing connection: incomplete frame storage charge exceeded "
+             "(retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+             spliceframereaderCharge(&ls->reader),
+             (unsigned) kKeepAliveReadChargeLimit);
         keepaliveclientCloseLineFromProtocolError(t, l);
         lineUnref(l);
         return;

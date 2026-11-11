@@ -308,13 +308,30 @@ bool rawdeviceBringUp(raw_device_t *rdev)
         raw_native_writer_t *native = &rdev->writer_states[i];
         native->event               = CreateEventW(NULL, TRUE, FALSE, NULL);
         if (native->event == NULL)
+        {
+            const DWORD error = GetLastError();
+            LOGE("RawDevice: cannot create output completion event for %s (worker=%zu, error=%lu)",
+                 rdev->name,
+                 i,
+                 error);
             goto fail;
+        }
         native->wait = CreateThreadpoolWait(rawdeviceWriteCompleted, native, NULL);
         if (native->wait == NULL)
+        {
+            const DWORD error = GetLastError();
+            LOGE(
+                "RawDevice: cannot create output completion wait for %s (worker=%zu, error=%lu)", rdev->name, i, error);
             goto fail;
+        }
     }
     if (! rawWriterOpen(&rdev->writer, kRawWriteQueueMax, 0, rdev, rawdeviceWriteBatch, rawdeviceStopWriter))
+    {
+        LOGE("RawDevice: cannot open worker output queues for %s (device_packet_limit=%u)",
+             rdev->name,
+             (unsigned) kRawWriteQueueMax);
         goto fail;
+    }
     if (! rawLifecycleTransitionStartingToUp(&rdev->lifecycle))
     {
         rawWriterCloseRequest(&rdev->writer);
@@ -327,7 +344,6 @@ bool rawdeviceBringUp(raw_device_t *rdev)
     return true;
 
 fail:
-    LOGE("RawDevice: failed to initialize worker output, error %lu", GetLastError());
     for (size_t i = 0; i < rdev->writer_worker_count; ++i)
         rawdeviceStopWriter(rdev, (wid_t) i);
     rawdeviceFreeWriterStates(rdev);

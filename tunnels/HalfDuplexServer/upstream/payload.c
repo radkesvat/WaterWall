@@ -6,6 +6,10 @@ static void checkWaitingLimit(tunnel_t *t, line_t *l, halfduplexserver_tstate_t 
 {
     if (sbufGetLength(ls->buffering) >= halfduplexserverWaitingLimit(l))
     {
+        LOGW("HalfDuplexServer: closing unpaired upload: waiting buffer limit reached "
+             "(buffered_bytes=%zu, effective_limit_bytes=%" PRIu64 ")",
+             sbufGetLength(ls->buffering),
+             halfduplexserverWaitingLimit(l));
         mutexLock(&(ts->pending_line_maps_mutex));
         hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
         bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
@@ -383,6 +387,22 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                 buf = ordinary;
                 if (! bufferqueueTryPushBack(&main_ls->startup_pending, &buf))
                 {
+                    const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&main_ls->startup_budget);
+                    const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&main_ls->startup_budget);
+                    const size_t               incoming_bytes  = sbufGetLength(buf);
+                    const size_t               incoming_charge = sbufGetQueueCharge(buf);
+                    LOGW("HalfDuplexServer: closing pair: startup queue refused: %s "
+                         "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+                         "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+                         incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+                         : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                                          : "queue admission failed",
+                         usage.bytes,
+                         incoming_bytes,
+                         limits.bytes,
+                         usage.charge,
+                         incoming_charge,
+                         limits.charge);
                     lineReuseBuffer(l, buf);
                     halfduplexserverAbortPair(t, main);
                     return;

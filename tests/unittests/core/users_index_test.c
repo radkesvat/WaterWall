@@ -45,6 +45,29 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
+static void testDiagnosticNamePreview(void)
+{
+    char        first_name[]  = "first\n\"\\\x1b";
+    char        second_name[] = "second\tname";
+    user_t      first = {.name = first_name}, second = {.name = second_name};
+    const char *a = usersUserNameForLog(&first);
+    const char *b = usersUserNameForLog(&second);
+    require(strstr(a, "first\\x0a") && strstr(a, "\\\"") && strstr(a, "\\\\") && strstr(a, "\\x1b"),
+            "diagnostic name preview left unescaped control, quote or backslash bytes");
+    require(strstr(b, "second\\x09name") && strstr(a, "first") && a != b,
+            "formatting a second user overwrote the first diagnostic name");
+    for (const unsigned char *cursor = (const unsigned char *) a; *cursor != 0; ++cursor)
+        require(*cursor >= 0x20 && *cursor < 0x7f, "diagnostic name retained an unsafe byte");
+    char long_name[128];
+    memset(long_name, 'x', sizeof(long_name) - 1);
+    long_name[sizeof(long_name) - 1] = '\0';
+    first.name                       = long_name;
+    a                                = usersUserNameForLog(&first);
+    require(strlen(a) == 67 && strcmp(a + 64, "...") == 0, "diagnostic name preview did not bound long input");
+    require(strcmp(long_name + 64, a + 64) != 0 && strlen(long_name) == 127,
+            "diagnostic preview changed the stored user name");
+}
+
 /* Exact chosen home buckets exercise the dependency independently of the
  * production randomized hash. Low 32 bits distinguish keys sharing a home. */
 static size_t collisionHomeHash(const uint64_t *key)
@@ -3148,6 +3171,7 @@ int main(void)
 {
     testCaseSet("users_index_test");
     require(userTestRuntimeInitialize(), "crypto global initialization failed");
+    testDiagnosticNamePreview();
     const uint64_t first_seed = userIndexHashSeed();
     require(first_seed != 0 && userIndexHashSeed() == first_seed,
             "process hash seed changed or truncated after first initialization");

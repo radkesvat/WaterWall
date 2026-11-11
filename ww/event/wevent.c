@@ -724,7 +724,10 @@ static void __read_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogw("read timeout [%s] <=> [%s]",
+            wlogw("closing socket: read timeout (fd=%d, inactive_ms=%llu, timeout_ms=%d) [%s] <=> [%s]",
+                  wioGetFD(io),
+                  (unsigned long long) inactive_ms,
+                  io->read_timeout,
                   SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
@@ -776,7 +779,12 @@ static void __write_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogw("write timeout [%s] <=> [%s]",
+            wlogw("closing socket: write timeout (fd=%d, inactive_ms=%llu, timeout_ms=%d, queued_bytes=%u) "
+                  "[%s] <=> [%s]",
+                  wioGetFD(io),
+                  (unsigned long long) inactive_ms,
+                  io->write_timeout,
+                  io->write_bufsize,
                   SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }
@@ -829,7 +837,10 @@ static void __keepalive_timeout_cb(wtimer_t *timer)
         {
             char localaddrstr[SOCKADDR_STRLEN] = {0};
             char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-            wlogd("keepalive timeout [%s] <=> [%s]",
+            wlogd("closing socket: keepalive timeout (fd=%d, inactive_ms=%llu, timeout_ms=%d) [%s] <=> [%s]",
+                  wioGetFD(io),
+                  (unsigned long long) inactive_ms,
+                  io->keepalive_timeout,
                   SOCKADDR_STR(io->localaddr, localaddrstr),
                   SOCKADDR_STR(io->peeraddr, peeraddrstr));
         }

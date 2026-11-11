@@ -35,12 +35,12 @@ void httpclientStartTransport(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: line init version-mode=%d websocket=%s upgrade=%s host=%s path=%s",
+        LOGD("HttpClient: line init version-mode=%d websocket=%s upgrade=%s host_bytes=%zu path_bytes=%zu",
              ts->version_mode,
              boolToTrueFalse(ts->websocket_enabled),
              boolToTrueFalse(ts->enable_upgrade),
-             ts->host,
-             ts->path);
+             httpclientLogTextBytes(ts->host),
+             httpclientLogTextBytes(ts->path));
     }
 
     lineRef(l);

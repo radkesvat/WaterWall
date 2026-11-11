@@ -354,7 +354,8 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
     if (rsocket < 0)
     {
-        LOGE("RawDevice: unable to open a raw socket");
+        const int error = errno;
+        LOGE("RawDevice: unable to open raw socket for %s (errno=%d: %s)", name, error, strerror(error));
         return NULL;
     }
 
@@ -362,7 +363,12 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
     {
         if (setsockopt(rsocket, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
         {
-            LOGE("RawDevice:  unable to set raw socket mark to %u", mark);
+            const int error = errno;
+            LOGE("RawDevice: unable to set raw socket mark for %s (mark=%u, errno=%d: %s)",
+                 name,
+                 mark,
+                 error,
+                 strerror(error));
             close(rsocket);
             return NULL;
         }
@@ -391,7 +397,13 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
     int sndbuf = kRawSocketSendBuffer;
     if (setsockopt(rsocket, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf)) < 0)
     {
-        LOGW("RawDevice: failed to set SO_SNDBUF: %s", strerror(errno));
+        const int error = errno;
+        LOGW("RawDevice: failed to set SO_SNDBUF for %s; retaining kernel setting "
+             "(requested_bytes=%d, errno=%d: %s)",
+             name,
+             sndbuf,
+             error,
+             strerror(error));
     }
     rawdeviceLogSocketBufferSize(rsocket, SO_SNDBUF, "SO_SNDBUF");
 

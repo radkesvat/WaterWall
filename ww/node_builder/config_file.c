@@ -172,7 +172,11 @@ static bool appendJsonChunk(char **buffer, size_t *length, size_t *capacity, con
     const size_t limit = configPolicyIsRestricted() ? WW_HOST_NODE_JSON_LIMIT : SIZE_MAX - 1;
     if (*length > limit || src_len > limit - *length)
     {
-        LOGF("JSON Error: resolved output exceeds the size limit");
+        LOGF("JSON Error: refusing resolved output: size limit exceeded "
+             "(current_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu)",
+             *length,
+             src_len,
+             limit);
         return false;
     }
     size_t required = *length + src_len + 1;

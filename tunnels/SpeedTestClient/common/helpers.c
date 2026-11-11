@@ -934,7 +934,13 @@ void speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf)
      * almost-empty private pipes to retain excessive capacity and descriptors. */
     if (! splicestreamSettleCharge(ls->recv_stream, kSpeedTestClientMaxRetainedCharge))
     {
-        speedtestclientFailLine(t, l, "receive stream exceeds retained storage limit");
+        char reason[192];
+        snprintf(reason,
+                 sizeof(reason),
+                 "receive storage charge limit exceeded (retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 splicestreamCharge(ls->recv_stream),
+                 (unsigned) kSpeedTestClientMaxRetainedCharge);
+        speedtestclientFailLine(t, l, reason);
     }
 }
 

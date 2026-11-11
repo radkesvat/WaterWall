@@ -78,6 +78,9 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
         udplistener_lstate_t *existing = idle->userdata;
         if (! idleLineMatchesPacket(existing, t, &data->peer_addr, &data->real_localaddr))
         {
+            LOGW("UdpListener: dropping datagram: peer idle-key collision (worker=%u, packet_bytes=%zu)",
+                 (unsigned) wid,
+                 sbufGetLength(buf));
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
             udppayloadDestroy(data);
             return;
@@ -91,6 +94,10 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
         // if idle is NULL, it means we failed to create a new idle item (duplicate hash, etc)
         if (! idle)
         {
+            LOGW("UdpListener: dropping datagram: peer idle registration refused "
+                 "(worker=%u, packet_bytes=%zu)",
+                 (unsigned) wid,
+                 sbufGetLength(buf));
             bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
             udppayloadDestroy(data);
             return;

@@ -48,9 +48,10 @@ void WSADeinit(void)
  * @param sockfd Socket descriptor to close when valid.
  * @return Negative error code.
  */
-static inline int socketErrnoNegative(int sockfd)
+static inline int socketErrnoNegative(int sockfd, const char *operation)
 {
     int err = socketERRNO();
+    printError("Socket: %s failed; socket setup refused (fd=%d, error=%d)", operation, sockfd, err);
     if (sockfd >= 0)
         closesocket(sockfd);
     return err > 0 ? -err : -1;
@@ -246,8 +247,7 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
     int sockfd = socketToFd(socket(localaddr->sa.sa_family, type, 0));
     if (sockfd < 0)
     {
-        printError("syscall return error, call: socket , value: %d\n", sockfd);
-        goto error;
+        return socketErrnoNegative(sockfd, "socket creation for bind");
     }
 
     socketOptionServerAddressUse(sockfd);
@@ -260,13 +260,10 @@ static int sockaddrBind(sockaddr_u *localaddr, int type)
 
     if (bind(sockfd, &localaddr->sa, sockaddrLen(localaddr)) < 0)
     {
-        printError("syscall return error, call: bind , value: %d\n", -1);
-        goto error;
+        return socketErrnoNegative(sockfd, "bind");
     }
 
     return sockfd;
-error:
-    return socketErrnoNegative(sockfd);
 }
 
 /**
@@ -283,8 +280,7 @@ static int sockaddrConnect(sockaddr_u *peeraddr, int nonblock)
     int connfd = socketToFd(socket(peeraddr->sa.sa_family, SOCK_STREAM, 0));
     if (connfd < 0)
     {
-        printError("socket");
-        goto error;
+        return socketErrnoNegative(connfd, "socket creation for connect");
     }
 
     if (nonblock)
@@ -300,13 +296,10 @@ static int sockaddrConnect(sockaddr_u *peeraddr, int nonblock)
     if (ret < 0 && socketERRNO() != EINPROGRESS)
     {
 #endif
-        // printError("connect");
-        goto error;
+        return socketErrnoNegative(connfd, "connect");
     }
 
     return connfd;
-error:
-    return socketErrnoNegative(connfd);
 }
 
 /**
@@ -322,8 +315,7 @@ static int listenFD(int sockfd)
     if (listen(sockfd, SOMAXCONN) < 0)
     {
 
-        printError("syscall return error, call: listen , value: %d\n", -1);
-        return socketErrnoNegative(sockfd);
+        return socketErrnoNegative(sockfd, "listen");
     }
     return sockfd;
 }
@@ -338,6 +330,7 @@ static int listenFD(int sockfd)
 static int ConnectFDTimeout(int connfd, int ms)
 {
     int       err    = 0;
+    int       diagnostic_error = 0;
     socklen_t optlen = sizeof(err);
 
 #ifdef OS_UNIX
@@ -349,7 +342,7 @@ static int ConnectFDTimeout(int connfd, int ms)
     int ret     = poll(&pfd, 1, ms);
     if (ret < 0)
     {
-        perror("poll");
+        diagnostic_error = socketERRNO();
         goto error;
     }
 #else
@@ -365,25 +358,36 @@ static int ConnectFDTimeout(int connfd, int ms)
     int ret = select(connfd + 1, 0, &writefds, 0, &tv);
     if (ret < 0)
     {
-        printError("select");
+        diagnostic_error = socketERRNO();
         goto error;
     }
 #endif
     if (ret == 0)
     {
+        diagnostic_error = ETIMEDOUT;
         errno = ETIMEDOUT;
         goto error;
     }
-    if (getsockopt(connfd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen) < 0 || err != 0)
+    const int option_result = getsockopt(connfd, SOL_SOCKET, SO_ERROR, (char *) &err, &optlen);
+    if (option_result < 0 || err != 0)
     {
+        diagnostic_error = option_result < 0 ? socketERRNO() : err;
         if (err != 0)
             errno = err;
         goto error;
     }
     blocking(connfd);
     return connfd;
-error:
-    return socketErrnoNegative(connfd);
+error: {
+    const int error = socketERRNO();
+    printError("Socket: connect completion failed; socket closed (fd=%d, timeout_ms=%d, error=%d)",
+               connfd,
+               ms,
+               diagnostic_error);
+    if (connfd >= 0)
+        closesocket(connfd);
+    return error > 0 ? -error : -1;
+}
 }
 
 int Bind(int port, const char *host, int type)
@@ -509,41 +513,48 @@ int createSocketPair(int family, int type, int protocol, int sv[2])
     listenfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (listenfd < 0)
     {
-        printError("syscall return error, call: socket , value: %d\n", (int) listenfd);
+        const int error = socketERRNO();
+        printError("Socket pair: listener creation failed (error=%d)", error);
         goto error;
     }
     if (bind(listenfd, (struct sockaddr *) &localaddr, addrlen) < 0)
     {
-        printError("syscall return error, call: bind , value: %d\n", -1);
+        const int error = socketERRNO();
+        printError("Socket pair: bind failed (fd=%d, error=%d)", listenfd, error);
         goto error;
     }
     if (listen(listenfd, 1) < 0)
     {
-        printError("syscall return error, call: listen , value: %d\n", -1);
+        const int error = socketERRNO();
+        printError("Socket pair: listen failed (fd=%d, backlog=1, error=%d)", listenfd, error);
         goto error;
     }
     if (getsockname(listenfd, (struct sockaddr *) &localaddr, &addrlen) < 0)
     {
-        printError("syscall return error, call: getsockname , value: %d\n", -1);
+        const int error = socketERRNO();
+        printError("Socket pair: getsockname failed (fd=%d, error=%d)", listenfd, error);
         goto error;
     }
     // connector
     connfd = socketToFd(socket(AF_INET, SOCK_STREAM, 0));
     if (connfd < 0)
     {
-        printError("syscall return error, call: socket , value: %d\n", (int) connfd);
+        const int error = socketERRNO();
+        printError("Socket pair: connector creation failed (error=%d)", error);
         goto error;
     }
     if (connect(connfd, (struct sockaddr *) &localaddr, addrlen) < 0)
     {
-        printError("syscall return error, call: connect , value: %d\n", -1);
+        const int error = socketERRNO();
+        printError("Socket pair: connect failed (fd=%d, error=%d)", connfd, error);
         goto error;
     }
     // acceptor
     acceptfd = socketToFd(accept(listenfd, (struct sockaddr *) &localaddr, &addrlen));
     if (acceptfd < 0)
     {
-        printError("syscall return error, call: accept , value: %d\n", -1);
+        const int error = socketERRNO();
+        printError("Socket pair: accept failed (listener_fd=%d, error=%d)", listenfd, error);
         goto error;
     }
 
@@ -776,7 +787,8 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd == -1)
     {
-        printError("socket");
+        const int error = socketERRNO();
+        printError("Interface IPv4 lookup: socket creation failed (error=%d)", error);
         return false;
     }
 
@@ -785,7 +797,8 @@ bool getInterfaceIp(const char *if_name, ip4_addr_t *ip_buffer, size_t buflen)
 
     if (ioctl(fd, SIOCGIFADDR, &ifr) == -1)
     {
-        printError("ioctl");
+        const int error = errno;
+        printError("Interface IPv4 lookup: SIOCGIFADDR failed (fd=%d, error=%d)", fd, error);
         close(fd);
         return false;
     }

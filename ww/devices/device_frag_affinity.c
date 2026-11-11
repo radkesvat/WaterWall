@@ -3,6 +3,7 @@
 #include "devices/device_packet_checksum_internal.h"
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 
 enum
 {
@@ -30,6 +31,15 @@ typedef struct device_frag_affinity_entry_s
     sbuf_t             *staged[kDeviceFragAffinityMaxStagedPerEntry];
     sbuf_t             *assembly;
 } device_frag_affinity_entry_t;
+typedef struct device_frag_discard_s
+{
+    const char *reason;
+    const char *unit;
+    size_t      usage;
+    size_t      requested;
+    size_t      limit;
+    size_t      packet_bytes;
+} device_frag_discard_t;
 struct device_frag_affinity_table_s
 {
     buffer_pool_t               *release_pool;
@@ -41,8 +51,44 @@ struct device_frag_affinity_table_s
     device_fragment_policy_t     policy;
     size_t                       retained_bytes;
     uint32_t                     staged_total;
+    log_rate_limiter_t           discard_limiter;
+    device_frag_discard_t        last_discard;
     device_frag_affinity_entry_t entries[kDeviceFragAffinityMaxEntries];
 };
+
+static void deviceFragReportDiscard(log_rate_limiter_report_t report, device_frag_discard_t diagnostic)
+{
+    if (! report.should_log)
+        return;
+    if (diagnostic.limit != 0)
+        LOGW("Device fragments: rejected %llu incoming fragment(s) "
+             "(last_reason=%s, last_packet_bytes=%zu, last_usage=%zu, last_requested=%zu, "
+             "last_limit=%zu, last_unit=%s, total_refusals=%llu)",
+             LLU(report.events),
+             diagnostic.reason,
+             diagnostic.packet_bytes,
+             diagnostic.usage,
+             diagnostic.requested,
+             diagnostic.limit,
+             diagnostic.unit,
+             LLU(report.total));
+    else if (diagnostic.unit != NULL)
+        LOGW("Device fragments: rejected %llu incoming fragment(s) "
+             "(last_reason=%s, last_packet_bytes=%zu, last_requested=%zu, last_unit=%s, total_refusals=%llu)",
+             LLU(report.events),
+             diagnostic.reason,
+             diagnostic.packet_bytes,
+             diagnostic.requested,
+             diagnostic.unit,
+             LLU(report.total));
+    else
+        LOGW("Device fragments: rejected %llu incoming fragment(s) "
+             "(last_reason=%s, last_packet_bytes=%zu, total_refusals=%llu)",
+             LLU(report.events),
+             diagnostic.reason,
+             diagnostic.packet_bytes,
+             LLU(report.total));
+}
 
 typedef struct device_frag_view_s
 {
@@ -378,6 +424,7 @@ void deviceFragAffinityDestroy(device_frag_affinity_table_t *table)
     if (! table)
         return;
     deviceFragAffinityReleaseStagedBuffers(table);
+    deviceFragReportDiscard(logRateLimiterFlush(&table->discard_limiter), table->last_discard);
     mutexDestroy(&table->lock);
     memoryFree(table);
 }
@@ -386,7 +433,8 @@ void deviceFragAffinityDestroy(device_frag_affinity_table_t *table)
 static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_table_t *table,
                                                            const device_frag_view_t     *view,
                                                            device_frag_parse_result_t parsed, sbuf_t *buf,
-                                                           device_frag_affinity_result_t *out, uint64_t now)
+                                                           device_frag_affinity_result_t *out, uint64_t now,
+                                                           device_frag_discard_t *diagnostic)
 {
     device_frag_affinity_entry_t *entry = NULL, *free_entry = NULL;
     if (! table->generation_open)
@@ -411,7 +459,14 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
     if (! entry)
     {
         if (! free_entry)
+        {
+            *diagnostic = (device_frag_discard_t) {.reason    = "association_table_full",
+                                                   .unit      = "associations",
+                                                   .usage     = kDeviceFragAffinityMaxEntries,
+                                                   .requested = 1,
+                                                   .limit     = kDeviceFragAffinityMaxEntries};
             goto drop;
+        }
         entry  = free_entry;
         *entry = (device_frag_affinity_entry_t) {.src           = view->src,
                                                  .dst           = view->dst,
@@ -421,22 +476,50 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
                                                  .expires_at_ms = now + kDeviceFragAffinityTimeoutMs};
     }
     if (entry->poisoned)
+    {
+        diagnostic->reason = "poisoned_association";
         goto drop;
-    if (parsed == kDeviceFragParseInvalid || entry->fragments == kDeviceFragAffinityMaxFragments)
+    }
+    if (parsed == kDeviceFragParseInvalid)
+    {
+        diagnostic->reason = "malformed_ipv4_fragment";
         goto poison;
+    }
+    if (entry->fragments == kDeviceFragAffinityMaxFragments)
+    {
+        *diagnostic = (device_frag_discard_t) {.reason    = "association_fragment_limit",
+                                               .unit      = "fragments",
+                                               .usage     = entry->fragments,
+                                               .requested = 1,
+                                               .limit     = kDeviceFragAffinityMaxFragments};
+        goto poison;
+    }
     uint64_t zero_hash = 0;
     wid_t    zero_wid  = 0;
     if (table->policy == kDeviceFragmentPreserve && view->offset == 0)
     {
         if (! deviceFragAffinityHashAsWhole(sbufGetMutablePtr(buf), sbufGetLength(buf), &zero_hash, &zero_wid) ||
             (entry->wid_known && entry->zero_flow_hash != zero_hash))
+        {
+            diagnostic->reason = "invalid_or_conflicting_fragment_zero";
             goto poison;
+        }
     }
     /* Account into a candidate so allocation refusal never publishes unwritten coverage. */
     device_frag_affinity_entry_t candidate = *entry;
     device_frag_account_result_t accounted = deviceFragAffinityAccount(&candidate, view);
     if (accounted != kDeviceFragAccountOk)
     {
+        diagnostic->reason = accounted == kDeviceFragAccountOverlap    ? "overlapping_fragment"
+                             : accounted == kDeviceFragAccountConflict ? "conflicting_fragment_end"
+                                                                       : "association_range_limit";
+        if (accounted == kDeviceFragAccountCapacity)
+        {
+            diagnostic->unit      = "ranges";
+            diagnostic->usage     = entry->range_count;
+            diagnostic->requested = 1;
+            diagnostic->limit     = kDeviceFragAffinityMaxRanges;
+        }
         if (accounted != kDeviceFragAccountOverlap || (view->offset == 0 && ! entry->wid_known))
             goto poison;
         goto drop;
@@ -453,8 +536,21 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
             const bool        fits = table->shared ? sbufTryComputeCapacity(need, padding, &capacity) &&
                                                   sbufTryComputeQueueCharge(capacity, &fit.allocation_charge)
                                                    : bufferpoolQueryBestFit(table->release_pool, need, padding, &fit);
-            if (! fits || fit.allocation_charge > kDeviceFragAffinityMaxAssemblyBytes - table->retained_bytes)
+            if (! fits)
+            {
+                *diagnostic = (device_frag_discard_t) {
+                    .reason = "unrepresentable_assembly_geometry", .unit = "payload_bytes", .requested = need};
                 goto poison;
+            }
+            if (fit.allocation_charge > kDeviceFragAffinityMaxAssemblyBytes - table->retained_bytes)
+            {
+                *diagnostic = (device_frag_discard_t) {.reason    = "device_assembly_storage_budget",
+                                                       .unit      = "allocation_bytes",
+                                                       .usage     = table->retained_bytes,
+                                                       .requested = fit.allocation_charge,
+                                                       .limit     = kDeviceFragAffinityMaxAssemblyBytes};
+                goto poison;
+            }
             /* Reserve the full replacement, including the still-live old allocation. */
             table->retained_bytes += fit.allocation_charge;
             sbuf_t *grown = table->shared ? sbufCreateWithPadding(need, padding)
@@ -513,10 +609,33 @@ static device_frag_affinity_action_t deviceFragOfferLocked(device_frag_affinity_
     if (! candidate.wid_known)
     {
         size_t charge = sbufGetAllocationCharge(buf);
-        if (candidate.staged_count == kDeviceFragAffinityMaxStagedPerEntry ||
-            table->staged_total == kDeviceFragAffinityMaxStaged ||
-            charge > kDeviceFragAffinityMaxStagedBytes - table->retained_bytes)
+        if (candidate.staged_count == kDeviceFragAffinityMaxStagedPerEntry)
+        {
+            *diagnostic = (device_frag_discard_t) {.reason    = "association_staged_fragment_limit",
+                                                   .unit      = "packets",
+                                                   .usage     = candidate.staged_count,
+                                                   .requested = 1,
+                                                   .limit     = kDeviceFragAffinityMaxStagedPerEntry};
             goto poison;
+        }
+        if (table->staged_total == kDeviceFragAffinityMaxStaged)
+        {
+            *diagnostic = (device_frag_discard_t) {.reason    = "device_staged_fragment_limit",
+                                                   .unit      = "packets",
+                                                   .usage     = table->staged_total,
+                                                   .requested = 1,
+                                                   .limit     = kDeviceFragAffinityMaxStaged};
+            goto poison;
+        }
+        if (charge > kDeviceFragAffinityMaxStagedBytes - table->retained_bytes)
+        {
+            *diagnostic = (device_frag_discard_t) {.reason    = "device_staged_storage_budget",
+                                                   .unit      = "allocation_bytes",
+                                                   .usage     = table->retained_bytes,
+                                                   .requested = charge,
+                                                   .limit     = kDeviceFragAffinityMaxStagedBytes};
+            goto poison;
+        }
         candidate.staged[candidate.staged_count++] = buf;
         ++table->staged_total;
         table->retained_bytes += charge;
@@ -555,9 +674,19 @@ device_frag_affinity_action_t deviceFragAffinityOffer(device_frag_affinity_table
     if (parsed == kDeviceFragParseNotFragment)
         return kDeviceFragAffinityNotFragment;
     assert(table && (table->shared || table->release_pool));
+    device_frag_discard_t     diagnostic = {0};
+    log_rate_limiter_report_t report     = {0};
     mutexLock(&table->lock);
     device_frag_affinity_action_t result =
-        deviceFragOfferLocked(table, &view, parsed, buf, out, getHRTimeUs() / 1000ULL);
+        deviceFragOfferLocked(table, &view, parsed, buf, out, getHRTimeUs() / 1000ULL, &diagnostic);
+    if (diagnostic.reason != NULL)
+    {
+        diagnostic.packet_bytes = length;
+        table->last_discard     = diagnostic;
+        /* Malformed and resource-refused fragments arrive in attacker-controlled packet bursts. */
+        report = logRateLimiterRecordImmediate(&table->discard_limiter, 1000);
+    }
     mutexUnlock(&table->lock);
+    deviceFragReportDiscard(report, diagnostic);
     return result;
 }

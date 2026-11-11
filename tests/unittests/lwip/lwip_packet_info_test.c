@@ -1,7 +1,7 @@
 /*
  * Covers: bounded packet debug formatting and captured logging as data.
  * Setup: read-only packet bytes ending at an inaccessible page, real logger.
- * Checks: empty/truncated/unknown/unaligned headers, exact bounded byte dump,
+ * Checks: empty/truncated/unknown/unaligned headers, no raw packet-byte dump,
  * normal IPv4/IPv6 addresses, long prefixes and literal formatting directives.
  * CTest: waterwall.lwip_packet_info_unit
  */
@@ -71,17 +71,10 @@ static void checkPacket(size_t length, uint8_t version, uint8_t ihl, const char 
     require(calls == 1 && captured == strlen(capture), "packet log was missing or unterminated");
     require(strstr(capture, "packet %s%n : ") == capture, "packet prefix was treated as a format");
     require(strstr(capture, expected) != NULL, "packet header classification/address changed");
-    const char *dump = strstr(capture, "Data: ");
-    require(dump != NULL, "packet byte dump is missing");
-    dump += strlen("Data: ");
-    const size_t dumped = min(length, (size_t) 16);
-    for (size_t i = 0; i < dumped; ++i)
-    {
-        char byte[4];
-        require(snprintf(byte, sizeof(byte), "%02x ", packet[i]) == 3, "byte oracle formatting failed");
-        require(memcmp(dump + i * 3, byte, 3) == 0, "packet dump changed available bytes");
-    }
-    require(strcmp(dump + dumped * 3, "\n") == 0, "packet dumped unavailable bytes or more than sixteen");
+    require(strstr(capture, "Data:") == NULL, "packet diagnostic retained a raw byte dump");
+    char observed_length[64];
+    snprintf(observed_length, sizeof(observed_length), "packet_bytes=%zu", length);
+    require(strstr(capture, observed_length) != NULL, "packet diagnostic lost its observed byte count");
     require(munmap(mapping, page * 2) == 0, "guarded packet release failed");
 }
 
@@ -95,7 +88,8 @@ int main(void)
 
     calls = 0;
     printIPPacketInfo("empty", NULL, 0);
-    require(calls == 1 && strstr(capture, "Empty packet, Data: \n") != NULL, "null empty input was not logged");
+    require(calls == 1 && strstr(capture, "Empty packet (packet_bytes=0)\n") != NULL,
+            "null empty input was not logged");
     checkPacket(0, 4, 5, "Empty packet");
     for (size_t length = 1; length < 20; ++length)
         checkPacket(length, 4, 5, "Truncated IPv4 header");
@@ -109,6 +103,14 @@ int main(void)
         checkPacket(length, 6, 0, "Truncated IPv6 header");
     checkPacket(40, 6, 0, "From ::1 to ::2");
     checkPacket(41, 6, 0, "From ::1 to ::2");
+
+    /* Unknown input has no validated header boundary: every byte after the
+     * version nibble can belong to application or authentication material. */
+    static const uint8_t unparsed[] = "token-material";
+    printIPPacketInfo("unknown", unparsed, sizeof(unparsed) - 1);
+    require(strstr(capture, "Unknown IP version") != NULL && strstr(capture, "token-material") == NULL &&
+                strstr(capture, "74 6f 6b 65 6e") == NULL,
+            "unparsed packet bytes leaked into the diagnostic as text or hexadecimal");
 
     char prefix[8192];
     memset(prefix, 'P', sizeof(prefix) - 1);

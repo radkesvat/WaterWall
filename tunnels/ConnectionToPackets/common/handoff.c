@@ -57,11 +57,31 @@ static bool ctpHandoffReserveClass(ctp_handoff_budget_t *budget, size_t charge, 
         if (*refused != UINT64_MAX)
             ++*refused;
     }
+    const size_t ordinary_byte_limit  = budget->max_bytes - budget->recovery_max_bytes;
+    const size_t ordinary_entry_limit = budget->max_entries - budget->recovery_max_entries;
+    const size_t recovery_bytes       = budget->recovery_bytes;
+    const size_t recovery_entries     = budget->recovery_entries;
+    const size_t recovery_byte_limit  = budget->recovery_max_bytes;
+    const size_t recovery_entry_limit = budget->recovery_max_entries;
     mutexUnlock(&budget->lock);
     if (first_refusal)
-        LOGW("ConnectionToPackets: %s %s budget exhausted (further refusals counted silently); inspect stack-stats",
+        LOGW("ConnectionToPackets: refusing %s packet handoff: %s admission exhausted "
+             "(ordinary_charge_bytes=%zu, incoming_charge_bytes=%zu, ordinary_limit_bytes=%zu, "
+             "ordinary_entries=%zu, ordinary_entry_limit=%zu, recovery_eligible=%u, "
+             "recovery_charge_bytes=%zu, recovery_limit_bytes=%zu, recovery_entries=%zu, "
+             "recovery_entry_limit=%zu; further refusals counted silently); inspect stack-stats",
              ingress ? "return" : "output",
-             local_capacity ? "lwIP memory" : "packet handoff");
+             local_capacity ? "lwIP memory" : "node packet handoff",
+             ordinary_bytes,
+             charge,
+             ordinary_byte_limit,
+             ordinary_entries,
+             ordinary_entry_limit,
+             (unsigned) recovery_eligible,
+             recovery_bytes,
+             recovery_byte_limit,
+             recovery_entries,
+             recovery_entry_limit);
     return admitted;
 }
 

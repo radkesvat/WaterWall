@@ -300,3 +300,10 @@ void httpclientSplitDownStreamFinish(tunnel_t *t, line_t *l);
 void httpclientSplitProcessDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
 void httpclientSplitRejectInput(tunnel_t *t, line_t *l);
+
+/* Render field lengths only: request paths and peer header values may contain
+ * credentials or control bytes that must not enter diagnostic records. */
+static inline size_t httpclientLogTextBytes(const char *text)
+{
+    return text != NULL ? stringLength(text) : 0;
+}

@@ -198,16 +198,29 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer, size_t l
     const uint8_t version     = length != 0 ? buffer[0] >> 4 : 0;
 
     if (length == 0)
-        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Empty packet, Data: ", prefix);
+        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Empty packet (packet_bytes=0)", prefix);
     else if (version == 4 && length < IP_HLEN)
-        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv4 header, Data: ", prefix);
+        packetInfoAppend(
+            logbuf, sizeof(logbuf), &used, "%s : Truncated IPv4 header (packet_bytes=%zu)", prefix, length);
     else if (version == 4)
     {
         const size_t header_length = (buffer[0] & 15U) * 4U;
         if (header_length < IP_HLEN)
-            packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Invalid IPv4 header, Data: ", prefix);
+            packetInfoAppend(logbuf,
+                             sizeof(logbuf),
+                             &used,
+                             "%s : Invalid IPv4 header (packet_bytes=%zu, header_bytes=%zu)",
+                             prefix,
+                             length,
+                             header_length);
         else if (header_length > length)
-            packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv4 header, Data: ", prefix);
+            packetInfoAppend(logbuf,
+                             sizeof(logbuf),
+                             &used,
+                             "%s : Truncated IPv4 header (packet_bytes=%zu, header_bytes=%zu)",
+                             prefix,
+                             length,
+                             header_length);
         else
         {
             ip4_addr_t source, destination;
@@ -219,15 +232,18 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer, size_t l
             packetInfoAppend(logbuf,
                              sizeof(logbuf),
                              &used,
-                             "%s : Packet v4 %s From %s to %s, Data: ",
+                             "%s : Packet v4 %s From %s to %s (packet_bytes=%zu, header_bytes=%zu)",
                              prefix,
                              IP_PROTO_STR(buffer[9]),
                              source_text,
-                             destination_text);
+                             destination_text,
+                             length,
+                             header_length);
         }
     }
     else if (version == 6 && length < IP6_HLEN)
-        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Truncated IPv6 header, Data: ", prefix);
+        packetInfoAppend(
+            logbuf, sizeof(logbuf), &used, "%s : Truncated IPv6 header (packet_bytes=%zu)", prefix, length);
     else if (version == 6)
     {
         ip6_addr_t source = {0}, destination = {0};
@@ -239,17 +255,21 @@ void printIPPacketInfo(const char *prefix, const unsigned char *buffer, size_t l
         packetInfoAppend(logbuf,
                          sizeof(logbuf),
                          &used,
-                         "%s : Packet v6 %s From %s to %s, Data: ",
+                         "%s : Packet v6 %s From %s to %s (packet_bytes=%zu)",
                          prefix,
                          IP_PROTO_STR(buffer[6]),
                          source_text,
-                         destination_text);
+                         destination_text,
+                         length);
     }
     else
-        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%s : Unknown IP version, Data: ", prefix);
-
-    for (size_t i = 0; i < min(length, (size_t) 16); ++i)
-        packetInfoAppend(logbuf, sizeof(logbuf), &used, "%02x ", buffer[i]);
+        packetInfoAppend(logbuf,
+                         sizeof(logbuf),
+                         &used,
+                         "%s : Unknown IP version (version=%u, packet_bytes=%zu)",
+                         prefix,
+                         (unsigned) version,
+                         length);
     LOGD("%s", logbuf);
 }
 

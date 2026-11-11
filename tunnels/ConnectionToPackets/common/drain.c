@@ -692,15 +692,6 @@ ctp_tcp_drain_adopt_result_t ctpTcpDrainAdoptLocked(tunnel_t *t, ctp_lstate_t *l
      */
     if (! ctpDrainBudgetReserve(ts, total))
     {
-        if (atomicLogRateLimiterShouldLog(&g_drain_budget_log, kCtpDrainLogIntervalMs))
-        {
-            LOGW("ConnectionToPackets: resetting a closing flow, the shared drain budget (%d bytes) or "
-                 "closer count (%d) is full; %u queued byte(s) affected",
-                 (int) kCtpMaxDrainBytesTotal,
-                 (int) kCtpMaxDrains,
-                 (unsigned int) total);
-        }
-
         return kCtpTcpDrainFailed;
     }
 
@@ -769,13 +760,23 @@ void ctpTcpDrainDestroyNetif(ctp_netif_ctx_t *ctx)
 bool ctpDrainBudgetReserve(ctp_tstate_t *ts, uint32_t bytes)
 {
     mutexLock(&ts->drain_lock);
-    const bool admitted = ts->drain_count < kCtpMaxDrains && bytes <= kCtpMaxDrainBytesTotal - ts->drain_bytes;
+    const bool   admitted   = ts->drain_count < kCtpMaxDrains && bytes <= kCtpMaxDrainBytesTotal - ts->drain_bytes;
+    const size_t used_bytes = ts->drain_bytes;
+    const size_t used_count = ts->drain_count;
     if (admitted)
     {
         ++ts->drain_count;
         ts->drain_bytes += bytes;
     }
     mutexUnlock(&ts->drain_lock);
+    if (! admitted && atomicLogRateLimiterShouldLog(&g_drain_budget_log, kCtpDrainLogIntervalMs))
+        LOGW("ConnectionToPackets: resetting closing flow: node closer admission refused "
+             "(retained_bytes=%zu, incoming_bytes=%u, byte_limit=%u, active_closers=%zu, closer_limit=%u)",
+             used_bytes,
+             (unsigned) bytes,
+             (unsigned) kCtpMaxDrainBytesTotal,
+             used_count,
+             (unsigned) kCtpMaxDrains);
     return admitted;
 }
 

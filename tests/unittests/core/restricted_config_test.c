@@ -19,6 +19,16 @@
 /* Exercise the checked arithmetic without attempting a SIZE_MAX allocation. */
 #include "node_builder/config_file.c"
 
+static char diagnostic[2048];
+
+static void captureDiagnostic(int level, const char *bytes, int length)
+{
+    discard      level;
+    const size_t count = length > 0 ? min((size_t) length, sizeof(diagnostic) - 1) : 0;
+    memoryCopy(diagnostic, bytes, count);
+    diagnostic[count] = '\0';
+}
+
 #ifdef WW_TEST_WRAP_DLOPEN
 static unsigned int loader_calls;
 void               *__wrap_dlopen(const char *path, int flags);
@@ -70,7 +80,8 @@ int main(int argc, char **argv)
 {
     testCaseSet("restricted_config_test");
     initWLibc();
-    createInternalLogger(NULL, true);
+    logger_t *logger = createInternalLogger(NULL, true);
+    require(logger != NULL, "create configuration diagnostic logger");
     if (argc == 2 && strcmp(argv[1], "--parse-json") == 0)
     {
         size_t size   = 0;
@@ -84,8 +95,14 @@ int main(int argc, char **argv)
     }
     char  *buffer = memoryAllocate(1);
     size_t length = SIZE_MAX - 2, capacity = 1;
+    logger_handler original_handler = loggerGetHandle(logger);
+    loggerSetHandler(logger, captureDiagnostic);
     require(! appendJsonChunk(&buffer, &length, &capacity, "ab", 2), "overflow rejected before copy");
     require(length == SIZE_MAX - 2 && capacity == 1, "overflow preserves caller state");
+    require(strstr(diagnostic, "refusing resolved output") && strstr(diagnostic, "current_bytes=") &&
+                strstr(diagnostic, "incoming_bytes=2") && strstr(diagnostic, "limit_bytes="),
+            "resolved output diagnostic omitted its action, attempted bytes or bound");
+    loggerSetHandler(logger, original_handler);
     memoryFree(buffer);
 
 #ifdef WW_TEST_WRAP_DLOPEN
@@ -96,6 +113,16 @@ int main(int argc, char **argv)
 #endif
     configPolicyRestrict();
     require(configPolicyIsRestricted(), "restricted policy enabled");
+    buffer   = memoryAllocate(1);
+    length   = WW_HOST_NODE_JSON_LIMIT;
+    capacity = 1;
+    loggerSetHandler(logger, captureDiagnostic);
+    require(! appendJsonChunk(&buffer, &length, &capacity, "x", 1), "restricted resolved output rejected");
+    require(strstr(diagnostic, "current_bytes=8388608") && strstr(diagnostic, "incoming_bytes=1") &&
+                strstr(diagnostic, "limit_bytes=8388608"),
+            "restricted resolved output did not identify the effective byte limit");
+    loggerSetHandler(logger, original_handler);
+    memoryFree(buffer);
     const char *valid[] = {"{}",
                            "[]",
                            "0",

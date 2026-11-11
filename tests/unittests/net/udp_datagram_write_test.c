@@ -16,6 +16,7 @@
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
+#include "loggers/internal_logger.h"
 #include "udp_send.h"
 #include "wevent.h"
 // Focused invariants for the nonblocking datagram write path (wioWriteDatagram):
@@ -48,6 +49,20 @@
  * current-worker accessors reject this test.
  */
 static test_worker_registry_t g_test_worker_registry;
+
+static char   write_logs[4096];
+static size_t write_log_length;
+
+static void captureWriteLog(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t count = min((size_t) length, sizeof(write_logs) - write_log_length - 1);
+    memoryCopy(write_logs + write_log_length, bytes, count);
+    write_log_length += count;
+    write_logs[write_log_length] = '\0';
+}
 
 #if WW_HAVE_SPLICE
 static unsigned udp_sendto_calls;
@@ -321,7 +336,19 @@ static void runTcpChecks(wloop_t *loop, buffer_pool_t *pool, const sockaddr_u *u
         usleep(2000);
     }
 
-    wioClose(io_tcp);
+    /* Exercise the real refusal after a retained write, before its socket is
+     * closed and both buffers are recycled. The incoming size is the remainder. */
+    io_tcp->max_write_bufsize = 8;
+    force_send_errno          = EAGAIN;
+    require(wioWrite(io_tcp, makePayload(pool, "hello")) == 0 && wioGetWriteBufSize(io_tcp) == 5,
+            "write-limit fixture did not retain its first payload");
+    write_log_length = 0;
+    write_logs[0]    = '\0';
+    require(wioWrite(io_tcp, makePayload(pool, "tail")) == -1, "write-limit refusal was not reported");
+    require(strstr(write_logs, "closing socket: write queue limit exceeded") && strstr(write_logs, "queued_bytes=5") &&
+                strstr(write_logs, "incoming_bytes=4") && strstr(write_logs, "limit_bytes=8"),
+            "write-limit diagnostic omitted the action, usage, attempted addition or effective byte limit");
+    require(wloopRun(loop) == 0 && wioIsClosed(io_tcp), "write-limit refusal did not complete its asynchronous close");
     closesocket(client);
     closesocket(listener);
 }
@@ -330,6 +357,9 @@ static void runTcpChecks(wloop_t *loop, buffer_pool_t *pool, const sockaddr_u *u
 
 int main(void)
 {
+    logger_t *logger = createInternalLogger(NULL, false);
+    require(logger != NULL, "could not create write diagnostic logger");
+    loggerSetHandler(logger, captureWriteLog);
     testSpliceInventoryInitialize(64);
     testCaseSet("udp_datagram_write_test");
     master_pool_t *large_master  = masterpoolCreateWithCapacity(16);
@@ -390,5 +420,6 @@ int main(void)
     masterpoolDestroy(small_master);
     masterpoolDestroy(medium_master);
     masterpoolDestroy(splice_master);
+    internaloggerDestroy();
     return 0;
 }

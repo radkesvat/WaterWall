@@ -58,7 +58,17 @@ static bool routerQueueDatagram(tunnel_t *t, line_t *l, router_lstate_t *ls, sbu
         charge > kRouterDatagramCharge || bufferqueueGetCharge(&ls->datagrams) > kRouterDatagramCharge - charge ||
         bufferqueueGetEntryCount(&ls->datagrams) >= kRouterDatagramCount)
     {
-        LOGE("Router: pending datagrams exceeded their retention limit, closing this line");
+        LOGE("Router: closing line: pending datagram admission refused "
+             "(queued_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, queued_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, charge_limit_bytes=%u, queued_datagrams=%zu, datagram_limit=%u)",
+             bufferqueueGetLength(&ls->datagrams),
+             bytes,
+             (unsigned) kRouterPendingBytes,
+             bufferqueueGetCharge(&ls->datagrams),
+             charge,
+             (unsigned) kRouterDatagramCharge,
+             bufferqueueGetEntryCount(&ls->datagrams),
+             (unsigned) kRouterDatagramCount);
         routerRejectPendingPayload(t, l, ls, *buf);
         return false;
     }
@@ -151,7 +161,11 @@ static void routerBufferReentrantPayload(tunnel_t *t, line_t *l, router_lstate_t
     const uint32_t incoming = sbufGetLength(buf);
     if (incoming > limit || queued > limit - incoming)
     {
-        LOGE("Router: initial replay backlog exceeded its limit, closing this line");
+        LOGE("Router: closing line: initial replay byte limit exceeded "
+             "(queued_bytes=%u, incoming_bytes=%u, limit_bytes=%u)",
+             queued,
+             incoming,
+             limit);
         routerRejectPendingPayload(t, l, ls, buf);
         return;
     }

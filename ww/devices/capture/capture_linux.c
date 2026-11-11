@@ -159,7 +159,13 @@ static bool captureOpenQueue(capture_device_t *cdev, capture_linux_queue_t *queu
 {
     const int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC, NETLINK_NETFILTER);
     if (fd < 0)
+    {
+        const int error = errno;
+        LOGW(
+            "CaptureDevice: cannot open queue %u Netlink socket (errno=%d: %s)", queue->number, error, strerror(error));
         return false;
+    }
+    const char        *operation = "bind Netlink socket";
     struct sockaddr_nl address = {.nl_family = AF_NETLINK};
     if (bind(fd, (struct sockaddr *) &address, sizeof(address)) != 0)
         goto failed;
@@ -167,17 +173,29 @@ static bool captureOpenQueue(capture_device_t *cdev, capture_linux_queue_t *queu
     if (setsockopt(fd, SOL_NETLINK, NETLINK_NO_ENOBUFS, &one, sizeof(one)) != 0)
         LOGW("CaptureDevice: unable to suppress Netlink overflow notifications: %s", strerror(errno));
     queue->fd = fd;
-    if (! netfilterSetConfig(fd, NFQNL_CFG_CMD_BIND, queue->number, 0) ||
-        ! captureConfigureQueueLimits(cdev, queue, count))
+    operation = "bind NFQUEUE";
+    if (! netfilterSetConfig(fd, NFQNL_CFG_CMD_BIND, queue->number, 0))
         goto failed;
+    if (! captureConfigureQueueLimits(cdev, queue, count))
+    {
+        operation = NULL; /* The failing required configuration logs its cause. */
+        goto failed;
+    }
     /* No capture rules reference this freshly bound queue yet. An acknowledged
      * empty-queue probe avoids silently using an unsupported batch command. */
+    operation               = "probe cumulative verdict support";
     const int batch_support = netfilterProbeVerdictBatch(fd, queue->number);
     if (batch_support < 0)
         goto failed;
     queue->batch_verdicts = batch_support != 0;
     return true;
 failed:
+    if (operation != NULL)
+    {
+        const int error = errno;
+        LOGW(
+            "CaptureDevice: queue %u setup cannot %s (errno=%d: %s)", queue->number, operation, error, strerror(error));
+    }
     close(fd);
     queue->fd = -1;
     return false;
@@ -212,7 +230,14 @@ static bool captureOpenQueues(capture_device_t *cdev)
     size_t state_bytes;
     if (! memoryTryComputeArraySize(cdev->capture_range_count, count, &state_count) ||
         ! memoryTryComputeArraySize(state_count, sizeof(*cdev->rule_states), &state_bytes))
+    {
+        LOGE("CaptureDevice: refusing queue setup: unrepresentable rule ledger geometry "
+             "(capture_ranges=%u, queues=%u, state_bytes_per_entry=%zu)",
+             cdev->capture_range_count,
+             (unsigned) count,
+             sizeof(*cdev->rule_states));
         return false;
+    }
     cdev->queues      = memoryAllocateZero((size_t) count * sizeof(*cdev->queues));
     cdev->rule_states = memoryAllocateZero(state_bytes);
     cdev->queue_count = count;
@@ -225,7 +250,6 @@ static bool captureOpenQueues(capture_device_t *cdev)
     {
         if (! captureOpenQueue(cdev, &cdev->queues[i], count))
         {
-            LOGW("CaptureDevice: queue %u setup failed: %s", cdev->queues[i].number, strerror(errno));
             if (i == 0 || ! captureUseSingleQueue(cdev))
             {
                 captureReleaseQueues(cdev);
@@ -384,10 +408,20 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     if (pool == NULL)
         return NULL;
     buffer_pool_fit_t fit;
-    if (! bufferpoolQueryBestFit(pool, kNetfilterReadBufferSize, 0, &fit) ||
-        fit.allocation_charge > kCaptureReaderChargeLimit)
+    if (! bufferpoolQueryBestFit(pool, kNetfilterReadBufferSize, 0, &fit))
     {
-        LOGE("CaptureDevice: receive allocation exceeds the device dispatch budget");
+        LOGE("CaptureDevice: cannot construct receive storage: unrepresentable buffer geometry "
+             "(required_receive_bytes=%u)",
+             (unsigned) kNetfilterReadBufferSize);
+        bufferpoolDestroy(pool);
+        return NULL;
+    }
+    if (fit.allocation_charge > kCaptureReaderChargeLimit)
+    {
+        LOGE("CaptureDevice: refusing receive storage: device dispatch allocation budget exceeded "
+             "(requested_allocation_bytes=%zu, allocation_limit_bytes=%u)",
+             fit.allocation_charge,
+             (unsigned) kCaptureReaderChargeLimit);
         bufferpoolDestroy(pool);
         return NULL;
     }

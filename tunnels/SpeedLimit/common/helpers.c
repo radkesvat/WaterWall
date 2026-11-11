@@ -195,3 +195,23 @@ const traffic_shaper_ops_t speedlimitShaperOps = {.preview  = speedlimitPreview,
                                                   .forward  = speedlimitForward,
                                                   .pressure = speedlimitPressure,
                                                   .close    = speedlimitClose};
+
+void speedlimitLogDrop(tunnel_t *t, line_t *line, size_t bytes, bool upstream)
+{
+    speedlimit_tstate_t *ts = tunnelGetState(t);
+    atomicIncU64Relaxed(&ts->dropped_payloads);
+    /* Drop mode can refuse every packet in a high-rate stream; sample the event
+     * and retain a node-wide cumulative count without logging under its bucket lock. */
+    if (atomicLogRateLimiterShouldLog(&ts->drop_log_limiter, 1000))
+        LOGW("SpeedLimit: dropping payload: insufficient rate credit "
+             "(sample_direction=%s, sample_payload_bytes=%zu, rate_bytes_per_second=%" PRIu64
+             ", scope=%s, worker=%u, node_dropped_payloads_total=%" PRIu64 ")",
+             upstream ? "upstream" : "downstream",
+             bytes,
+             ts->bytes_per_sec,
+             ts->limit_mode == kSpeedLimitLimitModeAllLines    ? "node"
+             : ts->limit_mode == kSpeedLimitLimitModePerWorker ? "worker"
+                                                               : "connection",
+             (unsigned) lineGetWID(line),
+             atomicLoadU64Relaxed(&ts->dropped_payloads));
+}

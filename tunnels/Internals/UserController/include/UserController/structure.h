@@ -11,6 +11,8 @@ typedef struct usercontroller_direction_s
     line_t          *line;
     uint64_t         ticket;
     bool             upstream;
+    log_rate_limiter_t oversize_drops;
+    size_t             last_oversize_bytes;
 } usercontroller_direction_t;
 
 // Origin of a line teardown, so the close path never sends a callback back toward the side that

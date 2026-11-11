@@ -28,17 +28,20 @@ static void tlsserverLogHandshakeComplete(line_t *l, tlsserver_lstate_t *ls)
 
     if (alpn_l > 0)
     {
-        LOGD("TlsServer: worker %u TLS handshake complete (version=%s, cipher=%s, sni=\"%s\", alpn=\"%.*s\")",
-             (unsigned int) lineGetWID(l), SSL_get_version(ssl), SSL_get_cipher_name(ssl),
-             sni != NULL ? sni : "<none>", (int) alpn_l, (const char *) alpn);
+        LOGD("TlsServer: worker %u TLS handshake complete (version=%s, cipher=%s, sni_bytes=%zu, alpn_bytes=%u)",
+             (unsigned int) lineGetWID(l),
+             SSL_get_version(ssl),
+             SSL_get_cipher_name(ssl),
+             tlsserverLogTextBytes(sni),
+             alpn_l);
         return;
     }
 
-    LOGD("TlsServer: worker %u TLS handshake complete (version=%s, cipher=%s, sni=\"%s\", alpn=<none>)",
+    LOGD("TlsServer: worker %u TLS handshake complete (version=%s, cipher=%s, sni_bytes=\"%zu\", alpn=<none>)",
          (unsigned int) lineGetWID(l),
          SSL_get_version(ssl),
          SSL_get_cipher_name(ssl),
-         sni != NULL ? sni : "<none>");
+         tlsserverLogTextBytes(sni));
 }
 
 static bool tlsserverPendingOutputStartsServerHello(tlsserver_lstate_t *ls)
@@ -341,7 +344,11 @@ void tlsserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             /* Bound the original wire transcript, including record headers and coalesced trailing bytes. */
             if (sbufGetLength(buf) > kTlsServerMaxFallbackPendingBytes - bufferstreamGetLength(&ls->fallback_probe))
             {
-                LOGW("TlsServer: pre-routing ClientHello buffer limit exceeded");
+                LOGW("TlsServer: closing connection: pre-routing ClientHello retention limit exceeded "
+                     "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%u)",
+                     bufferstreamGetLength(&ls->fallback_probe),
+                     sbufGetLength(buf),
+                     (unsigned) kTlsServerMaxFallbackPendingBytes);
                 lineReuseBuffer(l, buf);
                 tlsserverCloseLineFatal(t, l);
                 lineUnref(l);

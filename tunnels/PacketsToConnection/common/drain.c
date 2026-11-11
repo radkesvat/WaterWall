@@ -425,8 +425,6 @@ ptc_tcp_drain_adopt_result_t ptcTcpDrainAdoptLocked(tunnel_t *t, ptc_lstate_t *l
 
     if (! ptcDrainBudgetReserve(ts, (uint32_t) queued))
     {
-        if (atomicLogRateLimiterShouldLog(&g_ptc_drain_budget_log, kPtcDrainLogIntervalMs))
-            LOGW("PacketsToConnection: resetting a closing flow because the bounded closer budget is full");
         return kPtcTcpDrainFailed;
     }
 
@@ -477,13 +475,23 @@ void ptcTcpDrainDestroyRoute(interface_route_context_t *route)
 bool ptcDrainBudgetReserve(ptc_tstate_t *ts, uint32_t bytes)
 {
     mutexLock(&ts->drain_lock);
-    const bool admitted = ts->drain_count < kPtcMaxDrains && bytes <= kPtcMaxDrainBytesTotal - ts->drain_bytes;
+    const bool   admitted   = ts->drain_count < kPtcMaxDrains && bytes <= kPtcMaxDrainBytesTotal - ts->drain_bytes;
+    const size_t used_bytes = ts->drain_bytes;
+    const size_t used_count = ts->drain_count;
     if (admitted)
     {
         ++ts->drain_count;
         ts->drain_bytes += bytes;
     }
     mutexUnlock(&ts->drain_lock);
+    if (! admitted && atomicLogRateLimiterShouldLog(&g_ptc_drain_budget_log, kPtcDrainLogIntervalMs))
+        LOGW("PacketsToConnection: resetting closing flow: node closer admission refused "
+             "(retained_bytes=%zu, incoming_bytes=%u, byte_limit=%u, active_closers=%zu, closer_limit=%u)",
+             used_bytes,
+             (unsigned) bytes,
+             (unsigned) kPtcMaxDrainBytesTotal,
+             used_count,
+             (unsigned) kPtcMaxDrains);
     return admitted;
 }
 

@@ -150,6 +150,12 @@ static bool stagePacket(tou_session_t *s, uint8_t kind, const uint8_t *body, siz
 {
     if (length > UINT16_MAX)
     {
+        if (! s->output_failed)
+            LOGW("Kcp%s: aborting session: output envelope length cannot be represented "
+                 "(body_bytes=%zu, body_limit_bytes=%u)",
+                 s->client ? "Client" : "Server",
+                 length,
+                 (unsigned) UINT16_MAX);
         s->output_failed = true;
         return false;
     }
@@ -157,6 +163,15 @@ static bool stagePacket(tou_session_t *s, uint8_t kind, const uint8_t *body, siz
     if (s->output_bytes > s->output_byte_limit || size > s->output_byte_limit - s->output_bytes ||
         (size_t) tou_packet_queue_t_size(&s->output) >= s->output_packet_limit)
     {
+        if (! s->output_failed)
+            LOGW("Kcp%s: aborting session: encoded output staging admission refused "
+                 "(queued_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, queued_packets=%zu, packet_limit=%zu)",
+                 s->client ? "Client" : "Server",
+                 s->output_bytes,
+                 size,
+                 s->output_byte_limit,
+                 (size_t) tou_packet_queue_t_size(&s->output),
+                 s->output_packet_limit);
         s->output_failed = true;
         return false;
     }
@@ -199,6 +214,12 @@ static bool beginOutputBatch(tou_session_t *s)
                            parity * (mtu + kTouEnvelopeSize + kKcpFecOuterHeaderSize);
     if (packets > SIZE_MAX || bytes > SIZE_MAX)
     {
+        LOGW("Kcp%s: aborting session: encoded output batch geometry is unrepresentable "
+             "(required_packets=%" PRIu64 ", required_bytes=%" PRIu64 ", size_limit=%zu)",
+             s->client ? "Client" : "Server",
+             packets,
+             bytes,
+             SIZE_MAX);
         return false;
     }
     s->output_packet_limit = (size_t) packets;
@@ -315,6 +336,9 @@ static void emitOutput(tou_session_t *s)
     sbuf_t *buffer = bufferpoolTryGetBestFit(s->config.pool, packet.size, 0);
     if (buffer == NULL)
     {
+        LOGW("Kcp%s: aborting session: output buffer geometry refused (packet_bytes=%zu)",
+             s->client ? "Client" : "Server",
+             packet.size);
         memoryFree(packet.bytes);
         touSessionAbort(s, kTouCapacityFailure);
         return;
@@ -329,6 +353,10 @@ static bool expire(tou_session_t *s, uint64_t now)
 {
     if (s->client && ! s->ready && now >= s->handshake_deadline)
     {
+        LOGW("KcpClient: closing session: handshake deadline expired "
+             "(overdue_ms=%" PRIu64 ", no-recv-timeout-ms=%u)",
+             now - s->handshake_deadline,
+             s->config.no_recv_timeout_ms);
         touSessionAbort(s, kTouHandshakeTimeout);
         return true;
     }
@@ -342,12 +370,24 @@ static bool expire(tou_session_t *s, uint64_t now)
         }
         if (s->send_settled && (s->retention_deadline == 0 || now >= s->retention_deadline))
         {
+            if (! s->confirmed && ! s->send_completed)
+                LOGW("Kcp%s: close delivery unconfirmed at fixed deadline "
+                     "(elapsed_ms=%" PRIu64 ", negotiated_close_drain_ms=%u, pending_segments=%u)",
+                     s->client ? "Client" : "Server",
+                     now - s->close_started,
+                     s->settings.close_ms,
+                     (unsigned) ikcp_waitsnd(s->kcp));
             touSessionAbort(s, s->confirmed ? kTouConfirmed : s->send_completed ? kTouPeerDrained : kTouUnconfirmed);
             return true;
         }
     }
     else if (s->ready && now >= touDeadline(s->last_recv, s->config.no_recv_timeout_ms))
     {
+        LOGW("Kcp%s: closing session: receive idle deadline expired "
+             "(idle_ms=%" PRIu64 ", no-recv-timeout-ms=%u)",
+             s->client ? "Client" : "Server",
+             now - s->last_recv,
+             s->config.no_recv_timeout_ms);
         touSessionAbort(s, kTouIdleTimeout);
         return true;
     }
@@ -505,6 +545,11 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
         }
         if (peek == 0 || (size_t) peek > bufferpoolGetLargeBufferSize(s->config.pool))
         {
+            LOGW("Kcp%s: closing session: completed record size is unsupported "
+                 "(record_bytes=%d, minimum_bytes=1, receive_limit_bytes=%u)",
+                 s->client ? "Client" : "Server",
+                 peek,
+                 (unsigned) bufferpoolGetLargeBufferSize(s->config.pool));
             touSessionAbort(s, kTouProtocolFailure);
             return;
         }
@@ -514,6 +559,11 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
         const int count  = ikcp_recv(s->kcp, (char *) sbufGetMutablePtr(buffer), (int) sbufGetWritableCapacity(buffer));
         if (count <= 0)
         {
+            LOGW("Kcp%s: closing session: complete record receive failed "
+                 "(peek_bytes=%d, receive_result=%d)",
+                 s->client ? "Client" : "Server",
+                 peek,
+                 count);
             bufferpoolReuseBuffer(s->config.pool, buffer);
             touSessionAbort(s, kTouProtocolFailure);
             return;
@@ -551,6 +601,11 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
         }
         else if (flag != kTouFramePing || count != 1)
         {
+            LOGW("Kcp%s: closing session: invalid record flag or control length "
+                 "(flag=%u, record_bytes=%d, control_length_bytes=1)",
+                 s->client ? "Client" : "Server",
+                 (unsigned) flag,
+                 count);
             bufferpoolReuseBuffer(s->config.pool, buffer);
             touSessionAbort(s, kTouProtocolFailure);
             return;
@@ -748,6 +803,25 @@ static void queueWork(tou_session_t *s, sbuf_t *buffer, bool wire)
         tou_work_t event = {.buffer = buffer, .wire = wire};
         if (! bufferbudgetTryReserve(&s->budget, buffer, &event.reservation))
         {
+            const buffer_budget_cost_t used   = bufferbudgetGetUsage(&s->budget);
+            const buffer_budget_cost_t limits = bufferbudgetGetLimits(&s->budget);
+            size_t                     charge;
+            if (sbufTryGetQueueCharge(buffer, &charge))
+                LOGW("Kcp%s: closing session: %s input retention admission refused "
+                     "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, retained_charge_bytes=%zu, "
+                     "incoming_charge_bytes=%zu, charge_limit_bytes=%zu)",
+                     s->client ? "Client" : "Server",
+                     wire ? "carrier" : "nested application",
+                     used.bytes,
+                     sbufGetLength(buffer),
+                     limits.bytes,
+                     used.charge,
+                     charge,
+                     limits.charge);
+            else
+                LOGW("Kcp%s: closing session: input allocation charge is unrepresentable (input_bytes=%zu)",
+                     s->client ? "Client" : "Server",
+                     sbufGetLength(buffer));
             bufferpoolReuseBuffer(s->config.pool, buffer);
             touSessionAbort(s, kTouCapacityFailure);
         }

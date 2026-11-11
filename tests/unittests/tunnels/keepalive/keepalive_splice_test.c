@@ -14,6 +14,7 @@
  */
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/protocols/splice_source.h"
+#include "loggers/network_logger.h"
 
 #ifdef TEST_KEEPALIVE_SERVER
 #include "KeepAliveServer/interface.h"
@@ -47,6 +48,16 @@ enum
 {
     kExpectedChunkBytes = 1024U * 1024U
 };
+
+static char last_warning[2048];
+static void captureDiagnostic(int level, const char *text, int length)
+{
+    if (level != LOG_LEVEL_WARN)
+        return;
+    const size_t bytes = min((size_t) length, sizeof(last_warning) - 1);
+    memoryCopy(last_warning, text, bytes);
+    last_warning[bytes] = '\0';
+}
 
 static twf_worker_env_t env;
 static twf_line_pool_t  lines;
@@ -859,14 +870,22 @@ static void testControlAndRejection(void)
     twfRequire(keepaliveclientSendPingFrame(node, line) && wire_calls == 3, "Resume changed regular ping behavior");
 #endif
     const uint8_t invalid[] = {0, 0, 0, 0, 1};
+    last_warning[0]         = '\0';
     decode(node, line, ordinary(invalid, sizeof(invalid)));
     twfRequire(! lineIsAlive(line) && finishes == 2, "invalid frame did not close both directions");
+    twfRequire(strstr(last_warning, "closing connection") && strstr(last_warning, "body_bytes=0") &&
+                   strstr(last_warning, "minimum_bytes=1") && strstr(last_warning, "protocol_limit_bytes=1048577"),
+               "invalid frame diagnostic omitted the action, observed body bytes or protocol bounds");
     teardown();
 
     setup();
     fail_queue = true;
+    last_warning[0] = '\0';
     decode(node, line, ordinary(controls, 1));
     twfRequire(! lineIsAlive(line) && finishes == 2, "read admission failure did not close the line");
+    twfRequire(strstr(last_warning, "input queue admission failed") && strstr(last_warning, "incoming_bytes=1") &&
+                   strstr(last_warning, "retained_bytes=0") && ! strstr(last_warning, "limit exceeded"),
+               "queue refusal diagnostic lost its measurements or falsely reported a budget limit");
     teardown();
 
     const uint32_t rejected[] = {kExpectedChunkBytes + 2, UINT32_MAX};
@@ -879,7 +898,12 @@ static void testControlAndRejection(void)
         header[4] = 1;
         decode(node, line, ordinary(header, 4));
         twfRequire(lineIsAlive(line), "partial wide header was rejected before the kind arrived");
+        last_warning[0] = '\0';
         decode(node, line, ordinary(header + 4, 1));
+        char observed[64];
+        snprintf(observed, sizeof(observed), "body_bytes=%u", rejected[i]);
+        twfRequire(strstr(last_warning, observed) && strstr(last_warning, "protocol_limit_bytes=1048577"),
+                   "wide rejected frame diagnostic truncated its observed length or omitted the limit");
         twfRequire(! lineIsAlive(line) && plain_calls == 0 && finishes == 2,
                    "oversized frame length waited for a body or escaped validation");
         teardown();
@@ -989,6 +1013,10 @@ static void testLargePipeFrame(void)
 
 int main(void)
 {
+    logger_t *logger = createNetworkLogger(NULL, false);
+    twfRequire(logger != NULL, "create diagnostic capture logger");
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
+    loggerSetHandler(logger, captureDiagnostic);
     testIncrementalDelivery();
     testFragmentedControl();
     testAdvisoryControlReplies();
@@ -1011,6 +1039,7 @@ int main(void)
     testPipes();
     testLargePipeFrame();
 #endif
+    networkloggerDestroy();
     puts("KeepAlive frame bytes, splice ownership, FIFO and close tests passed");
     return 0;
 }

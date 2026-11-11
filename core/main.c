@@ -76,13 +76,31 @@ int waterwallInnerMain(int argc, char **argv)
 
 #ifdef OS_WIN
     if (! windowsSessionEffectsAttach(handoff.effects_mapping))
+    {
+        fprintf(stderr, "Startup refused: could not attach the session effects mapping\n");
         return 1;
+    }
     if (handoff.completion_event != 0)
     {
         completion_event = (HANDLE) handoff.completion_event;
-        if (! waterwallCapabilityValidate(completion_event, L"Event", EVENT_MODIFY_STATE) ||
-            ! SetHandleInformation(completion_event, HANDLE_FLAG_INHERIT, 0) || atexit(waterwallOrderlyReturn) != 0)
+        if (! waterwallCapabilityValidate(completion_event, L"Event", EVENT_MODIFY_STATE))
+        {
+            fprintf(stderr, "Startup refused: invalid shutdown completion event capability\n");
             return 1;
+        }
+        if (! SetHandleInformation(completion_event, HANDLE_FLAG_INHERIT, 0))
+        {
+            const DWORD error = GetLastError();
+            fprintf(stderr,
+                    "Startup refused: could not clear completion event inheritance (Windows error=%lu)\n",
+                    (unsigned long) error);
+            return 1;
+        }
+        if (atexit(waterwallOrderlyReturn) != 0)
+        {
+            fprintf(stderr, "Startup refused: could not register shutdown completion notification\n");
+            return 1;
+        }
     }
 #endif
 

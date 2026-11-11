@@ -2,12 +2,26 @@
 
 #include "loggers/network_logger.h"
 
-static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls)
+static void handleQueueOverflow(tunnel_t *t, line_t *l, tcplistener_tstate_t *ts, tcplistener_lstate_t *ls,
+                                size_t incoming_bytes, bool charge_known, size_t incoming_charge)
 {
-    LOGE("TcpListener: write retention overflow, queued bytes: %zu, capacity charge: %zu, limit: %u",
-         awqGetQueuedBytes(&ls->write_queue),
-         awqGetUsage(&ls->write_queue).charge,
-         (unsigned) kAwqMaxRetained);
+    const buffer_budget_cost_t used = awqGetUsage(&ls->write_queue);
+    if (charge_known)
+        LOGE("TcpListener: closing connection: write retention admission refused "
+             "(fd=%d, retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, "
+             "retained_charge_bytes=%zu, incoming_charge_bytes=%zu, charge_limit_bytes=%u)",
+             wioGetFD(ls->io),
+             used.bytes,
+             incoming_bytes,
+             (unsigned) kAwqMaxRetained,
+             used.charge,
+             incoming_charge,
+             (unsigned) kAwqMaxRetained);
+    else
+        LOGE("TcpListener: closing connection: incoming write allocation charge is unrepresentable "
+             "(fd=%d, incoming_bytes=%zu)",
+             wioGetFD(ls->io),
+             incoming_bytes);
 
     local_idle_item_t *idle_item = ls->idle_handle;
     ls->idle_handle              = NULL;
@@ -31,10 +45,13 @@ void tcplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     tcplistenerApplyReadPreference(ls);
     awqRefreshPending(&ls->write_queue, wioGetWriteBufSize(ls->io));
+    const size_t incoming_bytes  = sbufGetLength(buf);
+    size_t       incoming_charge = 0;
+    const bool   charge_known    = sbufTryGetQueueCharge(buf, &incoming_charge);
     switch (awqAdmit(&ls->write_queue, lineGetBufferPool(l), &buf))
     {
     case kAwqOverflow:
-        handleQueueOverflow(t, l, ts, ls);
+        handleQueueOverflow(t, l, ts, ls, incoming_bytes, charge_known, incoming_charge);
         return;
     case kAwqQueuedPause:
         tunnelNextUpStreamPause(t, l);

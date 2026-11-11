@@ -46,7 +46,11 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 
             if (sbufGetHeadroom(q) < header_len)
             {
-                LOGW("WireGuardDevice: dropping packet without enough left padding for transport header");
+                LOGW("WireGuardDevice: dropping packet: insufficient left padding for transport header "
+                     "(packet_bytes=%zu, headroom_bytes=%zu, required_headroom_bytes=%u)",
+                     sbufGetLength(q),
+                     sbufGetHeadroom(q),
+                     header_len);
                 result = ERR_BUF;
                 goto finish;
             }
@@ -95,7 +99,11 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
             if (! wireguardEncryptPacket(
                     dst, sbufGetWritableCapacity(q) - (size_t) (dst - sbufGetMutablePtr(q)), dst, padded_len, keypair))
             {
-                LOGW("WireGuardDevice: transport packet encryption failed");
+                LOGW("WireGuardDevice: dropping packet: transport encryption failed "
+                     "(payload_bytes=%u, padded_bytes=%u, auth_tag_bytes=%u)",
+                     unpadded_len,
+                     padded_len,
+                     (unsigned) WIREGUARD_AUTHTAG_LEN);
                 result = ERR_IF;
                 goto finish;
             }
@@ -120,14 +128,18 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
         else
         {
             // key has expired...
-            LOGD("WrireugardDevice: DISCARDING PACKET - KEY EXPIRED");
+            LOGD("WireGuardDevice: dropping packet: transport key expired or message limit reached "
+                 "(packet_bytes=%zu, sending_counter=%" PRIu64 ", message_limit=%" PRIu64 ")",
+                 sbufGetLength(q),
+                 keypair->sending_counter,
+                 (uint64_t) REJECT_AFTER_MESSAGES);
             keypairDestroy(keypair);
             result = ERR_CONN;
         }
     }
     else
     {
-        LOGD("WrireugardDevice: DISCARDING PACKET - NO VALID KEYS");
+        LOGD("WireGuardDevice: dropping packet: no valid transport keys (packet_bytes=%zu)", sbufGetLength(q));
         // No valid keys!
         result = ERR_CONN;
     }
@@ -201,7 +213,10 @@ void wireguarddeviceHandleInnerPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     else
     {
-        LOGD("WireguardDevice cannot route a packet");
+        LOGD("WireGuardDevice: dropping packet: no allowed-IP peer route "
+             "(packet_bytes=%u, ip_version=%u)",
+             buf_len,
+             (unsigned) version);
         lineReuseBuffer(l, buf);
     }
 

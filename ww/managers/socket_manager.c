@@ -1333,7 +1333,12 @@ static bool applyAcceptedTcpSocketOptions(wio_t *io, const socket_filter_option_
         {
             if (socketOptionSetFwMark(wioGetFD(io), effective_mark) != 0)
             {
-                LOGE("SocketManager: set accepted TCP socket fwmark failed");
+                const int error = socketERRNO();
+                LOGE("SocketManager: rejecting accepted TCP socket: SO_MARK failed "
+                     "(fd=%d, fwmark=%d, error=%d)",
+                     wioGetFD(io),
+                     effective_mark,
+                     error);
                 return false;
             }
         }
@@ -1341,13 +1346,23 @@ static bool applyAcceptedTcpSocketOptions(wio_t *io, const socket_filter_option_
 
     if (! socketOptionApplySendBuffer(wioGetFD(io), option->send_buffer_size))
     {
-        LOGE("SocketManager: set TCP socket send buffer failed");
+        const int error = socketERRNO();
+        LOGE("SocketManager: rejecting accepted TCP socket: SO_SNDBUF failed "
+             "(fd=%d, requested_bytes=%d, error=%d)",
+             wioGetFD(io),
+             option->send_buffer_size,
+             error);
         return false;
     }
 
     if (! socketOptionApplyRecvBuffer(wioGetFD(io), option->recv_buffer_size))
     {
-        LOGE("SocketManager: set TCP socket recv buffer failed");
+        const int error = socketERRNO();
+        LOGE("SocketManager: rejecting accepted TCP socket: SO_RCVBUF failed "
+             "(fd=%d, requested_bytes=%d, error=%d)",
+             wioGetFD(io),
+             option->recv_buffer_size,
+             error);
         return false;
     }
 

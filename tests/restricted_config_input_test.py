@@ -33,6 +33,7 @@ def run(binary, root, data, expected, *, restricted=True):
     for path in root.glob("log/**/*"):
         if path.is_file() and SECRET.encode() in path.read_bytes():
             raise AssertionError(f"secret leaked to {path}")
+    return output
 
 
 def main():
@@ -48,9 +49,13 @@ def main():
             (b'{"x":"\\u0000"}', "decoded NUL"),
             (b'{}\0' + SECRET.encode(), "NUL"),
             (b'{"x":"\xc0\xaf"}', "UTF-8"),
-            (b' ' * (2 * 1024 * 1024 + 1), "input limit"),
         ]:
             run(binary, root, data, error)
+        output = run(binary, root, b' ' * (2 * 1024 * 1024 + 1), "size limit exceeded")
+        for evidence in ("refusing core input", "accepted_bytes=2097152",
+                         "incoming_bytes=1", "limit_bytes=2097152"):
+            if evidence not in output:
+                raise AssertionError(f"core input limit diagnostic omitted {evidence!r}:\n{output}")
         # Ordinary malformed JSON no longer dumps credentials either.
         run(binary, root, b'{"x":' + SECRET.encode(), "JSON Error at byte", restricted=False)
 
@@ -75,11 +80,19 @@ def main():
             (json.dumps({"name": "x", "nodes": [{"name": "x", "type": "TunDevice", "settings": {
                 "fragment-policy": "preserve-fragments", "device-name": "wwtest", "device-ip": "10.0.0.1/24", "dns": [SECRET]}}]}),
              "dns contains invalid IPv4 address: <restricted>"),
-            ('{"name":"x","nodes":[],' + '"padding":"' + 'x' * (8 * 1024 * 1024) + '"}', "input limit"),
         ]
         for data, error in node_cases:
             (root / "nodes.json").write_text(data, encoding="utf-8")
             run(binary, root, core, error)
+        (root / "nodes.json").write_text(
+            '{"name":"x","nodes":[],"padding":"' + 'x' * (8 * 1024 * 1024) + '"}',
+            encoding="utf-8",
+        )
+        output = run(binary, root, core, "size limit exceeded")
+        for evidence in ("refusing input", "accepted_bytes=8388608",
+                         "incoming_bytes=1", "limit_bytes=8388608"):
+            if evidence not in output:
+                raise AssertionError(f"node input limit diagnostic omitted {evidence!r}:\n{output}")
 
         # Both route lists share the CIDR diagnostic, including after expansion.
         for key in ("route-cidrs", "route-exclude-cidrs"):

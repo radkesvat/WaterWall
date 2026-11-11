@@ -708,18 +708,26 @@ static void testReceiveDiscardRetainsVerdictId(void)
     sbuf_t  *buffer            = sbufCreate(kCaptureLinuxNetfilterReadBufferSize);
     uint32_t packet_id         = 0;
     io_fixture.datagram_length = kCaptureLinuxNetfilterReadBufferSize + 128U;
-    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketDiscarded &&
-                packet_id == htonl(kTestPacketId),
+    netfilter_packet_record_t record = {.buffer = buffer};
+    require(netfilterReceivePacketRecord(kTestSocket, &record) == kNetfilterPacketDiscarded &&
+                record.packet_id == htonl(kTestPacketId),
             "truncated packet lost its required verdict id");
+    require(record.discard_reason != NULL && strcmp(record.discard_reason, "truncated_netfilter_datagram") == 0 &&
+                record.discard_is_datagram && record.discarded_bytes == io_fixture.datagram_length &&
+                ! record.discard_has_copy_length,
+            "truncated packet diagnostic fabricated packet size or lost the observed datagram size");
 
     prepareReceivedPacket();
     sbufReset(buffer);
     const size_t payload_offset =
         nfqueueAttrOffset() + NFA_ALIGN(NFA_LENGTH(sizeof(struct nfqnl_msg_packet_hdr))) + NFA_LENGTH(0);
     io_fixture.message[payload_offset] = 0x65;
-    require(netfilterReceivePacket(kTestSocket, buffer, &packet_id) == kNetfilterPacketMalformedDiscarded &&
-                packet_id == htonl(kTestPacketId),
+    require(netfilterReceivePacketRecord(kTestSocket, &record) == kNetfilterPacketMalformedDiscarded &&
+                record.packet_id == htonl(kTestPacketId),
             "malformed IP packet lost its required verdict id");
+    require(strcmp(record.discard_reason, "invalid_ipv4_packet_or_checksums") == 0 && ! record.discard_is_datagram &&
+                record.discarded_bytes == 64 && ! record.discard_has_copy_length,
+            "malformed packet diagnostic reused a prior truncation reason or counted Netlink metadata as packet bytes");
 
     prepareReceivedPacket();
     sbufReset(buffer);

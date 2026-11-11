@@ -4,6 +4,7 @@
  * CTest: waterwall.usercontroller_payload_mode_unit. */
 #include "UserController/structure.h"
 #include "global_state.h"
+#include "loggers/network_logger.h"
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
@@ -14,6 +15,18 @@ static usercontroller_payload_mode_t expected_mode, resolved_mode;
 static unsigned                      resolver_calls, init_calls, admissions, releases;
 static unsigned                      prev_finishes, next_finishes;
 static tunnel_t                     *owner_endpoint;
+static char                          oversize_diagnostics[2048];
+static size_t                        oversize_diagnostic_length;
+
+static void captureOversizeDiagnostic(int level, const char *bytes, int length)
+{
+    discard      level;
+    const size_t count =
+        length > 0 ? min((size_t) length, sizeof(oversize_diagnostics) - oversize_diagnostic_length - 1) : 0;
+    memoryCopy(oversize_diagnostics + oversize_diagnostic_length, bytes, count);
+    oversize_diagnostic_length += count;
+    oversize_diagnostics[oversize_diagnostic_length] = '\0';
+}
 
 typedef enum mode_source_e
 {
@@ -181,6 +194,27 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
                 ls->started_from_next == reverse,
             "Init direction or resolver count changed");
     require(! ls->managed && ls->payload_mode == mode && admissions == 0, "anonymous Init lost saved mode");
+    logger_t      *logger           = getNetworkLogger();
+    logger_handler previous_handler = loggerGetHandle(logger);
+    if (mode == kUserControllerPayloadDatagram)
+    {
+        oversize_diagnostic_length = 0;
+        oversize_diagnostics[0]    = '\0';
+        loggerSetHandler(logger, captureOversizeDiagnostic);
+        loggerSetLevel(logger, LOG_LEVEL_WARN);
+        for (size_t bytes = 65536; bytes <= 65537; ++bytes)
+        {
+            sbuf_t *oversized = bufferpoolGetBestFit(lineGetBufferPool(line), bytes, 0);
+            sbufSetLength(oversized, bytes);
+            usercontrollerBandwidthSubmit(controller, line, oversized, ! reverse);
+            require(lineIsAlive(line), "oversized datagram closed the borrowed line");
+            if (bytes == 65536)
+                require(strstr(oversize_diagnostics, "dropping datagrams: payload policy limit exceeded") &&
+                            strstr(oversize_diagnostics, "last_packet_bytes=65536") &&
+                            strstr(oversize_diagnostics, "policy_limit_bytes=65535"),
+                        "oversize policy refusal omitted its action, sample or byte limit");
+        }
+    }
     resolved_mode =
         mode == kUserControllerPayloadStream ? kUserControllerPayloadDatagram : kUserControllerPayloadStream;
     lineGetDestinationAddressContext(line)->proto_tcp  = ! lineGetDestinationAddressContext(line)->proto_tcp;
@@ -197,6 +231,14 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
     else
         tunnelUpStreamFin(controller, line);
     require(lineIsAlive(line) && releases == 1, "borrower destroyed line or failed to release promotion");
+    if (mode == kUserControllerPayloadDatagram)
+    {
+        require(strstr(oversize_diagnostics, "total_drops=2") &&
+                    strstr(oversize_diagnostics, "last_packet_bytes=65537"),
+                "oversized datagram summary lost suppressed events or paired the wrong sample");
+        loggerSetLevelByString(logger, "OFF");
+        loggerSetHandler(logger, previous_handler);
+    }
     lineDestroy(line);
     tunnelchainDestroy(chain);
     tunnelDestroy(prev);

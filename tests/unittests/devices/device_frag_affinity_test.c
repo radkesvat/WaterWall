@@ -55,7 +55,50 @@ static master_pool_t *g_small_master;
 static master_pool_t *g_medium_master;
 static master_pool_t *g_splice_master;
 static buffer_pool_t *g_pool;
+static char           diagnostic_log[4096];
+static size_t         diagnostic_length;
+static sbuf_t        *makeFragment(uint16_t identification, uint16_t offset_units, bool more_fragments);
 
+static void captureDiagnostic(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t copied = min((size_t) length, sizeof(diagnostic_log) - diagnostic_length - 1);
+    memoryCopy(diagnostic_log + diagnostic_length, bytes, copied);
+    diagnostic_length += copied;
+    diagnostic_log[diagnostic_length] = '\0';
+}
+
+static void testDiscardDiagnostic(void)
+{
+    device_frag_affinity_table_t *table = deviceFragAffinityCreate(g_pool, kDeviceFragmentPreserve);
+    device_frag_affinity_result_t result;
+    diagnostic_length = 0;
+    diagnostic_log[0] = '\0';
+    for (unsigned i = 0; i < kDeviceFragAffinityMaxStagedPerEntry; ++i)
+    {
+        sbuf_t *buffer = makeFragment(710, (uint16_t) ((i + 1) * 8), true);
+        require(deviceFragAffinityOffer(table, sbufGetRawPtr(buffer), sbufGetLength(buffer), buffer, &result) ==
+                    kDeviceFragAffinityStaged,
+                "diagnostic fixture did not fill association staging");
+    }
+    sbuf_t *buffer = makeFragment(710, 17 * 8, true);
+    require(deviceFragAffinityOffer(table, sbufGetRawPtr(buffer), sbufGetLength(buffer), buffer, &result) ==
+                kDeviceFragAffinityConsumedDrop,
+            "staging refusal did not consume its fragment");
+    require(strstr(diagnostic_log, "last_reason=association_staged_fragment_limit") != NULL &&
+                strstr(diagnostic_log, "last_packet_bytes=84") != NULL &&
+                strstr(diagnostic_log, "last_usage=16, last_requested=1, last_limit=16, last_unit=packets") != NULL,
+            "fragment refusal lost the actual staging scope, usage, requested amount, limit or packet size");
+    buffer = makeFragment(710, 0, true);
+    require(deviceFragAffinityOffer(table, sbufGetRawPtr(buffer), sbufGetLength(buffer), buffer, &result) ==
+                kDeviceFragAffinityConsumedDrop,
+            "poisoned association accepted new fragment");
+    deviceFragAffinityDestroy(table);
+    require(strstr(diagnostic_log, "last_reason=poisoned_association, last_packet_bytes=84, total_refusals=2") != NULL,
+            "fragment final aggregate mixed a later reason with an earlier limit or lost suppressed events");
+}
 
 static void writeIpv4Checksum(uint8_t *packet)
 {
@@ -112,7 +155,8 @@ static device_frag_affinity_action_t offer(device_frag_affinity_table_t *table, 
     *result                           = (device_frag_affinity_result_t) {0};
     if (parsed == kDeviceFragParseNotFragment)
         return kDeviceFragAffinityNotFragment;
-    return deviceFragOfferLocked(table, &view, parsed, buf, result, now);
+    device_frag_discard_t diagnostic = {0};
+    return deviceFragOfferLocked(table, &view, parsed, buf, result, now, &diagnostic);
 }
 static void testCompletion(void)
 {
@@ -556,6 +600,9 @@ static void testSharedRawResultsSurviveOtherReaders(void)
 
 int main(void)
 {
+    logger_t *logger = loggerCreate();
+    loggerSetHandler(logger, captureDiagnostic);
+    setInternalLogger(logger);
     testCaseSet("device_frag_affinity_test");
     g_large_master = masterpoolCreateWithCapacity(16);
     g_small_master = masterpoolCreateWithCapacity(16);
@@ -568,6 +615,7 @@ int main(void)
 
     GSTATE.workers_count = 4;
     bufferpoolUpdateAllocationPaddings(g_pool, 64, 64, 64, 64);
+    testDiscardDiagnostic();
     testCompletion();
     testTrustedHeaderChecksum();
     testRejectionAndRetirement();
@@ -587,6 +635,7 @@ int main(void)
     masterpoolDestroy(g_small_master);
     masterpoolDestroy(g_medium_master);
     masterpoolDestroy(g_splice_master);
+    internaloggerDestroy();
     puts("Device fragment affinity tests passed");
     return 0;
 }

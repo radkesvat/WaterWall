@@ -1,5 +1,11 @@
 #include "bound_udp_socket.h"
 #include "egress_pin.h"
+#include "loggers/internal_logger.h"
+
+static void boundUdpSocketLogError(const char *operation, int fd, int error)
+{
+    LOGW("BoundUdpSocket: socket setup refused: %s (fd=%d, error=%d)", operation, fd, error);
+}
 
 wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
 {
@@ -12,6 +18,11 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
      * request before publishing any OS resource instead of narrowing it. */
     if (config->send_buffer_size > (uint32_t) INT_MAX || config->recv_buffer_size > (uint32_t) INT_MAX)
     {
+        LOGW("BoundUdpSocket: socket setup refused: buffer size is not representable "
+             "(send_buffer_bytes=%u, recv_buffer_bytes=%u, limit_bytes=%u)",
+             config->send_buffer_size,
+             config->recv_buffer_size,
+             (unsigned) INT_MAX);
         return NULL;
     }
 
@@ -22,6 +33,7 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
     {
         if (! getInterfaceIpString(config->interface_name, interface_ip, sizeof(interface_ip)))
         {
+            LOGW("BoundUdpSocket: socket setup refused: interface has no usable IPv4 bind address");
             return NULL;
         }
         bind_address = interface_ip;
@@ -33,31 +45,44 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
     }
 
     sockaddr_u addr = {0};
-    if (sockaddrSetIpAddressPort(&addr, bind_address, config->port) != 0)
+    const int  address_result = sockaddrSetIpAddressPort(&addr, bind_address, config->port);
+    if (address_result != 0)
     {
+        LOGW("BoundUdpSocket: socket setup refused: address resolution failed (resolver_error=%d)", address_result);
         return NULL;
     }
 
     int sockfd = socketToFd(socket(addr.sa.sa_family, SOCK_DGRAM, 0));
     if (sockfd < 0)
     {
+        const int error = socketERRNO();
+        boundUdpSocketLogError("socket creation failed", sockfd, error);
         return NULL;
     }
 
     if (socketOptionBindToDevice(sockfd, config->interface_name) != 0)
     {
+        const int error = socketERRNO();
+        boundUdpSocketLogError("interface binding failed", sockfd, error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (egressPinApply(sockfd, addr.sa.sa_family, config->interface_name) != 0)
     {
+        const int error = socketERRNO();
+        boundUdpSocketLogError("egress pin failed", sockfd, error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (config->fwmark >= 0 && socketOptionSetFwMark(sockfd, config->fwmark) != 0)
     {
+        const int error = socketERRNO();
+        LOGW("BoundUdpSocket: socket setup refused: SO_MARK failed (fd=%d, fwmark=%d, error=%d)",
+             sockfd,
+             config->fwmark,
+             error);
         closesocket(sockfd);
         return NULL;
     }
@@ -72,6 +97,8 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
     {
         if (socketOptionExclusiveAddrUse(sockfd, 1) != 0)
         {
+            const int error = socketERRNO();
+            boundUdpSocketLogError("exclusive address option failed", sockfd, error);
             closesocket(sockfd);
             return NULL;
         }
@@ -80,6 +107,8 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
     {
         if (socketOptionServerAddressUse(sockfd) != 0)
         {
+            const int error = socketERRNO();
+            boundUdpSocketLogError("reusable address option failed", sockfd, error);
             closesocket(sockfd);
             return NULL;
         }
@@ -92,6 +121,11 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
 
     if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
     {
+        const int error = socketERRNO();
+        LOGW("BoundUdpSocket: socket setup refused: bind failed (fd=%d, port=%u, error=%d)",
+             sockfd,
+             (unsigned) config->port,
+             error);
         closesocket(sockfd);
         return NULL;
     }
@@ -99,17 +133,39 @@ wio_t *boundUdpSocketCreate(wloop_t *loop, const bound_udp_config_t *config)
     /* Zero is intentional: the node parser materializes its true/default value
      * as kDefaultLargeSocketBufferSize, while an explicit false leaves the
      * kernel defaults untouched. */
-    if (! socketOptionApplySendBuffer(sockfd, (int) config->send_buffer_size) ||
-        ! socketOptionApplyRecvBuffer(sockfd, (int) config->recv_buffer_size))
+    if (! socketOptionApplySendBuffer(sockfd, (int) config->send_buffer_size))
     {
+        const int error = socketERRNO();
+        LOGW("BoundUdpSocket: socket setup refused: SO_SNDBUF failed (fd=%d, requested_bytes=%u, error=%d)",
+             sockfd,
+             config->send_buffer_size,
+             error);
+        closesocket(sockfd);
+        return NULL;
+    }
+    if (! socketOptionApplyRecvBuffer(sockfd, (int) config->recv_buffer_size))
+    {
+        const int error = socketERRNO();
+        LOGW("BoundUdpSocket: socket setup refused: SO_RCVBUF failed (fd=%d, requested_bytes=%u, error=%d)",
+             sockfd,
+             config->recv_buffer_size,
+             error);
         closesocket(sockfd);
         return NULL;
     }
 
     sockaddr_u local_addr = {0};
     socklen_t  addr_len   = sizeof(local_addr);
-    if (getsockname(sockfd, &local_addr.sa, &addr_len) < 0 || sockaddrPort(&local_addr) == 0)
+    if (getsockname(sockfd, &local_addr.sa, &addr_len) < 0)
     {
+        const int error = socketERRNO();
+        boundUdpSocketLogError("getsockname failed", sockfd, error);
+        closesocket(sockfd);
+        return NULL;
+    }
+    if (sockaddrPort(&local_addr) == 0)
+    {
+        LOGW("BoundUdpSocket: socket setup refused: bound socket has no local port (fd=%d)", sockfd);
         closesocket(sockfd);
         return NULL;
     }

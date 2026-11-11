@@ -256,12 +256,12 @@ void httpclientSplitUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: split HTTP/1.1 init id=%s upload=%s %s download=%s %s",
-             ls->split_id,
-             ts->split_upload_method,
-             ts->split_upload_path,
-             ts->split_download_method,
-             ts->split_download_path);
+        LOGD("HttpClient: split HTTP/1.1 init upload_method_bytes=%zu upload_path_bytes=%zu "
+             "download_method_bytes=%zu download_path_bytes=%zu",
+             httpclientLogTextBytes(ts->split_upload_method),
+             httpclientLogTextBytes(ts->split_upload_path),
+             httpclientLogTextBytes(ts->split_download_method),
+             httpclientLogTextBytes(ts->split_download_path));
     }
 
     lineRef(l);

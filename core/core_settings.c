@@ -1115,14 +1115,17 @@ bool parseCoreSettings(const char *data_json, size_t length)
 
     if (settings->workers_count <= 0)
     {
-        printError("CoreSettings: the workers count is invalid");
+        printError("CoreSettings: workers count is invalid (workers=%u, supported_range=1..254)",
+                   settings->workers_count);
         cJSON_Delete(json);
         startupFailureRecord(1);
         return false;
     }
     if (settings->workers_count > 254)
     {
-        printError("CoreSettings: workers count is shrinked to maximum supported value -> 254");
+        printError("CoreSettings: reducing workers count to the supported maximum "
+                   "(requested_workers=%u, effective_workers=254)",
+                   settings->workers_count);
         settings->workers_count = 254;
     }
 

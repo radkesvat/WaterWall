@@ -174,3 +174,10 @@ void   tlsserverCloseLineFatal(tunnel_t *t, line_t *l);
 size_t tlsserverRecordPaddingCallback(SSL *ssl, int type, size_t len, void *arg);
 void   tlsserverRecordMessageCallback(int write_p, int version, int content_type, const void *buf, size_t len, SSL *ssl,
                                       void *arg);
+
+/* Render field lengths only: request paths and peer header values may contain
+ * credentials or control bytes that must not enter diagnostic records. */
+static inline size_t tlsserverLogTextBytes(const char *text)
+{
+    return text != NULL ? stringLength(text) : 0;
+}

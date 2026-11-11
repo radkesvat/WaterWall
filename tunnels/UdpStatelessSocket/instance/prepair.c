@@ -14,27 +14,36 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
     int sockfd = socketToFd(socket(addr.sa.sa_family, SOCK_DGRAM, 0));
     if (sockfd < 0)
     {
-        LOGE("UdpStatelessSocket: socket fd < 0");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: socket creation failed (family=%d, socket_error=%d)",
+             (int) addr.sa.sa_family,
+             error);
         return NULL;
     }
 
     if (socketOptionBindToDevice(sockfd, state->interface_name) != 0)
     {
-        LOGE("UdpStatelessSocket: setsockopt SO_BINDTODEVICE error");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: interface bind failed (fd=%d, socket_error=%d)", sockfd, error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (egressPinApply(sockfd, addr.sa.sa_family, state->interface_name) != 0)
     {
-        LOGE("UdpStatelessSocket: egress pin failed");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: egress pin failed (fd=%d, socket_error=%d)", sockfd, error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (state->fwmark >= 0 && socketOptionSetFwMark(sockfd, state->fwmark) != 0)
     {
-        LOGE("UdpStatelessSocket: setsockopt SO_MARK error");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: SO_MARK failed (fd=%d, mark=%d, socket_error=%d)",
+             sockfd,
+             state->fwmark,
+             error);
         closesocket(sockfd);
         return NULL;
     }
@@ -48,21 +57,35 @@ static wio_t *udpstatelesssocketCreateUdpServer(udpstatelesssocket_tstate_t *sta
 
     if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
     {
-        LOGE("UdpStatelessSocket: UDP bind failed");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: UDP bind failed (fd=%d, port=%u, socket_error=%d)",
+             sockfd,
+             (unsigned) state->listen_port,
+             error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (! socketOptionApplySendBuffer(sockfd, state->send_buffer_size))
     {
-        LOGE("UdpStatelessSocket: set socket send buffer failed");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: SO_SNDBUF failed "
+             "(fd=%d, requested_bytes=%d, socket_error=%d)",
+             sockfd,
+             state->send_buffer_size,
+             error);
         closesocket(sockfd);
         return NULL;
     }
 
     if (! socketOptionApplyRecvBuffer(sockfd, state->recv_buffer_size))
     {
-        LOGE("UdpStatelessSocket: set socket recv buffer failed");
+        const int error = socketERRNO();
+        LOGE("UdpStatelessSocket: refusing startup: SO_RCVBUF failed "
+             "(fd=%d, requested_bytes=%d, socket_error=%d)",
+             sockfd,
+             state->recv_buffer_size,
+             error);
         closesocket(sockfd);
         return NULL;
     }

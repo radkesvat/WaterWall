@@ -3,6 +3,7 @@
 #include "buffer_budget.h"
 #include "buffer_queue.h"
 #include "line.h"
+#include "loggers/log_rate_limiter.h"
 
 typedef enum traffic_shaper_mode_e
 {
@@ -47,6 +48,16 @@ typedef struct traffic_shaper_ops_s
 
 typedef struct traffic_shaper_continuation_s traffic_shaper_continuation_t;
 
+typedef struct traffic_shaper_refusal_sample_s
+{
+    buffer_budget_cost_t used;
+    buffer_budget_cost_t incoming;
+    buffer_budget_cost_t limits;
+    size_t               entries;
+    wid_t                wid;
+    const char          *reason;
+} traffic_shaper_refusal_sample_t;
+
 typedef struct traffic_shaper_s
 {
     buffer_queue_t                 queue;
@@ -64,6 +75,8 @@ typedef struct traffic_shaper_s
     bool                           externally_paused;
     bool                           locally_paused; /* Stream backlog producer hold; never set for datagrams. */
     bool                           stopped;
+    log_rate_limiter_t              admission_refusals;
+    traffic_shaper_refusal_sample_t last_refusal;
 } traffic_shaper_t;
 
 typedef enum traffic_shaper_submit_e

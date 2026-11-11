@@ -143,8 +143,10 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV1(header
     {
         if (bufferstreamGetLength(stream) > kHeaderServerProxyProtocolV1MaxHeaderSize)
         {
-            LOGE("HeaderServer: PROXY protocol v1 header is longer than %u bytes",
-                 (unsigned int) kHeaderServerProxyProtocolV1MaxHeaderSize);
+            LOGE("HeaderServer: rejecting incomplete PROXY protocol v1 header: protocol size limit exceeded "
+                 "(retained_bytes=%zu, protocol_limit_bytes=%u)",
+                 bufferstreamGetLength(stream),
+                 (unsigned) kHeaderServerProxyProtocolV1MaxHeaderSize);
             return kHeaderServerHeaderParseError;
         }
 
@@ -154,8 +156,10 @@ static headerserver_header_parse_result_t headerserverReadProxyProtocolV1(header
     size_t full_len = line_end + 2U;
     if (full_len > kHeaderServerProxyProtocolV1MaxHeaderSize)
     {
-        LOGE("HeaderServer: PROXY protocol v1 header is longer than %u bytes",
-             (unsigned int) kHeaderServerProxyProtocolV1MaxHeaderSize);
+        LOGE("HeaderServer: rejecting PROXY protocol v1 header: protocol size limit exceeded "
+             "(header_bytes=%zu, protocol_limit_bytes=%u)",
+             full_len,
+             (unsigned) kHeaderServerProxyProtocolV1MaxHeaderSize);
         return kHeaderServerHeaderParseError;
     }
 
@@ -367,6 +371,15 @@ void headerserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         next_init_gate_input_t result = nextinitgateSubmit(&ls->gate, &buf);
         if (UNLIKELY(result == kNextInitGateRejected))
         {
+            LOGW("HeaderServer: closing connection: next-Init backlog admission refused "
+                 "(queued_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, queued_charge_bytes=%zu, "
+                 "incoming_charge_bytes=%zu, charge_limit_bytes=%zu)",
+                 bufferqueueGetLength(&ls->gate.pending),
+                 sbufGetLength(buf),
+                 ls->gate.limits.bytes,
+                 bufferqueueGetCharge(&ls->gate.pending),
+                 sbufGetQueueCharge(buf),
+                 ls->gate.limits.charge);
             lineReuseBuffer(l, buf);
             headerserverCloseLineFromProtocolError(t, l);
         }

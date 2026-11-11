@@ -10,13 +10,26 @@ typedef enum udpconnector_packet_peer_result_e
     kUdpConnectorPacketPeerConsumed
 } udpconnector_packet_peer_result_e;
 
-static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls)
+static void handleQueueOverflow(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls, sbuf_t *buf)
 {
-    LOGE("UdpConnector: write retention overflow, bytes: %zu, capacity charge: %zu, limit: %u",
-         bufferbudgetGetUsage(&ls->write_budget).bytes,
-         bufferbudgetGetUsage(&ls->write_budget).charge,
-         (unsigned) kUdpMaxPauseQueueSize);
+    const buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->write_budget);
+    size_t                     incoming_charge;
+    if (sbufTryGetQueueCharge(buf, &incoming_charge))
+        LOGE("UdpConnector: closing connection: write retention admission refused "
+             "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, charge_limit_bytes=%u)",
+             used.bytes,
+             sbufGetLength(buf),
+             (unsigned) kUdpMaxPauseQueueSize,
+             used.charge,
+             incoming_charge,
+             (unsigned) kUdpMaxPauseQueueSize);
+    else
+        LOGE("UdpConnector: closing connection: incoming write allocation charge is unrepresentable "
+             "(incoming_bytes=%zu)",
+             sbufGetLength(buf));
 
+    lineReuseBuffer(l, buf);
     udpconnectorLineDetach(t, l, ls, kUdpConnectorDetachQueueOverflow);
 }
 
@@ -24,8 +37,7 @@ static bool queueWrite(tunnel_t *t, line_t *l, udpconnector_lstate_t *ls, buffer
 {
     if (UNLIKELY(! udpconnectorQueueWrite(ls, queue, &buf)))
     {
-        lineReuseBuffer(l, buf);
-        handleQueueOverflow(t, l, ls);
+        handleQueueOverflow(t, l, ls, buf);
         return false;
     }
     if (! ls->queue_pause_sent && (bufferbudgetGetUsage(&ls->write_budget).bytes >= kUdpMinPauseQueueSize ||

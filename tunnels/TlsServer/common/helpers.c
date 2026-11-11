@@ -55,16 +55,16 @@ int tlsserverOnServername(SSL *ssl, int *ad, void *arg)
 
     if (sni == NULL || stricmp(sni, ts->expected_sni) != 0)
     {
-        LOGW("TlsServer: rejected TLS connection due to SNI mismatch, expected=\"%s\", got=\"%s\"",
-             ts->expected_sni,
-             sni != NULL ? sni : "<none>");
+        LOGW("TlsServer: rejected TLS connection due to SNI mismatch, expected_bytes=\"%zu\", got_bytes=\"%zu\"",
+             tlsserverLogTextBytes(ts->expected_sni),
+             tlsserverLogTextBytes(sni));
         *ad = SSL_AD_UNRECOGNIZED_NAME;
         return SSL_TLSEXT_ERR_ALERT_FATAL;
     }
 
     if (ts->verbose)
     {
-        LOGD("TlsServer: accepted SNI \"%s\"", sni);
+        LOGD("TlsServer: accepted SNI (sni_bytes=%zu)", tlsserverLogTextBytes(sni));
     }
 
     return SSL_TLSEXT_ERR_OK;
@@ -109,7 +109,7 @@ int tlsserverOnAlpnSelect(SSL *ssl, const unsigned char **out, unsigned char *ou
                 *outlen = (unsigned char) current_len;
                 if (ts->verbose)
                 {
-                    LOGD("TlsServer: selected ALPN \"%.*s\"", (int) current_len, (const char *) cur);
+                    LOGD("TlsServer: selected ALPN (alpn_bytes=%u)", current_len);
                 }
                 return SSL_TLSEXT_ERR_OK;
             }
@@ -676,7 +676,10 @@ bool tlsserverFlushSslOutput(tunnel_t *t, line_t *l, tlsserver_lstate_t *ls)
     }
     if (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) >= kTlsRecordShapingQueueHardLimit)
     {
-        LOGW("TlsServer: record shaping queue could not be reduced below its 8 MiB hard limit");
+        LOGW("TlsServer: TLS output refused: record shaping queue remains at its hard limit "
+             "(queued_ciphertext_bytes=%zu, limit_bytes=%u)",
+             tlsrecordshapingOutputQueueBytes(&ls->shaping_output),
+             (unsigned) kTlsRecordShapingQueueHardLimit);
         return false;
     }
     return tlsserverScheduleShapedOutput(t, l, ls);
@@ -830,7 +833,9 @@ static void tlsserverHandshakeDeadlineTimerCallback(wtimer_t *timer)
 
     ls->handshake_deadline_timer = NULL;
 
-    LOGW("TlsServer: TLS handshake timed out before completion");
+    const tlsserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    LOGW("TlsServer: closing connection: TLS handshake deadline expired (handshake_timeout_ms=%u)",
+         ts->handshake_timeout_ms);
     tlsserverCloseLineFatal(ls->tunnel, ls->line);
 }
 

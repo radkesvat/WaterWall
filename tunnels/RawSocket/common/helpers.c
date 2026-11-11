@@ -35,7 +35,8 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
     {
         if (atomicLogRateLimiterShouldLog(&rawsocket_invalid_packet_log, kRawSocketChecksumLogIntervalMs))
         {
-            LOGW("RawSocket: dropping malformed or unsupported captured packet");
+            LOGW("RawSocket: dropping captured packet: expected one exact IPv4 datagram (packet_bytes=%zu)",
+                 sbufGetLength(buf));
         }
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
         return;
@@ -61,7 +62,9 @@ void rawsocketWriteStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         if (atomicLogRateLimiterShouldLog(&rawsocket_checksum_failure_log, kRawSocketChecksumLogIntervalMs))
         {
-            LOGW("RawSocket: dropping malformed, unsupported, or unchecksummable output");
+            LOGW("RawSocket: dropping output packet: exact IPv4 validation or requested checksum repair failed "
+                 "(packet_bytes=%zu)",
+                 sbufGetLength(buf));
         }
         lineReuseBuffer(l, buf);
         return;

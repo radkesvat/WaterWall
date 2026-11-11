@@ -168,12 +168,29 @@ static void captureReaderPrepare(capture_worker_reader_t *lane, sbuf_t *buffer)
     lane->pending_wids[lane->pending_count++] = wid;
 }
 
-static void captureReaderDiscard(capture_worker_reader_t *lane)
+static void captureReaderDiscard(capture_worker_reader_t *lane, const netfilter_packet_record_t *record)
 {
     const log_rate_limiter_report_t report = logRateLimiterRecord(&lane->discard_log, kCaptureDiscardReportIntervalMs);
-    if (report.should_log)
-        LOGW("CaptureDevice: discarded %llu malformed, truncated or oversized packets (total=%llu)",
+    if (report.should_log && record->discard_has_copy_length)
+        LOGW("CaptureDevice: queue %u discarded %llu captured packet(s) "
+             "(last_reason=%s, last_packet_bytes=%zu, last_copied_packet_bytes=%u, policy_limit_bytes=%u, total=%llu)",
+             lane->generation->device->queues[lane->wid].number,
              LLU(report.events),
+             record->discard_reason,
+             record->discarded_bytes,
+             record->copied_packet_bytes,
+             (unsigned) kMaxAllowedPacketLength,
+             LLU(report.total));
+    else if (report.should_log)
+        LOGW("CaptureDevice: queue %u discarded %llu captured packet(s) "
+             "(last_reason=%s, last_%s_bytes=%zu, %s_limit_bytes=%u, total=%llu)",
+             lane->generation->device->queues[lane->wid].number,
+             LLU(report.events),
+             record->discard_reason != NULL ? record->discard_reason : "unclassified_capture_rejection",
+             record->discard_is_datagram ? "datagram" : "packet",
+             record->discarded_bytes,
+             record->discard_is_datagram ? "receive_capacity" : "policy",
+             record->discard_is_datagram ? (unsigned) kNetfilterReadBufferSize : (unsigned) kMaxAllowedPacketLength,
              LLU(report.total));
 }
 
@@ -246,7 +263,7 @@ static void captureReaderConsume(capture_worker_reader_t *lane, bool active)
         captureReaderPrepare(lane, buffer);
     }
     else if (active && record->verdict == NF_DROP && captureReaderRecordNeedsVerdict(record))
-        captureReaderDiscard(lane);
+        captureReaderDiscard(lane, record);
 }
 
 static netfilter_packet_result_t captureReaderReceive(capture_worker_reader_t *lane, buffer_pool_t *pool, bool active,
@@ -273,7 +290,7 @@ static netfilter_packet_result_t captureReaderReceive(capture_worker_reader_t *l
     else
     {
         netfilter_packet_record_t *record = &lane->records[0];
-        result = record->result = netfilterReceivePacket(fd, record->buffer, &record->packet_id);
+        result = record->result = netfilterReceivePacketRecord(fd, record);
         if (captureReaderRecordNeedsVerdict(record))
             lane->record_count = 1;
     }
@@ -683,12 +700,22 @@ bool captureReaderDrain(capture_device_t *device)
         for (uint16_t i = 0; i < device->reader->count; ++i)
             received += device->reader->lanes[i].received;
         if (received - initial >= kNetfilterResidualPacketBudget || (uint64_t) getHRTimeUs() >= deadline)
+        {
+            const uint64_t now = (uint64_t) getHRTimeUs();
+            LOGE("CaptureDevice: stopping residual queue drain for %s: %s bound reached "
+                 "(received_packets=%llu, packet_limit=%u, elapsed_ms=%llu, timeout_ms=%u)",
+                 device->name,
+                 received - initial >= kNetfilterResidualPacketBudget ? "packet" : "time",
+                 LLU(received - initial),
+                 (unsigned) kNetfilterResidualPacketBudget,
+                 LLU((now - (deadline - (uint64_t) kNetfilterIoDeadlineMs * 1000)) / 1000),
+                 (unsigned) kNetfilterIoDeadlineMs);
             break;
+        }
         /* Only the exclusive lifecycle coordinator may wait. Normal reads and
          * supervisor progress callbacks never sleep or poll for capacity. */
         wwSleepMS(1);
     }
-    LOGE("CaptureDevice: residual queue drain exceeded its packet/time bound");
     return false;
 }
 

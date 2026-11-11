@@ -572,12 +572,7 @@ void softiplimiterReleaseLine(tunnel_t *t, softiplimiter_lstate_t *ls)
 static void softiplimiterLogLine(tunnel_t *t, line_t *l, const softiplimiter_lstate_t *ls, const char *action,
                                  const char *reason, const softiplimiter_table_result_t *result)
 {
-    softiplimiter_tstate_t *ts = tunnelGetState(t);
-    if (! ts->verbose)
-    {
-        return;
-    }
-
+    softiplimiter_tstate_t *ts     = tunnelGetState(t);
     char ip[80] = {0};
     if (ls != NULL && ls->ip_key_valid)
     {

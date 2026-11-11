@@ -231,7 +231,7 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         if (UNLIKELY(read_packet_len == 0))
         {
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-            LOGW("CaptureDevice: read packet with length 0");
+            LOGW("CaptureDevice: discarding empty captured packet on %s (packet_bytes=0)", cdev->name);
             continue;
         }
 
@@ -247,7 +247,13 @@ static WTHREAD_ROUTINE(routineReadFromCapture) // NOLINT
         if (! deviceIpv4PreparePacketChecksums(sbufGetMutablePtr(buf), sbufGetLength(buf), checksum_provenance))
         {
             bufferpoolReuseBuffer(cdev->reader_buffer_pool, buf);
-            LOGW("CaptureDevice: discarded an IPv4 packet with invalid or unavailable checksums");
+            LOGW("CaptureDevice: discarded captured packet on %s: IPv4 validation or checksum preparation rejected "
+                 "(packet_bytes=%u, outbound=%u, loopback=%u, impostor=%u)",
+                 cdev->name,
+                 read_packet_len,
+                 (unsigned) address.Outbound,
+                 (unsigned) address.Loopback,
+                 (unsigned) address.Impostor);
             continue;
         }
 

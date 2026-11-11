@@ -24,7 +24,11 @@ static bool packetcounterWriteFormat(FILE *file, const char *fmt, ...)
 
     va_start(args, fmt);
     const int written = vfprintf(file, fmt, args);
+    const int error   = written < 0 ? errno : 0;
     va_end(args);
+
+    if (written < 0)
+        LOGE("PacketCounter: report write failed (errno=%d)", error);
 
     return written >= 0;
 }
@@ -118,6 +122,8 @@ static bool packetcounterWriteReport(tunnel_t *t)
 
     if (file == NULL)
     {
+        const int error = errno;
+        LOGE("PacketCounter: report open failed (errno=%d)", error);
         return false;
     }
 
@@ -221,6 +227,8 @@ static bool packetcounterWriteReport(tunnel_t *t)
 
     if (fclose(file) != 0)
     {
+        const int error = errno;
+        LOGE("PacketCounter: report close or buffered flush failed (errno=%d)", error);
         ok = false;
     }
     return ok;

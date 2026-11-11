@@ -282,3 +282,10 @@ bool httpserverTransportFinishCustomUpgrade(tunnel_t *t, line_t *l, httpserver_l
 void httpserverSplitRejectInput(tunnel_t *t, line_t *l);
 
 bool httpserverDrainSplitInput(tunnel_t *t, line_t *l);
+
+/* Render field lengths only: request paths and peer header values may contain
+ * credentials or control bytes that must not enter diagnostic records. */
+static inline size_t httpserverLogTextBytes(const char *text)
+{
+    return text != NULL ? stringLength(text) : 0;
+}

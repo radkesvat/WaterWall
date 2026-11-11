@@ -804,8 +804,15 @@ netfilter_verdict_result_t netfilterTrySendVerdictBatch(int netfilter_socket, ui
 }
 
 static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const struct msghdr *msg, size_t datagram_length,
-                                                         uint32_t *packet_id)
+                                                         uint32_t *packet_id, netfilter_packet_record_t *record)
 {
+    if (record != NULL)
+    {
+        record->discard_reason          = NULL;
+        record->discarded_bytes         = datagram_length;
+        record->discard_is_datagram     = true;
+        record->discard_has_copy_length = false;
+    }
     const struct sockaddr_nl *nl_addr = msg->msg_name;
     uint8_t                  *message = sbufGetMutablePtr(buff);
     if (datagram_length == 0)
@@ -825,11 +832,16 @@ static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const str
         uint32_t truncated_packet_id = 0;
         if (! captureLinuxNetfilterTryReadPacketIdFromPrefix(message, copied_len, &truncated_packet_id))
         {
-            LOGW("CaptureDevice: oversized netfilter datagram did not contain a complete packet id");
+            LOGW("CaptureDevice: cannot settle oversized netfilter datagram: no complete packet id "
+                 "(datagram_bytes=%zu, receive_capacity_bytes=%u)",
+                 datagram_length,
+                 (unsigned) kNetfilterReadBufferSize);
             errno = EBADMSG;
             return kNetfilterPacketError;
         }
         *packet_id = truncated_packet_id;
+        if (record != NULL)
+            record->discard_reason = "truncated_netfilter_datagram";
         return kNetfilterPacketDiscarded;
     }
 
@@ -845,12 +857,25 @@ static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const str
             return kNetfilterPacketError;
         }
         *packet_id = packet_view.packet_id;
+        if (record != NULL)
+            record->discard_reason = "malformed_netfilter_packet";
         return kNetfilterPacketMalformedDiscarded;
     }
 
     *packet_id = packet_view.packet_id;
     if (parse_result == kNetfilterPacketParseDiscarded)
     {
+        if (record != NULL)
+        {
+            record->discard_reason = packet_view.payload_length > kMaxAllowedPacketLength
+                                         ? "packet_policy_size_limit"
+                                         : "incomplete_captured_packet";
+            record->discarded_bytes =
+                packet_view.has_capture_length ? packet_view.capture_length : packet_view.payload_length;
+            record->discard_is_datagram     = false;
+            record->discard_has_copy_length = true;
+            record->copied_packet_bytes     = packet_view.payload_length;
+        }
         return kNetfilterPacketDiscarded;
     }
 
@@ -859,12 +884,19 @@ static netfilter_packet_result_t netfilterDecodeDatagram(sbuf_t *buff, const str
     if (! captureLinuxPreparePacket(
             sbufGetMutablePtr(buff), sbufGetLength(buff), packet_view.has_skb_info, packet_view.skb_info))
     {
+        if (record != NULL)
+        {
+            record->discard_reason      = "invalid_ipv4_packet_or_checksums";
+            record->discarded_bytes     = sbufGetLength(buff);
+            record->discard_is_datagram = false;
+        }
         return kNetfilterPacketMalformedDiscarded;
     }
     return kNetfilterPacketReady;
 }
 
-netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id)
+static netfilter_packet_result_t netfilterReceivePacketInternal(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id,
+                                                                netfilter_packet_record_t *record)
 {
     assert(packet_id != NULL);
     assert(sbufGetWritableCapacity(buff) >= kNetfilterReadBufferSize);
@@ -906,7 +938,17 @@ netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *b
         return kNetfilterPacketError;
     }
 
-    return netfilterDecodeDatagram(buff, &msg, (size_t) result, packet_id);
+    return netfilterDecodeDatagram(buff, &msg, (size_t) result, packet_id, record);
+}
+
+netfilter_packet_result_t netfilterReceivePacket(int netfilter_socket, sbuf_t *buff, uint32_t *packet_id)
+{
+    return netfilterReceivePacketInternal(netfilter_socket, buff, packet_id, NULL);
+}
+
+netfilter_packet_result_t netfilterReceivePacketRecord(int netfilter_socket, netfilter_packet_record_t *record)
+{
+    return netfilterReceivePacketInternal(netfilter_socket, record->buffer, &record->packet_id, record);
 }
 
 netfilter_packet_result_t netfilterReceiveBatch(int netfilter_socket, netfilter_batch_workspace_t *workspace,
@@ -940,8 +982,8 @@ netfilter_packet_result_t netfilterReceiveBatch(int netfilter_socket, netfilter_
             {
                 netfilter_packet_record_t *record  = &records[i];
                 const struct mmsghdr      *message = &workspace->messages[i];
-                record->result =
-                    netfilterDecodeDatagram(record->buffer, &message->msg_hdr, message->msg_len, &record->packet_id);
+                record->result                     = netfilterDecodeDatagram(
+                    record->buffer, &message->msg_hdr, message->msg_len, &record->packet_id, record);
                 record->error = record->result == kNetfilterPacketError ? errno : 0;
             }
             return kNetfilterPacketReady;

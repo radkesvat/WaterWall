@@ -1,4 +1,5 @@
 #include "APIServer/structure.h"
+#include "loggers/network_logger.h"
 
 enum
 {
@@ -124,9 +125,23 @@ static bool checkDeadlines(apiserver_lstate_t *ls)
     uint64_t now = nodeApiNowMs();
     for (api_request_t *r = ls->requests ? ls->requests->next : NULL; r; r = r->next)
         if (r->deadline_ms && now >= r->deadline_ms)
+        {
+            LOGW("APIServer: closing session: queued request deadline expired "
+                 "(overdue_ms=%" PRIu64 ", request_timeout_ms=%u)",
+                 now - r->deadline_ms,
+                 ((apiserver_tstate_t *) tunnelGetState(ls->tunnel))->limits.request_timeout_ms);
             return false; /* Never insert a later timeout ahead of the head reply. */
+        }
     if (ls->output_deadline && now >= ls->output_deadline)
+    {
+        LOGW("APIServer: closing session: output deadline expired "
+             "(sent_bytes=%zu, output_bytes=%zu, overdue_ms=%" PRIu64 ", output_timeout_ms=%u)",
+             ls->output_offset,
+             ls->output_size,
+             now - ls->output_deadline,
+             ((apiserver_tstate_t *) tunnelGetState(ls->tunnel))->limits.output_timeout_ms);
         return false;
+    }
     if (ls->frame_deadline && now >= ls->frame_deadline)
     {
         if (! apiserverFramingError(ls, "timeout"))
@@ -134,13 +149,21 @@ static bool checkDeadlines(apiserver_lstate_t *ls)
     }
     if (ls->requests && ls->requests->deadline_ms && now >= ls->requests->deadline_ms)
     {
+        LOGW("APIServer: request deadline expired; sending timeout and closing session "
+             "(overdue_ms=%" PRIu64 ", request_timeout_ms=%u)",
+             now - ls->requests->deadline_ms,
+             ((apiserver_tstate_t *) tunnelGetState(ls->tunnel))->limits.request_timeout_ms);
         apiserverAbandonJob(ls);
         ls->requests->close = true;
         if (! apiserverPublishResponse(ls, "timeout", NULL, kApiResultError, NULL, 0))
             return false;
     }
     if (! ls->requests && ! ls->input_head && ! ls->frame_deadline && ! ls->output && now >= ls->idle_deadline)
+    {
+        LOGD("APIServer: closing idle session (idle_timeout_ms=%u)",
+             ((apiserver_tstate_t *) tunnelGetState(ls->tunnel))->limits.idle_timeout_ms);
         return false;
+    }
     return true;
 }
 

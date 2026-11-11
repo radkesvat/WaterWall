@@ -25,6 +25,7 @@
 
 #include "devices/device_flow_affinity.h"
 #include "devices/device_reader_session.h"
+#include "loggers/internal_logger.h"
 #include "net/packet_batch.h"
 
 #include "wloop_internal.h"
@@ -1685,8 +1686,31 @@ static void testConcurrentProducerBudget(test_env_t *env)
 /* Exercise the actual nonblocking affinity -> FIFO path with only five
  * ordinary packets. The consumer is held by the captured scheduler, so no
  * network traffic or resource-exhaustion workload is involved. */
+static char   overflow_diagnostic[4096];
+static size_t overflow_diagnostic_length;
+
+static void captureOverflowDiagnostic(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t copied = min((size_t) length, sizeof(overflow_diagnostic) - overflow_diagnostic_length - 1);
+    memoryCopy(overflow_diagnostic + overflow_diagnostic_length, bytes, copied);
+    overflow_diagnostic_length += copied;
+    overflow_diagnostic[overflow_diagnostic_length] = '\0';
+}
+
 static void testBoundedAffinityDispatch(test_env_t *env)
 {
+    logger_t  *logger       = getInternalLogger();
+    const bool owned_logger = logger == NULL;
+    if (owned_logger)
+    {
+        logger = loggerCreate();
+        setInternalLogger(logger);
+    }
+    const logger_handler previous_handler = loggerGetHandle(logger);
+    loggerSetHandler(logger, captureOverflowDiagnostic);
     for (unsigned int mode = 0; mode < 3; ++mode)
     {
         resetCapturedMessages();
@@ -1717,6 +1741,18 @@ static void testBoundedAffinityDispatch(test_env_t *env)
                 "could not configure bounded affinity fixture");
         tracked_reuse_pool = env->worker_buffer_pool;
         deviceReaderDistributeBatchDroppingOverflow(session, buffers, ARRAY_SIZE(buffers));
+        if (mode == 0)
+        {
+            char expected[160];
+            snprintf(expected, sizeof(expected), "allocation_limit_bytes=%zu, packet_limit=2", byte_limit);
+            require(strstr(overflow_diagnostic, "dropping unadmitted input: device dispatch budget exceeded") != NULL &&
+                        strstr(overflow_diagnostic, "last_reason=queue_capacity") != NULL &&
+                        strstr(overflow_diagnostic, "last_dropped_dispatch_packets=3") != NULL &&
+                        strstr(overflow_diagnostic, "queued_packets_snapshot=2") != NULL &&
+                        strstr(overflow_diagnostic, expected) != NULL,
+                    "nonblocking dispatch overflow lost drop action, observed remainder, effective limits or snapshot "
+                    "label");
+        }
         const unsigned int accepted = mode == 2 ? 0 : 2;
         require(atomicLoadRelaxed(&session->output_packets) == accepted &&
                     atomic_load_explicit(&session->output_charge, memory_order_relaxed) == accepted * charge &&
@@ -1746,6 +1782,10 @@ static void testBoundedAffinityDispatch(test_env_t *env)
         tracked_reuse_pool = NULL;
         deviceReaderSessionUnref(session);
     }
+    if (owned_logger)
+        internaloggerDestroy();
+    else
+        loggerSetHandler(logger, previous_handler);
 }
 
 int main(void)

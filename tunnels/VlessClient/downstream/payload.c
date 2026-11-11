@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -29,6 +30,28 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                               sbufGetQueueCharge(buf) > kVlessClientMaxOrderCharge - retained_charge);
     if (UNLIKELY(charge_full || ! bufferreaderTryPush(&ls->reader, &buf, limit)))
     {
+        const size_t retained_bytes = bufferreaderLength(&ls->reader);
+        const size_t incoming_bytes = sbufGetLength(buf);
+        if (charge_full)
+            LOGW("VlessClient: closing connection: receive input admission refused: storage charge limit exceeded "
+                 "(retained_charge_bytes=%zu, incoming_charge_bytes=%zu, charge_limit_bytes=%u, "
+                 "retained_bytes=%zu, incoming_bytes=%zu)",
+                 retained_charge,
+                 sbufGetQueueCharge(buf),
+                 (unsigned) kVlessClientMaxOrderCharge,
+                 retained_bytes,
+                 incoming_bytes);
+        else
+            LOGW("VlessClient: closing connection: receive input admission refused: %s "
+                 "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, retained_charge_bytes=%zu, "
+                 "incoming_charge_bytes=%zu)",
+                 retained_bytes > limit || incoming_bytes > limit - retained_bytes ? "byte limit exceeded"
+                                                                                   : "queue admission failed",
+                 retained_bytes,
+                 incoming_bytes,
+                 limit,
+                 retained_charge,
+                 sbufGetQueueCharge(buf));
         lineReuseBuffer(l, buf);
         vlessclientCloseLine(t, l, kVlessClientCloseInternal);
         return;
@@ -37,7 +60,13 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* UDP input must settle while the outer callback owns the parser. */
         if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge))
+        {
+            LOGW("VlessClient: closing connection: retained input charge limit exceeded "
+                 "(retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 bufferreaderCharge(&ls->reader),
+                 (unsigned) kVlessClientMaxInputCharge);
             vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+        }
         return;
     }
     line_t *application = ls->kind == kVlessClientLineKindUdpCarrier ? ls->application_line : l;
@@ -79,7 +108,13 @@ void vlessclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* Complete frames drain first, including after response metadata. */
         if (ls->kind == kVlessClientLineKindUdpCarrier && ! bufferreaderSettle(&ls->reader, kVlessClientMaxInputCharge))
+        {
+            LOGW("VlessClient: closing connection: retained input charge limit exceeded "
+                 "(retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 bufferreaderCharge(&ls->reader),
+                 (unsigned) kVlessClientMaxInputCharge);
             vlessclientCloseLine(t, l, kVlessClientCloseInternal);
+        }
         else
         {
             ls->receiving = false;

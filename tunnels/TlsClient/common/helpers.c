@@ -536,7 +536,10 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
     }
     if (tlsrecordshapingOutputQueueBytes(&ls->shaping_output) >= kTlsRecordShapingQueueHardLimit)
     {
-        LOGW("TlsClient: record shaping queue could not be reduced below its 8 MiB hard limit");
+        LOGW("TlsClient: TLS output refused: record shaping queue remains at its hard limit "
+             "(queued_ciphertext_bytes=%zu, limit_bytes=%u)",
+             tlsrecordshapingOutputQueueBytes(&ls->shaping_output),
+             (unsigned) kTlsRecordShapingQueueHardLimit);
         return false;
     }
     return tlsclientScheduleShapedOutput(t, l, ls);

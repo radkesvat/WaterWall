@@ -25,7 +25,9 @@ static void __connect_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("connect timeout [%s] <=> [%s]",
+        wlogw("closing connection: connect timeout (fd=%d, timeout_ms=%d) [%s] <=> [%s]",
+              wioGetFD(io),
+              io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT,
               SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
@@ -40,7 +42,10 @@ static void __close_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("close timeout [%s] <=> [%s]",
+        wlogw("forcing socket close: output drain timeout (fd=%d, queued_bytes=%u, timeout_ms=%d) [%s] <=> [%s]",
+              wioGetFD(io),
+              io->write_bufsize,
+              io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT,
               SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
@@ -125,7 +130,6 @@ static void nio_accept(wio_t *io)
             }
             else
             {
-                LOGE("listenfd=%d accept error: %s:%d", wioGetFD(io), socketStrError(err), err);
                 io->error = err;
                 goto accept_error;
             }
@@ -157,7 +161,10 @@ static void nio_accept(wio_t *io)
     return;
 
 accept_error:
-    wloge("listenfd=%d accept error: %s:%d", wioGetFD(io), socketStrError(io->error), io->error);
+    wloge("accept failed; listener remains open (fd=%d, error=%d: %s)",
+          wioGetFD(io),
+          io->error,
+          socketStrError(io->error));
     // NOTE: Don't close listen fd automatically anyway.
     // wioClose(io);
 }
@@ -550,6 +557,11 @@ write:
         else
         {
             // printError("write");
+            wloge("socket write failed (fd=%d, remaining_bytes=%zu, queued_bytes=%u, error=%d)",
+                  wioGetFD(io),
+                  sbufGetLength(buf),
+                  io->write_bufsize,
+                  err);
             io->error = err;
             goto write_error;
         }
@@ -904,6 +916,10 @@ int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after)
             else
             {
                 // printError("write");
+                wloge("socket write failed (fd=%d, remaining_bytes=%zu, error=%d)",
+                      wioGetFD(io),
+                      sbufGetLength(buf),
+                      err);
                 io->error = err;
                 goto write_error;
             }
@@ -920,6 +936,10 @@ int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after)
         add_error = wioAddAlreadyAdmitted(io, wio_handle_events, WW_WRITE);
         if (UNLIKELY(add_error != 0))
         {
+            wloge("closing socket: write watcher registration failed (fd=%d, remaining_bytes=%zu, result=%d)",
+                  wioGetFD(io),
+                  sbufGetLength(buf),
+                  add_error);
             io->error = add_error < 0 ? -add_error : add_error;
             nwrite    = add_error;
             goto write_error;
@@ -930,7 +950,12 @@ int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after)
     {
         if (io->write_bufsize + (uint32_t) len - (uint32_t) nwrite > io->max_write_bufsize)
         {
-            wloge("write bufsize > %u, close it!", io->max_write_bufsize);
+            wloge("closing socket: write queue limit exceeded (fd=%d, queued_bytes=%u, incoming_bytes=%zu, "
+                  "limit_bytes=%u)",
+                  wioGetFD(io),
+                  io->write_bufsize,
+                  sbufGetLength(buf),
+                  io->max_write_bufsize);
             io->error = WERR_OVER_LIMIT;
             goto write_error;
         }

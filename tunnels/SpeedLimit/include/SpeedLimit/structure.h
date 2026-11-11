@@ -1,5 +1,6 @@
 #pragma once
 
+#include "loggers/log_rate_limiter.h"
 #include "wwapi.h"
 
 typedef struct speedlimit_lstate_s speedlimit_lstate_t;
@@ -30,6 +31,8 @@ typedef struct speedlimit_tstate_s
     uint8_t  work_mode;
     uint16_t _padding0;
 
+    atomic_log_rate_limiter_t  drop_log_limiter;
+    atomic_ullong              dropped_payloads;
     speedlimit_atomic_bucket_t global_bucket;
     speedlimit_bucket_t        worker_buckets[];
 } speedlimit_tstate_t;
@@ -94,6 +97,7 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
+void                              speedlimitLogDrop(tunnel_t *t, line_t *line, size_t bytes, bool upstream);
 void                              speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t *l);
 void                              speedlimitLinestateDestroy(speedlimit_lstate_t *ls);
 extern const traffic_shaper_ops_t speedlimitShaperOps;

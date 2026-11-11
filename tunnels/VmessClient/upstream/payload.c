@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 void vmessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -44,6 +45,22 @@ void vmessclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     buf = vmessclientCompactInput(l, buf);
     if (! bufferqueueTryPushBack(&next_ls->pending_up, &buf))
     {
+        const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&next_ls->upstream_budget);
+        const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&next_ls->upstream_budget);
+        const size_t               incoming_bytes  = sbufGetLength(buf);
+        const size_t               incoming_charge = sbufGetQueueCharge(buf);
+        LOGW("VmessClient: closing connection: upstream ordering queue refused: %s "
+             "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+             incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+             : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                              : "queue admission failed",
+             usage.bytes,
+             incoming_bytes,
+             limits.bytes,
+             usage.charge,
+             incoming_charge,
+             limits.charge);
         lineReuseBuffer(l, buf);
         vmessclientSetReason(next_ls, kVmessClientReasonRetainedInput);
         vmessclientCloseLine(t, next, kVmessClientCloseInternal);

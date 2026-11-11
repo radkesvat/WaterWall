@@ -65,7 +65,8 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    const char *refusal = ctpRefusePendingPayload(ts, ls, sbufGetLength(buf));
+    const size_t incoming_bytes = sbufGetLength(buf);
+    const char  *refusal        = ctpRefusePendingPayload(ts, ls, incoming_bytes);
 
     if (UNLIKELY(refusal != NULL))
     {
@@ -74,13 +75,16 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         if (atomicLogRateLimiterShouldLog(&ctp_admission_log, kCtpDropLogIntervalMs))
         {
-            LOGW("ConnectionToPackets: unwritten payload passed the flow's %s (%u budget bytes + %u delivery bytes / "
-                 "%u entries), "
-                 "resetting the flow",
+            LOGW("ConnectionToPackets: resetting TCP flow: %s admission refused "
+                 "(queued_bytes=%zu, incoming_bytes=%zu, max-pending-bytes=%u, delivery_headroom_bytes=%u, "
+                 "queued_entries=%zu, entry_limit=%u)",
                  refusal,
-                 (unsigned int) ts->max_pending_bytes,
-                 (unsigned int) kCtpPendingDeliveryHeadroom,
-                 (unsigned int) kCtpMaxPendingEntries);
+                 bufferqueueGetLength(&ls->pending_queue),
+                 incoming_bytes,
+                 (unsigned) ts->max_pending_bytes,
+                 (unsigned) kCtpPendingDeliveryHeadroom,
+                 bufferqueueGetEntryCount(&ls->pending_queue),
+                 (unsigned) kCtpMaxPendingEntries);
         }
         ctpCloseLineTowardPrevWithoutDrain(t, l);
         return;
@@ -97,7 +101,11 @@ void ctpTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         lineReuseBuffer(l, buf);
         if (atomicLogRateLimiterShouldLog(&ctp_admission_log, kCtpDropLogIntervalMs))
         {
-            LOGW("ConnectionToPackets: payload queue capacity rejected, resetting the flow");
+            LOGW("ConnectionToPackets: resetting TCP flow: pending queue geometry refused "
+                 "(queued_bytes=%zu, incoming_bytes=%zu, queued_entries=%zu)",
+                 bufferqueueGetLength(&ls->pending_queue),
+                 incoming_bytes,
+                 bufferqueueGetEntryCount(&ls->pending_queue));
         }
         ctpCloseLineTowardPrevWithoutDrain(t, l);
         return;

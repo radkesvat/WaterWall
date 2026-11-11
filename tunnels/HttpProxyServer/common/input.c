@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 /* Shared bounded storage and HTTP framing for both Payload callbacks. */
 
@@ -155,12 +156,27 @@ int hpsReadHeader(hps_session_t *s, hps_direction_t d, char **block)
             break;
         }
     if ((! n && len >= hpsSettings(s)->max_header) || n > hpsSettings(s)->max_header)
+    {
+        LOGW("HttpProxyServer: refusing %s header: max-header-bytes exceeded "
+             "(observed_header_bytes=%zu, max_header_bytes=%u, header_complete=%s)",
+             d == kHpsUpstream ? "request" : "response",
+             n ? n : len,
+             hpsSettings(s)->max_header,
+             boolToTrueFalse(n != 0));
         return -431;
+    }
     size_t line = 0;
     while (line < len && p[line] != '\r' && p[line] != '\n')
         ++line;
     if (line > kHpsRequestLineLimit)
+    {
+        LOGW("HttpProxyServer: refusing %s header: first-line protocol size limit exceeded "
+             "(first_line_bytes=%zu, protocol_limit_bytes=%u)",
+             d == kHpsUpstream ? "request" : "response",
+             line,
+             (unsigned) kHpsRequestLineLimit);
         return -414;
+    }
     if (! n)
         return 0;
     *block = memoryAllocate(n + 1);
@@ -264,6 +280,12 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         }
         if (length > allowance + hpsSettings(s)->max_pending)
         {
+            LOGW("HttpProxyServer: refusing %s delivery: pending data plus delivery headroom exceeded "
+                 "(incoming_bytes=%" PRIu64 ", max_pending_bytes=%u, delivery_headroom_bytes=%" PRIu64 ")",
+                 d == kHpsUpstream ? "request" : "response",
+                 length,
+                 hpsSettings(s)->max_pending,
+                 allowance);
             lineReuseBuffer(l, buf);
             hpsFail(s, 503);
             return;
@@ -349,6 +371,15 @@ void hpsAcceptPayload(hps_session_t *s, line_t *l, sbuf_t *buf, hps_direction_t 
         lineReuseBuffer(l, buf);
     else if (oversized || length + older > allowance)
     {
+        LOGW("HttpProxyServer: refusing %s delivery: %s limit exceeded "
+             "(remaining_bytes=%" PRIu64 ", deferred_bytes=%" PRIu64 ", delivery_headroom_bytes=%" PRIu64
+             ", max_pending_bytes=%u)",
+             d == kHpsUpstream ? "request" : "response",
+             oversized ? "delivery" : "deferred remainder",
+             length,
+             older,
+             allowance,
+             hpsSettings(s)->max_pending);
         lineReuseBuffer(l, buf);
         hpsFail(s, 503);
     }

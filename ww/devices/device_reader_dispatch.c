@@ -19,6 +19,10 @@ bool deviceReaderSessionEnableWorkerQueue(device_reader_session_t *session)
     {
         if (! mutexTryInit(&queues[i].lock))
         {
+            LOGE("DeviceReaderSession: cannot configure worker dispatch: queue mutex initialization failed "
+                 "(worker=%u, requested_worker_queues=%u)",
+                 (unsigned) i,
+                 (unsigned) count);
             for (uint16_t j = 0; j < i; ++j)
             {
                 mutexDestroy(&queues[j].lock);
@@ -478,7 +482,10 @@ bool deviceReaderSessionPost(device_reader_session_t *session, wid_t target_wid,
             const size_t next = sbufGetAllocationCharge(bufs[first + chunk]);
             if (UNLIKELY(next > session->output_charge_limit))
             {
-                LOGF("DeviceReaderSession: ordinary packet exceeds configured queue budget");
+                LOGF("DeviceReaderSession: ordinary packet exceeds device queue budget "
+                     "(packet_allocation_bytes=%zu, allocation_limit_bytes=%zu)",
+                     next,
+                     session->output_charge_limit);
                 abortProgramNow(1);
             }
             if (next > session->output_charge_limit - charge)
@@ -520,7 +527,11 @@ device_reader_post_result_e deviceReaderSessionTryPost(device_reader_session_t *
         const size_t next = sbufGetAllocationCharge(bufs[i]);
         if (UNLIKELY(next > session->output_charge_limit - charge))
         {
-            LOGF("DeviceReaderSession: nonblocking batch exceeds configured queue budget");
+            LOGF("DeviceReaderSession: nonblocking batch exceeds device queue budget "
+                 "(batch_allocation_bytes=%zu, incoming_allocation_bytes=%zu, allocation_limit_bytes=%zu)",
+                 charge,
+                 next,
+                 session->output_charge_limit);
             abortProgramNow(1);
         }
         charge += next;
@@ -580,7 +591,10 @@ bool deviceReaderSessionPostReserved(device_reader_session_t *session, wid_t tar
     {
         if (UNLIKELY(charges[i] != sbufGetAllocationCharge(bufs[i])))
         {
-            LOGF("DeviceReaderSession: output reservation does not match packet allocation charge");
+            LOGF("DeviceReaderSession: output reservation does not match packet allocation charge "
+                 "(reserved_bytes=%zu, packet_allocation_bytes=%zu)",
+                 charges[i],
+                 sbufGetAllocationCharge(bufs[i]));
             abortProgramNow(1);
         }
     }

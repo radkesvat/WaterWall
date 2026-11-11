@@ -658,10 +658,10 @@ static bool httpserverTransportSendHttp1WebSocketResponseHeaders(tunnel_t *t, li
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: accepting websocket HTTP/1.1 upgrade path=%s host=%s protocol=%s",
-             info->path,
-             info->host,
-             ts->websocket_subprotocol != NULL ? ts->websocket_subprotocol : "<none>");
+        LOGD("HttpServer: accepting websocket HTTP/1.1 upgrade path_bytes=%zu host_bytes=%zu protocol_bytes=%zu",
+             httpserverLogTextBytes(info->path),
+             httpserverLogTextBytes(info->host),
+             httpserverLogTextBytes(ts->websocket_subprotocol));
     }
 
     if (! stringAppendFormat(header_buf, kHttpServerMaxHeaderBytes, &offset, "HTTP/1.1 101 Switching Protocols\r\n") ||
@@ -729,7 +729,7 @@ static bool httpserverTransportSendHttp1UpgradeResponseHeaders(tunnel_t *t, line
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: accepting HTTP/1.1 upgrade protocol=%s", protocol);
+        LOGD("HttpServer: accepting HTTP/1.1 upgrade protocol_bytes=%zu", httpserverLogTextBytes(protocol));
     }
 
     char  *header_buf = memoryAllocate(kHttpServerMaxHeaderBytes);
@@ -1001,24 +1001,38 @@ static bool parseHttp1RequestHeaders(const char *headers, httpserver_h1_request_
     return true;
 }
 
+static const char *httpserverLogMethod(const char *method)
+{
+    /* Only canonical protocol names reach the log; unknown peer tokens may contain secrets. */
+    return method != NULL ? httpMethodStr(httpMethodEnum(method)) : "<missing>";
+}
+
 static bool validateHttp1Request(const httpserver_tstate_t *ts, const httpserver_h1_request_info_t *info)
 {
     if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
         ! stringAsciiCaseEquals(ts->expected_method, info->method))
     {
-        LOGW("HttpServer: method mismatch, expected=%s got=%s", ts->expected_method, info->method);
+        LOGW("HttpServer: method mismatch, expected=%s got=%s (expected_bytes=%zu, got_bytes=%zu)",
+             httpserverLogMethod(ts->expected_method),
+             httpserverLogMethod(info->method),
+             httpserverLogTextBytes(ts->expected_method),
+             httpserverLogTextBytes(info->method));
         return false;
     }
 
     if (ts->expected_path != NULL && ts->expected_path[0] != '\0' && stringCompare(ts->expected_path, info->path) != 0)
     {
-        LOGW("HttpServer: path mismatch, expected=%s got=%s", ts->expected_path, info->path);
+        LOGW("HttpServer: path mismatch, expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_path),
+             httpserverLogTextBytes(info->path));
         return false;
     }
 
     if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host, info->host))
     {
-        LOGW("HttpServer: host mismatch, expected=%s got=%s", ts->expected_host, info->host);
+        LOGW("HttpServer: host mismatch, expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_host),
+             httpserverLogTextBytes(info->host));
         return false;
     }
 
@@ -1035,13 +1049,17 @@ static bool validateWebSocketHttp1Request(const httpserver_tstate_t *ts, const h
 
     if (ts->expected_path != NULL && ts->expected_path[0] != '\0' && stringCompare(ts->expected_path, info->path) != 0)
     {
-        LOGW("HttpServer: websocket path mismatch, expected=%s got=%s", ts->expected_path, info->path);
+        LOGW("HttpServer: websocket path mismatch, expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_path),
+             httpserverLogTextBytes(info->path));
         return false;
     }
 
     if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host, info->host))
     {
-        LOGW("HttpServer: websocket host mismatch expected=%s got=%s", ts->expected_host, info->host);
+        LOGW("HttpServer: websocket host mismatch expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_host),
+             httpserverLogTextBytes(info->host));
         return false;
     }
 
@@ -1282,27 +1300,30 @@ static bool validateHttp2Request(const httpserver_tstate_t *ts, const httpserver
     if (ts->expected_method != NULL && ts->expected_method[0] != '\0' &&
         (! ls->websocket_h2_method_seen || ! stringAsciiCaseEquals(ts->expected_method, ls->websocket_h2_method)))
     {
-        LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s",
-             ts->expected_method,
-             ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>");
+        const char *method = ls->websocket_h2_method_seen ? ls->websocket_h2_method : NULL;
+        LOGW("HttpServer: HTTP/2 method mismatch, expected=%s got=%s (expected_bytes=%zu, got_bytes=%zu)",
+             httpserverLogMethod(ts->expected_method),
+             httpserverLogMethod(method),
+             httpserverLogTextBytes(ts->expected_method),
+             httpserverLogTextBytes(method));
         return false;
     }
 
     if (ts->expected_path != NULL && ts->expected_path[0] != '\0' &&
         (! ls->websocket_h2_path_seen || stringCompare(ts->expected_path, ls->websocket_h2_path) != 0))
     {
-        LOGW("HttpServer: HTTP/2 path mismatch, expected=%s got=%s",
-             ts->expected_path,
-             ls->websocket_h2_path_seen ? ls->websocket_h2_path : "<missing>");
+        LOGW("HttpServer: HTTP/2 path mismatch, expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_path),
+             httpserverLogTextBytes(ls->websocket_h2_path_seen ? ls->websocket_h2_path : NULL));
         return false;
     }
 
     if (! httpserverAuthorityMatchesExpectedHost(ts->expected_host,
                                                  ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : ""))
     {
-        LOGW("HttpServer: HTTP/2 authority mismatch, expected=%s got=%s",
-             ts->expected_host,
-             ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : "<missing>");
+        LOGW("HttpServer: HTTP/2 authority mismatch, expected_bytes=%zu got_bytes=%zu",
+             httpserverLogTextBytes(ts->expected_host),
+             httpserverLogTextBytes(ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : NULL));
         return false;
     }
 
@@ -1488,11 +1509,12 @@ static int httpserverOnFrameRecvCallback(nghttp2_session *session, const nghttp2
             ls->websocket_active = validateWebSocketHttp2Request(ts, ls);
             if (ls->websocket_active && ts->verbose)
             {
-                LOGD("HttpServer: websocket HTTP/2 handshake accepted stream_id=%d authority=%s path=%s protocol=%s",
+                LOGD("HttpServer: websocket HTTP/2 handshake accepted stream_id=%d authority_bytes=%zu path_bytes=%zu "
+                     "protocol_bytes=%zu",
                      ls->h2_stream_id,
-                     ls->websocket_h2_authority,
-                     ls->websocket_h2_path,
-                     ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : "<none>");
+                     httpserverLogTextBytes(ls->websocket_h2_authority),
+                     httpserverLogTextBytes(ls->websocket_h2_path),
+                     httpserverLogTextBytes(ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : NULL));
             }
         }
         else if (! validateHttp2Request(ts, ls))
@@ -1843,8 +1865,23 @@ bool httpserverTransportQueuePendingDown(line_t *l, httpserver_lstate_t *ls, sbu
 {
     if (bufferqueueTryPushBack(&ls->pending_down, &payload))
         return true;
+    const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&ls->pending_down_budget);
+    const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->pending_down_budget);
+    const size_t               incoming_bytes  = sbufGetLength(payload);
+    const size_t               incoming_charge = sbufGetQueueCharge(payload);
+    LOGW("HttpServer: refusing pending payload: %s "
+         "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+         "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+         incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+         : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                          : "queue admission failed",
+         usage.bytes,
+         incoming_bytes,
+         limits.bytes,
+         usage.charge,
+         incoming_charge,
+         limits.charge);
     lineReuseBuffer(l, payload);
-    LOGW("HttpServer: pending response payload limit exceeded");
     return false;
 }
 
@@ -2016,15 +2053,16 @@ static bool httpserverTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpse
     {
         if (ls->h2_stream_id > 0 && ! ls->websocket_active)
         {
-            LOGE("HttpServer: websocket HTTP/2 handshake failed method=%s protocol=%s path=%s authority=%s version=%s "
-                 "origin=%s subprotocol=%s",
-                 ls->websocket_h2_method_seen ? ls->websocket_h2_method : "<missing>",
-                 ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : "<missing>",
-                 ls->websocket_h2_path_seen ? ls->websocket_h2_path : "<missing>",
-                 ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : "<missing>",
-                 ls->websocket_h2_version_seen ? ls->websocket_h2_version : "<missing>",
-                 ls->websocket_h2_origin_seen ? ls->websocket_h2_origin : "<none>",
-                 ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : "<none>");
+            LOGE("HttpServer: websocket HTTP/2 handshake failed method_bytes=%zu protocol_bytes=%zu path_bytes=%zu "
+                 "authority_bytes=%zu version_bytes=%zu "
+                 "origin_bytes=%zu subprotocol_bytes=%zu",
+                 httpserverLogTextBytes(ls->websocket_h2_method_seen ? ls->websocket_h2_method : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_path_seen ? ls->websocket_h2_path : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_authority_seen ? ls->websocket_h2_authority : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_version_seen ? ls->websocket_h2_version : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_origin_seen ? ls->websocket_h2_origin : NULL),
+                 httpserverLogTextBytes(ls->websocket_h2_subprotocol_seen ? ls->websocket_h2_subprotocol : NULL));
             return false;
         }
 
@@ -2204,13 +2242,14 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
     {
         if (ts->verbose)
         {
-            LOGD("HttpServer: parsed websocket HTTP/1.1 request method=%s path=%s host=%s origin=%s subprotocol=%s "
+            LOGD("HttpServer: parsed websocket HTTP/1.1 request method_bytes=%zu path_bytes=%zu host_bytes=%zu "
+                 "origin_bytes=%zu subprotocol_bytes=%zu "
                  "transfer-chunked=%s content-length=%" PRId64,
-                 info.method,
-                 info.path,
-                 info.host,
-                 info.has_origin ? info.origin : "<none>",
-                 info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>",
+                 httpserverLogTextBytes(info.method),
+                 httpserverLogTextBytes(info.path),
+                 httpserverLogTextBytes(info.host),
+                 httpserverLogTextBytes(info.has_origin ? info.origin : NULL),
+                 httpserverLogTextBytes(info.has_sec_websocket_protocol ? info.sec_websocket_protocol : NULL),
                  boolToTrueFalse(info.transfer_chunked),
                  info.content_length);
         }
@@ -2251,10 +2290,11 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
 
     if (ts->verbose)
     {
-        LOGD("HttpServer: parsed HTTP/1.1 request method=%s path=%s host=%s transfer-chunked=%s content-length=%s",
-             info.method,
-             info.path,
-             info.host,
+        LOGD("HttpServer: parsed HTTP/1.1 request method_bytes=%zu path_bytes=%zu host_bytes=%zu transfer-chunked=%s "
+             "content-length=%s",
+             httpserverLogTextBytes(info.method),
+             httpserverLogTextBytes(info.path),
+             httpserverLogTextBytes(info.host),
              boolToTrueFalse(info.transfer_chunked),
              boolToTrueFalse(info.has_content_length));
     }
@@ -2269,9 +2309,10 @@ bool httpserverTransportHandleHttp1RequestHeaderPhase(tunnel_t *t, line_t *l, ht
         {
             if (request_has_body)
             {
-                LOGW("HttpServer: ignoring upgrade request protocol=%s because the original HTTP/1.1 request carries a "
+                LOGW("HttpServer: ignoring upgrade request protocol_bytes=%zu because the original HTTP/1.1 request "
+                     "carries a "
                      "body",
-                     httpserverUpgradeProtocol(ts));
+                     httpserverLogTextBytes(httpserverUpgradeProtocol(ts)));
             }
             else
             {

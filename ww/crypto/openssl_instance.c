@@ -7,6 +7,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <stdio.h>
 
 static void *opennsl_dedicated_malloc(size_t num, const char *file, int line)
 {
@@ -48,8 +49,14 @@ wcrypto_status_t opensslGlobalInit(void)
     }
 
     GSTATE.openssl_dedicated_memory = memorymanagerCreateDedicatedMemory();
-    if (0 == CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free))
+    const int memory_hooks =
+        CRYPTO_set_mem_functions(opennsl_dedicated_malloc, opennsl_dedicated_realloc, opennsl_dedicated_free);
+    if (memory_hooks == 0)
     {
+        fprintf(stderr,
+                "OpenSSL: refusing cryptography startup: allocator-hook installation rejected "
+                "(CRYPTO_set_mem_functions_result=%d)\n",
+                memory_hooks);
         GSTATE.openssl_dedicated_memory = NULL;
         return kWCryptoBackendFailed;
     }
@@ -57,15 +64,37 @@ wcrypto_status_t opensslGlobalInit(void)
 #if OPENSSL_VERSION_NUMBER >= 0x10100000L
     uint64_t init_flags =
         OPENSSL_INIT_SSL_DEFAULT | OPENSSL_INIT_ADD_ALL_CIPHERS | OPENSSL_INIT_ADD_ALL_DIGESTS | OPENSSL_INIT_NO_ATEXIT;
-    if (OPENSSL_init_ssl(init_flags, NULL) != 1)
+    const int initialized = OPENSSL_init_ssl(init_flags, NULL);
+    if (initialized != 1)
     {
+        const unsigned long error = ERR_peek_last_error();
+        if (error != 0)
+            fprintf(stderr,
+                    "OpenSSL: refusing cryptography startup: OPENSSL_init_ssl failed "
+                    "(result=%d, openssl_error_code=%lu)\n",
+                    initialized,
+                    error);
+        else
+            fprintf(
+                stderr, "OpenSSL: refusing cryptography startup: OPENSSL_init_ssl failed (result=%d)\n", initialized);
         opensslRuntimeCleanup();
         GSTATE.openssl_dedicated_memory = NULL;
         return kWCryptoBackendFailed;
     }
 #else
-    if (SSL_library_init() != 1)
+    const int initialized = SSL_library_init();
+    if (initialized != 1)
     {
+        const unsigned long error = ERR_peek_last_error();
+        if (error != 0)
+            fprintf(stderr,
+                    "OpenSSL: refusing cryptography startup: SSL_library_init failed "
+                    "(result=%d, openssl_error_code=%lu)\n",
+                    initialized,
+                    error);
+        else
+            fprintf(
+                stderr, "OpenSSL: refusing cryptography startup: SSL_library_init failed (result=%d)\n", initialized);
         opensslRuntimeCleanup();
         GSTATE.openssl_dedicated_memory = NULL;
         return kWCryptoBackendFailed;

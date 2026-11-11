@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
@@ -21,6 +22,14 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
     if (UNLIKELY(! bufferreaderTryPush(&ls->reader, &buf, kTrojanClientMaxUdpBufferedBytes)))
     {
+        LOGW("TrojanClient: closing connection: receive input admission refused "
+             "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu)",
+             bufferreaderLength(&ls->reader),
+             sbufGetLength(buf),
+             (size_t) kTrojanClientMaxUdpBufferedBytes,
+             bufferreaderCharge(&ls->reader),
+             sbufGetQueueCharge(buf));
         lineReuseBuffer(l, buf);
         trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
         return;
@@ -29,7 +38,13 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* Nested input must settle while the outer callback owns the parser. */
         if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge))
+        {
+            LOGW("TrojanClient: closing connection: retained input charge limit exceeded "
+                 "(retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 bufferreaderCharge(&ls->reader),
+                 (unsigned) kTrojanClientMaxInputCharge);
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
+        }
         return;
     }
     assert(ls->kind == kTrojanClientLineKindUdpCarrier);
@@ -59,7 +74,13 @@ void trojanclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     {
         /* Complete frames drain first; only incomplete input survives return. */
         if (! bufferreaderSettle(&ls->reader, kTrojanClientMaxInputCharge))
+        {
+            LOGW("TrojanClient: closing connection: retained input charge limit exceeded "
+                 "(retained_charge_bytes=%zu, limit_charge_bytes=%u)",
+                 bufferreaderCharge(&ls->reader),
+                 (unsigned) kTrojanClientMaxInputCharge);
             trojanclientCloseLine(t, l, kTrojanClientCloseInternal);
+        }
         else
             ls->receiving = false;
     }

@@ -164,7 +164,16 @@ static void tunLogReaderPollError(tun_device_t *tdev, short revents)
 {
     int       socket_error = 0;
     socklen_t err_len      = sizeof(socket_error);
-    getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len);
+    if (getsockopt(tdev->handle, SOL_SOCKET, SO_ERROR, &socket_error, &err_len) != 0)
+    {
+        const int error = errno;
+        LOGE("TunDevice: stopping reader on %s after device poll event 0x%x; SO_ERROR unavailable (errno=%d: %s)",
+             tdev->name,
+             (unsigned) revents,
+             error,
+             strerror(error));
+        return;
+    }
     LOGE("TunDevice: Exit read routine due to socket error event: %s%s%s, socket error: %d (%s)",
          (revents & POLLERR) ? "POLLERR " : "",
          (revents & POLLHUP) ? "POLLHUP " : "",
@@ -209,7 +218,7 @@ WTHREAD_ROUTINE(routineReadFromTun)
             char    drain_byte;
             ssize_t drain_res = read(tdev->linux_pipe_fds[0], &drain_byte, 1);
             discard drain_res;
-            LOGW("TunDevice: Exit read routine due to pipe event");
+            LOGD("TunDevice: Exit read routine due to stop pipe event");
             break;
         }
 
@@ -268,8 +277,9 @@ static bool tunWriteResult(tun_device_t *tdev, ssize_t written, size_t expected,
     {
         if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
         {
-            LOGW("TunDevice: discarded a packet, writing to device %s failed with errno %d (%s)",
+            LOGW("TunDevice: discarded a packet, writing to device %s failed (write_bytes=%zu, errno=%d: %s)",
                  tdev->name,
+                 expected,
                  write_errno,
                  strerror(write_errno));
         }
@@ -307,6 +317,10 @@ static bool tunWriteOrdinary(tun_device_t *tdev, buffer_pool_t *pool, sbuf_t *bu
         if (tdev->trusted_checksums &&
             ! tunLinuxOffloadEncodeWrite(sbufGetMutablePtr(buf), (uint32_t) packet_length, metadata))
         {
+            if (atomicLogRateLimiterShouldLog(&tun_write_packet_failure_log, kTunPacketFailureLogIntervalMs))
+                LOGW("TunDevice: dropping output on %s: cannot encode checksum offload metadata (packet_bytes=%zu)",
+                     tdev->name,
+                     packet_length);
             bufferpoolReuseBuffer(pool, buf);
             return true;
         }
@@ -366,7 +380,13 @@ bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count
             if (written < 0 && write_errno == EINVAL)
             {
                 if (! atomicExchangeExplicit(&tdev->gso_write_disabled, true, memory_order_relaxed))
-                    LOGW("TunDevice: %s rejected TCP GSO output; using ordinary packet writes", tdev->name);
+                    LOGW("TunDevice: %s rejected TCP GSO output; using ordinary packet writes "
+                         "(record_bytes=%zu, packets=%u, errno=%d: %s)",
+                         tdev->name,
+                         record.length,
+                         members,
+                         write_errno,
+                         strerror(write_errno));
                 continue;
             }
             for (unsigned i = 0; i < members; ++i)
@@ -396,8 +416,8 @@ bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **batch, size_t count
     return true;
 }
 
-/* Failure-only TLS sampler. Full is ordinary bounded overload and deliberately
- * silent; Down/Closed keep sparse lifecycle evidence without a shared limiter. */
+/* Failure-only TLS sampler. Full is diagnosed by the shared writer;
+ * Down/Closed keep sparse lifecycle evidence without a shared limiter. */
 static bool tundeviceShouldLogRefusal(void)
 {
     static thread_local uint32_t refusal_count;

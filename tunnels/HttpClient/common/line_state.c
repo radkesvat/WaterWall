@@ -68,7 +68,22 @@ bool httpclientQueuePendingUp(line_t *l, httpclient_lstate_t *ls, sbuf_t *buf)
 {
     if (bufferqueueTryPushBack(&ls->pending_up, &buf))
         return true;
+    const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&ls->pending_up_budget);
+    const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->pending_up_budget);
+    const size_t               incoming_bytes  = sbufGetLength(buf);
+    const size_t               incoming_charge = sbufGetQueueCharge(buf);
+    LOGW("HttpClient: refusing pending payload: %s "
+         "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+         "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+         incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+         : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                          : "queue admission failed",
+         usage.bytes,
+         incoming_bytes,
+         limits.bytes,
+         usage.charge,
+         incoming_charge,
+         limits.charge);
     lineReuseBuffer(l, buf);
-    LOGW("HttpClient: pending application payload limit exceeded");
     return false;
 }

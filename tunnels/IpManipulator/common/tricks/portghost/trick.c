@@ -82,7 +82,11 @@ static bool appendGhostBytes(ipmanipulator_tstate_t *state, line_t *l, sbuf_t **
     {
         if (ipmanipulatorShouldLogEgressWarning(state))
         {
-            LOGW("portghosttrick: cannot append ghost bytes because IPv4 total length would overflow");
+            LOGW("portghosttrick: dropping packet: ghost trailer exceeds IPv4 length limit "
+                 "(packet_bytes=%u, trailer_bytes=%u, protocol_limit_bytes=%u)",
+                 (unsigned) ip_total_len,
+                 tail_len,
+                 (unsigned) UINT16_MAX);
         }
         return dropGhostedPacket(l, buf_ptr);
     }

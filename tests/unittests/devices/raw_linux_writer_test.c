@@ -691,7 +691,11 @@ static void testRefusalLogging(void)
     queuePacket(&rdev, 0, 0, 21);
     resetLogCapture();
     runFreshRefusal(&rdev);
-    require(log_capture_len == 0, "raw Full refusal emitted a diagnostic");
+    require(countLogSubstring("RawWriter: worker 0 refused 1 output packet(s)") == 1 &&
+                strstr(log_capture, "device packet budget reached") != NULL &&
+                strstr(log_capture, "last_retained_packets=1, requested_packets=1, packet_limit=1") != NULL &&
+                strstr(log_capture, "last_packet_bytes=21") != NULL,
+            "raw Full refusal lost its action, packet-budget evidence or effective limit");
     for (unsigned i = 0; i < 64; ++i)
     {
         sbuf_t *buffer = sbufCreate(21);
@@ -699,7 +703,7 @@ static void testRefusalLogging(void)
         require(! rawdeviceWrite(&rdev, buffer), "full raw queue accepted a write");
         sbufDestroy(buffer);
     }
-    require(log_capture_len == 0, "raw Full refusal logged at packet rate");
+    require(countLogSubstring("RawWriter: worker 0 refused") < 65, "raw Full refusal logged at packet rate");
     rawWriterCloseRequest(&rdev.writer);
     rawWriterCloseWait(&rdev.writer);
     atomicStoreRelaxed(&rdev.lifecycle, kRawLifecycleDown);

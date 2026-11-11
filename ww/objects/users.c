@@ -30,7 +30,43 @@ const char *usersUserNameForLog(const user_t *user)
     {
         return "<unnamed>";
     }
-    return user->name;
+    /* Two users can appear in one diagnostic. Keep separate bounded TLS
+     * views so argument evaluation order cannot overwrite another name. */
+    enum
+    {
+        kNameBytes = 64,
+        kViews     = 4
+    };
+    static thread_local char     views[kViews][kNameBytes * 4 + 4];
+    static thread_local unsigned next_view;
+    char                        *output  = views[next_view++ % kViews];
+    static const char            hex[]   = "0123456789abcdef";
+    size_t                       written = 0, consumed = 0;
+    for (; consumed < kNameBytes && user->name[consumed] != '\0'; ++consumed)
+    {
+        const unsigned char byte = (unsigned char) user->name[consumed];
+        if (byte == '\\' || byte == '"')
+        {
+            output[written++] = '\\';
+            output[written++] = (char) byte;
+        }
+        else if (byte >= 0x20 && byte < 0x7f)
+            output[written++] = (char) byte;
+        else
+        {
+            output[written++] = '\\';
+            output[written++] = 'x';
+            output[written++] = hex[byte >> 4];
+            output[written++] = hex[byte & 0xf];
+        }
+    }
+    if (user->name[consumed] != '\0')
+    {
+        memoryCopy(output + written, "...", 3);
+        written += 3;
+    }
+    output[written] = '\0';
+    return output;
 }
 
 void usersStringDuplicate(char **dest, const char *value)

@@ -17,6 +17,7 @@
 #include "VlessClient/interface.h"
 #include "dns_strategy.h"
 #include "internal.h"
+#include "loggers/network_logger.h"
 #include "splice_buffer.h"
 /* Keep the normal ownership ledger while refusing one first-output allocation. */
 #define __wrap_bufferpoolTryGetBestFit trackedTryGetBestFit
@@ -25,6 +26,18 @@
 #undef __wrap_bufferpoolTryGetBestFit
 
 static bool fail_initial_allocation;
+static char admission_log[2048];
+
+static void captureAdmissionLog(int level, const char *text, int length)
+{
+    discard level;
+    if (length <= 0 || strstr(text, "VlessClient: closing connection: receive input admission refused") == NULL)
+        return;
+    const size_t count = min((size_t) length, sizeof(admission_log) - 1);
+    memoryCopy(admission_log, text, count);
+    admission_log[count] = '\0';
+}
+
 sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding);
 sbuf_t     *__wrap_bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t size, uint16_t padding)
 {
@@ -399,6 +412,7 @@ static void beginWithAdmission(bool udp, const char *target, uint32_t pool_size,
                                unsigned admission)
 {
     memoryZero(&f, sizeof(f));
+    admission_log[0] = '\0';
     pressure = fail_queue = immediate_pressure = false;
     reads = moves = pressure_refusals               = 0;
     f.udp                                           = udp;
@@ -921,6 +935,12 @@ static void testLimits(uint32_t pool_size)
                    "exact retained limit refused");
         tunnelDownStreamPayload(f.t, f.carrier, bytes("x", 1, false, 320));
         twfRequire(! lineIsAlive(f.application), "retained input overflow survived");
+        char expected_limit[64];
+        snprintf(expected_limit, sizeof(expected_limit), "byte_limit=%zu", limit);
+        twfRequire(strstr(admission_log, "byte limit exceeded") != NULL &&
+                       strstr(admission_log, expected_limit) != NULL &&
+                       strstr(admission_log, "incoming_bytes=1") != NULL,
+                   "byte refusal diagnostic lost its actual reason, incoming bytes or applicable limit");
         memoryFree(data);
         end();
     }
@@ -957,6 +977,14 @@ static void testNestedTcpRetention(void)
                 tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0A", 3, pipe != 0, 320));
                 twfRequire(lineIsAlive(f.application) == (fault == 0), "retained TCP settlement changed");
                 twfRequire(f.down_len == (fault ? 1U : 1U + 1024U * size), "nested TCP delivery count changed");
+                if (fault == 1)
+                    twfRequire(strstr(admission_log, "storage charge limit exceeded") != NULL &&
+                                   strstr(admission_log, "charge_limit_bytes=8388608") != NULL &&
+                                   strstr(admission_log, "incoming_bytes=1") != NULL,
+                               "charge refusal diagnostic reported the byte limit instead of the failed charge cap");
+                if (fault == 2)
+                    twfRequire(strstr(admission_log, "queue admission failed") != NULL,
+                               "queue refusal diagnostic incorrectly blamed a byte or charge limit");
                 if (! fault)
                 {
                     for (unsigned i = 0; i < 1024U * size; ++i)
@@ -1665,6 +1693,9 @@ static void testExistingAssociationAfterAdmissionClose(void)
 
 int main(void)
 {
+    logger_t *logger = createNetworkLogger(NULL, false);
+    twfRequire(logger != NULL, "could not create VLESS admission diagnostic logger");
+    loggerSetHandler(logger, captureAdmissionLog);
     testInitAdmission();
     testExistingAssociationAfterAdmissionClose();
     testFirstPayload();
@@ -1700,6 +1731,7 @@ int main(void)
     TEST_RUN_CASE(testTcpBypassTransitions);
     testPreparedDestination();
     testOwnerDrain();
+    networkloggerDestroy();
     puts("VlessClient wire, splice, bounds, pressure and lifetime passed");
     return 0;
 }

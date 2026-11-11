@@ -95,7 +95,11 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     uint16_t min_first_fragment_payload = (uint16_t) ((tcphdr_len + 7U) & ~0x7U);
     if (min_first_fragment_payload >= total_payload)
     {
-        LOGW("sniblendertrick: packet is too small to fragment without splitting the TCP header, bypassing");
+        LOGW("sniblendertrick: bypassing fragmentation: TCP header leaves insufficient fragment payload "
+             "(ipv4_payload_bytes=%u, tcp_header_bytes=%u, minimum_first_fragment_bytes=%u)",
+             (unsigned) total_payload,
+             (unsigned) tcphdr_len,
+             (unsigned) min_first_fragment_payload);
         return false;
     }
 
@@ -144,9 +148,12 @@ bool sniblendertrickUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     if (planned_count <= 1)
     {
-        LOGW("sniblendertrick: packet is too small for configured fragment count (%d) after preserving the TCP header,"
-             " bypassing",
-             state->trick_sni_blender_packets_count);
+        LOGW("sniblendertrick: bypassing fragmentation: payload cannot form configured fragments "
+             "(configured_fragments=%d, planned_fragments=%d, ipv4_payload_bytes=%u, tcp_header_bytes=%u)",
+             state->trick_sni_blender_packets_count,
+             planned_count,
+             (unsigned) total_payload,
+             (unsigned) tcphdr_len);
         return false;
     }
 

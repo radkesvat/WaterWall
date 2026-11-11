@@ -126,6 +126,8 @@ void streamfragmenterCloseLine(tunnel_t *t, line_t *l);
 bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l);
 void streamfragmenterDrain(tunnel_t *t, line_t *l);
 bool streamfragmenterEnqueue(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t cuts, streamfragmenter_job_kind_t kind);
+void streamfragmenterLogRetentionRefusal(streamfragmenter_lstate_t *ls, const char *operation, size_t incoming_bytes,
+                                         size_t incoming_charge);
 void streamfragmenterCandidateFallback(tunnel_t *t, line_t *l);
 bool streamfragmenterArmAssemblyTimer(tunnel_t *t, line_t *l);
 void streamfragmenterCancelAssemblyTimer(streamfragmenter_lstate_t *ls);

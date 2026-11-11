@@ -2,6 +2,7 @@
 
 #include "global_state.h"
 #include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 #include "quiescence_gate.h"
 #include "worker_messages.h"
 
@@ -14,6 +15,12 @@ typedef struct tun_writer_queue_s
     tun_writer_buffers_t buffers;
     bool                 scheduled; /* Owner worker, or closed and quiesced. */
     atomic_bool          cancelled;
+    log_rate_limiter_t   refusal_limiter;
+    const char          *last_refusal_reason;
+    size_t               last_refused_usage;
+    size_t               last_refused_request;
+    size_t               last_refused_limit;
+    size_t               last_refused_packet_bytes;
 } tun_writer_queue_t;
 
 struct tun_writer_generation_s
@@ -44,7 +51,24 @@ static void tunWriterGenerationUnref(tun_writer_generation_t *generation)
     }
 }
 
-static bool tunWriterReserve(atomic_size_t *used, size_t limit, size_t amount)
+static void tunWriterReportRefusals(tun_writer_queue_t *queue, size_t wid, log_rate_limiter_report_t report)
+{
+    if (report.should_log)
+        LOGW("TunWriter: worker %zu refused %llu output packet(s): device queue budget exceeded "
+             "(last_reason=%s, last_usage=%zu, last_requested=%zu, last_limit=%zu, last_packet_bytes=%zu, "
+             "last_unit=%s, total=%llu)",
+             wid,
+             LLU(report.events),
+             queue->last_refusal_reason,
+             queue->last_refused_usage,
+             queue->last_refused_request,
+             queue->last_refused_limit,
+             queue->last_refused_packet_bytes,
+             strcmp(queue->last_refusal_reason, "packet_count") == 0 ? "packets" : "allocation_bytes",
+             LLU(report.total));
+}
+
+static bool tunWriterReserve(atomic_size_t *used, size_t limit, size_t amount, size_t *refused_usage)
 {
 #if WW_HAVE_C11_ATOMICS
     size_t current = atomicLoadRelaxed(used);
@@ -54,7 +78,10 @@ static bool tunWriterReserve(atomic_size_t *used, size_t limit, size_t amount)
     for (;;)
     {
         if (amount > limit - (size_t) current)
+        {
+            *refused_usage = (size_t) current;
             return false;
+        }
         if (atomic_compare_exchange_weak_explicit(
                 used, &current, (size_t) current + amount, memory_order_relaxed, memory_order_relaxed))
             return true;
@@ -222,6 +249,7 @@ void tunWriterCloseWait(tun_writer_t *writer)
     for (size_t i = 0; i < generation->worker_count; ++i)
     {
         tun_writer_queue_t *queue = &generation->queues[i];
+        tunWriterReportRefusals(queue, i, logRateLimiterFlush(&queue->refusal_limiter));
         tunWriterDiscardQueue(generation, queue);
         tun_writer_buffers_t_drop(&queue->buffers);
     }
@@ -262,13 +290,22 @@ tun_writer_send_result_t tunWriterTrySend(tun_writer_t *writer, sbuf_t *buffer)
         goto done;
 
     result = kTunWriterSendFull;
-    if (! tunWriterReserve(&generation->packets, generation->packet_limit, 1))
-        goto done;
+    size_t refused_usage;
+    if (! tunWriterReserve(&generation->packets, generation->packet_limit, 1, &refused_usage))
+    {
+        queue->last_refusal_reason  = "packet_count";
+        queue->last_refused_request = 1;
+        queue->last_refused_limit   = generation->packet_limit;
+        goto budget_refused;
+    }
     const size_t charge = sbufGetAllocationCharge(buffer);
-    if (! tunWriterReserve(&generation->charge, generation->charge_limit, charge))
+    if (! tunWriterReserve(&generation->charge, generation->charge_limit, charge, &refused_usage))
     {
         discard atomicSubExplicit(&generation->packets, 1, memory_order_relaxed);
-        goto done;
+        queue->last_refusal_reason  = "allocation_bytes";
+        queue->last_refused_request = charge;
+        queue->last_refused_limit   = generation->charge_limit;
+        goto budget_refused;
     }
     discard tun_writer_buffers_t_push_back(&queue->buffers, buffer);
     if (! queue->scheduled && ! tunWriterSchedule(generation, queue, worker->wid))
@@ -281,6 +318,12 @@ tun_writer_send_result_t tunWriterTrySend(tun_writer_t *writer, sbuf_t *buffer)
         goto done;
     }
     result = kTunWriterSendOk;
+    goto done;
+budget_refused:
+    queue->last_refused_usage        = refused_usage;
+    queue->last_refused_packet_bytes = sbufGetLength(buffer);
+    /* Packet producers can repeatedly hit either dimension within one burst. */
+    tunWriterReportRefusals(queue, worker->wid, logRateLimiterRecordImmediate(&queue->refusal_limiter, 1000));
 done:
     quiescenceGateLeave(&generation->gate);
     return result;

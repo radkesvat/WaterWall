@@ -41,7 +41,19 @@ static inline void bgpStreamDestroy(bgp_stream_t *s)
 
 static inline void bgpClose(tunnel_t *t, line_t *l, bgp_stream_t *s, const char *reason)
 {
-    LOGE("Bgp4: %s", reason);
+    LOGE("Bgp4%s: closing line: %s "
+         "(retained_input_bytes=%zu, input_charge_bytes=%zu, input_byte_limit=%u, input_charge_limit_bytes=%u, "
+         "queued_output_bytes=%zu, output_charge_bytes=%zu, output_byte_limit=%u, output_charge_limit_bytes=%u)",
+         s->client ? "Client" : "Server",
+         reason,
+         spliceframereaderLength(&s->reader),
+         spliceframereaderCharge(&s->reader),
+         (unsigned) kBgpPendingBytes,
+         (unsigned) kBgpReadChargeLimit,
+         bufferqueueGetLength(&s->output),
+         bufferqueueGetCharge(&s->output),
+         (unsigned) kBgpPendingBytes,
+         (unsigned) kBgpOutputChargeLimit);
     bgpStreamDestroy(s);
     lineRef(l);
     tunnelNextUpStreamFinish(t, l);
@@ -171,17 +183,21 @@ done:
 
 static inline void bgpDecode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *buf)
 {
+    const size_t               incoming_bytes = sbufGetLength(buf);
+    char                       reason[128];
     const splice_frame_admit_t result = spliceframereaderAdmit(&s->reader, buf);
     switch (result)
     {
     case kSpliceFrameByteLimit:
-        bgpClose(t, l, s, "receive byte limit exceeded");
+        snprintf(reason, sizeof(reason), "receive byte limit exceeded (incoming_bytes=%zu)", incoming_bytes);
+        bgpClose(t, l, s, reason);
         return;
     case kSpliceFrameChargeLimit:
         bgpClose(t, l, s, "receive storage limit exceeded");
         return;
     case kSpliceFramePushFailed:
-        bgpClose(t, l, s, "receive queue capacity exceeded");
+        snprintf(reason, sizeof(reason), "receive queue geometry refused (incoming_bytes=%zu)", incoming_bytes);
+        bgpClose(t, l, s, reason);
         return;
     case kSpliceFrameDrain:
     case kSpliceFrameQueued:
@@ -249,8 +265,10 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
     const bool     direct     = frames == 1 && queued == 0 && ! s->encode_pumping;
     if (wire_bytes > kBgpPendingBytes - bufferqueueGetLength(&s->output))
     {
+        char reason[128];
+        snprintf(reason, sizeof(reason), "encoded byte limit exceeded (incoming_wire_bytes=%" PRIu64 ")", wire_bytes);
         bufferpoolReuseBuffer(pool, input);
-        bgpClose(t, l, s, "encoded byte limit exceeded");
+        bgpClose(t, l, s, reason);
         return;
     }
     if (direct)
@@ -298,10 +316,15 @@ static inline void bgpEncode(tunnel_t *t, line_t *l, bgp_stream_t *s, sbuf_t *in
         if (charge > kBgpOutputChargeLimit || sbufGetQueueCharge(frame) > kBgpOutputChargeLimit - charge ||
             ! bufferqueueTryPushBack(&s->output, &frame))
         {
+            char reason[128];
+            snprintf(reason,
+                     sizeof(reason),
+                     "encoded output storage admission refused (incoming_charge_bytes=%zu)",
+                     sbufGetQueueCharge(frame));
             bufferpoolReuseBuffer(pool, frame);
             if (input != NULL)
                 bufferpoolReuseBuffer(pool, input);
-            bgpClose(t, l, s, "encoded charge limit exceeded");
+            bgpClose(t, l, s, reason);
             return;
         }
         open_length = 0;

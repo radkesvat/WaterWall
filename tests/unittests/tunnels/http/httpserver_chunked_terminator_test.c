@@ -5,7 +5,8 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes,
  * caseBodylessRequestStaysOpenForResponse, caseHeaderLimitExcludesDeliveredBody,
- * caseCustomUpgradeBypassesAfterReentrantTails, caseChunkedSuffixTailroom
+ * caseCustomUpgradeBypassesAfterReentrantTails, caseChunkedSuffixTailroom,
+ * HTTP/1 and HTTP/2 method mismatch diagnostics with safe protocol names.
  * Checks: Assertion labels include: HttpServer destroyed its state at HTTP body end; HttpServer completed a
  * partial trailer block; HttpServer did not forward exactly one body chunk; HttpServer forwarded the
  * wrong body length
@@ -21,11 +22,25 @@
 #include "HttpServer/structure.h"
 
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "loggers/network_logger.h"
 
 enum
 {
     kTestLargeBufferSize = 4096
 };
+
+static char     method_log[1024];
+static unsigned method_log_count;
+
+static void captureMethodLog(int level, const char *text, int length)
+{
+    if (level != LOG_LEVEL_WARN || text == NULL || length <= 0 || strstr(text, "method mismatch") == NULL)
+        return;
+    const size_t copied = min((size_t) length, sizeof(method_log) - 1);
+    memoryCopy(method_log, text, copied);
+    method_log[copied] = '\0';
+    ++method_log_count;
+}
 
 typedef struct httpserver_chunked_fixture_s
 {
@@ -192,6 +207,79 @@ static void caseHeaderLimitExcludesDeliveredBody(unsigned mode)
         twfRequire(bufferstreamViewByteAt(&ls->in_stream, length - header_length - 1) == 'b',
                    "header parsing changed the trailing body");
     }
+    fixtureTeardown(&fixture);
+}
+
+static void caseMethodMismatchDiagnostics(bool http2, const char *method, const char *expected_label)
+{
+    twfSetCase(http2 ? "HttpServer HTTP/2 method rejection diagnostics"
+                     : "HttpServer HTTP/1 method rejection diagnostics");
+    httpserver_chunked_fixture_t fixture;
+    fixtureSetup(&fixture);
+    httpserver_tstate_t *ts                = tunnelGetState(fixture.http);
+    httpserver_lstate_t *ls                = lineGetState(fixture.line, fixture.http);
+    char                 expected_method[] = "GET";
+    ts->expected_method                    = expected_method;
+    method_log_count                       = 0;
+    method_log[0]                          = '\0';
+
+    if (http2)
+    {
+        twfRequire(nghttp2_session_callbacks_new(&ts->cbs) == 0, "server callbacks allocation failed");
+        twfRequire(httpserverTransportPrepareHttp2Session(fixture.http, fixture.line, ls),
+                   "HTTP/2 session preparation failed");
+        nghttp2_session_callbacks *callbacks = NULL;
+        nghttp2_session           *peer      = NULL;
+        twfRequire(nghttp2_session_callbacks_new(&callbacks) == 0, "peer callbacks allocation failed");
+        twfRequire(nghttp2_session_client_new(&peer, callbacks, NULL) == 0, "peer session allocation failed");
+        nghttp2_session_callbacks_del(callbacks);
+        twfRequire(nghttp2_submit_settings(peer, NGHTTP2_FLAG_NONE, NULL, 0) == 0, "peer SETTINGS failed");
+        nghttp2_nv headers[] = {
+            {(uint8_t *) ":method", (uint8_t *) method, 7, strlen(method), NGHTTP2_NV_FLAG_NONE},
+            {(uint8_t *) ":scheme", (uint8_t *) "http", 7, 4, NGHTTP2_NV_FLAG_NONE},
+            {(uint8_t *) ":path", (uint8_t *) "/", 5, 1, NGHTTP2_NV_FLAG_NONE},
+            {(uint8_t *) ":authority", (uint8_t *) "unit.test", 10, 9, NGHTTP2_NV_FLAG_NONE},
+        };
+        twfRequire(nghttp2_submit_request2(peer, NULL, headers, ARRAY_SIZE(headers), NULL, NULL) == 1,
+                   "peer request submission failed");
+        for (;;)
+        {
+            const uint8_t *wire   = NULL;
+            nghttp2_ssize  length = nghttp2_session_mem_send2(peer, &wire);
+            twfRequire(length >= 0, "peer request serialization failed");
+            if (length == 0)
+                break;
+            twfRequire(nghttp2_session_mem_recv2(ls->session, wire, (size_t) length) == length,
+                       "server could not process the HTTP/2 request");
+        }
+        twfRequire(ls->h2_request_rejected, "HTTP/2 method mismatch was accepted");
+        nghttp2_session_del(peer);
+        nghttp2_session_callbacks_del(ts->cbs);
+        ts->cbs = NULL;
+    }
+    else
+    {
+        char request[256];
+        int  length = snprintf(request, sizeof(request), "%s / HTTP/1.1\r\nHost: unit.test\r\n\r\n", method);
+        twfRequire(length > 0 && (size_t) length < sizeof(request), "HTTP/1 fixture request overflow");
+        ls->h1_headers_parsed = false;
+        sbuf_t *input         = bufferpoolGetLargeBuffer(fixture.env.pool);
+        sbufSetLength(input, (size_t) length);
+        sbufWrite(input, request, (size_t) length);
+        bufferstreamPush(&ls->in_stream, input);
+        twfRequire(! httpserverTransportHandleHttp1RequestHeaderPhase(fixture.http, fixture.line, ls),
+                   "HTTP/1 method mismatch was accepted");
+    }
+
+    char expected[96];
+    snprintf(expected, sizeof(expected), "expected=GET got=%s", expected_label);
+    twfRequire(method_log_count == 1 && strstr(method_log, expected) != NULL,
+               "method rejection omitted the safe expected/received protocol names");
+    snprintf(expected, sizeof(expected), "got_bytes=%zu", strlen(method));
+    twfRequire(strstr(method_log, expected) != NULL, "method rejection omitted the observed token length");
+    if (strcmp(expected_label, "<unknown>") == 0)
+        twfRequire(strstr(method_log, method) == NULL, "method rejection exposed an unknown peer token");
+    twfRequire(lineIsAlive(fixture.line), "method validation destroyed the borrowed line");
     fixtureTeardown(&fixture);
 }
 
@@ -583,6 +671,15 @@ static void casePendingDrainReentry(unsigned mode)
 
 int main(void)
 {
+    logger_t *logger = createNetworkLogger(NULL, false);
+    twfRequire(logger != NULL, "network logger setup failed");
+    loggerSetHandler(logger, captureMethodLog);
+    for (unsigned http2 = 0; http2 < 2; ++http2)
+    {
+        caseMethodMismatchDiagnostics(http2 != 0, "PUT", "PUT");
+        /* Fit the HTTP/2 parser's 15-byte method field so this tests redaction, not truncation. */
+        caseMethodMismatchDiagnostics(http2 != 0, "PRIVATE-123", "<unknown>");
+    }
     caseChunkedSuffixTailroom(2, false, false, false);
     caseChunkedSuffixTailroom(1, true, false, false);
     caseChunkedSuffixTailroom(0, false, false, false);
@@ -602,5 +699,6 @@ int main(void)
         caseHeaderLimitExcludesDeliveredBody(mode);
     caseTerminatorSplitAcrossPayloadsResumesAndDropsTrailingBytes();
     caseBodylessRequestStaysOpenForResponse();
+    networkloggerDestroy();
     return 0;
 }

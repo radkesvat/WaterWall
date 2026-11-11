@@ -795,7 +795,12 @@ static int enqueue_send(wio_t *io, sbuf_t *buf)
     uint32_t len = sbufGetLength(buf);
     if (len > io->max_write_bufsize - min(io->write_bufsize, io->max_write_bufsize))
     {
-        wloge("write bufsize > %u, close it!", io->max_write_bufsize);
+        wloge("closing socket: write queue limit exceeded (fd=%d, queued_bytes=%u, incoming_bytes=%u, "
+              "limit_bytes=%u)",
+              wioGetFD(io),
+              io->write_bufsize,
+              len,
+              io->max_write_bufsize);
         io->error = WERR_OVER_LIMIT;
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
         return WERR_OVER_LIMIT;
@@ -1342,7 +1347,9 @@ static void __connect_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("connect timeout [%s] <=> [%s]",
+        wlogw("closing connection: connect timeout (fd=%d, timeout_ms=%d) [%s] <=> [%s]",
+              wioGetFD(io),
+              io->connect_timeout ? io->connect_timeout : WIO_DEFAULT_CONNECT_TIMEOUT,
               SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;
@@ -1788,7 +1795,10 @@ static void __close_timeout_cb(wtimer_t *timer)
     {
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};
-        wlogw("close timeout [%s] <=> [%s]",
+        wlogw("forcing socket close: output drain timeout (fd=%d, queued_bytes=%u, timeout_ms=%d) [%s] <=> [%s]",
+              wioGetFD(io),
+              io->write_bufsize,
+              io->close_timeout ? io->close_timeout : WIO_DEFAULT_CLOSE_TIMEOUT,
               SOCKADDR_STR(io->localaddr, localaddrstr),
               SOCKADDR_STR(io->peeraddr, peeraddrstr));
         io->error = ETIMEDOUT;

@@ -173,8 +173,23 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     const http_receive_result_t admitted = httpReceiveAdmit(&ls->receive, lineGetBufferPool(l), buf);
     if (admitted == kHttpReceiveRejected)
     {
+        const buffer_budget_cost_t usage           = bufferbudgetGetUsage(&ls->receive.budget);
+        const buffer_budget_cost_t limits          = bufferbudgetGetLimits(&ls->receive.budget);
+        const size_t               incoming_bytes  = sbufGetLength(buf);
+        const size_t               incoming_charge = sbufGetQueueCharge(buf);
+        LOGW("HttpClient: closing connection: nested receive refused: %s "
+             "(retained_bytes=%zu, incoming_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, limit_charge_bytes=%zu)",
+             incoming_bytes > limits.bytes - usage.bytes      ? "byte budget exceeded"
+             : incoming_charge > limits.charge - usage.charge ? "storage charge budget exceeded"
+                                                              : "queue admission failed",
+             usage.bytes,
+             incoming_bytes,
+             limits.bytes,
+             usage.charge,
+             incoming_charge,
+             limits.charge);
         lineReuseBuffer(l, buf);
-        LOGW("HttpClient: nested receive limit exceeded");
         rejectInput(t, l, ls);
     }
     if (admitted != kHttpReceiveDrain)
@@ -195,7 +210,13 @@ void httpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         size_t limit = kHttpReceiveStreamBytes;
         if (! httpReceiveSettle(&ls->in_stream, limit))
         {
-            LOGW("HttpClient: retained receive limit exceeded");
+            LOGW("HttpClient: closing connection: retained receive %s limit exceeded "
+                 "(retained_bytes=%zu, limit_bytes=%zu, retained_charge_bytes=%zu, charge_limit_bytes=%u)",
+                 bufferstreamGetLength(&ls->in_stream) > limit ? "byte" : "storage charge",
+                 bufferstreamGetLength(&ls->in_stream),
+                 limit,
+                 bufferstreamGetCharge(&ls->in_stream),
+                 (unsigned) kHttpReceiveStreamCharge);
             rejectInput(t, l, ls);
             lineUnref(l);
             return;

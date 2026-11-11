@@ -438,7 +438,7 @@ bool usersNameTableInsertLocked(users_t *users, user_t *user)
     result = users_name_map_t_insert(&users->name_table->map, key, user);
     if (UNLIKELY(! result.inserted && result.ref->second != user))
     {
-        LOGE("Users: duplicate username \"%s\" between two users", user->name);
+        LOGE("Users: duplicate username \"%s\" between two users", usersUserNameForLog(user));
         return false;
     }
 

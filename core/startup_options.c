@@ -381,13 +381,22 @@ char *waterwallStartupOptionsReadCoreJson(const waterwall_startup_options_t *opt
     {
         if (length == limit)
         {
-            if (fgetc(input) == EOF && ! ferror(input))
+            const int extra_byte = fgetc(input);
+            if (extra_byte == EOF && ! ferror(input))
             {
                 break;
             }
             if (options->restricted_config)
             {
-                fprintf(stderr, "Restricted config: input limit or read failure at byte %zu\n", length);
+                if (extra_byte != EOF)
+                    fprintf(stderr,
+                            "Restricted config: refusing core input: size limit exceeded "
+                            "(accepted_bytes=%zu, incoming_bytes=1, limit_bytes=%zu) at byte %zu\n",
+                            length,
+                            limit,
+                            length);
+                else
+                    fprintf(stderr, "Restricted config: read failure at byte %zu\n", length);
             }
             else
             {

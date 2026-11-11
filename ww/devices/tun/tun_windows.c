@@ -40,6 +40,7 @@ enum
 };
 
 static atomic_log_rate_limiter_t tun_oversized_output_log;
+static atomic_log_rate_limiter_t tun_send_ring_full_log;
 
 static_assert(kMaxReadDistributeQueueSize <= UINT16_MAX, "TUN read batch count must fit in the reader session");
 
@@ -88,6 +89,7 @@ struct tun_device_s
     // Reader-worker-owned accounting for oversized receive packets that are
     // dropped instead of terminating the process.
     log_rate_limiter_t oversized_read_discard_limiter;
+    size_t             last_oversized_read_packet_bytes;
 
     atomic_int lifecycle;
 };
@@ -471,8 +473,9 @@ static void tunDeliverPacket(void *device, sbuf_t *buf, wid_t wid)
 
 // Counts one oversized-read drop and emits a rate-limited aggregate warning.
 // Only the selected reader worker calls this, so the counters need no atomics.
-static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
+static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev, size_t packet_bytes)
 {
+    tdev->last_oversized_read_packet_bytes = packet_bytes;
     log_rate_limiter_report_t report =
         logRateLimiterRecord(&tdev->oversized_read_discard_limiter, kTunDiscardReportIntervalMs);
 
@@ -481,10 +484,12 @@ static void tunWindowsRecordOversizedReadDiscard(tun_device_t *tdev)
         return;
     }
 
-    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u over %llums (total=%llu)",
+    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u over %llums "
+         "(last_packet_bytes=%zu, total=%llu)",
          LLU(report.events),
          (unsigned int) tunDeviceMtu(tdev),
          LLU(report.elapsed_ms),
+         tdev->last_oversized_read_packet_bytes,
          LLU(report.total));
 }
 
@@ -498,9 +503,11 @@ static void tunWindowsReportPendingOversizedReadDiscards(tun_device_t *tdev)
         return;
     }
 
-    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u before reader exit (total=%llu)",
+    LOGW("TunDevice: reader: discarded %llu packet(s) larger than configured MTU %u before reader exit "
+         "(last_packet_bytes=%zu, total=%llu)",
          LLU(report.events),
          (unsigned int) tunDeviceMtu(tdev),
+         tdev->last_oversized_read_packet_bytes,
          LLU(report.total));
 }
 
@@ -622,7 +629,7 @@ static void tunWindowsReaderRun(worker_t *worker, void *arg1, void *arg2, void *
         if (tunWindowsReceivePacketExceedsMtu(tunDeviceMtu(tdev), packet_size))
         {
             WintunReleaseReceivePacket(tdev->session_handle, packet);
-            tunWindowsRecordOversizedReadDiscard(tdev);
+            tunWindowsRecordOversizedReadDiscard(tdev, packet_size);
             continue;
         }
         sbuf_t *buf = bufferpoolGetSmallBuffer(tdev->reader_buffer_pool);
@@ -718,19 +725,31 @@ static bool tunWriteBatch(void *context, worker_t *worker, sbuf_t **buffers, siz
         BYTE *Packet = WintunAllocateSendPacket(Session, sbufGetLength(buf));
         if (! Packet)
         {
-            DWORD last_error = GetLastError();
+            const DWORD  last_error   = GetLastError();
+            const size_t packet_bytes = sbufGetLength(buf);
             bufferpoolReuseBuffer(worker->buffer_pool, buf);
 
             if (last_error == ERROR_BUFFER_OVERFLOW)
             {
                 // A full Wintun send ring is transient; drop this packet and keep consuming the queue.
+                if (atomicLogRateLimiterShouldLog(&tun_send_ring_full_log, kTunDiscardReportIntervalMs))
+                    LOGW("TunDevice: dropping output on %s: Wintun send ring full "
+                         "(packet_bytes=%zu, session_ring_capacity_bytes=%u, error=%lu)",
+                         tdev->name,
+                         packet_bytes,
+                         0x400000U,
+                         last_error);
                 continue;
             }
 
             tun_lifecycle_state_t failed_from;
             if (tunLifecycleTransitionToFailed(&tdev->lifecycle, &failed_from))
             {
-                LOGE("TunDevice: failed to allocate Wintun write packet, code: %lu", last_error);
+                LOGE("TunDevice: failing writer on %s: cannot allocate Wintun packet "
+                     "(packet_bytes=%zu, error=%lu)",
+                     tdev->name,
+                     packet_bytes,
+                     last_error);
                 failed = failed_from == kTunLifecycleUp;
             }
             continue;
@@ -1335,7 +1354,7 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
     discard multi_queue_requested;
     if (mtu <= 16)
     {
-        LOGE("TunDevice: Invalid MTU size: %u", mtu);
+        LOGE("TunDevice: refusing device creation: invalid MTU (mtu_bytes=%u, minimum_bytes=17)", (unsigned) mtu);
         return NULL;
     }
 
@@ -1489,7 +1508,10 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
     unsigned session_slot;
     if (! windowsSessionAdapterBegin(&session_slot))
     {
-        LOGE("TunDevice: session adapter inventory is full");
+        LOGE("TunDevice: refusing adapter creation: process session inventory is full "
+             "(reserved_adapter_slots=%u, requested_slots=1, fixed_slot_limit=%u)",
+             (unsigned) WW_SESSION_ADAPTER_MAX,
+             (unsigned) WW_SESSION_ADAPTER_MAX);
         tundeviceDestroy(tdev);
         return NULL;
     }

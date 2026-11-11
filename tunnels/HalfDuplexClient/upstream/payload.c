@@ -1,3 +1,4 @@
+#include "loggers/network_logger.h"
 #include "structure.h"
 
 bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
@@ -20,6 +21,11 @@ bool halfduplexclientForwardPayload(tunnel_t *t, line_t *main, sbuf_t *buf)
     sbuf_t        *framed  = reuse ? buf : bufferpoolTryGetBestFit(pool, total, padding);
     if (framed == NULL)
     {
+        LOGW("HalfDuplexClient: closing pair: upload intro allocation geometry refused "
+             "(payload_bytes=%u, intro_bytes=%u, requested_bytes=%" PRIu64 ")",
+             length,
+             (unsigned) kHLFDIntroSize,
+             total);
         bufferpoolReuseBuffer(pool, buf);
         halfduplexclientClosePair(t, main, false, false);
     }
@@ -93,6 +99,24 @@ void halfduplexclientTunnelUpStreamPayload(tunnel_t *t, line_t *main, sbuf_t *bu
                          kHalfDuplexClientMaxPendingCharge - bufferqueueGetCharge(&ls->pending_up) ||
                      ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
         {
+            const size_t pending_bytes   = bufferqueueGetLength(&ls->pending_up);
+            const size_t pending_charge  = bufferqueueGetCharge(&ls->pending_up);
+            const size_t incoming_charge = sbufGetQueueCharge(buf);
+            LOGW("HalfDuplexClient: closing pair: pending upstream %s "
+                 "(pending_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, pending_charge_bytes=%zu, "
+                 "incoming_charge_bytes=%zu, charge_limit_bytes=%u)",
+                 length > kHalfDuplexClientMaxPendingBytes || pending_bytes > kHalfDuplexClientMaxPendingBytes - length
+                     ? "byte limit exceeded"
+                 : pending_charge > kHalfDuplexClientMaxPendingCharge ||
+                         incoming_charge > kHalfDuplexClientMaxPendingCharge - pending_charge
+                     ? "storage charge limit exceeded"
+                     : "queue admission failed",
+                 pending_bytes,
+                 length,
+                 (unsigned) kHalfDuplexClientMaxPendingBytes,
+                 pending_charge,
+                 incoming_charge,
+                 (unsigned) kHalfDuplexClientMaxPendingCharge);
             lineReuseBuffer(main, buf);
             halfduplexclientClosePair(t, main, false, false);
             return;

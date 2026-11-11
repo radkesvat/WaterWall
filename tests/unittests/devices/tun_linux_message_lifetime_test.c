@@ -2155,7 +2155,8 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     destroyDevice(tdev);
 
     /* The real wrapper remains UP while its test fixture replaces the large
-     * production generation with a capacity-one open one. Full is silent. */
+     * production generation with a capacity-one open one. The shared writer
+     * explains the packet-budget refusal. */
     resetReaderFixture(0);
     tdev = createRunningDevice();
     reopenTunWriterWithCapacityOne(tdev);
@@ -2166,7 +2167,13 @@ static void testTunWriterRefusalClassesUseFreshTlsState(void)
     tun_refusal_probe_t full = {.tdev = tdev};
     resetTunLogCapture();
     runFreshTunRefusalThread(&full);
-    require(tun_log_capture_len == 0, "TUN Full refusal emitted a diagnostic");
+    require(countTunLogSubstring("TunWriter: worker 0 refused 1 output packet(s)") == 1 &&
+                strstr(tun_log_capture, "device queue budget exceeded") != NULL &&
+                strstr(tun_log_capture, "last_reason=packet_count") != NULL &&
+                strstr(tun_log_capture, "last_usage=1, last_requested=1, last_limit=1") != NULL &&
+                strstr(tun_log_capture, "last_packet_bytes=64") != NULL &&
+                strstr(tun_log_capture, "last_unit=packets") != NULL,
+            "TUN Full refusal lost its action, packet-budget evidence or effective limit");
     require(bringDownDevice(tdev), "failed to bring down TUN Full-refusal fixture");
     destroyDevice(tdev);
     cancelWriterMessages();

@@ -104,9 +104,18 @@ bool nodeApiDomainTryReserve(node_api_domain_t *domain, size_t bytes)
     assert(domain != NULL);
     mutexLock(&domain->mutex);
     bool accepted = ! domain->closed && bytes <= domain->memory_limit - domain->bytes;
+    const bool   capacity_refused = ! accepted && ! domain->closed;
+    const size_t used             = domain->bytes;
+    const size_t limit            = domain->memory_limit;
     if (accepted)
         domain->bytes += bytes;
     mutexUnlock(&domain->mutex);
+    if (capacity_refused)
+        LOGW("NodeAPI: refusing dispatch-domain memory reservation "
+             "(used_allocation_bytes=%zu, requested_allocation_bytes=%zu, limit_allocation_bytes=%zu)",
+             used,
+             bytes,
+             limit);
     return accepted;
 }
 
@@ -160,8 +169,11 @@ node_api_job_t *nodeApiJobCreate(node_api_domain_t *domain, tunnel_t *target, co
         ! checkedAdd(&charge, working_memory_allowance))
         return NULL;
     mutexLock(&domain->mutex);
-    const bool accepted = nodeApiAdmissionIsOpen() && ! domain->closed && domain->jobs < domain->job_limit &&
-                          charge <= domain->memory_limit - domain->bytes;
+    const bool admission_open = nodeApiAdmissionIsOpen() && ! domain->closed;
+    const bool accepted =
+        admission_open && domain->jobs < domain->job_limit && charge <= domain->memory_limit - domain->bytes;
+    const size_t used_bytes = domain->bytes, used_jobs = domain->jobs;
+    const size_t byte_limit = domain->memory_limit, job_limit = domain->job_limit;
     if (accepted)
     {
         ++domain->jobs;
@@ -170,7 +182,19 @@ node_api_job_t *nodeApiJobCreate(node_api_domain_t *domain, tunnel_t *target, co
     }
     mutexUnlock(&domain->mutex);
     if (! accepted)
+    {
+        if (admission_open)
+            LOGW("NodeAPI: refusing dispatch job: %s "
+                 "(active_jobs=%zu, requested_jobs=1, job_limit=%zu, used_allocation_bytes=%zu, "
+                 "requested_allocation_bytes=%zu, limit_allocation_bytes=%zu)",
+                 used_jobs >= job_limit ? "dispatch-domain job limit reached" : "dispatch-domain memory limit exceeded",
+                 used_jobs,
+                 job_limit,
+                 used_bytes,
+                 charge,
+                 byte_limit);
         return NULL;
+    }
     node_api_job_t *job = memoryAllocateZero(sizeof(*job));
     job->domain         = domain;
     job->target         = target;

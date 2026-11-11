@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "loggers/network_logger.h"
 
 static bool bodyRange(const hpc_lstate_t *ls, size_t n)
 {
@@ -91,6 +92,10 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             {
                 if (length > kHpsRequestLineLimit + 2)
                 {
+                    LOGW("HttpProxyClient: closing connection: response status-line limit exceeded "
+                         "(status_line_bytes=%zu, protocol_limit_bytes=%u)",
+                         length,
+                         (unsigned) (kHpsRequestLineLimit + 2));
                     hpcClose(t, l);
                     return false;
                 }
@@ -100,6 +105,10 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             {
                 if (length == ts->max_header)
                 {
+                    LOGW("HttpProxyClient: closing connection: incomplete response header reached max-header-bytes "
+                         "(header_bytes=%zu, max_header_bytes=%u)",
+                         length,
+                         ts->max_header);
                     hpcClose(t, l);
                     return false;
                 }
@@ -126,6 +135,10 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
                 ls->response     = (hps_header_t) {0};
                 if (++ls->informational > kHpsInformationalLimit)
                 {
+                    LOGW("HttpProxyClient: closing connection: informational response limit exceeded "
+                         "(responses=%u, protocol_limit=%u)",
+                         ls->informational,
+                         (unsigned) kHpsInformationalLimit);
                     hpcClose(t, l);
                     return false;
                 }
@@ -133,6 +146,8 @@ bool hpcResponse(tunnel_t *t, line_t *l, sbuf_t *b)
             }
             if (ls->response.status >= 300)
             {
+                LOGW("HttpProxyClient: closing connection: proxy rejected request (response_status=%u)",
+                     ls->response.status);
                 hpcClose(t, l);
                 return false;
             }
@@ -221,6 +236,10 @@ void httpproxyclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b)
     }
     if (n > kHpcDeliveryLimit)
     {
+        LOGW("HttpProxyClient: closing connection: response delivery limit exceeded "
+             "(incoming_bytes=%zu, limit_bytes=%u)",
+             n,
+             (unsigned) kHpcDeliveryLimit);
         lineReuseBuffer(l, b);
         hpcClose(t, l);
         return;

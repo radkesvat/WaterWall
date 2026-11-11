@@ -1,4 +1,5 @@
 #include "APIServer/structure.h"
+#include "loggers/network_logger.h"
 
 void apiserverReleaseRequest(apiserver_lstate_t *ls)
 {
@@ -30,6 +31,16 @@ static void appendRequest(apiserver_lstate_t *ls, api_request_t *r)
 
 bool apiserverFramingError(apiserver_lstate_t *ls, const char *error)
 {
+    const apiserver_tstate_t *ts = tunnelGetState(ls->tunnel);
+    LOGW("APIServer: rejecting session framing: %s "
+         "(header_bytes=%zu, declared_frame_bytes=%zu, received_frame_bytes=%zu, "
+         "max_request_envelope=%zu, frame_timeout_ms=%u)",
+         error,
+         ls->header_size,
+         ls->frame_size,
+         ls->frame_used,
+         ts->limits.max_request_envelope,
+         ts->limits.frame_timeout_ms);
     /* The error is only publishable at the head; otherwise closure preserves FIFO. */
     if (ls->requests || ls->output || ! apiserverReserve(ls, sizeof(api_request_t)))
         return false;

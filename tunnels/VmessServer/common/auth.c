@@ -541,6 +541,11 @@ static void authRunWorker(vmessserver_auth_worker_t *worker)
             tunnel_t *t    = job->state->tunnel;
             line_t   *line = job->state->line;
             lineRef(line);
+            const vmessserver_tstate_t *ts = tunnelGetState(t);
+            LOGW("VmessServer: closing connection: authentication handshake deadline expired "
+                 "(handshake_timeout_ms=%u, waiting_for_credential_cache=%s)",
+                 ts->handshake_timeout_ms,
+                 boolToTrueFalse(job->waiting_cache));
             vmessserverReason(job->state,
                               job->waiting_cache ? kVmessServerReasonAuthUnavailable : kVmessServerReasonTimeout);
             vmessserverCloseLineBidirectional(t, line);
@@ -641,12 +646,21 @@ bool vmessserverAuthLineInit(vmessserver_lstate_t *ls)
     vmessserver_auth_runtime_t *runtime = ts->auth;
     vmessserver_auth_worker_t  *worker  = &runtime->workers[lineGetWID(ls->line)];
     mutexLock(&runtime->mutex);
-    const bool admitted = ! runtime->stopping && runtime->pending_count < ts->auth_max_pending;
+    const bool   stopping      = runtime->stopping;
+    const size_t pending_count = runtime->pending_count;
+    const bool   admitted      = ! stopping && pending_count < ts->auth_max_pending;
     if (admitted)
         ++runtime->pending_count;
     mutexUnlock(&runtime->mutex);
     if (! admitted)
+    {
+        if (! stopping)
+            LOGW("VmessServer: rejecting connection: node authentication pending-connection limit reached "
+                 "(pending_connections=%zu, auth_max_pending=%zu)",
+                 pending_count,
+                 ts->auth_max_pending);
         return false;
+    }
     vmessserver_auth_job_t *job = memoryAllocateZero(sizeof(*job));
     lineRef(ls->line);
     job->worker      = worker;
@@ -675,13 +689,21 @@ bool vmessserverAuthAdmitInput(vmessserver_lstate_t *ls, size_t bytes)
     vmessserver_tstate_t       *ts      = tunnelGetState(ls->tunnel);
     vmessserver_auth_runtime_t *runtime = ts->auth;
     mutexLock(&runtime->mutex);
-    const bool admitted = ! runtime->stopping && runtime->pending_bytes <= ts->auth_pending_max_bytes &&
-                          bytes <= ts->auth_pending_max_bytes - runtime->pending_bytes;
+    const bool   stopping      = runtime->stopping;
+    const size_t pending_bytes = runtime->pending_bytes;
+    const bool   admitted      = ! stopping && pending_bytes <= ts->auth_pending_max_bytes &&
+                          bytes <= ts->auth_pending_max_bytes - pending_bytes;
     if (admitted)
         runtime->pending_bytes += bytes;
     mutexUnlock(&runtime->mutex);
     if (admitted)
         ls->unauth_bytes += bytes;
+    else if (! stopping)
+        LOGW("VmessServer: refusing input: node authentication pending-byte limit exceeded "
+             "(pending_bytes=%zu, incoming_bytes=%zu, auth_pending_max_bytes=%zu)",
+             pending_bytes,
+             bytes,
+             ts->auth_pending_max_bytes);
     return admitted;
 }
 

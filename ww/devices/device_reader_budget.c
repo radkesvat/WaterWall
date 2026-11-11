@@ -45,7 +45,16 @@ void deviceReaderSessionSignalOutputCapacity(device_reader_session_t *session)
             {
                 continue;
             }
-            LOGF("DeviceReaderSession: failed to signal output capacity: %s", strerror(errno));
+            if (written < 0)
+            {
+                const int error = errno;
+                LOGF("DeviceReaderSession: failed to signal output capacity (errno=%d: %s)", error, strerror(error));
+            }
+            else
+                LOGF("DeviceReaderSession: short output-capacity notification "
+                     "(written_bytes=%zd, expected_bytes=%zu)",
+                     written,
+                     sizeof(one));
             abortProgramNow(1);
         }
     }
@@ -66,7 +75,12 @@ void deviceReaderSessionReleaseWork(device_reader_session_t *session, size_t exa
         atomic_fetch_sub_explicit(&session->output_packets, packets, memory_order_acq_rel);
     if (UNLIKELY(previous_charge < exact_charge || previous_count < packets))
     {
-        LOGF("DeviceReaderSession: output-budget reservation underflow");
+        LOGF("DeviceReaderSession: output-budget reservation underflow "
+             "(reserved_allocation_bytes=%zu, released_allocation_bytes=%zu, reserved_packets=%u, released_packets=%u)",
+             previous_charge,
+             exact_charge,
+             previous_count,
+             packets);
         abortProgramNow(1);
     }
     mutexUnlock(&session->output_budget_lock);
@@ -86,12 +100,23 @@ bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, 
     assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
     if (! mutexTryInit(&session->output_budget_lock))
     {
+        LOGE("DeviceReaderSession: cannot configure device dispatch budget: mutex initialization failed "
+             "(allocation_limit_bytes=%zu, packet_limit=%u)",
+             max_charge,
+             (unsigned) max_packets);
         return false;
     }
 #ifdef OS_LINUX
     const int fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (fd < 0)
     {
+        const int error = errno;
+        LOGE("DeviceReaderSession: cannot configure device dispatch capacity event "
+             "(allocation_limit_bytes=%zu, packet_limit=%u, errno=%d: %s)",
+             max_charge,
+             (unsigned) max_packets,
+             error,
+             strerror(error));
         mutexDestroy(&session->output_budget_lock);
         return false;
     }
@@ -178,7 +203,18 @@ void deviceReaderSessionDrainOutputWake(device_reader_session_t *session)
         {
             return;
         }
-        LOGF("DeviceReaderSession: failed to drain output-capacity notification: %s", strerror(errno));
+        if (nread < 0)
+        {
+            const int error = errno;
+            LOGF("DeviceReaderSession: failed to drain output-capacity notification (errno=%d: %s)",
+                 error,
+                 strerror(error));
+        }
+        else
+            LOGF("DeviceReaderSession: short output-capacity notification read "
+                 "(read_bytes=%zd, expected_bytes=%zu)",
+                 nread,
+                 sizeof(count));
         abortProgramNow(1);
     }
 #else
@@ -208,7 +244,9 @@ bool deviceReaderSessionWaitReserveWork(device_reader_session_t *session, size_t
         {
             if (UNLIKELY((fd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0))
             {
-                LOGF("DeviceReaderSession: invalid output-capacity notification descriptor");
+                LOGF("DeviceReaderSession: invalid output-capacity notification descriptor "
+                     "(poll_events=0x%x)",
+                     (unsigned) fd.revents);
                 abortProgramNow(1);
             }
             deviceReaderSessionDrainOutputWake(session);

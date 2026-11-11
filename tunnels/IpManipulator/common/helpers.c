@@ -1296,7 +1296,10 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint8_t ip_header_words = IPH_HL(ipheader);
     if (ip_header_words < 5 || ip_header_words > 15)
     {
-        LOGW("IpManipulator: dropping packet with an invalid IPv4 header length before final egress");
+        LOGW("IpManipulator: dropping packet before final egress: invalid IPv4 header length "
+             "(header_words=%u, allowed_words=5..15, packet_bytes=%zu)",
+             (unsigned) ip_header_words,
+             sbufGetLength(buf));
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1305,7 +1308,11 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint16_t ip_total_len  = lwip_ntohs(IPH_LEN(ipheader));
     if (ip_total_len < ip_header_len || ip_total_len > sbufGetLength(buf))
     {
-        LOGW("IpManipulator: dropping packet with an invalid IPv4 total length before final egress");
+        LOGW("IpManipulator: dropping packet before final egress: inconsistent IPv4 total length "
+             "(declared_bytes=%u, header_bytes=%u, packet_bytes=%zu)",
+             (unsigned) ip_total_len,
+             (unsigned) ip_header_len,
+             sbufGetLength(buf));
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1335,9 +1342,11 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
             if (ipmanipulatorShouldLogEgressWarning(state))
             {
                 LOGW("IpManipulator: dropping non-TCP IPv4 packet because its %u-byte trailer would exceed "
-                     "instance MTU %u; IPv4 fragmentation is not supported",
+                     "instance MTU %u; IPv4 fragmentation is not supported (packet_bytes=%u, protocol=%u)",
                      (unsigned int) portghost_tail_len,
-                     (unsigned int) state->mtu);
+                     (unsigned int) state->mtu,
+                     (unsigned) ip_total_len,
+                     (unsigned) transport_protocol);
             }
             reuseBuffer(buf);
             return lineIsAlive(l);
@@ -1348,7 +1357,10 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
 
     if (ip_total_len < ip_header_len + sizeof(struct tcp_hdr))
     {
-        LOGW("IpManipulator: dropping truncated TCP packet before final egress");
+        LOGW("IpManipulator: dropping packet before final egress: truncated TCP header "
+             "(declared_ipv4_bytes=%u, required_header_bytes=%zu)",
+             (unsigned) ip_total_len,
+             (size_t) ip_header_len + sizeof(struct tcp_hdr));
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1357,7 +1369,10 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint8_t         tcp_header_words = TCPH_HDRLEN(tcp_header);
     if (tcp_header_words < 5 || tcp_header_words > 15)
     {
-        LOGW("IpManipulator: dropping packet with an invalid TCP header length before final egress");
+        LOGW("IpManipulator: dropping packet before final egress: invalid TCP header length "
+             "(tcp_header_words=%u, allowed_words=5..15, packet_bytes=%zu)",
+             (unsigned) tcp_header_words,
+             sbufGetLength(buf));
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1366,7 +1381,10 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint32_t headers_len    = (uint32_t) ip_header_len + tcp_header_len;
     if (ip_total_len < headers_len)
     {
-        LOGW("IpManipulator: dropping packet whose IPv4 length truncates its TCP header before final egress");
+        LOGW("IpManipulator: dropping packet before final egress: IPv4 length truncates TCP header "
+             "(declared_ipv4_bytes=%u, required_header_bytes=%u)",
+             (unsigned) ip_total_len,
+             headers_len);
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1376,7 +1394,11 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
     uint32_t flag_metadata_len = has_flag_metadata ? 1U : 0U;
     if ((uint32_t) ip_total_len < headers_len + flag_metadata_len)
     {
-        LOGW("IpManipulator: dropping TCP packet without its configured preserved-flags metadata");
+        LOGW("IpManipulator: dropping TCP packet without configured preserved-flags metadata "
+             "(declared_ipv4_bytes=%u, header_bytes=%u, required_metadata_bytes=%u)",
+             (unsigned) ip_total_len,
+             headers_len,
+             flag_metadata_len);
         reuseBuffer(buf);
         return lineIsAlive(l);
     }
@@ -1389,8 +1411,11 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
         if (ipmanipulatorShouldLogEgressWarning(state))
         {
             LOGW("IpManipulator: dropping oversized TCP packet because live or preserved-original %s segmentation "
-                 "is unsupported",
-                 (unsupported_flags & TCP_RST) != 0 ? "RST" : "URG");
+                 "is unsupported (packet_bytes=%u, trailer_bytes=%u, mtu_bytes=%u)",
+                 (unsupported_flags & TCP_RST) != 0 ? "RST" : "URG",
+                 (unsigned) ip_total_len,
+                 portghost_tail_len,
+                 (unsigned) state->mtu);
         }
         reuseBuffer(buf);
         return lineIsAlive(l);
@@ -1403,8 +1428,13 @@ static bool ipmanipulatorSendEgressMaybeSegmented(tunnel_t *t, line_t *l, sbuf_t
         if (ipmanipulatorShouldLogEgressWarning(state))
         {
             LOGW("IpManipulator: dropping oversized TCP packet because IPv4/TCP headers and configured trailers "
-                 "leave no segmentable payload within instance MTU %u",
-                 (unsigned int) state->mtu);
+                 "leave no segmentable payload within instance MTU %u "
+                 "(packet_bytes=%u, header_bytes=%u, trailer_bytes=%u, payload_bytes=%u)",
+                 (unsigned int) state->mtu,
+                 (unsigned) ip_total_len,
+                 headers_len,
+                 segment_overhead,
+                 total_payload_len);
         }
         reuseBuffer(buf);
         return lineIsAlive(l);

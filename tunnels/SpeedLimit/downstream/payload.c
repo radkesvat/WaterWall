@@ -14,7 +14,10 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *tunnel, line_t *line, sbuf_t *b
         if (speedlimitGrantBytes(tunnel, line, sbufGetLength(buffer), false) == sbufGetLength(buffer))
             tunnelPrevDownStreamPayload(tunnel, line, buffer);
         else
+        {
+            speedlimitLogDrop(tunnel, line, sbufGetLength(buffer), false);
             lineReuseBuffer(line, buffer);
+        }
         return;
     }
     if (trafficshaperSubmit(&state->down, buffer) == kTrafficShaperRefused)

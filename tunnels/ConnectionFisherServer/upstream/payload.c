@@ -1,3 +1,4 @@
+#include "loggers/network_logger.h"
 #include "structure.h"
 
 void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -24,6 +25,23 @@ void connectionfisherserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
                  sbufGetQueueCharge(buf) > kConnectionFisherServerMaxPendingCharge - retained_charge ||
                  ! bufferqueueTryPushBack(&ls->pending_up, &buf)))
     {
+        const size_t incoming_bytes  = sbufGetLength(buf);
+        const size_t incoming_charge = sbufGetQueueCharge(buf);
+        const size_t limit           = kConnectionFisherServerMaxPendingBytes + handshake_bytes;
+        LOGW("ConnectionFisherServer: closing connection: pending input %s "
+             "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%zu, retained_charge_bytes=%zu, "
+             "incoming_charge_bytes=%zu, charge_limit_bytes=%u)",
+             incoming_bytes > limit - retained_bytes ? "byte limit exceeded"
+             : retained_charge > kConnectionFisherServerMaxPendingCharge ||
+                     incoming_charge > kConnectionFisherServerMaxPendingCharge - retained_charge
+                 ? "storage charge limit exceeded"
+                 : "queue admission failed",
+             retained_bytes,
+             incoming_bytes,
+             limit,
+             retained_charge,
+             incoming_charge,
+             (unsigned) kConnectionFisherServerMaxPendingCharge);
         lineReuseBuffer(l, buf);
         connectionfisherserverCloseLineFromProtocolError(t, l);
         return;

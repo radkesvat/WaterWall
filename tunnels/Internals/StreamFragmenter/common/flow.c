@@ -3,6 +3,24 @@
 
 static void fragmentTimer(wtimer_t *timer);
 
+void streamfragmenterLogRetentionRefusal(streamfragmenter_lstate_t *ls, const char *operation, size_t incoming_bytes,
+                                         size_t incoming_charge)
+{
+    const buffer_budget_cost_t used = bufferbudgetGetUsage(&ls->budget);
+    LOGW("StreamFragmenter: closing line: %s retention admission refused "
+         "(retained_bytes=%zu, incoming_bytes=%zu, byte_limit=%u, retained_charge_bytes=%zu, "
+         "incoming_charge_bytes=%zu, charge_limit_bytes=%u, queued_jobs=%u, job_limit=%u)",
+         operation,
+         used.bytes,
+         incoming_bytes,
+         (unsigned) kStreamFragmenterHardCharge,
+         used.charge,
+         incoming_charge,
+         (unsigned) kStreamFragmenterHardCharge,
+         (unsigned) ls->job_count,
+         (unsigned) kStreamFragmenterHardJobs);
+}
+
 bool streamfragmenterUpdatePressure(tunnel_t *t, line_t *l)
 {
     streamfragmenter_lstate_t *ls    = lineGetState(l, t);
@@ -26,10 +44,24 @@ bool streamfragmenterEnqueue(tunnel_t *t, line_t *l, sbuf_t *buf, uint64_t cuts,
 {
     streamfragmenter_lstate_t *ls  = lineGetState(l, t);
     if (ls->job_count >= kStreamFragmenterHardJobs)
+    {
+        LOGW("StreamFragmenter: closing line: queued job limit reached "
+             "(queued_jobs=%u, incoming_jobs=1, job_limit=%u, incoming_bytes=%zu)",
+             (unsigned) ls->job_count,
+             (unsigned) kStreamFragmenterHardJobs,
+             sbufGetLength(buf));
         return false;
-    streamfragmenter_job_t    *job = memoryAllocateZero(sizeof(*job));
+    }
+    streamfragmenter_job_t *job = memoryAllocateZero(sizeof(*job));
     if (! bufferbudgetTryReserve(&ls->budget, buf, &job->reservation))
     {
+        size_t charge;
+        if (sbufTryGetQueueCharge(buf, &charge))
+            streamfragmenterLogRetentionRefusal(ls, "queued output", sbufGetLength(buf), charge);
+        else
+            LOGW("StreamFragmenter: closing line: queued output allocation charge is unrepresentable "
+                 "(incoming_bytes=%zu)",
+                 sbufGetLength(buf));
         memoryFree(job);
         return false;
     }

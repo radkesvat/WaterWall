@@ -9,9 +9,24 @@
 #include "devices/device_flow_affinity.h"
 #include "devices/device_packet_checksum_internal.h"
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
+#include "loggers/internal_logger.h"
 #include "packet_affinity.h"
 #include "packet_batch.h"
 #include "wloop_internal.h"
+
+static char   capacity_logs[16384];
+static size_t capacity_log_length;
+
+static void captureCapacityLog(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t count = min((size_t) length, sizeof(capacity_logs) - capacity_log_length - 1);
+    memoryCopy(capacity_logs + capacity_log_length, bytes, count);
+    capacity_log_length += count;
+    capacity_logs[capacity_log_length] = '\0';
+}
 
 typedef struct affinity_fixture_s
 {
@@ -328,17 +343,27 @@ static void caseBoundsAndQuantum(void)
 {
     affinity_fixture_t fixture;
     setup(&fixture, 4);
-    for (unsigned i = 0; i < 513; ++i)
+    capacity_log_length = 0;
+    capacity_logs[0]    = '\0';
+    for (unsigned i = 0; i < 514; ++i)
         forwardPacket(fixture.affinity, fixture.lines[0], identifiedPacket(2, (uint16_t) i));
     twfRequire(g_twf_buffers.live_count == 512 && posts == 1, "packet admission exceeded its aggregate bound");
+    twfRequire(strstr(capacity_logs, "dropping packets") && strstr(capacity_logs, "last_reason=packet-count limit") &&
+                   strstr(capacity_logs, "last_packet_bytes=36") && strstr(capacity_logs, "last_queued_packets=512") &&
+                   strstr(capacity_logs, "packet_limit=512"),
+               "packet-count refusal omitted action, sampled evidence or effective bound");
     tosPumpWorker(&fixture.env, 2);
     twfRequire(fixture.delivered == 512 && posts == 2, "drain did not yield after its packet quantum");
     twfRequire(fixture.batch_begins == 2 && fixture.batch_ends == 2, "each quantum needs its own packet batch");
     for (unsigned i = 0; i < 512; ++i)
         twfRequire(fixture.ids[i] == i, "yield reordered accepted packets");
     teardown(&fixture);
+    twfRequire(strstr(capacity_logs, "total_drops=2") != NULL,
+               "suppressed capacity refusals were lost instead of reported by the final summary");
 
     setup(&fixture, 4);
+    capacity_log_length = 0;
+    capacity_logs[0]    = '\0';
     for (unsigned i = 0; i < 8; ++i)
     {
         sbuf_t *small = identifiedPacket(2, (uint16_t) i);
@@ -349,6 +374,11 @@ static void caseBoundsAndQuantum(void)
         forwardPacket(fixture.affinity, fixture.lines[0], large);
     }
     twfRequire(g_twf_buffers.live_count == 7, "allocation charge bound counted payload bytes instead of storage");
+    twfRequire(strstr(capacity_logs, "last_reason=allocation-byte limit") &&
+                   strstr(capacity_logs, "last_packet_bytes=36") && strstr(capacity_logs, "last_queued_packets=7") &&
+                   strstr(capacity_logs, "last_incoming_allocation_bytes=") &&
+                   strstr(capacity_logs, "allocation_limit_bytes=8388608"),
+               "allocation refusal omitted its distinct reason, allocation charge or byte limit");
     tosPumpWorker(&fixture.env, 2);
     twfRequire(fixture.delivered == 7, "allocation-bound refusal changed accepted delivery");
     forwardPacket(fixture.affinity, fixture.lines[0], identifiedPacket(2, 9));
@@ -475,6 +505,9 @@ static void caseDirectionalTunnel(flow_affinity_direction_t direction)
 
 int main(void)
 {
+    logger_t *logger = createInternalLogger(NULL, false);
+    twfRequire(logger != NULL, "could not create diagnostic capture logger");
+    loggerSetHandler(logger, captureCapacityLog);
     testCaseSet("packet affinity quiescence during a drain");
     caseQuiesceDuringDrain();
     testCaseSet("packet affinity directional internal tunnel");
@@ -502,5 +535,6 @@ int main(void)
     testCaseSet("packet affinity independent intent and nested delivery");
     caseIndependentPackets(false);
     caseIndependentPackets(true);
+    internaloggerDestroy();
     return 0;
 }

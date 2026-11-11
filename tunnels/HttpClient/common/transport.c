@@ -817,10 +817,11 @@ bool httpclientTransportSendHttp1RequestHeaders(tunnel_t *t, line_t *l, bool upg
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: sending HTTP/1.1 request method=%s host=%s path=%s websocket=%s h2c-upgrade=%s",
-             method,
-             host_line,
-             path,
+        LOGD("HttpClient: sending HTTP/1.1 request method_bytes=%zu host_bytes=%zu path_bytes=%zu websocket=%s "
+             "h2c-upgrade=%s",
+             httpclientLogTextBytes(method),
+             httpclientLogTextBytes(host_line),
+             httpclientLogTextBytes(path),
              boolToTrueFalse(websocket_mode),
              boolToTrueFalse(upgrade_requested && ! custom_upgrade));
     }
@@ -1909,10 +1910,10 @@ static bool httpclientTransportMaybeSubmitWebSocketHttp2Request(tunnel_t *t, lin
 
     if (ts->verbose)
     {
-        LOGD("HttpClient: submitted websocket HTTP/2 extended CONNECT stream_id=%d authority=%s path=%s",
+        LOGD("HttpClient: submitted websocket HTTP/2 extended CONNECT stream_id=%d authority_bytes=%zu path_bytes=%zu",
              stream_id,
-             ts->host,
-             ts->path);
+             httpclientLogTextBytes(ts->host),
+             httpclientLogTextBytes(ts->path));
     }
 
     return sendNghttp2Outbound(t, l, ls);
@@ -1977,7 +1978,10 @@ bool httpclientTransportEnsureHttp2Session(tunnel_t *t, line_t *l, httpclient_ls
     ls->h2_stream_id = stream_id;
     if (ts->verbose)
     {
-        LOGD("HttpClient: submitted HTTP/2 request stream_id=%d method=%s path=%s", stream_id, ts->method, ts->path);
+        LOGD("HttpClient: submitted HTTP/2 request stream_id=%d method_bytes=%zu path_bytes=%zu",
+             stream_id,
+             httpclientLogTextBytes(ts->method),
+             httpclientLogTextBytes(ts->path));
     }
     return httpclientSendHttp2Startup(t, l, ls, startup);
 }
@@ -2431,14 +2435,15 @@ static bool httpclientTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpcl
     if (ts->websocket_enabled && ls->websocket_h2_request_submitted && ls->h2_headers_received &&
         ! ls->websocket_active)
     {
-        LOGE("HttpClient: websocket HTTP/2 handshake failed status_seen=%s status=%d protocol_seen=%s protocol=%s "
-             "extensions_seen=%s extensions=%s",
+        LOGE("HttpClient: websocket HTTP/2 handshake failed status_seen=%s status=%d protocol_seen=%s "
+             "protocol_bytes=%zu "
+             "extensions_seen=%s extensions_bytes=%zu",
              boolToTrueFalse(ls->websocket_h2_status_seen),
              ls->websocket_h2_status_code,
              boolToTrueFalse(ls->websocket_h2_protocol_seen),
-             ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : "<none>",
+             httpclientLogTextBytes(ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : NULL),
              boolToTrueFalse(ls->websocket_h2_extensions_seen),
-             ls->websocket_h2_extensions_seen ? ls->websocket_h2_extensions : "<none>");
+             httpclientLogTextBytes(ls->websocket_h2_extensions_seen ? ls->websocket_h2_extensions : NULL));
         return false;
     }
 
@@ -2447,9 +2452,9 @@ static bool httpclientTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpcl
         ls->websocket_waiting_handshake = false;
         if (ts->verbose)
         {
-            LOGD("HttpClient: websocket HTTP/2 handshake accepted stream_id=%d protocol=%s",
+            LOGD("HttpClient: websocket HTTP/2 handshake accepted stream_id=%d protocol_bytes=%zu",
                  ls->h2_stream_id,
-                 ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : "<none>");
+                 httpclientLogTextBytes(ls->websocket_h2_protocol_seen ? ls->websocket_h2_protocol : NULL));
         }
         if (! httpclientTransportDrainWebSocketDown(t, l, ls))
         {
@@ -2552,13 +2557,13 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             if (ts->verbose)
             {
                 LOGD("HttpClient: parsed websocket HTTP/1.1 response status=%d connection-upgrade=%s "
-                     "upgrade-websocket=%s accept=%s protocol=%s extensions=%s",
+                     "upgrade-websocket=%s accept_bytes=%zu protocol_bytes=%zu extensions_bytes=%zu",
                      info.status_code,
                      boolToTrueFalse(info.connection_upgrade),
                      boolToTrueFalse(info.upgrade_websocket),
-                     info.has_sec_websocket_accept ? info.sec_websocket_accept : "<none>",
-                     info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>",
-                     info.has_sec_websocket_extensions ? info.sec_websocket_extensions : "<none>");
+                     httpclientLogTextBytes(info.has_sec_websocket_accept ? info.sec_websocket_accept : NULL),
+                     httpclientLogTextBytes(info.has_sec_websocket_protocol ? info.sec_websocket_protocol : NULL),
+                     httpclientLogTextBytes(info.has_sec_websocket_extensions ? info.sec_websocket_extensions : NULL));
             }
 
             if (info.status_code != 101 || ! info.connection_upgrade || ! info.upgrade_websocket ||
@@ -2578,9 +2583,9 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
             httpclientBuildWebSocketAccept(ls->websocket_key, expected_accept, sizeof(expected_accept));
             if (expected_accept[0] == '\0' || ! stringAsciiCaseEquals(expected_accept, info.sec_websocket_accept))
             {
-                LOGE("HttpClient: websocket Sec-WebSocket-Accept validation failed expected=%s got=%s",
-                     expected_accept,
-                     info.has_sec_websocket_accept ? info.sec_websocket_accept : "<none>");
+                LOGE("HttpClient: websocket Sec-WebSocket-Accept validation failed expected_bytes=%zu got_bytes=%zu",
+                     httpclientLogTextBytes(expected_accept),
+                     httpclientLogTextBytes(info.has_sec_websocket_accept ? info.sec_websocket_accept : NULL));
                 memoryFree(header_text);
                 return false;
             }
@@ -2590,23 +2595,25 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                 if (! info.has_sec_websocket_protocol ||
                     ! stringAsciiCaseEquals(info.sec_websocket_protocol, ts->websocket_subprotocol))
                 {
-                    LOGE("HttpClient: websocket subprotocol negotiation failed expected=%s got=%s",
-                         ts->websocket_subprotocol,
-                         info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>");
+                    LOGE("HttpClient: websocket subprotocol negotiation failed expected_bytes=%zu got_bytes=%zu",
+                         httpclientLogTextBytes(ts->websocket_subprotocol),
+                         httpclientLogTextBytes(info.has_sec_websocket_protocol ? info.sec_websocket_protocol : NULL));
                     memoryFree(header_text);
                     return false;
                 }
             }
             else if (info.has_sec_websocket_protocol)
             {
-                LOGE("HttpClient: websocket server selected an unexpected subprotocol=%s", info.sec_websocket_protocol);
+                LOGE("HttpClient: websocket server selected an unexpected subprotocol_bytes=%zu",
+                     httpclientLogTextBytes(info.sec_websocket_protocol));
                 memoryFree(header_text);
                 return false;
             }
 
             if (info.has_sec_websocket_extensions)
             {
-                LOGE("HttpClient: websocket server selected unsupported extensions=%s", info.sec_websocket_extensions);
+                LOGE("HttpClient: websocket server selected unsupported extensions_bytes=%zu",
+                     httpclientLogTextBytes(info.sec_websocket_extensions));
                 memoryFree(header_text);
                 return false;
             }
@@ -2618,8 +2625,8 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
 
             if (ts->verbose)
             {
-                LOGD("HttpClient: websocket HTTP/1.1 handshake accepted protocol=%s",
-                     info.has_sec_websocket_protocol ? info.sec_websocket_protocol : "<none>");
+                LOGD("HttpClient: websocket HTTP/1.1 handshake accepted protocol_bytes=%zu",
+                     httpclientLogTextBytes(info.has_sec_websocket_protocol ? info.sec_websocket_protocol : NULL));
             }
 
             if (! httpclientTransportFlushPendingUp(t, l, ls))
@@ -2643,7 +2650,8 @@ bool httpclientTransportHandleHttp1ResponseHeaderPhase(tunnel_t *t, line_t *l, h
                 ls->runtime_proto     = kHttpClientRuntimeUpgradedRaw;
                 if (ts->verbose)
                 {
-                    LOGD("HttpClient: accepted HTTP/1.1 custom upgrade protocol=%s", httpclientUpgradeProtocol(ts));
+                    LOGD("HttpClient: accepted HTTP/1.1 custom upgrade protocol_bytes=%zu",
+                         httpclientLogTextBytes(httpclientUpgradeProtocol(ts)));
                 }
                 memoryFree(header_text);
                 return httpclientTransportFinishCustomUpgrade(t, l, ls);

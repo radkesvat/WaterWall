@@ -3,7 +3,7 @@
 #include "loggers/network_logger.h"
 
 static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *parent_ls, mux_cid_t cid,
-                            const char *reason)
+                            const char *reason, uint32_t aggregate_limit, bool aggregate_evaluated)
 {
     muxserver_tstate_t *ts     = tunnelGetState(t);
     const uint64_t      now_ms = wloopNowMonotonicMS(getWorkerLoop(lineGetWID(parent_l)));
@@ -12,9 +12,12 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     {
         if (atomicLogRateLimiterShouldLog(&ts->protocol_abuse_log_limiter, kMuxServerAdmissionLogIntervalMs))
         {
-            LOGW("MuxServer: closing parent on worker %u after sustained rejected Opens (latest cid=%u)",
+            LOGW("MuxServer: closing parent on worker %u after sustained rejected Opens (latest cid=%u, "
+                 "reject_burst=%u, reject_refill_per_second=%u)",
                  (unsigned int) lineGetWID(parent_l),
-                 (unsigned int) cid);
+                 (unsigned int) cid,
+                 (unsigned) kMuxServerRejectedOpenBurst,
+                 (unsigned) kMuxServerRejectedOpenRefillPerSecond);
         }
         muxserverHandleParentLoss(t, parent_l, true);
         return false;
@@ -22,12 +25,17 @@ static bool rejectFreshOpen(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
 
     if (atomicLogRateLimiterShouldLog(&ts->resource_admission_log_limiter, kMuxServerAdmissionLogIntervalMs))
     {
-        LOGW("MuxServer: rejecting fresh Open cid %u on worker %u: %s (parent-live=%u aggregate-live=%u)",
+        LOGW("MuxServer: rejecting fresh Open cid %u on worker %u: %s "
+             "(parent_live_children=%u, max_children=%u, aggregate_live_snapshot=%u, aggregate_limit=%u, "
+             "aggregate_limit_kind=%s)",
              (unsigned int) cid,
              (unsigned int) lineGetWID(parent_l),
              reason,
              parent_ls->children_count,
-             (unsigned int) atomicLoadRelaxed(&ts->live_children_count));
+             ts->max_children,
+             (unsigned int) atomicLoadRelaxed(&ts->live_children_count),
+             aggregate_limit,
+             aggregate_evaluated ? "effective" : "configured_not_evaluated");
     }
 
     sbuf_t *close_frame = muxParentOutputControlBuffer(lineGetBufferPool(parent_l));
@@ -53,7 +61,8 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
 
     if (parent_ls->children_count >= ts->max_children)
     {
-        return rejectFreshOpen(t, parent_l, parent_ls, frame->cid, "per-parent live-child limit reached");
+        return rejectFreshOpen(
+            t, parent_l, parent_ls, frame->cid, "per-parent live-child limit reached", ts->max_live_children, false);
     }
 
     const muxserver_memory_admission_t admission = muxserverEvaluateMemoryAdmission(ts);
@@ -67,7 +76,8 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     }
     if (! admission.permits_memory)
     {
-        return rejectFreshOpen(t, parent_l, parent_ls, frame->cid, "memory pressure gate is closed");
+        return rejectFreshOpen(
+            t, parent_l, parent_ls, frame->cid, "memory pressure gate is closed", admission.effective_ceiling, true);
     }
     if (! muxserverTryReserveLiveChildSlot(ts, admission.effective_ceiling))
     {
@@ -77,7 +87,9 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
                                frame->cid,
                                admission.snapshot_status == kSystemMemorySnapshotFresh
                                    ? "aggregate live-child limit reached"
-                                   : "memory-snapshot fallback live-child limit reached");
+                                   : "memory-snapshot fallback live-child limit reached",
+                               admission.effective_ceiling,
+                               true);
     }
 
     line_t             *child_l      = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(parent_l));

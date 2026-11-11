@@ -101,17 +101,40 @@ static bool quicDeliverEvent(quic_context_t *context)
     uint32_t          length  = (uint32_t) event.length + prefix;
     uint16_t          padding = bufferpoolGetLargeBufferPadding(context->pool);
     buffer_pool_fit_t fit;
-    if (! bufferpoolQueryBestFit(context->pool, length, padding, &fit) ||
-        fit.allocation_charge + retained > (size_t) state->max_bytes * 2)
+    const bool        representable = bufferpoolQueryBestFit(context->pool, length, padding, &fit);
+    if (! representable || fit.allocation_charge + retained > (size_t) state->max_bytes * 2)
     {
-        quicFail(context, "output allocation budget exceeded");
+        char reason[224];
+        if (representable)
+            snprintf(reason,
+                     sizeof(reason),
+                     "output allocation budget exceeded "
+                     "(retained_charge_bytes=%zu, incoming_charge_bytes=%zu, allocation_limit_bytes=%zu)",
+                     retained,
+                     fit.allocation_charge,
+                     (size_t) state->max_bytes * 2);
+        else
+            snprintf(reason,
+                     sizeof(reason),
+                     "output allocation geometry refused "
+                     "(payload_bytes=%u, padding_bytes=%u)",
+                     length,
+                     (unsigned) padding);
+        quicFail(context, reason);
         return true;
     }
     sbuf_t *buffer = bufferpoolGetBestFit(context->pool, length, padding);
     if (length > sbufGetWritableCapacity(buffer))
     {
+        char reason[160];
+        snprintf(reason,
+                 sizeof(reason),
+                 "output buffer capacity is insufficient "
+                 "(payload_bytes=%u, writable_capacity_bytes=%zu)",
+                 length,
+                 sbufGetWritableCapacity(buffer));
         bufferpoolReuseBuffer(context->pool, buffer);
-        quicFail(context, "output allocation budget exceeded");
+        quicFail(context, reason);
         return true;
     }
     uint8_t *data = sbufGetMutablePtr(buffer);
@@ -167,7 +190,14 @@ static bool quicWriteApplication(quic_context_t *context)
     {
         if (storage.send_entries == 0)
         {
-            quicFail(context, "send ledger storage budget exceeded");
+            char reason[192];
+            snprintf(reason,
+                     sizeof(reason),
+                     "send ledger storage budget exceeded "
+                     "(incoming_chunk_bytes=%u, split_entry_allowance=%u)",
+                     chunk,
+                     (unsigned) (length > chunk));
+            quicFail(context, reason);
             return true;
         }
         return false;
@@ -190,7 +220,15 @@ static bool quicDrainExpired(quic_context_t *context)
     if (context->final_flush && ! ww_quic_engine_closing(context->engine) &&
         ww_quic_now_us() >= context->final_deadline_us)
     {
-        quicFail(context, "data/FIN delivery unconfirmed at close-drain deadline");
+        const quic_tstate_t *state = tunnelGetState(context->tunnel);
+        char                 reason[192];
+        snprintf(reason,
+                 sizeof(reason),
+                 "data/FIN delivery unconfirmed at close-drain deadline "
+                 "(overdue_ms=%" PRIu64 ", close-drain-timeout-ms=%u)",
+                 (ww_quic_now_us() - context->final_deadline_us) / 1000,
+                 state->close_drain_timeout_ms);
+        quicFail(context, reason);
         return true;
     }
     return false;

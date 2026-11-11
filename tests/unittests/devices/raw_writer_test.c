@@ -5,6 +5,7 @@
 
 #include "devices/raw/raw_writer.h"
 #include "fixtures/worker_registry_fixture.h"
+#include "loggers/internal_logger.h"
 #include "test_assert.h"
 
 #include <pthread.h>
@@ -39,6 +40,19 @@ static atomic_uint       native_entered;
 static atomic_bool       native_release;
 static atomic_bool       close_started;
 static atomic_bool       close_finished;
+static char              diagnostic_log[4096];
+static size_t            diagnostic_length;
+
+static void captureDiagnostic(int level, const char *bytes, int length)
+{
+    discard level;
+    if (length <= 0)
+        return;
+    const size_t copied = min((size_t) length, sizeof(diagnostic_log) - diagnostic_length - 1);
+    memoryCopy(diagnostic_log + diagnostic_length, bytes, copied);
+    diagnostic_length += copied;
+    diagnostic_log[diagnostic_length] = '\0';
+}
 
 typedef struct output_s
 {
@@ -259,13 +273,23 @@ static void testBlockedBudgetAndRetry(void)
     testWorkerBindWID(1);
     require(rawWriterTrySend(&writer, packet(4)) == kRawWriterSendOk, "consumed prefix did not release capacity");
     sbuf_t *refused = packet(5);
+    diagnostic_length = 0;
+    diagnostic_log[0] = '\0';
     require(rawWriterTrySend(&writer, refused) == kRawWriterSendFull, "active suffix escaped shared backlog bound");
+    require(strstr(diagnostic_log, "device packet budget reached") != NULL &&
+                strstr(diagnostic_log, "last_retained_packets=4") != NULL &&
+                strstr(diagnostic_log, "requested_packets=1") != NULL &&
+                strstr(diagnostic_log, "packet_limit=4") != NULL &&
+                strstr(diagnostic_log, "last_packet_bytes=4") != NULL,
+            "raw output refusal lost its exact decision-time packet budget and size");
+    require(rawWriterTrySend(&writer, refused) == kRawWriterSendFull, "repeated refusal changed buffer ownership");
     sbufDestroy(refused);
     output.prefix = SIZE_MAX;
     output.status = kRawWriterBatchContinue;
     runAll();
     require(output.counts[0] == 4 && output.counts[1] == 1 && output.first[1] == 1, "timed retry changed suffix order");
     rawWriterDestroy(&writer);
+    require(strstr(diagnostic_log, "total=2") != NULL, "raw output stop lost aggregated refusal evidence");
 }
 
 static void *notifyForeign(void *arg)
@@ -430,6 +454,9 @@ static void testConcurrentWritesAndStop(void)
 
 int main(void)
 {
+    logger_t *logger = loggerCreate();
+    loggerSetHandler(logger, captureDiagnostic);
+    setInternalLogger(logger);
     test_worker_registry_t registry = {0};
     GSTATE.workers_count            = 2;
     testWorkerRegistryInstall(&registry);
@@ -444,5 +471,6 @@ int main(void)
     require(captured_count == 0, "test retained worker messages");
     testWorkerRegistryRestore(&registry);
     testWorkerUnbindWID();
+    internaloggerDestroy();
     return 0;
 }

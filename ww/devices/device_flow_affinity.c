@@ -2,6 +2,8 @@
 
 #include "devices/device_frag_affinity.h"
 #include "global_state.h"
+#include "loggers/internal_logger.h"
+#include "loggers/log_rate_limiter.h"
 
 enum
 {
@@ -174,6 +176,29 @@ static bool deviceFlowAffinityPostSorted(device_reader_session_t *session, sbuf_
                 accepted = result == kDeviceReaderPostAccepted;
                 if (result == kDeviceReaderPostCapacity)
                 {
+                    /* These external readers drop instead of waiting. Bursts
+                     * can repeatedly overflow the same device dispatch queue. */
+                    static thread_local log_rate_limiter_t overflow_log;
+                    const log_rate_limiter_report_t        report = logRateLimiterRecordImmediate(&overflow_log, 1000);
+                    if (report.should_log)
+                    {
+                        const size_t requested_charge = chunk != 0 ? charge : sbufGetAllocationCharge(sorted[first]);
+                        LOGW("DeviceReaderSession: dropping unadmitted input: device dispatch budget exceeded "
+                             "(last_reason=%s, last_dropped_dispatch_packets=%u, last_requested_allocation_bytes=%zu, "
+                             "last_requested_packets=%u, allocation_limit_bytes=%zu, packet_limit=%u, "
+                             "queued_allocation_bytes_snapshot=%zu, queued_packets_snapshot=%u, "
+                             "refused_batches=%llu, total_refused_batches=%llu)",
+                             chunk != 0 ? "queue_capacity" : "single_allocation_exceeds_budget",
+                             dispatch_count - first,
+                             requested_charge,
+                             chunk != 0 ? (unsigned) chunk : 1U,
+                             session->output_charge_limit,
+                             session->output_packet_limit,
+                             (size_t) atomicLoadRelaxed(&session->output_charge),
+                             (unsigned) atomicLoadRelaxed(&session->output_packets),
+                             LLU(report.events),
+                             LLU(report.total));
+                    }
                     /* Capacity refusal retains the whole chunk. Include it
                      * in the unposted remainder settled below. */
                     chunk = 0;

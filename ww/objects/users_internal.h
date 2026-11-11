@@ -355,6 +355,8 @@ user_t *usersStorageAtLocked(const users_t *users, size_t index);
 
 user_t *usersGetAtLocked(const users_t *users, size_t index);
 
+/* Escaped preview of at most 64 name bytes; four rotating thread-local views
+ * allow multiple names in one diagnostic. Borrowed until four further calls. */
 const char *usersUserNameForLog(const user_t *user);
 
 void usersStringDuplicate(char **dest, const char *value);

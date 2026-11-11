@@ -22,7 +22,19 @@ void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
         if (read_result == kEncryptionFrameInvalid)
         {
-            LOGW("EncryptionClient: invalid encrypted frame received, closing line");
+            uint8_t header[kEncryptionTlsHeaderSize];
+            bufferstreamCopyBytesAt(&ls->read_stream, 0, header, sizeof(header));
+            const unsigned body_bytes     = ((unsigned) header[3] << 8) | header[4];
+            const bool     header_invalid = header[0] != kEncryptionTlsApplicationData ||
+                                        header[1] != kEncryptionTlsVersionMajor ||
+                                        header[2] != kEncryptionTlsVersionMinor;
+            LOGW("EncryptionClient: closing connection: invalid encrypted frame %s "
+                 "(body_bytes=%u, minimum_body_bytes=%u, effective_body_limit_bytes=%u, max_frame_payload=%u)",
+                 header_invalid ? "type/version" : "body length",
+                 body_bytes,
+                 (unsigned) (kEncryptionNonceSize + kEncryptionTagSize),
+                 ts->max_frame_payload + kEncryptionNonceSize + kEncryptionTagSize,
+                 ts->max_frame_payload);
             encryptionclientCloseLineBidirectional(t, l);
             return;
         }

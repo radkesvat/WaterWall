@@ -398,7 +398,11 @@ static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sn
 
     if (delta > 0 && original_packet_len > UINT32_MAX - (uint32_t) delta)
     {
-        LOGW("firstsnitrick: packet length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: packet length expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             original_packet_len,
+             (int) delta,
+             UINT32_MAX);
         return NULL;
     }
 
@@ -409,44 +413,77 @@ static sbuf_t *craftFirstSniPacket(tunnel_t *t, line_t *l, sbuf_t *buf, const sn
 
     if (delta > 0 && match->ip_total_len > UINT16_MAX - (uint16_t) delta)
     {
-        LOGW("firstsnitrick: IPv4 total length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: IPv4 length expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             (unsigned) match->ip_total_len,
+             (int) delta,
+             (unsigned) UINT16_MAX);
         return NULL;
     }
 
     if (delta > 0 && match->server_name_list_len > UINT16_MAX - (uint16_t) delta)
     {
-        LOGW("firstsnitrick: TLS server-name list length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: TLS server-name list expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             (unsigned) match->server_name_list_len,
+             (int) delta,
+             (unsigned) UINT16_MAX);
         return NULL;
     }
 
     if (delta > 0 && match->server_name_ext_len > UINT16_MAX - (uint16_t) delta)
     {
-        LOGW("firstsnitrick: TLS server-name extension length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: TLS server-name extension expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             (unsigned) match->server_name_ext_len,
+             (int) delta,
+             (unsigned) UINT16_MAX);
         return NULL;
     }
 
     if (delta > 0 && match->extensions_len > UINT16_MAX - (uint16_t) delta)
     {
-        LOGW("firstsnitrick: TLS extensions length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: TLS extensions expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             (unsigned) match->extensions_len,
+             (int) delta,
+             (unsigned) UINT16_MAX);
         return NULL;
     }
 
     if (delta > 0 && match->tls_record_len > UINT16_MAX - (uint16_t) delta)
     {
-        LOGW("firstsnitrick: TLS record length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: TLS record expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             (unsigned) match->tls_record_len,
+             (int) delta,
+             (unsigned) UINT16_MAX);
         return NULL;
     }
 
     if (delta > 0 && match->client_hello_len > 0xFFFFFFU - (uint32_t) delta)
     {
-        LOGW("firstsnitrick: TLS ClientHello length overflow while expanding fake SNI");
+        LOGW("firstsnitrick: skipping fake packet: TLS ClientHello expansion overflows "
+             "(original_bytes=%u, added_bytes=%d, limit_bytes=%u)",
+             match->client_hello_len,
+             (int) delta,
+             0xFFFFFFU);
         return NULL;
     }
 
     if (new_ip_total_len <= 0 || new_extensions_len <= 0 || new_server_name_list_len <= 0 ||
         new_server_name_ext_len <= 0 || new_tls_record_len <= 0 || new_client_hello_len <= 0)
     {
-        LOGW("firstsnitrick: fake SNI would make packet lengths invalid");
+        LOGW("firstsnitrick: skipping fake packet: SNI replacement makes encoded lengths nonpositive "
+             "(length_change_bytes=%d, ipv4_bytes=%d, extensions_bytes=%d, name_list_bytes=%d, "
+             "name_extension_bytes=%d, record_bytes=%d, client_hello_bytes=%" PRId64 ")",
+             (int) delta,
+             (int) new_ip_total_len,
+             (int) new_extensions_len,
+             (int) new_server_name_list_len,
+             (int) new_server_name_ext_len,
+             (int) new_tls_record_len,
+             new_client_hello_len);
         return NULL;
     }
 
