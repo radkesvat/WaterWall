@@ -31,3 +31,9 @@ WW_EXPORT int domainresolverTunnelResolve(tunnel_t *provider, line_t *line, cons
  * The caller retains its existing request/line reference and settlement rules. */
 WW_EXPORT int domainresolverTunnelResolveRaw(tunnel_t *provider, line_t *line, const char *domain, const char *service,
                                              int socktype, dns_resolve_cb cb, void *userdata);
+/* Use the request's snapshotted strategy when its destination is independent
+ * of the line's mutable destination context. Completion has the raw contract. */
+WW_EXPORT int domainresolverTunnelResolveRawWithStrategy(tunnel_t *provider, line_t *line, const char *domain,
+                                                         const char *service, int socktype,
+                                                         enum domain_strategy strategy, dns_resolve_cb cb,
+                                                         void *userdata);

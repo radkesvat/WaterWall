@@ -123,6 +123,10 @@ static inline bool asyncdnsStatusIsShutdown(int status)
  */
 int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, int socktype, dns_resolve_cb cb,
                     void *userdata);
+/* Same completion contract; family must be AF_UNSPEC, AF_INET, or AF_INET6.
+ * A single-family request issues only that family's DNS query. */
+int asyncdnsResolveFamily(dns_resolver_t *r, const char *host, const char *service, int socktype, int family,
+                          dns_resolve_cb cb, void *userdata);
 
 #if defined(EVENT_IOCP) && defined(WATERWALL_IOCP_TEST_HOOKS)
 typedef int(WSAAPI *asyncdns_test_select_cb)(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,

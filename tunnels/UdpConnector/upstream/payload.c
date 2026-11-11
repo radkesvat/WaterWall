@@ -275,8 +275,14 @@ static bool udpconnectorStartPacketDnsResolve(tunnel_t *t, line_t *l, udpconnect
 
     char service[6];
     snprintf(service, sizeof(service), "%u", (unsigned) request->port);
-    int rc = domainresolverTunnelResolveRaw(
-        ts->domain_resolver_tunnel, l, request->domain, service, SOCK_DGRAM, udpconnectorOnPacketDnsResolved, request);
+    int rc = domainresolverTunnelResolveRawWithStrategy(ts->domain_resolver_tunnel,
+                                                        l,
+                                                        request->domain,
+                                                        service,
+                                                        SOCK_DGRAM,
+                                                        (enum domain_strategy) request->strategy,
+                                                        udpconnectorOnPacketDnsResolved,
+                                                        request);
     if (rc != ARES_SUCCESS)
     {
         udpconnectorPacketDnsRequestUnlink(ls, request);

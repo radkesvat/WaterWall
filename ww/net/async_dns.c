@@ -816,9 +816,10 @@ void asyncdnsCleanup(dns_resolver_t *r)
     memoryZero(r, sizeof(*r));
 }
 
-int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, int socktype, dns_resolve_cb cb,
-                    void *userdata)
+int asyncdnsResolveFamily(dns_resolver_t *r, const char *host, const char *service, int socktype, int family,
+                          dns_resolve_cb cb, void *userdata)
 {
+    assert(family == AF_UNSPEC || family == AF_INET || family == AF_INET6);
     if (r == NULL || r->channel == NULL || host == NULL || host[0] == '\0' || cb == NULL)
     {
         return ARES_EFORMERR;
@@ -849,7 +850,7 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
 
     struct ares_addrinfo_hints hints;
     memoryZero(&hints, sizeof(hints));
-    hints.ai_family   = AF_UNSPEC;
+    hints.ai_family   = family;
     hints.ai_socktype = socktype;
     if (r->transport_process != NULL)
         hints.ai_flags |= ARES_AI_NOSORT;
@@ -858,4 +859,10 @@ int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, in
     asyncdnsRefreshTimer(r);
 
     return ARES_SUCCESS;
+}
+
+int asyncdnsResolve(dns_resolver_t *r, const char *host, const char *service, int socktype, dns_resolve_cb cb,
+                    void *userdata)
+{
+    return asyncdnsResolveFamily(r, host, service, socktype, AF_UNSPEC, cb, userdata);
 }

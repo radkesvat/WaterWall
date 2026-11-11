@@ -19,6 +19,8 @@ static unsigned  inits, writes, finishes, pauses, resumes, results, cancellation
 static unsigned  preparations, preparation_cleanups;
 static bool      preparation_refuses;
 static bool      init_establishes, init_finishes, init_pauses, answer_queries, submitting;
+static bool      answer_ipv6;
+static unsigned  a_questions, aaaa_questions;
 
 static bool prepareOwned(tunnel_t *helper, tunnel_t *owner, line_t *line, void *storage)
 {
@@ -105,7 +107,12 @@ static void answerQuery(line_t *line, const uint8_t *query, size_t query_length,
     end += 5;
     twfRequire(end <= query_length, "invalid DNS question");
     const bool   ipv4          = query[end - 4] == 0 && query[end - 3] == 1;
-    const size_t answer_length = end + (ipv4 ? 16 : 0);
+    twfRequire(ipv4 || (query[end - 4] == 0 && query[end - 3] == 28), "unexpected DNS question type");
+    if (ipv4)
+        ++a_questions;
+    else
+        ++aaaa_questions;
+    const size_t answer_length = end + (ipv4 ? 16 : answer_ipv6 ? 28 : 0);
     const size_t prefix        = tcp ? 2 : 0;
     sbuf_t      *answer        = makeInput(line, prefix + answer_length, 0);
     uint8_t     *wire          = sbufGetMutablePtr(answer);
@@ -119,11 +126,17 @@ static void answerQuery(line_t *line, const uint8_t *query, size_t query_length,
     wire[2] = 0x81;
     wire[3] = 0x80;
     wire[6] = 0;
-    wire[7] = ipv4 ? 1 : 0;
+    wire[7] = ipv4 || answer_ipv6 ? 1 : 0;
     wire[8] = wire[9] = wire[10] = wire[11] = 0;
     if (ipv4)
     {
         const uint8_t record[] = {0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 42};
+        memoryCopy(wire + end, record, sizeof(record));
+    }
+    else if (answer_ipv6)
+    {
+        const uint8_t record[] = {0xc0, 0x0c, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 0x20, 0x01,
+                                  0x0d, 0xb8, 0, 0,  0, 0, 0, 0, 0, 0,  0, 0,  0,    42};
         memoryCopy(wire + end, record, sizeof(record));
     }
     domainresolverTransportPayload(resolver, line, answer);
@@ -423,6 +436,98 @@ static void testNativeChannelFlags(const asyncdns_options_t *options)
     }
 }
 
+typedef struct family_result_s
+{
+    int      family;
+    unsigned callbacks;
+} family_result_t;
+
+static void familyResolved(void *userdata, int status, const char *error, const dns_resolved_addr_t *addrs,
+                           size_t count)
+{
+    discard          error;
+    family_result_t *result = userdata;
+    twfRequire(status == ARES_SUCCESS && count == (result->family == AF_UNSPEC ? 2U : 1U),
+               "family-constrained lookup returned the wrong result count");
+    for (size_t i = 0; i < count; ++i)
+        twfRequire(result->family == AF_UNSPEC || addrs[i].family == result->family,
+                   "family-constrained lookup returned another family");
+    ++result->callbacks;
+}
+
+static void familyLineResolved(tunnel_t *t, line_t *line, void *userdata, int status, const char *error,
+                               const dns_resolved_addr_t *addrs, size_t count)
+{
+    discard t;
+    twfRequire(lineIsAlive(line), "family lookup completed on a dead application line");
+    familyResolved(userdata, status, error, addrs, count);
+}
+
+static void testQueryFamilies(tunnel_t *next, const asyncdns_options_t *options)
+{
+    twfSetCase("effective DNS strategies query only required address families");
+    const enum domain_strategy    strategies[] = {kDsInvalid, kDsPreferIpV4, kDsPreferIpV6, kDsOnlyIpV4, kDsOnlyIpV6};
+    domainresolver_tstate_t      *ts           = tunnelGetState(resolver);
+    const domainresolver_tstate_t saved        = *ts;
+    node_t                        helper_node  = {.type = (char *) "DomainResolver"};
+    tunnel_t                     *helper       = domainresolverTunnelCreate(&helper_node);
+    twfRequire(helper != NULL, "family strategy helper creation failed");
+    domainresolverTunnelSetProvider(helper, resolver);
+    domainresolverTunnelUseLineStrategy(helper, true);
+    domainresolver_transport_t *workers[1] = {NULL};
+    bool                        closed[1]  = {false};
+    ts->dns_workers                        = workers;
+    ts->dns_worker_closed                  = closed;
+    ts->dns_workers_count                  = 1;
+    ts->dns_egress                         = next;
+    answer_ipv6                            = true;
+    for (unsigned mode = kDomainResolverModeDirect; mode <= kDomainResolverModeChain; ++mode)
+    {
+        ts->mode = (domainresolver_mode_t) mode;
+        for (unsigned strategy_index = 0; strategy_index < ARRAY_SIZE(strategies); ++strategy_index)
+        {
+            const enum domain_strategy strategy = strategies[strategy_index];
+            const int family = strategy == kDsOnlyIpV4 ? AF_INET : strategy == kDsOnlyIpV6 ? AF_INET6 : AF_UNSPEC;
+            for (unsigned api = 0; api < 3; ++api)
+            {
+                workers[0] = domainresolverTransportCreate(resolver, next, 0, options);
+                twfRequire(workers[0] != NULL, "family channel creation failed");
+                line_t         *line     = lineCreate(tunnelchainGetLinePools(tunnelGetChain(resolver)), 0);
+                family_result_t result   = {.family = family};
+                const unsigned  before_a = a_questions, before_aaaa = aaaa_questions;
+                ts->use_line_strategy = false;
+                ts->strategy          = api == 0 ? strategy : (family == AF_INET ? kDsOnlyIpV6 : kDsOnlyIpV4);
+                addresscontextSetDomainStrategy(lineGetDestinationAddressContext(line),
+                                                api == 1 ? strategy : ts->strategy);
+                int status =
+                    api == 2 ? domainresolverTunnelResolveRawWithStrategy(
+                                   resolver, line, "family.test", NULL, SOCK_STREAM, strategy, familyResolved, &result)
+                             : domainresolverTunnelResolve(api == 1 ? helper : resolver,
+                                                           line,
+                                                           "family.test",
+                                                           NULL,
+                                                           SOCK_STREAM,
+                                                           familyLineResolved,
+                                                           resolver,
+                                                           &result);
+                twfRequire(status == ARES_SUCCESS, "family lookup submission failed");
+                for (unsigned i = 0; i < 8 && result.callbacks == 0; ++i)
+                    dnsTransportProcess(workers[0]);
+                twfRequire(result.callbacks == 1 && a_questions - before_a == (family == AF_INET6 ? 0U : 1U) &&
+                               aaaa_questions - before_aaaa == (family == AF_INET ? 0U : 1U),
+                           "effective family did not control A/AAAA query emission");
+                domainresolverTransportDestroy(workers[0]);
+                workers[0] = NULL;
+                releaseObserved();
+                lineDestroy(line);
+            }
+        }
+    }
+    answer_ipv6 = false;
+    *ts         = saved;
+    domainresolverTunnelDestroy(helper, wwLifecycleStartupRollback());
+}
+
 int main(int argc, char **argv)
 {
     const char *selected = argc == 2 ? argv[1] : NULL;
@@ -563,6 +668,7 @@ int main(int argc, char **argv)
                 testConnectionReuse(next, &options, tcp != 0, stay_open != 0);
         testNativeChannelFlags(&options);
     }
+    testQueryFamilies(next, &options);
     chain->line_pools[0] = NULL;
     tunnelchainDestroy(chain);
     twfLinePoolTeardown(&lines);

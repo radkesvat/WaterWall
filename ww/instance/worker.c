@@ -539,8 +539,8 @@ void workerRun(worker_t *worker)
     workerUnbindCurrentThread();
 }
 
-int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
-                                    void *userdata)
+int workerResolveDomainServiceFamilyAsync(wid_t wid, const char *domain, const char *service, int socktype, int family,
+                                          dns_resolve_cb cb, void *userdata)
 {
     /*
      * The resolver channel is worker-local c-ares state with no internal
@@ -562,7 +562,13 @@ int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *s
         return ARES_ECANCELLED;
     }
 
-    return asyncdnsResolve(&worker->dns_resolver, domain, service, socktype, cb, userdata);
+    return asyncdnsResolveFamily(&worker->dns_resolver, domain, service, socktype, family, cb, userdata);
+}
+
+int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
+                                    void *userdata)
+{
+    return workerResolveDomainServiceFamilyAsync(wid, domain, service, socktype, AF_UNSPEC, cb, userdata);
 }
 
 int workerResolveDomainAsync(wid_t wid, const char *domain, dns_resolve_cb cb, void *userdata)

@@ -202,7 +202,7 @@ endif()
 
 if(LINUX AND TARGET DomainResolver)
   waterwall_add_native_executable(domainresolver_flow_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/domainresolver/domainresolver_flow_test.c)
-  target_link_options(domainresolver_flow_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=lineResolveDomainServiceAsync")
+  target_link_options(domainresolver_flow_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS} "-Wl,--wrap=lineResolveDomainServiceAsync" "-Wl,--wrap=lineResolveDomainOnResolverFamilyAsync")
   target_link_libraries(domainresolver_flow_test PRIVATE DomainResolver ww)
   add_dependencies(waterwall_unit_tests domainresolver_flow_test)
   add_waterwall_unit_test(waterwall.domainresolver_flow_unit domainresolver_flow_test "unit;tunnels;dns;flow;lifetime")

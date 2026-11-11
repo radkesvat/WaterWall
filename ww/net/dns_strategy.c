@@ -1,5 +1,18 @@
 #include "dns_strategy.h"
 
+int dnsstrategyQueryFamily(enum domain_strategy strategy)
+{
+    switch (strategy)
+    {
+    case kDsOnlyIpV4:
+        return AF_INET;
+    case kDsOnlyIpV6:
+        return AF_INET6;
+    default:
+        return AF_UNSPEC;
+    }
+}
+
 bool dnsstrategyFamilyAllowedByStrategy(int family, enum domain_strategy strategy)
 {
     switch (strategy)

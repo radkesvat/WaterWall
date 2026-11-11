@@ -59,10 +59,10 @@ Use a string for `strategy`:
 | `accept-dns-returned-order` | Use the first usable IPv4 or IPv6 result. |
 | `prefer-ipv4` | Prefer IPv4 and fall back to IPv6. |
 | `prefer-ipv6` | Prefer IPv6 and fall back to IPv4. |
-| `only-ipv4` | Accept only IPv4 results. |
-| `only-ipv6` | Accept only IPv6 results. |
+| `only-ipv4` | Query A records and accept only IPv4 results. |
+| `only-ipv6` | Query AAAA records and accept only IPv6 results. |
 
-Only the canonical lowercase strategy strings above are accepted; numeric strategies are rejected. This also applies when `resolve` is omitted. The optional `resolve` field defaults to `true`. Address selection is independent of DNS transport.
+Only the canonical lowercase strategy strings above are accepted; numeric strategies are rejected. This also applies when `resolve` is omitted. The optional `resolve` field defaults to `true`. Address selection is independent of DNS transport. The two `only-` strategies constrain lookups to the selected family in every mode; preference and returned-order strategies query both families.
 
 ## Native Mode
 

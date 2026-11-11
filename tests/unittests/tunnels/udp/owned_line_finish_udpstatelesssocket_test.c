@@ -381,6 +381,15 @@ int __wrap_workerResolveDomainServiceAsync(wid_t wid, const char *domain, const 
     return ARES_ENOTINITIALIZED;
 }
 
+int __wrap_workerResolveDomainServiceFamilyAsync(wid_t wid, const char *domain, const char *service, int socktype,
+                                                 int family, dns_resolve_cb cb, void *userdata);
+int __wrap_workerResolveDomainServiceFamilyAsync(wid_t wid, const char *domain, const char *service, int socktype,
+                                                 int family, dns_resolve_cb cb, void *userdata)
+{
+    twfRequire(family == AF_INET, "stateless only-ipv4 submitted another query family");
+    return __wrap_workerResolveDomainServiceAsync(wid, domain, service, socktype, cb, userdata);
+}
+
 static void protectedDnsInit(tunnel_t *egress, line_t *line)
 {
     discard            egress;

@@ -695,6 +695,10 @@ int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const 
 int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
                                      const char *service, int socktype, LineDnsResolveFn cb, tunnel_t *t,
                                      void *userdata);
+/* Same guarded completion; family is AF_UNSPEC, AF_INET, or AF_INET6. */
+int lineResolveDomainOnResolverFamilyAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
+                                           const char *service, int socktype, int family, LineDnsResolveFn cb,
+                                           tunnel_t *t, void *userdata);
 
 /**
  * @brief Acquire, hold, and release a temporary line reference around a task.

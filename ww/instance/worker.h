@@ -192,6 +192,9 @@ int workerResolveDomainAsync(wid_t wid, const char *domain, dns_resolve_cb cb, v
  */
 int workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype, dns_resolve_cb cb,
                                     void *userdata);
+/* Same owner-worker contract; family is AF_UNSPEC, AF_INET, or AF_INET6. */
+int workerResolveDomainServiceFamilyAsync(wid_t wid, const char *domain, const char *service, int socktype, int family,
+                                          dns_resolve_cb cb, void *userdata);
 
 /**
  * @brief Gets the worker ID of the current thread.

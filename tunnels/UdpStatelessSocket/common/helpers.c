@@ -665,8 +665,14 @@ static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
     lineRef(l);
     char service[6];
     snprintf(service, sizeof(service), "%u", (unsigned) request->port);
-    int rc = domainresolverTunnelResolveRaw(
-        state->dns_provider, l, request->domain, service, SOCK_DGRAM, udpstatelesssocketOnDnsResolved, request);
+    int rc = domainresolverTunnelResolveRawWithStrategy(state->dns_provider,
+                                                        l,
+                                                        request->domain,
+                                                        service,
+                                                        SOCK_DGRAM,
+                                                        (enum domain_strategy) request->strategy,
+                                                        udpstatelesssocketOnDnsResolved,
+                                                        request);
     if (rc != ARES_SUCCESS)
     {
         lineUnref(l);

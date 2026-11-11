@@ -80,6 +80,17 @@ int __wrap_lineResolveDomainServiceAsync(line_t *line, const char *domain, const
     return ARES_SUCCESS;
 }
 
+int __wrap_lineResolveDomainOnResolverFamilyAsync(line_t *line, dns_resolver_t *channel, const char *domain,
+                                                  const char *service, int socktype, int family,
+                                                  LineDnsResolveFn callback, tunnel_t *t, void *userdata);
+int __wrap_lineResolveDomainOnResolverFamilyAsync(line_t *line, dns_resolver_t *channel, const char *domain,
+                                                  const char *service, int socktype, int family,
+                                                  LineDnsResolveFn callback, tunnel_t *t, void *userdata)
+{
+    twfRequire(channel == NULL && family == AF_INET, "native only-ipv4 lookup requested another family");
+    return __wrap_lineResolveDomainServiceAsync(line, domain, service, socktype, callback, t, userdata);
+}
+
 static sbuf_t *payload(line_t *l, char c)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));

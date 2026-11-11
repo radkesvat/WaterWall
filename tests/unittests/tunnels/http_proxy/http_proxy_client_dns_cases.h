@@ -20,12 +20,14 @@ static void            *dns_userdata;
 static unsigned         lookups;
 static int              submit_status;
 static char             lookup_name[256];
+static int              lookup_family;
 
 int __wrap_lineResolveDomainServiceAsync(line_t *l, const char *domain, const char *service, int socktype,
                                          LineDnsResolveFn callback, tunnel_t *t, void *userdata);
 int __wrap_lineResolveDomainServiceAsync(line_t *l, const char *domain, const char *service, int socktype,
                                          LineDnsResolveFn callback, tunnel_t *t, void *userdata)
 {
+    lookup_family = AF_UNSPEC;
     require(l == line && ! service && socktype == SOCK_STREAM, "origin DNS arguments");
     ++lookups;
     stringCopyN(lookup_name, domain, sizeof(lookup_name));
@@ -37,6 +39,18 @@ int __wrap_lineResolveDomainServiceAsync(line_t *l, const char *domain, const ch
     dns_userdata = userdata;
     lineRef(l);
     return ARES_SUCCESS;
+}
+int __wrap_lineResolveDomainOnResolverFamilyAsync(line_t *l, dns_resolver_t *resolver, const char *domain,
+                                                  const char *service, int socktype, int family,
+                                                  LineDnsResolveFn callback, tunnel_t *t, void *userdata);
+int __wrap_lineResolveDomainOnResolverFamilyAsync(line_t *l, dns_resolver_t *resolver, const char *domain,
+                                                  const char *service, int socktype, int family,
+                                                  LineDnsResolveFn callback, tunnel_t *t, void *userdata)
+{
+    require(resolver == NULL && (family == AF_INET || family == AF_INET6), "origin DNS family arguments");
+    int result    = __wrap_lineResolveDomainServiceAsync(l, domain, service, socktype, callback, t, userdata);
+    lookup_family = family;
+    return result;
 }
 static void dnsComplete(int status, const dns_resolved_addr_t *answers, size_t count)
 {
@@ -175,6 +189,10 @@ static void dnsTests(void)
                 dnsOpen(strategy, mixed & 1, mixed & 2, "origin.test");
                 rewrite_target = true;
                 dnsStart();
+                require(lookup_family == (strategy == 4 || strategy == 6 ? AF_INET
+                                          : strategy == 5                ? AF_INET6
+                                                                         : AF_UNSPEC),
+                        "origin DNS did not query the selected family");
                 require(lookups == 1 && ! stringCompare(lookup_name, "origin.test") && ! next_inits && ! writes &&
                             ! ((hpc_tstate_t *) tunnelGetState(proxy))->workers[0].timers,
                         "DNS must precede core Init, timer and transport");

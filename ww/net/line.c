@@ -592,9 +592,9 @@ line_task_submit_result_e lineScheduleDelayedTaskWithBuf(line_t *const line, Lin
     return mapped;
 }
 
-int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
-                                     const char *service, int socktype, LineDnsResolveFn cb, tunnel_t *t,
-                                     void *userdata)
+int lineResolveDomainOnResolverFamilyAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
+                                           const char *service, int socktype, int family, LineDnsResolveFn cb,
+                                           tunnel_t *t, void *userdata)
 {
     if (line == NULL || domain == NULL || domain[0] == '\0' || cb == NULL)
     {
@@ -626,10 +626,10 @@ int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolve
         .userdata = userdata,
     };
 
-    int rc =
-        resolver != NULL
-            ? asyncdnsResolve(resolver, domain, service, socktype, lineDnsResolveResult, msg)
-            : workerResolveDomainServiceAsync(lineGetWID(line), domain, service, socktype, lineDnsResolveResult, msg);
+    int rc = resolver != NULL
+                 ? asyncdnsResolveFamily(resolver, domain, service, socktype, family, lineDnsResolveResult, msg)
+                 : workerResolveDomainServiceFamilyAsync(
+                       lineGetWID(line), domain, service, socktype, family, lineDnsResolveResult, msg);
     if (rc != ARES_SUCCESS)
     {
         lineUnref(line);
@@ -638,6 +638,14 @@ int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolve
     }
 
     return ARES_SUCCESS;
+}
+
+int lineResolveDomainOnResolverAsync(line_t *const line, dns_resolver_t *resolver, const char *domain,
+                                     const char *service, int socktype, LineDnsResolveFn cb, tunnel_t *t,
+                                     void *userdata)
+{
+    return lineResolveDomainOnResolverFamilyAsync(
+        line, resolver, domain, service, socktype, AF_UNSPEC, cb, t, userdata);
 }
 
 int lineResolveDomainServiceAsync(line_t *const line, const char *domain, const char *service, int socktype,
