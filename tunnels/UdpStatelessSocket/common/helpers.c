@@ -12,6 +12,8 @@ typedef struct udpstatelesssocket_dns_request_s
     char     *domain;
     uint16_t  port;
     int       strategy;
+    udpstatelesssocket_dns_pending_t *pending;
+    buffer_budget_cost_t              retained;
 } udpstatelesssocket_dns_request_t;
 
 static void udpstatelesssocketCleanupSendRequest(void *arg1, void *arg2, void *arg3,
@@ -428,6 +430,9 @@ static void udpstatelesssocketDnsRequestDestroy(udpstatelesssocket_dns_request_t
 {
     assert(request != NULL);
 
+    assert(request->pending->requests != 0);
+    --request->pending->requests;
+    bufferbudgetRelease(&request->pending->budget, request->retained);
     memoryFree(request->domain);
     memoryFree(request);
 }
@@ -629,9 +634,10 @@ static void udpstatelesssocketOnDnsResolved(void *userdata, int status, const ch
     }
 
     udpstatelesssocketDnsCacheStore(tunnelGetState(t), request->domain, request->port, request->strategy, &peer_addr);
+    // Retention ends before the send can reenter and admit another datagram.
+    udpstatelesssocketDnsRequestDestroy(request);
     udpstatelesssocketDispatchToPeer(t, buf, &peer_addr);
     lineUnref(line);
-    udpstatelesssocketDnsRequestDestroy(request);
 }
 
 static int udpstatelesssocketEffectiveDnsStrategy(const udpstatelesssocket_tstate_t *state,
@@ -650,7 +656,20 @@ static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
         return;
     }
 
-    udpstatelesssocket_tstate_t      *state       = tunnelGetState(t);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(t);
+    assert(lineIsOnCurrentWorker(l));
+    assert(state->dns_pending != NULL);
+    udpstatelesssocket_dns_pending_t *pending  = &state->dns_pending[lineGetWID(l)];
+    const buffer_budget_cost_t        retained = {sbufGetLength(buf), sbufGetAllocationCharge(buf)};
+    if (pending->requests >= kUdpStatelessSocketDnsPendingRequests ||
+        ! bufferbudgetTryAcquire(&pending->budget, retained))
+    {
+        // These are independent datagrams on a borrowed line: drop only the
+        // refused input, preserving other pending sends and the line itself.
+        lineReuseBuffer(l, buf);
+        return;
+    }
+    ++pending->requests;
     udpstatelesssocket_dns_request_t *request     = memoryAllocate(sizeof(*request));
     char                             *domain_copy = stringDuplicate(dest_ctx->domain);
     *request                                      = (udpstatelesssocket_dns_request_t) {
@@ -660,6 +679,8 @@ static void udpstatelesssocketStartDnsResolve(tunnel_t *t, line_t *l, sbuf_t *bu
                                              .domain   = domain_copy,
                                              .port     = dest_ctx->port,
                                              .strategy = udpstatelesssocketEffectiveDnsStrategy(state, dest_ctx),
+                                             .pending  = pending,
+                                             .retained = retained,
     };
 
     lineRef(l);

@@ -46,6 +46,16 @@ void udpstatelesssocketTunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *
     udpstatelesssocketDnsCacheClear(state);
     mutexDestroy(&state->dns_cache_mutex);
 
+    if (state->dns_pending != NULL)
+    {
+        for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        {
+            assert(state->dns_pending[wid].requests == 0);
+            bufferbudgetAssertEmpty(&state->dns_pending[wid].budget);
+        }
+        memoryFree(state->dns_pending);
+    }
+
     memoryFree(state->listen_address);
     memoryFree(state->interface_name);
 

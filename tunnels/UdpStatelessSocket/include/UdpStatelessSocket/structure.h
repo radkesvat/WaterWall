@@ -7,12 +7,21 @@ enum
 {
     kUdpStatelessSocketDnsRefreshIntervalMs = 30 * 60 * 1000,
     kUdpStatelessSocketDnsCacheCapacity     = 256,
+    kUdpStatelessSocketDnsPendingRequests   = 256,
+    kUdpStatelessSocketDnsPendingBytes      = 2 * 1024 * 1024,
+    kUdpStatelessSocketDnsPendingCharge     = 4 * 1024 * 1024,
     kUdpStatelessSocketInitExpireTime       = 30 * 1000,
     kUdpStatelessSocketKeepExpireTime       = 300 * 1000
 };
 
 typedef struct udpstatelesssocket_dns_cache_entry_s udpstatelesssocket_dns_cache_entry_t;
 typedef struct udpstatelesssocket_send_request_s    udpstatelesssocket_send_request_t;
+
+typedef struct udpstatelesssocket_dns_pending_s
+{
+    buffer_budget_t budget;
+    size_t          requests;
+} udpstatelesssocket_dns_pending_t;
 
 struct udpstatelesssocket_dns_cache_entry_s
 {
@@ -42,6 +51,7 @@ typedef struct udpstatelesssocket_tstate_s
     udpsock_t                   socket; // UDP socket side-data, including worker-local peer idle tables
     master_pool_t              *send_request_master_pool;
     threadsafe_generic_pool_t **send_request_pools;
+    udpstatelesssocket_dns_pending_t *dns_pending; // Owner-worker requests across all borrowed lines.
 
     // These fields are read from json
     char    *listen_address; // address to listen on (ip)

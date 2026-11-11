@@ -189,6 +189,11 @@ When payload is sent through `UdpStatelessSocket`:
   refresh in place, expired entries are reclaimed before insertion, and the oldest entry is evicted when the cap is full
 - the destination IP and port are converted to a socket address and sent through the bound socket
 
+Pending DNS sends have a separate limit per socket instance and submitting worker:
+256 requests, 2 MiB of datagram payload, and 4 MiB of retained buffer allocation.
+A send exceeding any limit drops that whole datagram. Completion, errors and
+shutdown release its allowance; the completed-answer cache does not consume it.
+
 This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.
 
 ### Listener and connector role

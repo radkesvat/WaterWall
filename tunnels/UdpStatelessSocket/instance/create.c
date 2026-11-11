@@ -205,6 +205,12 @@ tunnel_t *udpstatelesssocketTunnelCreate(node_t *node)
     if (! udpstatelesssocketCreateDnsProvider(t, node))
         return udpstatelesssocketTunnelCreateFail(t);
 
+    state->dns_pending = memoryCalloc(getWorkersCount(), sizeof(*state->dns_pending));
+    for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
+        bufferbudgetInit(
+            &state->dns_pending[wid].budget,
+            (buffer_budget_cost_t) {kUdpStatelessSocketDnsPendingBytes, kUdpStatelessSocketDnsPendingCharge});
+
     atomic_init(&state->socket.retired, false);
     state->socket.idle_tables       = memoryAllocateZero(sizeof(*state->socket.idle_tables) * getWorkersCount());
     state->send_request_master_pool = masterpoolCreateWithCapacity(2 * ((8) + RAM_PROFILE));

@@ -4,7 +4,9 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseHeadOnlyMetadata, caseEndpointOwnerFinishKillsLine, caseBorrowedLineFinishDoesNotDestroy,
- * caseSpliceOwnerDispatch
+ * caseSpliceOwnerDispatch, casePendingDnsBounds, caseProtectedDnsProvider.
+ * Pending DNS checks cover count/byte/allocation admission, synchronous completion,
+ * submission refusal, timeout, shutdown and completion after borrowed-line death.
  * Checks: Assertion labels include: UdpStatelessSocket must advertise only the head role;
  * UdpStatelessSocket must reject a previous neighbor; an idle item expired; these cases close their line
  * first; the owner must detach its idle-table entry before destroying the line
@@ -69,6 +71,7 @@ typedef struct udpstateless_fixture_s
     line_t             *line;
     local_idle_table_t *idle_table;
     local_idle_table_t *idle_table_slots[1];
+    udpstatelesssocket_dns_pending_t dns_pending;
 } udpstateless_fixture_t;
 
 /*
@@ -103,6 +106,9 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
     udpstatelesssocket_tstate_t *ts = tunnelGetState(fixture->uss);
     // The socket owns peer lines at the head; downstream Finish arrives from next.
     ts->socket.idle_tables = fixture->idle_table_slots;
+    ts->dns_pending        = &fixture->dns_pending;
+    bufferbudgetInit(&fixture->dns_pending.budget,
+                     (buffer_budget_cost_t) {kUdpStatelessSocketDnsPendingBytes, kUdpStatelessSocketDnsPendingCharge});
 
     // Real pooled lines: lineDestroy() returns a line to line->pools[wid], so the
     // postcondition cannot be driven with a bare allocation.
@@ -141,6 +147,9 @@ static void fixtureSetup(udpstateless_fixture_t *fixture, bool attach_idle_item)
 
 static void fixtureTeardown(udpstateless_fixture_t *fixture)
 {
+    twfRequire(fixture->dns_pending.requests == 0 && fixture->dns_pending.budget.used.bytes == 0 &&
+                   fixture->dns_pending.budget.used.charge == 0,
+               "pending DNS retention survived fixture cleanup");
     localidletableDestroy(fixture->idle_table);
     twfRequireNoLeakedBuffers();
     twfLinePoolTeardown(&fixture->lines);
@@ -365,6 +374,30 @@ static void caseDisabledDnsDropsBorrowedDatagram(void)
 static tunnel_t *protected_dns_provider;
 static unsigned  protected_dns_queries, native_dns_queries;
 static bool      protected_dns_answer = true;
+typedef struct pending_dns_callback_s
+{
+    dns_resolve_cb cb;
+    void          *userdata;
+} pending_dns_callback_t;
+
+static pending_dns_callback_t pending_dns_callbacks[kUdpStatelessSocketDnsPendingRequests + 1];
+static bool                   native_dns_deferred, native_dns_synchronous;
+
+static void completeNativeDns(size_t slot, int status)
+{
+    pending_dns_callback_t pending = pending_dns_callbacks[slot];
+    twfRequire(pending.cb != NULL, "DNS fixture completed an empty callback slot");
+    pending_dns_callbacks[slot] = (pending_dns_callback_t) {0};
+    sockaddr_u peer;
+    twfRequire(sockaddrSetIpAddressPort(&peer, "127.0.0.42", 53) == 0, "DNS fixture address failed");
+    dns_resolved_addr_t resolved = {.family = AF_INET, .addrlen = sizeof(peer.sin)};
+    memoryCopy(&resolved.addr, &peer, sizeof(peer.sin));
+    pending.cb(pending.userdata,
+               status,
+               ares_strerror(status),
+               status == ARES_SUCCESS ? &resolved : NULL,
+               status == ARES_SUCCESS ? 1 : 0);
+}
 
 int __wrap_workerResolveDomainServiceAsync(wid_t wid, const char *domain, const char *service, int socktype,
                                            dns_resolve_cb cb, void *userdata);
@@ -375,9 +408,20 @@ int __wrap_workerResolveDomainServiceAsync(wid_t wid, const char *domain, const 
     discard domain;
     discard service;
     discard socktype;
-    discard cb;
-    discard userdata;
     ++native_dns_queries;
+    if (native_dns_deferred || native_dns_synchronous)
+    {
+        for (size_t slot = 0; slot < ARRAY_SIZE(pending_dns_callbacks); ++slot)
+        {
+            if (pending_dns_callbacks[slot].cb != NULL)
+                continue;
+            pending_dns_callbacks[slot] = (pending_dns_callback_t) {cb, userdata};
+            if (native_dns_synchronous)
+                completeNativeDns(slot, ARES_SUCCESS);
+            return ARES_SUCCESS;
+        }
+        twfRequire(false, "DNS fixture exceeded its callback capacity");
+    }
     return ARES_ENOTINITIALIZED;
 }
 
@@ -388,6 +432,125 @@ int __wrap_workerResolveDomainServiceFamilyAsync(wid_t wid, const char *domain, 
 {
     twfRequire(family == AF_INET, "stateless only-ipv4 submitted another query family");
     return __wrap_workerResolveDomainServiceAsync(wid, domain, service, socktype, cb, userdata);
+}
+
+static void submitPendingDnsDatagram(udpstateless_fixture_t *fixture, line_t *line, size_t length, size_t capacity)
+{
+    static unsigned next_domain;
+    char            domain[64];
+    snprintf(domain, sizeof(domain), "pending-%u.test", ++next_domain);
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    addresscontextDomainSetByString(destination, domain);
+    addresscontextSetPort(destination, 53);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+    sbuf_t *buf = bufferpoolGetBestFit(fixture->env.pool, capacity, 0);
+    sbufSetLength(buf, length);
+    udpstatelesssocketTunnelWritePayload(fixture->uss, line, buf);
+}
+
+static void completeAllNativeDns(int status)
+{
+    for (size_t slot = 0; slot < ARRAY_SIZE(pending_dns_callbacks); ++slot)
+        if (pending_dns_callbacks[slot].cb != NULL)
+            completeNativeDns(slot, status);
+}
+
+static void requirePendingDnsEmpty(udpstateless_fixture_t *fixture, uint32_t refs)
+{
+    twfRequire(fixture->dns_pending.requests == 0 && fixture->dns_pending.budget.used.bytes == 0 &&
+                   fixture->dns_pending.budget.used.charge == 0 && twfLineRefCount(fixture->line) == refs,
+               "DNS settlement retained request count, bytes, charge or line references");
+    twfRequireNoLeakedBuffers();
+}
+
+static void casePendingDnsBounds(void)
+{
+    twfSetCase("stateless pending DNS bounds count, payload and allocation across borrowed lines");
+    udpstateless_fixture_t fixture;
+    fixtureSetup(&fixture, false);
+    udpstatelesssocket_tstate_t *state = tunnelGetState(fixture.uss);
+    state->dns_policy                  = (dns_policy_t) {.resolve = true, .strategy = kDsOnlyIpV4};
+    state->dns_strategy_override       = true;
+    atomic_init(&state->socket.retired, false);
+    twfRequire(mutexTryInit(&state->dns_cache_mutex), "DNS cache mutex setup failed");
+    node_t provider_node = {.type = (char *) "DomainResolver"};
+    node_t factory       = nodeDomainResolverGet();
+    state->dns_provider  = factory.createHandle(&provider_node);
+    memoryFree(factory.type);
+    twfRequire(state->dns_provider != NULL, "native DNS provider setup failed");
+    const uint32_t refs    = twfLineRefCount(fixture.line);
+    native_dns_queries     = 0;
+    native_dns_deferred    = true;
+    native_dns_synchronous = false;
+    for (unsigned i = 0; i < kUdpStatelessSocketDnsPendingRequests; ++i)
+        submitPendingDnsDatagram(&fixture, fixture.line, 0, 0);
+    twfRequire(fixture.dns_pending.requests == kUdpStatelessSocketDnsPendingRequests &&
+                   native_dns_queries == kUdpStatelessSocketDnsPendingRequests,
+               "empty datagrams did not fill the request-count allowance");
+    line_t *other = twfLinePoolCreateLine(&fixture.lines);
+    submitPendingDnsDatagram(&fixture, other, 1, 1);
+    twfRequire(lineIsAlive(other) && twfLineRefCount(other) == 1 &&
+                   native_dns_queries == kUdpStatelessSocketDnsPendingRequests,
+               "another borrowed line bypassed the worker request cap or was closed");
+    completeNativeDns(0, ARES_ETIMEOUT);
+    submitPendingDnsDatagram(&fixture, other, 1, 1);
+    twfRequire(fixture.dns_pending.requests == kUdpStatelessSocketDnsPendingRequests && twfLineRefCount(other) == 2,
+               "timeout did not restore one request slot for another line");
+    lineRef(other);
+    lineDestroy(other);
+    completeNativeDns(0, ARES_SUCCESS);
+    twfRequire(! lineIsAlive(other) && twfLineRefCount(other) == 1,
+               "dead-line DNS completion leaked its retained reference");
+    lineUnref(other);
+    completeAllNativeDns(ARES_ECANCELLED);
+    requirePendingDnsEmpty(&fixture, refs);
+
+    // Valid maximum UDP datagrams fit until the logical-byte allowance is exact.
+    for (size_t left = kUdpStatelessSocketDnsPendingBytes; left != 0;)
+    {
+        size_t length = min(left, (size_t) 65507);
+        submitPendingDnsDatagram(&fixture, fixture.line, length, length);
+        left -= length;
+    }
+    twfRequire(fixture.dns_pending.budget.used.bytes == kUdpStatelessSocketDnsPendingBytes,
+               "pending DNS failed admission at the logical-byte boundary");
+    unsigned submitted = native_dns_queries;
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, 1);
+    twfRequire(native_dns_queries == submitted && lineIsAlive(fixture.line),
+               "logical-byte overflow submitted DNS or closed its borrowed line");
+    completeAllNativeDns(ARES_ETIMEOUT);
+    requirePendingDnsEmpty(&fixture, refs);
+
+    // A tiny datagram can retain a large allocation; bytes alone cannot bound it.
+    const size_t exact_capacity = kUdpStatelessSocketDnsPendingCharge - sizeof(sbuf_t) - kSbufAllocationAlignment;
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, exact_capacity);
+    twfRequire(fixture.dns_pending.requests == 1 &&
+                   fixture.dns_pending.budget.used.charge == kUdpStatelessSocketDnsPendingCharge,
+               "pending DNS failed admission at the allocation-charge boundary");
+    submitted = native_dns_queries;
+    submitPendingDnsDatagram(&fixture, fixture.line, 0, 0);
+    twfRequire(native_dns_queries == submitted, "empty datagram escaped the allocation-charge cap");
+    completeAllNativeDns(ARES_ECANCELLED);
+    requirePendingDnsEmpty(&fixture, refs);
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, kUdpStatelessSocketDnsPendingCharge);
+    twfRequire(native_dns_queries == submitted, "one oversized allocation bypassed the DNS retention cap");
+    requirePendingDnsEmpty(&fixture, refs);
+
+    native_dns_deferred = false;
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, 1);
+    requirePendingDnsEmpty(&fixture, refs);
+    native_dns_synchronous = true;
+    submitPendingDnsDatagram(&fixture, fixture.line, 1, 1);
+    requirePendingDnsEmpty(&fixture, refs);
+    native_dns_synchronous = false;
+    twfRequire(fixture.trace.next_finish == 0 && fixture.trace.prev_finish == 0,
+               "DNS admission or settlement emitted Finish on a borrowed line");
+    udpstatelesssocketLinestateDestroy(lineGetState(fixture.line, fixture.uss));
+    lineDestroy(fixture.line);
+    udpstatelesssocketDnsCacheClear(state);
+    mutexDestroy(&state->dns_cache_mutex);
+    tunnelOwnedChildDestroy(state->dns_provider);
+    fixtureTeardown(&fixture);
 }
 
 static void protectedDnsInit(tunnel_t *egress, line_t *line)
@@ -537,6 +700,7 @@ int main(void)
     caseBorrowedLineFinishDoesNotDestroy();
     caseDisabledDnsDropsBorrowedDatagram();
 #if defined(OS_LINUX)
+    casePendingDnsBounds();
     caseProtectedDnsProvider();
 #endif
 
