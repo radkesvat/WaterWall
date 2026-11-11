@@ -249,11 +249,11 @@ static void asyncdnsArmTimer(dns_resolver_t *r, uint32_t timeout_ms)
         return;
     }
 
-    /* Repeated virtual readiness or lookup submissions must not debounce an
-     * earlier wake, including an expiration already waiting for dispatch.
-     * The custom callback detaches its timer slot before processing, so this
+    /* Repeated readiness or lookup submissions must not debounce an earlier
+     * wake, including an expiration already waiting for dispatch. The timer
+     * callback detaches its slot before processing, so this
      * comparison never mistakes the executing one-shot for future work. */
-    if (r->transport_process != NULL && r->timer->next_timeout <= r->loop->cur_hrtime + (uint64_t) timeout_ms * 1000)
+    if (r->timer->next_timeout <= r->loop->cur_hrtime + (uint64_t) timeout_ms * 1000)
         return;
 
     if (! wtimerReset(r->timer, timeout_ms))
@@ -480,11 +480,11 @@ static void asyncdnsTimerCallback(wtimer_t *timer)
         return;
     }
 
+    /* The loop reclaims this expired one-shot after dispatch. New work needs
+     * its own timer; an executing expiration is not an earlier future wake. */
+    r->timer = NULL;
     if (r->transport_process != NULL)
     {
-        /* The loop reclaims this expired one-shot after dispatch. New work
-         * needs its own armed timer, not the old expiration's deadline. */
-        r->timer             = NULL;
         r->transport_pending = false;
         r->transport_process(r->transport_userdata);
     }

@@ -1393,6 +1393,22 @@ static void testAsyncDnsResolvesUnderIocp(env_t *env)
     require(resolver.timer != NULL && ((const wtimeout_t *) resolver.timer)->timeout <= 20U,
             "async DNS IOCP polling timer exceeds 20 ms");
     require(resolver.watches != NULL, "async DNS query created no c-ares watches");
+    const uint64_t        first_due   = resolver.timer->next_timeout;
+    const uint64_t        saved_now   = loop->cur_hrtime;
+    asyncdns_test_state_t synchronous = {0};
+    for (unsigned i = 0; i < 8; ++i)
+    {
+        /* Cached/numeric submissions still refresh the pending native poll.
+         * Model arrivals more frequent than its 20 ms interval, including an
+         * already-due timer, without depending on scheduler timing. */
+        loop->cur_hrtime += 5000;
+        require(asyncdnsResolve(&resolver, "127.0.0.1", NULL, SOCK_STREAM, asyncdnsTestResolved, &synchronous) ==
+                    ARES_SUCCESS,
+                "concurrent numeric DNS submission failed");
+        require(resolver.timer != NULL && resolver.timer->next_timeout == first_due,
+                "new lookups postponed native DNS readiness polling");
+    }
+    loop->cur_hrtime = saved_now;
     for (dns_watch_t *watch = resolver.watches; watch != NULL; watch = watch->next)
     {
         require(watch->io == NULL, "async DNS created a readiness wio under native IOCP");
