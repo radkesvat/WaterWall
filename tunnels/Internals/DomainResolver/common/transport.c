@@ -527,6 +527,12 @@ void domainresolverTransportPayload(tunnel_t *owner, line_t *line, sbuf_t *buf)
         return;
     }
     size_t length = sbufGetLength(buf);
+    if (socket->tcp && length == 0)
+    {
+        /* Empty stream payload is not EOF. Only Finish may close this stream. */
+        lineReuseBuffer(line, buf);
+        return;
+    }
     if ((! socket->tcp && length > kDnsTransportMaxDatagram) ||
         length > kDnsTransportMaxInputBytes - bufferqueueGetLength(&socket->input) ||
         bufferqueueGetEntryCount(&socket->input) >= kDnsTransportMaxInputEntries)

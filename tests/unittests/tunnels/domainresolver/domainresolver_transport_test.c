@@ -19,7 +19,7 @@ static unsigned  inits, writes, finishes, pauses, resumes, results, cancellation
 static unsigned  preparations, preparation_cleanups;
 static bool      preparation_refuses;
 static bool      init_establishes, init_finishes, init_pauses, answer_queries, submitting;
-static bool      answer_ipv6;
+static bool      answer_ipv6, inject_empty_tcp;
 static unsigned  a_questions, aaaa_questions;
 
 static bool prepareOwned(tunnel_t *helper, tunnel_t *owner, line_t *line, void *storage)
@@ -139,7 +139,11 @@ static void answerQuery(line_t *line, const uint8_t *query, size_t query_length,
                                   0x0d, 0xb8, 0, 0,  0, 0, 0, 0, 0, 0,  0, 0,  0,    42};
         memoryCopy(wire + end, record, sizeof(record));
     }
+    if (tcp && inject_empty_tcp)
+        domainresolverTransportPayload(resolver, line, makeInput(line, 0, 0));
     domainresolverTransportPayload(resolver, line, answer);
+    if (tcp && inject_empty_tcp)
+        domainresolverTransportPayload(resolver, line, makeInput(line, 0, 0));
 }
 
 static void observeWrite(tunnel_t *next, line_t *line, sbuf_t *buf)
@@ -578,6 +582,11 @@ int main(int argc, char **argv)
                    writes == 0,
                "send escaped before TCP Est");
     domainresolverTransportEst(resolver, observed_line);
+    domainresolverTransportPayload(resolver, observed_line, makeInput(observed_line, 0, 0));
+    char empty_probe;
+    twfRequire(dnsTransportReceive(handle, &empty_probe, 1, 0, NULL, NULL, transport) == -1 && errno == EWOULDBLOCK &&
+                   bufferqueueGetEntryCount(&dnsTransportSocket(transport, handle)->input) == 0,
+               "empty TCP payload became EOF or retained an input entry");
     twfRequire(dnsTransportSend(handle, data, sizeof(data), 0, NULL, 0, transport) == kDnsTransportTcpWriteChunk,
                "TCP short write did not preserve bounded chunking");
     data[0] = 'B';
@@ -665,7 +674,11 @@ int main(int argc, char **argv)
     {
         for (unsigned tcp = 0; tcp < 2; ++tcp)
             for (unsigned stay_open = 0; stay_open < 2; ++stay_open)
+            {
+                inject_empty_tcp = tcp != 0;
                 testConnectionReuse(next, &options, tcp != 0, stay_open != 0);
+            }
+        inject_empty_tcp = false;
         testNativeChannelFlags(&options);
     }
     testQueryFamilies(next, &options);
