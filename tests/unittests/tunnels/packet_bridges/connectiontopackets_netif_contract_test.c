@@ -241,6 +241,53 @@ static void testConfiguredDestinationPreparation(void)
     }
 }
 
+static void testPinnedDestinationPreparation(void)
+{
+    const char *selectors[] = {"{}",
+                               "{\"target-address\":\"configured.test\"}",
+                               "{\"port\":443}",
+                               "{\"target-address\":\"10.90.0.3\",\"port\":443}"};
+    for (unsigned resolve = 0; resolve < 2; ++resolve)
+        for (unsigned transport = 0; transport < 2; ++transport)
+            for (size_t i = 0; i < ARRAY_SIZE(selectors); ++i)
+            {
+                testCaseSet("CTP preserves and consumes pinned DNS destinations");
+                tunnel_t *t = tunnelCreate(NULL, sizeof(ctp_tstate_t), 0);
+                require(t != NULL, "pinned destination fixture allocation");
+                ctp_tstate_t *ts       = tunnelGetState(t);
+                cJSON        *settings = cJSON_Parse(selectors[i]);
+                require(settings != NULL, "pinned destination settings");
+                cJSON_AddStringToObject(settings, "source-ipv4", "10.90.0.1");
+                cJSON_AddNumberToObject(settings, "mtu", 1500);
+                cJSON *policy = cJSON_AddObjectToObject(settings, "dns-behaviour");
+                cJSON_AddBoolToObject(policy, "resolve", resolve != 0);
+                require(ctpLoadSettings(ts, settings), "pinned destination settings rejected");
+                cJSON_Delete(settings);
+
+                line_t             line     = {0};
+                address_context_t *dest     = lineGetDestinationAddressContext(&line);
+                const uint8_t      protocol = transport ? IP_PROTO_TCP : IP_PROTO_UDP;
+                require(addresscontextSetIpAddressPortProtocol(dest, "10.90.0.53", 5353, protocol),
+                        "pinned DNS endpoint setup");
+                const ip_addr_t expected_ip = dest->ip_address;
+                addresscontextSetResolverDns(dest, true);
+                addresscontextSetDestinationPinned(dest, true);
+                ctp_domain_resolver_lstate_t prepared = {0};
+                require(ctpDomainResolverPrepare(NULL, t, &line, &prepared), "pinned destination preparation");
+                require(addresscontextIsIp(dest) && ip_addr_cmp(&dest->ip_address, &expected_ip) && dest->port == 5353,
+                        "CTP replaced the pinned DNS endpoint");
+                require(addresscontextIsResolverDns(dest) && ! addresscontextDestinationIsPinned(dest),
+                        "CTP lost resolver origin or failed to consume the pin");
+                require(prepared.protocol == protocol && dest->proto_tcp == (protocol == IP_PROTO_TCP) &&
+                            dest->proto_udp == (protocol == IP_PROTO_UDP),
+                        "pinned destination did not initialize exact transport preparation");
+                addresscontextReset(dest);
+                addresscontextReset(&ts->target_addr);
+                dnsPolicyDestroy(&ts->dns_policy);
+                tunnelDestroy(t);
+            }
+}
+
 static void testInvalidDestinationSettings(void)
 {
     static const char *invalid[] = {
@@ -329,6 +376,7 @@ int main(void)
     require(lwipTestRuntimeInitialize(), "failed to initialize the lwIP random runtime");
     lwipTestEngineBegin(1);
     testConfiguredDestinationPreparation();
+    testPinnedDestinationPreparation();
     testInvalidDestinationSettings();
     testCaseSet("production netif contract");
     testProductionSettingsReachProductionNetif();

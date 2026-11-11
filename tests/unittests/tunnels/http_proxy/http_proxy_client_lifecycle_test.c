@@ -394,6 +394,59 @@ static void closeLine(void)
     late_init = quiesce_in_init = false;
     on_write = write_action = on_receive = receive_action = close_signal = 0;
 }
+
+static void pinnedDestinationNextInit(tunnel_t *t, line_t *l)
+{
+    const address_context_t *dest = lineGetDestinationAddressContext(l);
+    require(! addresscontextDestinationIsPinned(dest), "CONNECT leaked its destination pin to the outer connector");
+    require(addresscontextIsResolverDns(dest), "CONNECT erased the logical resolver origin");
+    require(dest->port == 5353 && addresscontextClassifyTransport(dest) == kAddressContextTransportTcp,
+            "CONNECT changed the pinned port or transport");
+    nextInit(t, l);
+}
+
+static void pinnedDestinations(void)
+{
+    testCaseSet("CONNECT consumes pinned logical destinations before outer Init");
+    for (unsigned resolve = 0; resolve < 2; ++resolve)
+        for (unsigned selectors = 0; selectors < 4; ++selectors)
+            for (unsigned family = 0; family < 2; ++family)
+            {
+                char settings[512];
+                stringNPrintf(settings,
+                              sizeof(settings),
+                              "{\"target-address\":\"%s\",\"port\":%s,\"dns-behaviour\":{\"resolve\":%s},"
+                              "\"username\":\"fixture\",\"password\":\"secret\"}",
+                              selectors & 1U ? "dest_context->address" : "must-not-resolve.test",
+                              selectors & 2U ? "\"dest_context->port\"" : "443",
+                              resolve ? "true" : "false");
+                defer_start = true;
+                openLine(settings);
+                defer_start             = false;
+                address_context_t *dest = lineGetDestinationAddressContext(line);
+                require(addresscontextSetIpAddressPortProtocol(
+                            dest, family ? "2001:db8::53" : "192.0.2.53", 5353, IP_PROTO_TCP),
+                        "pinned DNS destination setup");
+                addresscontextSetResolverDns(dest, true);
+                addresscontextSetDestinationPinned(dest, true);
+                next->fnInitU  = pinnedDestinationNextInit;
+                rewrite_target = true;
+                tunnelUpStreamInit(entry, line);
+                char        expected[256];
+                const char *authority = family ? "[2001:db8::53]:5353" : "192.0.2.53:5353";
+                stringNPrintf(expected,
+                              sizeof(expected),
+                              "CONNECT %s HTTP/1.1\r\nHost: %s\r\n"
+                              "Proxy-Authorization: Basic Zml4dHVyZTpzZWNyZXQ=\r\n\r\n",
+                              authority,
+                              authority);
+                require(next_inits == 1 && writes == 1 && strcmp(sent, expected) == 0,
+                        "CONNECT did not preserve pinned authority across configured selectors and outer Init");
+                require(dest->port == 9999 && ! addresscontextIsResolverDns(dest),
+                        "outer endpoint did not replace the independent proxy context");
+                closeLine();
+            }
+}
 static const char *connect_settings = "{\"target-address\":\"origin.test\",\"port\":443}";
 static const char *chunk_settings   = "{\"mode\":\"http\",\"target-address\":\"origin.test\",\"port\":80}";
 static const char *fixed_settings =
@@ -1069,6 +1122,7 @@ int main(void)
     dnsTests();
 #endif
     startup();
+    pinnedDestinations();
     combinedPressure();
     connectParserRetirement();
     framing();

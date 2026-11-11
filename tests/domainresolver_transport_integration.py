@@ -14,6 +14,7 @@ import shutil
 import signal
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -22,6 +23,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.environ.get("WATERWALL_TEST_SUPPORT_DIR",
                                 str(Path(__file__).resolve().parent / "support" / "python")))
 from wwtest.config import core_config
+from wwtest.fixtures.http_proxy import header as http_header
 from wwtest.process import Process, install_termination_handler
 from wwtest.run_directory import RunDirectory
 from wwtest.sockets import connect_when_ready, exact
@@ -52,6 +54,7 @@ class DnsFixture:
         self.counts = {"udp": 0, "tcp": 0}
         self.names = {}
         self.sources = {}
+        self.tcp_prefixes = []
         self.lock = threading.Lock()
         self.release_abandoned = threading.Event()
         family = socket.AF_INET6 if ":" in host else socket.AF_INET
@@ -128,7 +131,9 @@ class DnsFixture:
             peer.settimeout(5)
             try:
                 while True:
-                    length = struct.unpack(">H", exact(peer, 2))[0]
+                    prefix = exact(peer, 2)
+                    self.tcp_prefixes.append(prefix)
+                    length = struct.unpack(">H", prefix)[0]
                     reply = self.response(exact(peer, length), "tcp", peer.getpeername())
                     if reply is not None:
                         wire = struct.pack(">H", len(reply)) + reply
@@ -164,6 +169,37 @@ def serve_echo(listener, observed_sources=None):
         if observed_sources is not None:
             observed_sources.append(address[0])
         DnsFixture.start(echo, peer)
+
+
+def serve_dns_connect_proxy(listener, observed_headers):
+    """An independent CONNECT peer forwards framed DNS only after proxy authentication."""
+    def connection(peer):
+        with peer:
+            peer.settimeout(5)
+            try:
+                request_header = http_header(peer)
+                observed_headers.append(request_header)
+                expected = (f"CONNECT {HOST}:{DNS} HTTP/1.1\r\nHost: {HOST}:{DNS}\r\n"
+                            "Proxy-Authorization: Basic Zml4dHVyZTpzZWNyZXQ=\r\n\r\n").encode()
+                if request_header != expected:
+                    return
+                with socket.create_connection((HOST, DNS), timeout=5) as upstream:
+                    peer.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                    while True:
+                        prefix = exact(peer, 2)
+                        query = exact(peer, struct.unpack(">H", prefix)[0])
+                        upstream.sendall(prefix + query)
+                        prefix = exact(upstream, 2)
+                        reply = exact(upstream, struct.unpack(">H", prefix)[0])
+                        peer.sendall(prefix + reply)
+            except (AssertionError, OSError):
+                return
+    while True:
+        try:
+            peer, _ = listener.accept()
+        except OSError:
+            return
+        DnsFixture.start(connection, peer)
 
 
 def request(process, name, port=APP, numeric=False):
@@ -285,6 +321,23 @@ def config(mode, endpoint):
             # The logical DNS target and UDP/TCP selection are authoritative;
             # the fixed outer VPN connector must still use its separate peer.
             nodes[4]["settings"].update({"address": HOST, "port": NATIVE, "protocol": "tcp"})
+    elif mode.startswith("http-pinned"):
+        settings["dns-next"] = "dns-router"
+        resolve = mode.endswith("-resolve")
+        nodes += [node("dns-router", "Router", {"rules": [
+            {"network": "udp", "target": "dns-udp"}]}, "dns-http"),
+            connector("dns-udp", "UdpConnector"),
+            node("dns-http", "HttpProxyClient", {
+                "target-address": "must-not-resolve.test" if resolve else "dest_context->address",
+                "port": NATIVE if resolve else "dest_context->port", "username": "fixture", "password": "secret",
+                "dns-behaviour": {"resolve": resolve}}, "dns-proxy-out"),
+            node("dns-proxy-out", "TcpConnector", {"address": HOST, "port": VPN, "fastopen": False})]
+    elif mode == "ctp-pinned":
+        settings["dns-next"] = "dns-ctp"
+        nodes += [node("dns-ctp", "ConnectionToPackets", {
+            "source-ipv4": "10.27.0.2", "target-address": HOST, "port": NATIVE,
+            "dns-behaviour": {"resolve": False}}, "dns-ptc"),
+            node("dns-ptc", "PacketsToConnection", {}, "dns-out"), connector("dns-out")]
     return nodes
 
 
@@ -439,9 +492,26 @@ def main():
     install_termination_handler()
     with RunDirectory("ww-resolver-transport-") as root, ExitStack() as stack:
         dns_host = "::1" if mode == "direct6" else HOST
+        if mode == "ctp-pinned":
+            # The virtual lwIP stack keeps 127/8 local instead of emitting it
+            # through CTP. Keep the real fixture on this namespace's loopback.
+            parent_netns = os.environ.get("WATERWALL_TEST_PARENT_NETNS")
+            assert parent_netns and os.readlink("/proc/self/ns/net") != parent_netns, \
+                "CTP DNS test requires the private network namespace wrapper"
+            dns_host = "10.27.0.53"
+            subprocess.run(["ip", "address", "add", dns_host + "/32", "dev", "lo"], check=True, timeout=5)
+            stack.callback(subprocess.run, ["ip", "address", "del", dns_host + "/32", "dev", "lo"],
+                           check=True, timeout=5)
         fixture = DnsFixture(stack, dns_host, DNS, answers={
             "vpn.test": VPN_SERVICE_HOST, "tcp-vpn.test": VPN_SERVICE_HOST} if mode == "shared-vless" else None)
         native = DnsFixture(stack, HOST, NATIVE, spoof=False)
+        proxy_headers = []
+        if mode.startswith("http-pinned"):
+            proxy = stack.enter_context(socket.socket())
+            proxy.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            proxy.bind((HOST, VPN))
+            proxy.listen()
+            DnsFixture.start(serve_dns_connect_proxy, proxy, proxy_headers)
         echo = stack.enter_context(socket.socket())
         echo.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         echo.bind((HOST, SERVICE))
@@ -557,6 +627,12 @@ def main():
                         reply = b""
                     assert len(reply) < 2 or reply[:2] != b"\x05\x00", f"failed DNS escaped for {name}"
             assert expected.counts["udp"] > 0 and expected.counts["tcp"] > 0, expected.counts
+            if mode.startswith("http-pinned"):
+                assert proxy_headers, "TCP fallback bypassed its configured HTTP proxy"
+                assert all(header.startswith(f"CONNECT {HOST}:{DNS} HTTP/1.1\r\n".encode()) and
+                           b"Proxy-Authorization: Basic Zml4dHVyZTpzZWNyZXQ=\r\n" in header
+                           for header in proxy_headers), "proxy received the wrong DNS authority or credentials"
+                assert b"CO" not in fixture.tcp_prefixes, "HTTP CONNECT/credentials escaped to the DNS server"
             if expected is fixture:
                 assert native.counts == {"udp": 0, "tcp": 0}, f"native DNS escape: {native.counts}"
             else:

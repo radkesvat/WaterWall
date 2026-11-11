@@ -19,15 +19,18 @@ static bool append(char *out, size_t cap, size_t *at, const char *s)
 /* Copy the authority before any address-context setter can release its domain. */
 static bool selectAuthority(const hpc_tstate_t *ts, line_t *l, bool prepared, hps_authority_t *authority)
 {
-    address_context_t *dest = lineGetDestinationAddressContext(l);
+    address_context_t *dest   = lineGetDestinationAddressContext(l);
+    const bool         pinned = addresscontextDestinationIsPinned(dest);
     if (dest->proto_udp || dest->proto_icmp || dest->proto_packet)
         return false;
-    uint16_t port = prepared || ts->dynamic_port ? dest->port : ts->port;
+    if (pinned && addresscontextClassifyTransport(dest) != kAddressContextTransportTcp)
+        return false;
+    uint16_t port = prepared || pinned || ts->dynamic_port ? dest->port : ts->port;
     if (! port)
         return false;
     char        host[256];
     const char *target = ts->target;
-    if (prepared || ts->dynamic_address)
+    if (prepared || pinned || ts->dynamic_address)
     {
         if (addresscontextIsDomain(dest) && ! (ts->resolve_domains && addresscontextIsDomainResolved(dest)))
         {
@@ -62,7 +65,13 @@ bool hpcDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
     if (! hpcAllowed(owner, l) || ! selectAuthority(ts, l, false, &authority))
         return false;
     address_context_t *dest = lineGetDestinationAddressContext(l);
-    if (authority.literal)
+    if (addresscontextDestinationIsPinned(dest))
+    {
+        // This CONNECT owns the logical destination; the following connector
+        // still selects its independent proxy endpoint.
+        addresscontextSetDestinationPinned(dest, false);
+    }
+    else if (authority.literal)
         addresscontextSetIp(dest, &authority.ip);
     else
         addresscontextDomainSet(dest, authority.host, (uint8_t) stringLength(authority.host));
@@ -131,6 +140,7 @@ bool hpcBuildRequest(tunnel_t *t, line_t *l)
     ls->request = hpcBuffer(l, at);
     memoryCopy(sbufGetMutablePtr(ls->request), text, at);
     sbufSetLength(ls->request, at);
+    addresscontextSetDestinationPinned(dest, false);
     addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
 done:
     memoryZero(text, (size_t) ts->max_header + 1);

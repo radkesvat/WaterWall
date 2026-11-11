@@ -94,8 +94,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
   set_tests_properties(waterwall.domainresolver_configuration PROPERTIES TIMEOUT 600)
   add_waterwall_test_labels(waterwall.domainresolver_configuration "integration" "tunnels" "dns")
   add_waterwall_case_resource_lock(waterwall.domainresolver_configuration domainresolver_transport)
-  foreach(mode IN ITEMS omitted native direct direct6 chain chain-sniff chain-default shared shared-explicit shared-vless vless isolation rejected pinned vless-pinned)
+  foreach(mode IN ITEMS omitted native direct direct6 chain chain-sniff chain-default shared shared-explicit shared-vless vless isolation rejected pinned vless-pinned http-pinned http-pinned-resolve ctp-pinned)
     if(mode MATCHES "vless" AND NOT (TARGET VlessClient AND TARGET VlessServer AND TARGET TlsClient AND TARGET TlsServer))
+      continue()
+    endif()
+    if((mode MATCHES "^http-pinned" AND NOT (TARGET HttpProxyClient AND TARGET UdpConnector)) OR
+       (mode STREQUAL "ctp-pinned" AND NOT (TARGET ConnectionToPackets AND TARGET PacketsToConnection)))
       continue()
     endif()
     set(resolver_case waterwall.domainresolver_transport_${mode})

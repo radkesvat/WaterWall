@@ -267,6 +267,20 @@ bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
     address_context_t            *dest_ctx = lineGetDestinationAddressContext(l);
     uint8_t                       protocol = 0;
 
+    if (addresscontextDestinationIsPinned(dest_ctx))
+    {
+        if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
+            ! ctpProtocolFromContext(dest_ctx, &protocol))
+        {
+            LOGE("ConnectionToPackets: pinned destination requires an address, port and exact TCP or UDP transport");
+            return false;
+        }
+        ls->protocol = protocol;
+        addresscontextSetDestinationPinned(dest_ctx, false);
+        addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
+        return true;
+    }
+
     if (! ctpSelectProtocol(owner, l, &protocol))
     {
         return false;
