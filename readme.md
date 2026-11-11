@@ -19,6 +19,14 @@ without writing low-level networking code.
 [Download a release](https://github.com/radkesvat/WaterWall/releases) ·
 [Support development](https://radkesvat-support.vercel.app/)
 
+## Clients, panels, and tools
+
+Explore projects that use the WaterWall core.
+
+| Project | Description | Status |
+| --- | --- | --- |
+| [SRP VPN Connect](https://github.com/bigmoveus/SRP-VPN-Connect) | VPN client for Android and iOS ([TestFlight](https://testflight.apple.com/join/A1tAaYW4)). | Usable and under active development. |
+
 ## How it works
 
 Each node does one job. A listener accepts traffic, middle nodes process it, and
