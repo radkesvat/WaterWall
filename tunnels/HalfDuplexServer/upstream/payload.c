@@ -65,10 +65,12 @@ static bool extractPairIdAndSetupConnection(line_t *l, halfduplexserver_lstate_t
     if (*is_upload)
     {
         ls->upload_line = l;
+        ls->upload_tunnel = ls->ingress_tunnel;
     }
     else
     {
         ls->download_line = l;
+        ls->download_tunnel = ls->ingress_tunnel;
     }
 
     return true;
@@ -149,6 +151,10 @@ static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, lin
     ls_mainline->upload_line   = upload_line;
     ls_mainline->download_line = download_line;
     ls_mainline->main_line     = main_line;
+    ls_mainline->upload_tunnel   = upload_ls->ingress_tunnel;
+    ls_mainline->download_tunnel = download_ls->ingress_tunnel;
+    upload_ls->download_tunnel   = download_ls->ingress_tunnel;
+    download_ls->upload_tunnel   = upload_ls->ingress_tunnel;
 
     return main_line;
 }
@@ -181,8 +187,16 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
     if (halfduplexserverPairAlive(t, main, upload, download))
     {
         ls->startup_initializing = false;
+        halfduplexserver_lstate_t *download_ls = lineGetState(download, ls->download_tunnel);
+        if (download_ls->transport_paused)
+        {
+            tunnelNextUpStreamPause(t, main);
+            if (! halfduplexserverPairAlive(t, main, upload, download))
+                goto done;
+        }
         halfduplexserverReplayStartup(t, main);
     }
+done:
     lineUnref(download);
     lineUnref(upload);
     lineUnref(main);
@@ -190,10 +204,20 @@ static void initializeMainLineConnection(tunnel_t *t, line_t *main, sbuf_t *init
 
 static void handlePipeToWorker(tunnel_t *t, line_t *l, sbuf_t *buf, wid_t target_wid, halfduplexserver_lstate_t *ls)
 {
+    const bool paused = ls->transport_paused;
     halfduplexserverLinestateDestroy(ls);
     if (pipeTo(t, l, target_wid))
     {
         tunnel_t *prev_tun = t->prev;
+        if (paused)
+        {
+            buffer_pool_t *pool = lineGetBufferPool(l);
+            if (! lineCallWithRef(l, tunnelUpStreamPause, prev_tun))
+            {
+                bufferpoolReuseBuffer(pool, buf);
+                return;
+            }
+        }
         tunnelUpStreamPayload(prev_tun, l, buf);
         return;
     }
@@ -212,9 +236,9 @@ static void handleUploadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, hal
     download_line_ls->state       = kCsDownloadDirect;
     download_line_ls->upload_line = l;
 
-    line_t *main_line = createAndInitializeMainLine(t, l, download_line, ls, download_line_ls);
+    line_t *main_line = createAndInitializeMainLine(halfduplexserverOwner(t), l, download_line, ls, download_line_ls);
 
-    initializeMainLineConnection(t, main_line, buf);
+    initializeMainLineConnection(halfduplexserverOwner(t), main_line, buf);
 }
 
 static void handleDuplicateUploadConnection(tunnel_t *t, line_t *l, halfduplexserver_lstate_t *ls)
@@ -237,13 +261,13 @@ static void handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
     upload_line_ls->state         = kCsUploadDirect;
     upload_line_ls->download_line = l;
 
-    line_t *main_line = createAndInitializeMainLine(t, upload_line, l, upload_line_ls, ls);
+    line_t *main_line = createAndInitializeMainLine(halfduplexserverOwner(t), upload_line, l, upload_line_ls, ls);
 
     assert(upload_line_ls->buffering);
     sbuf_t *buf_upline        = upload_line_ls->buffering;
     upload_line_ls->buffering = NULL;
 
-    initializeMainLineConnection(t, main_line, buf_upline);
+    initializeMainLineConnection(halfduplexserverOwner(t), main_line, buf_upline);
 }
 
 static void handleDuplicateDownloadConnection(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexserver_lstate_t *ls)
@@ -328,7 +352,8 @@ static void handleUploadInTable(tunnel_t *t, line_t *l, sbuf_t *buf, halfduplexs
 
 void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    halfduplexserver_tstate_t *ts = tunnelGetState(t);
+    tunnel_t                  *owner = halfduplexserverOwner(t);
+    halfduplexserver_tstate_t *ts    = tunnelGetState(owner);
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
     // Only setup parses or retains bytes. Direct paths preserve the wrapper;
@@ -374,14 +399,14 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         if (LIKELY(ls->main_line != NULL))
         {
             line_t                    *main    = ls->main_line;
-            halfduplexserver_lstate_t *main_ls = lineGetState(main, t);
+            halfduplexserver_lstate_t *main_ls = lineGetState(main, owner);
             if (main_ls->startup_active)
             {
                 sbuf_t *ordinary = sbufTryEnsureOrdinary(lineGetBufferPool(l), buf);
                 if (ordinary == NULL)
                 {
                     lineReuseBuffer(l, buf);
-                    halfduplexserverAbortPair(t, main);
+                    halfduplexserverAbortPair(owner, main);
                     return;
                 }
                 buf = ordinary;
@@ -404,13 +429,13 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
                          incoming_charge,
                          limits.charge);
                     lineReuseBuffer(l, buf);
-                    halfduplexserverAbortPair(t, main);
+                    halfduplexserverAbortPair(owner, main);
                     return;
                 }
-                halfduplexserverReplayStartup(t, main);
+                halfduplexserverReplayStartup(owner, main);
                 return;
             }
-            tunnelNextUpStreamPayload(t, main, buf);
+            tunnelNextUpStreamPayload(owner, main, buf);
         }
         else
         {

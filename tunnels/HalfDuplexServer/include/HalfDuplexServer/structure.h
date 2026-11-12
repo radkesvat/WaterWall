@@ -54,6 +54,9 @@ enum connection_status
 
 typedef struct halfduplexserver_tstate_s
 {
+    node_t     *pair_node;
+    tunnel_t   *owner;
+    tunnel_t   *wrapper;
     wmutex_t    pending_line_maps_mutex;
     hmap_cons_t upload_line_map;
     hmap_cons_t download_line_map;
@@ -66,7 +69,11 @@ typedef struct halfduplexserver_lstate_s
     line_t                *upload_line;
     line_t                *download_line;
     line_t                *main_line;
+    tunnel_t              *ingress_tunnel;
+    tunnel_t              *upload_tunnel;
+    tunnel_t              *download_tunnel;
     enum connection_status state;
+    bool                   transport_paused;
 
     halfduplex_pair_id_t pair_id;
     // Only the owned main line attaches/owns startup resources.
@@ -106,7 +113,9 @@ WW_EXPORT void         halfduplexserverTunnelDestroy(tunnel_t *t, const ww_lifec
 WW_EXPORT tunnel_t    *halfduplexserverTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexserverTunnelApi(tunnel_t *instance, sbuf_t *message);
 
+void halfduplexserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 void halfduplexserverTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void halfduplexserverTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void halfduplexserverTunnelUpStreamPause(tunnel_t *t, line_t *l);
@@ -120,6 +129,13 @@ void halfduplexserverTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void halfduplexserverLinestateInitialize(halfduplexserver_lstate_t *ls);
 void halfduplexserverLinestateDestroy(halfduplexserver_lstate_t *ls);
+
+static inline tunnel_t *halfduplexserverOwner(tunnel_t *t)
+{
+    halfduplexserver_tstate_t *ts = tunnelGetState(t);
+    assert(ts->owner != NULL);
+    return ts->owner;
+}
 
 #ifdef WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM
 halfduplexserver_pending_decision_t halfduplexserverTestPendingClaim(halfduplexserver_tstate_t *ts,

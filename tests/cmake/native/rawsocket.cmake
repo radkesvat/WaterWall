@@ -157,6 +157,15 @@ if(TARGET HalfDuplexClient)
 endif()
 
 if(TARGET HalfDuplexServer)
+  waterwall_add_native_executable(halfduplexserver_pair_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexserver_pair_test.c)
+  target_link_libraries(halfduplexserver_pair_test PRIVATE HalfDuplexServer ww)
+  target_link_options(halfduplexserver_pair_test PRIVATE
+    "-Wl,--wrap=nodemanagerGetConfigNodeByName" "-Wl,--wrap=nodemanagerGetConfigNodeByHash")
+  add_dependencies(waterwall_unit_tests halfduplexserver_pair_test)
+  add_waterwall_unit_test(waterwall.halfduplexserver_pair_unit halfduplexserver_pair_test
+    "unit;tunnels;halfduplexserver;configuration;topology")
+
   waterwall_add_native_executable(halfduplexserver_reentrant_init_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexserver_reentrant_init_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(halfduplexserver_reentrant_init_test HalfDuplexServer)

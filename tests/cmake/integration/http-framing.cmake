@@ -25,6 +25,26 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   endforeach()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET HalfDuplexClient AND TARGET HalfDuplexServer AND TARGET TlsClient AND TARGET TlsServer AND
+   TARGET TcpListener AND TARGET TcpConnector AND TARGET UdpListener AND TARGET UdpConnector AND
+   TARGET VlessClient AND TARGET VlessServer AND TARGET TcpUdpConnector)
+  foreach(pair_carrier IN ITEMS kcp quic)
+    if((pair_carrier STREQUAL "kcp" AND TARGET KcpClient AND TARGET KcpServer) OR
+       (pair_carrier STREQUAL "quic" AND TARGET QuicClient AND TARGET QuicServer))
+      foreach(pair_upload IN ITEMS tls udp)
+        set(pair_case waterwall.halfduplex_pair_${pair_carrier}_${pair_upload}_upload)
+        add_waterwall_isolated_test(${pair_case}
+          "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_pair_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${pair_carrier}" "${pair_upload}")
+        set_tests_properties(${pair_case} PROPERTIES TIMEOUT 75)
+        add_waterwall_test_labels(${pair_case} "integration" "tunnels" "halfduplex" "${pair_carrier}")
+        add_waterwall_case_resource_lock(${pair_case} halfduplex_pair)
+      endforeach()
+    endif()
+  endforeach()
+endif()
+
 add_waterwall_integration_test(waterwall.http1_bidirectional_roundtrip http1_bidirectional_roundtrip)
 add_waterwall_integration_test(waterwall.http1_bidirectional_tcp_loopback http1_bidirectional_tcp_loopback)
 add_waterwall_integration_test(waterwall.http1_split_roundtrip http1_split_roundtrip)

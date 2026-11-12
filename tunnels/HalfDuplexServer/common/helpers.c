@@ -6,20 +6,21 @@ bool halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t
         return false;
     halfduplexserver_lstate_t *ls = lineGetState(main, t);
     return ls->main_line == main && ls->upload_line == upload && ls->download_line == download &&
-           ((halfduplexserver_lstate_t *) lineGetState(upload, t))->main_line == main &&
-           ((halfduplexserver_lstate_t *) lineGetState(download, t))->main_line == main;
+           ((halfduplexserver_lstate_t *) lineGetState(upload, ls->upload_tunnel))->main_line == main &&
+           ((halfduplexserver_lstate_t *) lineGetState(download, ls->download_tunnel))->main_line == main;
 }
 
 void halfduplexserverAbortPair(tunnel_t *t, line_t *main)
 {
     halfduplexserver_lstate_t *ls     = lineGetState(main, t);
     line_t                    *upload = ls->upload_line;
+    tunnel_t                  *upload_tunnel = ls->upload_tunnel;
     lineRef(upload);
     // Internal refusal closes both directions. The normal upload-close path
     // detaches the association and settles main storage before next callbacks.
-    halfduplexserverTunnelUpStreamFinish(t, upload);
+    tunnelUpStreamFin(upload_tunnel, upload);
     if (lineIsAlive(upload))
-        tunnelPrevDownStreamFinish(t, upload);
+        tunnelPrevDownStreamFinish(upload_tunnel, upload);
     lineUnref(upload);
 }
 
@@ -79,7 +80,7 @@ void halfduplexserverReplayStartup(tunnel_t *t, line_t *main)
     {
         ls->source_paused       = false;
         ls->startup_dispatching = false;
-        tunnelPrevDownStreamResume(t, upload);
+        tunnelPrevDownStreamResume(ls->upload_tunnel, upload);
         if (! halfduplexserverPairAlive(t, main, upload, download))
             goto done;
     }

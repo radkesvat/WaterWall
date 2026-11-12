@@ -14,6 +14,8 @@ static void localAsyncCloseLineUpStream(tunnel_t *t, line_t *l)
 static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool current_is_download)
 {
     halfduplexserver_lstate_t *current_ls   = lineGetState(current_line, t);
+    tunnel_t *const            owner        = halfduplexserverOwner(t);
+    tunnel_t *const sibling_tunnel = current_is_download ? current_ls->upload_tunnel : current_ls->download_tunnel;
     line_t *const              main_line    = current_ls->main_line;
     line_t *const              sibling_line = current_is_download ? current_ls->upload_line : current_ls->download_line;
 
@@ -21,21 +23,23 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
     if (main_line != NULL)
     {
         lineRef(main_line);
-        halfduplexserver_lstate_t *main_ls = lineGetState(main_line, t);
+        halfduplexserver_lstate_t *main_ls = lineGetState(main_line, owner);
         halfduplexserverLinestateDestroy(main_ls);
     }
     if (sibling_line != NULL)
     {
         lineRef(sibling_line);
-        halfduplexserver_lstate_t *sibling_ls = lineGetState(sibling_line, t);
+        halfduplexserver_lstate_t *sibling_ls = lineGetState(sibling_line, sibling_tunnel);
         sibling_ls->main_line                 = NULL;
         if (current_is_download)
         {
             sibling_ls->download_line = NULL;
+            sibling_ls->download_tunnel = NULL;
         }
         else
         {
             sibling_ls->upload_line = NULL;
+            sibling_ls->upload_tunnel = NULL;
         }
     }
 
@@ -44,7 +48,7 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
 
     if (main_line != NULL && lineIsAlive(main_line))
     {
-        tunnelNextUpStreamFinish(t, main_line);
+        tunnelNextUpStreamFinish(owner, main_line);
         if (lineIsAlive(main_line))
         {
             lineDestroy(main_line);
@@ -53,12 +57,13 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
 
     if (sibling_line != NULL && lineIsAlive(sibling_line))
     {
-        const line_task_submit_result_e result = lineScheduleTask(sibling_line, localAsyncCloseLineUpStream, t, NULL);
+        const line_task_submit_result_e result =
+            lineScheduleTask(sibling_line, localAsyncCloseLineUpStream, sibling_tunnel, NULL);
         if (result == kLineTaskSubmitRejectedSettled)
         {
             if (lineIsAlive(sibling_line))
             {
-                localAsyncCloseLineUpStream(t, sibling_line);
+                localAsyncCloseLineUpStream(sibling_tunnel, sibling_line);
             }
         }
         else
@@ -80,7 +85,7 @@ static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool cur
 
 void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
 {
-    halfduplexserver_tstate_t *ts = tunnelGetState(t);
+    halfduplexserver_tstate_t *ts = tunnelGetState(halfduplexserverOwner(t));
     halfduplexserver_lstate_t *ls = lineGetState(l, t);
 
     switch (ls->state)

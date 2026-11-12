@@ -8,7 +8,7 @@ void halfduplexserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
     if (! ls->startup_active && ! ls->startup_initializing && ! ls->startup_dispatching)
     {
         ls->source_paused = false;
-        tunnelPrevDownStreamResume(t, ls->upload_line);
+        tunnelPrevDownStreamResume(ls->upload_tunnel, ls->upload_line);
         return;
     }
     halfduplexserverReplayStartup(t, l);

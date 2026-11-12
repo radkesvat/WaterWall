@@ -8,6 +8,6 @@ void halfduplexserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
     if ((! ls->startup_active && ! ls->startup_initializing && ! ls->startup_dispatching) || ! ls->source_paused)
     {
         ls->source_paused = true;
-        tunnelPrevDownStreamPause(t, ls->upload_line);
+        tunnelPrevDownStreamPause(ls->upload_tunnel, ls->upload_line);
     }
 }

@@ -6,7 +6,9 @@
  * Cases: caseFragmentedIntroPairsAndStripsCompletePrefix, caseSecondHalfOfPairIdParticipatesInMatching,
  * caseInvalidAndDuplicateRolesCloseLocally, caseSimultaneousOppositeRolesCannotBothMiss,
  * caseWaitingBoundary, caseSpliceFragments, caseSetupClosureAndRefusal, casePairingOrder; the driver
- * lists the remaining cases
+ * lists the remaining cases. Every scenario repeats for shared ingress and for
+ * each role arriving through a paired secondary; callback destinations are checked.
+ * Early download pressure and nested Init pressure retain the primary application path.
  * Checks: Assertion labels include: HalfDuplexServer scheduled a NULL transport close; HalfDuplexServer
  * unexpectedly requested cancellation notification; HalfDuplexServer scheduled the wrong transport for
  * closure; the upload transport was not retained across the re-entrant main Init
@@ -42,6 +44,8 @@ bool        __wrap_bufferqueueTryPushBack(buffer_queue_t *queue, sbuf_t **buf)
 }
 
 static bool splice_inputs;
+// 0: primary ingress; 1: upload through peer; 2: download through peer; 3: both through peer.
+static unsigned ingress_mode;
 #include "wthread.h"
 
 enum
@@ -57,6 +61,10 @@ typedef struct halfduplexserver_fixture_s
     tunnel_t        *prev;
     tunnel_t        *halfduplex;
     tunnel_t        *next;
+    tunnel_t        *peer;
+    tunnel_t        *peer_prev;
+    tunnel_t        *upload_tunnel;
+    tunnel_t        *download_tunnel;
     line_t          *upload_line;
     line_t          *download_line;
     line_t          *replacement_line;
@@ -163,7 +171,6 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
                                                   LineTaskCancelFn on_cancel)
 {
     discard task;
-    discard t;
 
     if (g_fixture == NULL)
     {
@@ -176,6 +183,7 @@ line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFn
     halfduplexserver_fixture_t *fixture = g_fixture;
     twfRequire(fixture != NULL, "HalfDuplexServer scheduled a close outside the active fixture");
     twfRequire(line == fixture->upload_line, "HalfDuplexServer scheduled the wrong transport for closure");
+    twfRequire(t == fixture->upload_tunnel, "scheduled close selected the wrong upload ingress");
     twfRequireEqualU32(
         twfLineRefCount(line), 3, "the upload transport was not retained across the re-entrant main Init");
     twfRequire(on_cancel == NULL, "HalfDuplexServer unexpectedly requested cancellation notification");
@@ -194,7 +202,8 @@ static void transportOwnerDownstreamFinish(tunnel_t *prev, line_t *line)
 {
     halfduplexserver_fixture_t *fixture = g_fixture;
     twfRequire(fixture != NULL, "the transport owner ran outside the active fixture");
-    twfRequire(prev == fixture->prev, "the wrong previous tunnel received the transport Finish");
+    tunnel_t *ingress = line == fixture->upload_line ? fixture->upload_tunnel : fixture->download_tunnel;
+    twfRequire(prev == ingress->prev, "the wrong previous tunnel received the transport Finish");
     twfRequire(line == fixture->download_line || line == fixture->upload_line,
                "HalfDuplexServer finished an untracked transport synchronously");
 
@@ -263,6 +272,8 @@ static void fixtureSetup(halfduplexserver_fixture_t *fixture)
     halfduplexserver_tstate_t *ts = tunnelGetState(fixture->halfduplex);
     mutexInit(&ts->pending_line_maps_mutex);
     ts->pending_line_maps_mutex_initialized = true;
+    ts->owner                               = fixture->halfduplex;
+    fixture->halfduplex->fnFinU             = halfduplexserverTunnelUpStreamFinish;
     ts->upload_line_map                     = hmap_cons_t_with_capacity(kHmapCap);
     ts->download_line_map                   = hmap_cons_t_with_capacity(kHmapCap);
 
@@ -273,16 +284,34 @@ static void fixtureSetup(halfduplexserver_fixture_t *fixture)
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->halfduplex->lstate_size;
+    fixture->upload_tunnel = fixture->download_tunnel = fixture->halfduplex;
+    if (ingress_mode != 0)
+    {
+        fixture->peer      = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
+        fixture->peer_prev = twfCreatePrevTunnel(&fixture->trace);
+        twfRequire(fixture->peer != NULL, "failed to create peer ingress");
+        ((halfduplexserver_tstate_t *) tunnelGetState(fixture->peer))->owner = fixture->halfduplex;
+        fixture->peer->fnFinU                                                = halfduplexserverTunnelUpStreamFinish;
+        fixture->peer->lstate_offset                                         = fixture->chain->sum_line_state_size;
+        fixture->chain->sum_line_state_size += fixture->peer->lstate_size;
+        fixture->peer->chain = fixture->chain;
+        tunnelBind(fixture->peer_prev, fixture->peer);
+        fixture->peer_prev->fnFinD = transportOwnerDownstreamFinish;
+        if (ingress_mode == 1 || ingress_mode == 3)
+            fixture->upload_tunnel = fixture->peer;
+        if (ingress_mode == 2 || ingress_mode == 3)
+            fixture->download_tunnel = fixture->peer;
+    }
     tunnelchainFinalize(fixture->chain);
     fixture->halfduplex->chain = fixture->chain;
 
     g_fixture = fixture;
 }
 
-static line_t *createTransportLine(halfduplexserver_fixture_t *fixture)
+static line_t *createTransportLine(halfduplexserver_fixture_t *fixture, bool upload)
 {
     line_t *line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
-    halfduplexserverTunnelUpStreamInit(fixture->halfduplex, line);
+    halfduplexserverTunnelUpStreamInit(upload ? fixture->upload_tunnel : fixture->download_tunnel, line);
     return line;
 }
 
@@ -315,7 +344,8 @@ static sbuf_t *createIntroBuffer(halfduplexserver_fixture_t *fixture, bool uploa
 
 static void sendIntro(halfduplexserver_fixture_t *fixture, line_t *line, bool upload)
 {
-    halfduplexserverTunnelUpStreamPayload(fixture->halfduplex, line, createIntroBuffer(fixture, upload));
+    halfduplexserverTunnelUpStreamPayload(
+        upload ? fixture->upload_tunnel : fixture->download_tunnel, line, createIntroBuffer(fixture, upload));
 }
 
 static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
@@ -334,7 +364,7 @@ static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
     }
     if (fixture->upload_line != NULL && lineIsAlive(fixture->upload_line))
     {
-        halfduplexserverTunnelUpStreamFinish(fixture->halfduplex, fixture->upload_line);
+        halfduplexserverTunnelUpStreamFinish(fixture->upload_tunnel, fixture->upload_line);
         lineDestroy(fixture->upload_line);
     }
     if (fixture->closed_upload_ref_held)
@@ -352,6 +382,11 @@ static void fixtureTeardown(halfduplexserver_fixture_t *fixture)
     tunnelDestroy(fixture->next);
     halfduplexserverTunnelDestroy(fixture->halfduplex, wwLifecycleStartupRollback());
     tunnelDestroy(fixture->prev);
+    if (fixture->peer != NULL)
+    {
+        halfduplexserverTunnelDestroy(fixture->peer, wwLifecycleStartupRollback());
+        tunnelDestroy(fixture->peer_prev);
+    }
     g_fixture = NULL;
 }
 
@@ -369,16 +404,16 @@ static void runRejectedPairingCase(bool upload_first, bool refuse_scheduled_clos
 
     if (upload_first)
     {
-        fixture.upload_line = createTransportLine(&fixture);
+        fixture.upload_line = createTransportLine(&fixture, true);
         sendIntro(&fixture, fixture.upload_line, true);
-        fixture.download_line = createTransportLine(&fixture);
+        fixture.download_line = createTransportLine(&fixture, false);
         sendIntro(&fixture, fixture.download_line, false);
     }
     else
     {
-        fixture.download_line = createTransportLine(&fixture);
+        fixture.download_line = createTransportLine(&fixture, false);
         sendIntro(&fixture, fixture.download_line, false);
-        fixture.upload_line = createTransportLine(&fixture);
+        fixture.upload_line = createTransportLine(&fixture, true);
         sendIntro(&fixture, fixture.upload_line, true);
     }
 
@@ -414,7 +449,10 @@ typedef struct halfduplexserver_protocol_fixture_s
     tunnel_t        *prev;
     tunnel_t        *halfduplex;
     tunnel_t        *next;
+    tunnel_t        *peer;
+    tunnel_t        *peer_prev;
     line_t          *transport_lines[4];
+    tunnel_t        *transport_tunnels[4];
     line_t          *main_line;
     uint8_t          forwarded_payload[64];
     uint32_t         forwarded_length;
@@ -425,10 +463,20 @@ typedef struct halfduplexserver_protocol_fixture_s
 static halfduplexserver_protocol_fixture_t *g_protocol_fixture;
 static uint32_t                             g_protocol_pool_size = kTestLargeBufferSize;
 
+static tunnel_t *protocolIngress(halfduplexserver_protocol_fixture_t *fixture, line_t *line)
+{
+    for (size_t index = 0; index < ARRAY_SIZE(fixture->transport_lines); ++index)
+        if (fixture->transport_lines[index] == line)
+            return fixture->transport_tunnels[index];
+    twfRequire(false, "transport has no registered ingress");
+    return NULL;
+}
+
 static void protocolTransportFinish(tunnel_t *prev, line_t *line)
 {
     halfduplexserver_protocol_fixture_t *fixture = g_protocol_fixture;
-    twfRequire(fixture != NULL && prev == fixture->prev, "protocol fixture finished through the wrong owner");
+    twfRequire(fixture != NULL && prev == protocolIngress(fixture, line)->prev,
+               "protocol fixture finished through the wrong owner");
 
     bool found = false;
     for (size_t index = 0; index < ARRAY_SIZE(fixture->transport_lines); ++index)
@@ -487,6 +535,8 @@ static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
     halfduplexserver_tstate_t *ts = tunnelGetState(fixture->halfduplex);
     mutexInit(&ts->pending_line_maps_mutex);
     ts->pending_line_maps_mutex_initialized = true;
+    ts->owner                               = fixture->halfduplex;
+    fixture->halfduplex->fnFinU             = halfduplexserverTunnelUpStreamFinish;
     ts->upload_line_map                     = hmap_cons_t_with_capacity(kHmapCap);
     ts->download_line_map                   = hmap_cons_t_with_capacity(kHmapCap);
 
@@ -498,6 +548,19 @@ static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->halfduplex->lstate_size;
+    if (ingress_mode != 0)
+    {
+        fixture->peer      = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
+        fixture->peer_prev = twfCreatePrevTunnel(&fixture->trace);
+        twfRequire(fixture->peer != NULL, "failed to create protocol peer ingress");
+        ((halfduplexserver_tstate_t *) tunnelGetState(fixture->peer))->owner = fixture->halfduplex;
+        fixture->peer->fnFinU                                                = halfduplexserverTunnelUpStreamFinish;
+        fixture->peer->lstate_offset                                         = fixture->chain->sum_line_state_size;
+        fixture->chain->sum_line_state_size += fixture->peer->lstate_size;
+        fixture->peer->chain = fixture->chain;
+        tunnelBind(fixture->peer_prev, fixture->peer);
+        fixture->peer_prev->fnFinD = protocolTransportFinish;
+    }
     tunnelchainFinalize(fixture->chain);
     fixture->halfduplex->chain = fixture->chain;
 
@@ -513,7 +576,10 @@ static line_t *protocolCreateTransport(halfduplexserver_protocol_fixture_t *fixt
         {
             line_t *line                    = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
             fixture->transport_lines[index] = line;
-            halfduplexserverTunnelUpStreamInit(fixture->halfduplex, line);
+            fixture->transport_tunnels[index] =
+                ingress_mode == 3 || (ingress_mode != 0 && index % 2 == ingress_mode - 1) ? fixture->peer
+                                                                                          : fixture->halfduplex;
+            halfduplexserverTunnelUpStreamInit(fixture->transport_tunnels[index], line);
             return line;
         }
     }
@@ -529,7 +595,7 @@ static void protocolSendBytes(halfduplexserver_protocol_fixture_t *fixture, line
                                       length,
                                       splice_inputs && length <= 64000,
                                       (uint16_t) (length > 4096 ? length - 1000 : length / 2));
-    halfduplexserverTunnelUpStreamPayload(fixture->halfduplex, line, buf);
+    halfduplexserverTunnelUpStreamPayload(protocolIngress(fixture, line), line, buf);
 }
 
 static void protocolBuildIntro(uint8_t intro[kHLFDIntroSize], uint8_t command, const uint8_t pair_id[kHLFDPairIdSize])
@@ -556,8 +622,8 @@ static void protocolFixtureTeardown(halfduplexserver_protocol_fixture_t *fixture
         line_t *line = fixture->transport_lines[index];
         if (line != NULL)
         {
+            halfduplexserverTunnelUpStreamFinish(fixture->transport_tunnels[index], line);
             fixture->transport_lines[index] = NULL;
-            halfduplexserverTunnelUpStreamFinish(fixture->halfduplex, line);
             lineDestroy(line);
         }
     }
@@ -567,6 +633,11 @@ static void protocolFixtureTeardown(halfduplexserver_protocol_fixture_t *fixture
     tunnelDestroy(fixture->next);
     halfduplexserverTunnelDestroy(fixture->halfduplex, wwLifecycleStartupRollback());
     tunnelDestroy(fixture->prev);
+    if (fixture->peer != NULL)
+    {
+        halfduplexserverTunnelDestroy(fixture->peer, wwLifecycleStartupRollback());
+        tunnelDestroy(fixture->peer_prev);
+    }
     g_protocol_fixture       = NULL;
     g_protocol_schedule_mode = false;
     twfWorkerEnvTeardown(&fixture->env);
@@ -872,7 +943,9 @@ static void caseWaitingBoundary(uint32_t large, uint32_t total, bool append, boo
 static sbuf_t *expected_direct;
 static void    protocolDirect(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
-    discard t;
+    halfduplexserver_protocol_fixture_t *fixture = g_protocol_fixture;
+    twfRequire(t == (line == fixture->main_line ? fixture->next : protocolIngress(fixture, line)->prev),
+               "direct payload targeted wrong branch");
     twfRequire(buf == expected_direct && sbufIsSplice(buf), "server direct path replaced splice wrapper");
     buf = halfduplexTestMaterialize(lineGetBufferPool(line), buf);
     twfRequire(sbufGetLength(buf) == 5 && memoryEqual(sbufGetRawPtr(buf), "later", 5), "direct body changed");
@@ -895,10 +968,10 @@ static void caseSpliceFragments(void)
             if (download_first)
                 protocolSendBytes(&fixture, down, download, 17);
             halfduplexserverTunnelUpStreamPayload(
-                fixture.halfduplex,
+                protocolIngress(&fixture, up),
                 up,
                 halfduplexTestBytes(fixture.env.pool, upload, split, split % 2 == 0, split / 2));
-            halfduplexserver_lstate_t *ls = lineGetState(up, fixture.halfduplex);
+            halfduplexserver_lstate_t *ls = lineGetState(up, protocolIngress(&fixture, up));
             twfRequire(ls->buffering == NULL || ! sbufIsSplice(ls->buffering), "partial intro retained splice");
             protocolSendBytes(&fixture, up, upload + split, sizeof(upload) - split);
             if (! download_first)
@@ -915,12 +988,14 @@ static void caseSpliceFragments(void)
 #if WW_HAVE_SPLICE
             fixture.next->fnPayloadU = protocolDirect;
             fixture.prev->fnPayloadD = protocolDirect;
+            if (fixture.peer_prev != NULL)
+                fixture.peer_prev->fnPayloadD = protocolDirect;
             expected_direct          = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
-            halfduplexserverTunnelUpStreamPayload(fixture.halfduplex, up, expected_direct);
+            halfduplexserverTunnelUpStreamPayload(protocolIngress(&fixture, up), up, expected_direct);
             expected_direct = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
             halfduplexserverTunnelDownStreamPayload(fixture.halfduplex, fixture.main_line, expected_direct);
             halfduplexserverTunnelUpStreamPayload(
-                fixture.halfduplex, down, halfduplexTestBytes(fixture.env.pool, "ignored", 7, true, 0));
+                protocolIngress(&fixture, down), down, halfduplexTestBytes(fixture.env.pool, "ignored", 7, true, 0));
 #endif
             protocolFixtureTeardown(&fixture);
         }
@@ -946,7 +1021,7 @@ static void caseSetupClosureAndRefusal(void)
                 // before any access to this synthetic body length.
                 buf      = halfduplexTestMaterialize(fixture.env.pool, buf);
                 buf->len = UINT32_MAX;
-                halfduplexserverTunnelUpStreamPayload(fixture.halfduplex, up, buf);
+                halfduplexserverTunnelUpStreamPayload(protocolIngress(&fixture, up), up, buf);
                 twfRequire(fixture.transport_finish_count == 1, "setup refusal did not close borrowed input");
                 halfduplexserver_tstate_t *ts = tunnelGetState(fixture.halfduplex);
                 twfRequire(hmap_cons_t_size(&ts->upload_line_map) == 0, "setup refusal left waiting entry");
@@ -973,10 +1048,10 @@ static void orderClose(unsigned side)
     else
     {
         line_t *half = side == 1 ? order.upload : order.download;
-        halfduplexserverTunnelUpStreamFinish(f->halfduplex, half);
+        halfduplexserverTunnelUpStreamFinish(protocolIngress(f, half), half);
         // A received Finish must not have been reflected to its sender.
         twfRequire(lineIsAlive(half), "received Finish reflected toward half owner");
-        protocolTransportFinish(f->prev, half);
+        protocolTransportFinish(protocolIngress(f, half)->prev, half);
     }
 }
 static void orderNextFinish(tunnel_t *t, line_t *line)
@@ -992,7 +1067,7 @@ static void orderSend(const char *data)
 }
 static void orderPause(tunnel_t *t, line_t *line)
 {
-    discard t;
+    twfRequire(t == protocolIngress(g_protocol_fixture, line)->prev, "source Pause targeted wrong ingress");
     twfRequire(line == order.upload, "source Pause targeted wrong half");
     ++order.pauses;
     if (order.close_stage == 4)
@@ -1000,7 +1075,7 @@ static void orderPause(tunnel_t *t, line_t *line)
 }
 static void orderResume(tunnel_t *t, line_t *line)
 {
-    discard t;
+    twfRequire(t == protocolIngress(g_protocol_fixture, line)->prev, "source Resume targeted wrong ingress");
     twfRequire(line == order.upload && ! order.in_init, "source Resume escaped Init barrier");
     halfduplexserver_protocol_fixture_t *f = g_protocol_fixture;
     twfRequire(! ((halfduplexserver_lstate_t *) lineGetState(f->main_line, f->halfduplex))->startup_active,
@@ -1011,7 +1086,7 @@ static void orderResume(tunnel_t *t, line_t *line)
     else
     {
         order.direct = halfduplexTestBytes(f->env.pool, order.resumes == 2 ? "F" : "E", 1, true, 0);
-        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, order.direct);
+        halfduplexserverTunnelUpStreamPayload(protocolIngress(f, order.upload), order.upload, order.direct);
         if (order.mode == 5 && order.resumes == 1)
         {
             halfduplexserverTunnelDownStreamPause(f->halfduplex, f->main_line);
@@ -1055,7 +1130,7 @@ static void orderPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     {
         order.tail_seen = true;
         order.direct    = halfduplexTestBytes(f->env.pool, "E", 1, true, 0);
-        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, order.direct);
+        halfduplexserverTunnelUpStreamPayload(protocolIngress(f, order.upload), order.upload, order.direct);
     }
 }
 static void orderInit(tunnel_t *t, line_t *line)
@@ -1087,6 +1162,11 @@ static void orderSetup(halfduplexserver_protocol_fixture_t *f, unsigned mode, un
     f->next->fnFinU     = orderNextFinish;
     f->prev->fnPauseD   = orderPause;
     f->prev->fnResumeD  = orderResume;
+    if (f->peer_prev != NULL)
+    {
+        f->peer_prev->fnPauseD  = orderPause;
+        f->peer_prev->fnResumeD = orderResume;
+    }
     order.upload        = protocolCreateTransport(f);
     order.download      = protocolCreateTransport(f);
 }
@@ -1104,7 +1184,7 @@ static void orderPair(halfduplexserver_protocol_fixture_t *f, bool download_firs
     {
         // Mix an ordinary partial intro with a potentially splice-backed tail.
         halfduplexserverTunnelUpStreamPayload(
-            f->halfduplex, order.upload, halfduplexTestBytes(f->env.pool, up, 7, false, 0));
+            protocolIngress(f, order.upload), order.upload, halfduplexTestBytes(f->env.pool, up, 7, false, 0));
         protocolSendBytes(f, order.upload, up + 7, length - 7);
     }
     else
@@ -1147,7 +1227,7 @@ static void casePairingOrder(void)
                 if (mode == 2 || mode == 4 || (mode == 3 && ! empty))
                     twfRequire(order.resumes == 1, "source Resume duplicated or missing");
                 order.direct = halfduplexTestBytes(f.env.pool, "Z", 1, true, 0);
-                halfduplexserverTunnelUpStreamPayload(f.halfduplex, order.upload, order.direct);
+                halfduplexserverTunnelUpStreamPayload(protocolIngress(&f, order.upload), order.upload, order.direct);
                 protocolFixtureTeardown(&f);
             }
     for (unsigned stage = 1; stage <= 4; ++stage)
@@ -1199,7 +1279,7 @@ static void budgetInit(tunnel_t *t, line_t *line)
         memorySet(sbufGetMutablePtr(buf), 0x71, size);
         if (budget_dimension == 1)
             twfRequire(sbufGetQueueCharge(buf) == 2 * 1024 * 1024, "charge equality fixture geometry changed");
-        halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+        halfduplexserverTunnelUpStreamPayload(protocolIngress(f, order.upload), order.upload, buf);
     }
     if (budget_dimension != 3)
     {
@@ -1213,7 +1293,7 @@ static void budgetInit(tunnel_t *t, line_t *line)
         {
             sbuf_t *buf = twfTrackAcquired(sbufCreateWithPadding(budget_dimension == 0 ? 1 : 0, 64));
             sbufSetLength(buf, budget_dimension == 0 ? 1 : 0);
-            halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+            halfduplexserverTunnelUpStreamPayload(protocolIngress(f, order.upload), order.upload, buf);
         }
     }
     order.in_init = false;
@@ -1229,7 +1309,7 @@ static void refusalInit(tunnel_t *t, line_t *line)
         buf->len = UINT32_MAX;
     else
         fail_queue = true;
-    halfduplexserverTunnelUpStreamPayload(f->halfduplex, order.upload, buf);
+    halfduplexserverTunnelUpStreamPayload(protocolIngress(f, order.upload), order.upload, buf);
 }
 static void caseStartupBudget(void)
 {
@@ -1268,8 +1348,104 @@ static void caseStartupBudget(void)
     }
 }
 
-int main(void)
+typedef struct transport_pressure_s
 {
+    line_t  *upload;
+    line_t  *download;
+    unsigned init_action;
+    unsigned pauses;
+    unsigned resumes;
+    bool     in_init;
+    bool     close_on_pause;
+} transport_pressure_t;
+static transport_pressure_t transport_pressure;
+
+static void pressurePause(tunnel_t *t, line_t *line)
+{
+    halfduplexserver_protocol_fixture_t *fixture = g_protocol_fixture;
+    twfRequire(t == fixture->next && line == fixture->main_line,
+               "download pressure targeted the wrong application path");
+    twfRequire(! transport_pressure.in_init, "download pressure escaped the main Init barrier");
+    ++transport_pressure.pauses;
+    if (transport_pressure.close_on_pause)
+        protocolCloseMain(fixture);
+}
+
+static void pressureResume(tunnel_t *t, line_t *line)
+{
+    halfduplexserver_protocol_fixture_t *fixture = g_protocol_fixture;
+    twfRequire(t == fixture->next && line == fixture->main_line, "download Resume targeted the wrong application path");
+    twfRequire(! transport_pressure.in_init, "download Resume escaped the main Init barrier");
+    ++transport_pressure.resumes;
+}
+
+static void pressureInit(tunnel_t *t, line_t *line)
+{
+    protocolMainInit(t, line);
+    halfduplexserver_protocol_fixture_t *fixture = g_protocol_fixture;
+    transport_pressure.in_init                   = true;
+    tunnel_t *download                           = protocolIngress(fixture, transport_pressure.download);
+    if (transport_pressure.init_action == 1 || transport_pressure.init_action == 2)
+        halfduplexserverTunnelUpStreamPause(download, transport_pressure.download);
+    if (transport_pressure.init_action == 2 || transport_pressure.init_action == 3)
+        halfduplexserverTunnelUpStreamResume(download, transport_pressure.download);
+    transport_pressure.in_init = false;
+}
+
+static void caseEarlyTransportPressure(void)
+{
+    twfSetCase("HalfDuplexServer retains download pressure across intro and reentrant main Init");
+    for (unsigned first = 0; first < 2; ++first)
+        for (unsigned early = 0; early < 2; ++early)
+            for (unsigned action = 0; action < 4; ++action)
+            {
+                halfduplexserver_protocol_fixture_t fixture;
+                protocolFixtureSetup(&fixture);
+                transport_pressure          = (transport_pressure_t) {.init_action = action};
+                transport_pressure.upload   = protocolCreateTransport(&fixture);
+                transport_pressure.download = protocolCreateTransport(&fixture);
+                tunnel_t *upload            = protocolIngress(&fixture, transport_pressure.upload);
+                tunnel_t *download          = protocolIngress(&fixture, transport_pressure.download);
+                fixture.next->fnInitU       = pressureInit;
+                fixture.next->fnPauseU      = pressurePause;
+                fixture.next->fnResumeU     = pressureResume;
+                halfduplexserverTunnelUpStreamEst(upload, transport_pressure.upload);
+                halfduplexserverTunnelUpStreamEst(download, transport_pressure.download);
+                halfduplexserverTunnelUpStreamPause(upload, transport_pressure.upload);
+                if (early)
+                    halfduplexserverTunnelUpStreamPause(download, transport_pressure.download);
+                const uint8_t id[kHLFDPairIdSize] = {0xA9};
+                uint8_t       up[kHLFDIntroSize], down[kHLFDIntroSize];
+                protocolBuildIntro(up, kHLFDCmdUpload, id);
+                protocolBuildIntro(down, kHLFDCmdDownload, id);
+                if (first)
+                    protocolSendBytes(&fixture, transport_pressure.download, down, sizeof(down));
+                protocolSendBytes(&fixture, transport_pressure.upload, up, sizeof(up));
+                if (! first)
+                    protocolSendBytes(&fixture, transport_pressure.download, down, sizeof(down));
+                unsigned expected_pauses = action == 1 || (early && action == 0) ? 1 : 0;
+                twfRequire(fixture.main_init_count == 1 && transport_pressure.pauses == expected_pauses &&
+                               transport_pressure.resumes == 0,
+                           "pending download pressure was dropped or duplicated during Init");
+                halfduplexserver_lstate_t *main = lineGetState(fixture.main_line, fixture.halfduplex);
+                twfRequire(main->upload_tunnel == upload && main->download_tunnel == download,
+                           "main line did not retain both ingress identities");
+                halfduplexserverTunnelUpStreamResume(upload, transport_pressure.upload);
+                twfRequire(transport_pressure.resumes == 0, "upload write pressure resumed the application");
+                halfduplexserverTunnelUpStreamResume(download, transport_pressure.download);
+                twfRequire(transport_pressure.resumes == 1, "download Resume did not reach the primary application");
+                transport_pressure.close_on_pause = true;
+                halfduplexserverTunnelUpStreamPause(download, transport_pressure.download);
+                twfRequire(fixture.main_line == NULL && fixture.transport_finish_count == 2,
+                           "application close during download Pause leaked a paired half");
+                protocolFixtureTeardown(&fixture);
+            }
+}
+
+static void runSuite(void)
+{
+    splice_inputs = false;
+    caseEarlyTransportPressure();
     casePairingOrder();
     caseStartupBudget();
     const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
@@ -1292,6 +1468,7 @@ int main(void)
     caseInvalidAndDuplicateRolesCloseLocally();
 
     splice_inputs = true;
+    caseEarlyTransportPressure();
     casePairingOrder();
     caseStartupBudget();
     runRejectedPairingCase(true, false);
@@ -1307,6 +1484,12 @@ int main(void)
     caseFragmentedIntroPairsAndStripsCompletePrefix();
     caseSecondHalfOfPairIdParticipatesInMatching();
     caseInvalidAndDuplicateRolesCloseLocally();
+}
+
+int main(void)
+{
+    for (ingress_mode = 0; ingress_mode < 4; ++ingress_mode)
+        runSuite();
     printf("halfduplexserver_reentrant_init_test: all cases passed\n");
     return 0;
 }

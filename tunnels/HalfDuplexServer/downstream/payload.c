@@ -8,7 +8,7 @@ void halfduplexserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
 
     if (LIKELY(ls->download_line != NULL))
     {
-        tunnelPrevDownStreamPayload(t, ls->download_line, buf);
+        tunnelPrevDownStreamPayload(ls->download_tunnel, ls->download_line, buf);
     }
     else
     {
