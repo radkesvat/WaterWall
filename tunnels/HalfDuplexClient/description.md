@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HalfDuplexClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -59,6 +59,33 @@ Separate transport paths:
 }
 ```
 
+## Complete TLS/KCP Topology
+
+One local TCP stream can upload over TLS/TCP and download over KCP/UDP. The two
+client branches start at `HalfDuplexClient`; both server branches belong to the
+same configuration:
+
+```text
+Client:
+TcpListener -> VlessClient -> HalfDuplexClient
+  upload   -> TlsClient -> TcpConnector == TLS/TCP ==> server TcpListener
+  download -> KcpClient -> UdpConnector == KCP/UDP ==> server UdpListener
+
+Server:
+TcpListener -> TlsServer -> hs1 -> VlessServer -> TcpUdpConnector
+UdpListener -> KcpServer -> hs2 (pair: hs1)
+```
+
+`hs1` and `hs2` share one pairing group, and the reconstructed application line
+continues through `hs1` to `VlessServer` and `TcpUdpConnector`.
+Both transport connections are initiated by the client. The path names describe
+application payload directions; KCP still exchanges acknowledgements and control
+traffic in both directions. Swap the client's `upload` and `download` values to
+reverse the transport roles without changing the server's `pair` setting.
+
+See the [complete TLS/KCP walkthrough](../../WaterWall-Docs/docs/03-examples/tunnels/halfduplex-split-transports.mdx)
+and the [client/server configuration files](examples/tls-kcp) for setup and execution.
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -89,8 +116,9 @@ and branches already bound to another predecessor are rejected.
 
 Each path must accept a normal layer-4 line. The download path receives upstream
 Init and its pairing intro too; its name describes the application data direction.
-Both paths must ultimately reach the same `HalfDuplexServer` instance. The user is
-responsible for arranging that remote topology; this node cannot validate it.
+Both paths must ultimately reach one `HalfDuplexServer` pairing group: either the
+same instance or servers joined through `settings.pair`. The user is responsible
+for arranging that remote topology; this node cannot validate it.
 
 ## Detailed Behavior
 

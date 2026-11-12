@@ -1,0 +1,76 @@
+{
+  "name": "halfduplex-tls-kcp-server",
+  "nodes": [
+    {
+      "name": "udp-in",
+      "type": "UdpListener",
+      "next": "udp-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 4000
+      }
+    },
+    {
+      "name": "udp-server",
+      "type": "KcpServer",
+      "next": "hs2",
+      "settings": {
+        "send-mtu": 1400,
+        "fec": false,
+        "kcp-no-congestion-control": false
+      }
+    },
+    {
+      "name": "hs2",
+      "type": "HalfDuplexServer",
+      "settings": {
+        "pair": "hs1"
+      }
+    },
+    {
+      "name": "tcp-in",
+      "type": "TcpListener",
+      "next": "tls-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "next": "hs1",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "halfduplex.example.test"
+      }
+    },
+    {
+      "name": "hs1",
+      "type": "HalfDuplexServer",
+      "next": "vless-server"
+    },
+    {
+      "name": "vless-server",
+      "type": "VlessServer",
+      "next": "backend",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "connect": true,
+        "udp": true
+      }
+    },
+    {
+      "name": "backend",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

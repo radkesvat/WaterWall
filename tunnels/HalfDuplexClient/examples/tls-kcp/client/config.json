@@ -1,0 +1,75 @@
+{
+  "name": "halfduplex-tls-kcp-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "vless-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "vless-client",
+      "type": "VlessClient",
+      "next": "split",
+      "settings": {
+        "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+        "address": "127.0.0.1",
+        "port": 9000,
+        "protocol": "tcp"
+      }
+    },
+    {
+      "name": "split",
+      "type": "HalfDuplexClient",
+      "settings": {
+        "upload": "tls-client",
+        "download": "udp-client"
+      }
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "next": "tcp-out",
+      "settings": {
+        "sni": "halfduplex.example.test",
+        "verify": false,
+        "alpns": [
+          "http/1.1"
+        ]
+      }
+    },
+    {
+      "name": "tcp-out",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "udp-client",
+      "type": "KcpClient",
+      "next": "udp-out",
+      "settings": {
+        "send-mtu": 1400,
+        "fec": false,
+        "kcp-no-congestion-control": false
+      }
+    },
+    {
+      "name": "udp-out",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 4000,
+        "balance-mode": "packet"
+      }
+    }
+  ]
+}
