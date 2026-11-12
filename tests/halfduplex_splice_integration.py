@@ -7,8 +7,10 @@ without first closing the client. Both modes require namespace support and termi
 Failed runs retain logs. CTest: waterwall.halfduplex_tcp_splice_{true,false} and
 waterwall.halfduplex_tcp_response_close_{true,false}. Native units force cross-connection
 Finish ordering; this integration checks the complete backend-close path over real TCP.
+The separate/same path variants exercise named branches with real connector DNS helpers.
 """
 import concurrent.futures
+import argparse
 import json
 from pathlib import Path
 import shutil
@@ -29,7 +31,7 @@ from wwtest.run_directory import RunDirectory
 from wwtest.process import Process
 
 
-def run(binary, enabled, server_closes=False):
+def run(binary, enabled, server_closes=False, paths="shared"):
     tracer = None if server_closes else shutil.which("strace")
     if not server_closes and tracer is None:
         raise RuntimeError("strace is required for pipe-to-socket evidence")
@@ -46,6 +48,15 @@ def run(binary, enabled, server_closes=False):
             {"name": "out", "type": "TcpConnector",
              "settings": {"address": "127.0.0.1", "port": 27983, "nodelay": True, "fastopen": False}},
         ]
+        if paths != "shared":
+            del nodes[1]["next"]
+            nodes[1]["settings"] = {
+                "upload": "transport",
+                "download": "download-transport" if paths == "separate" else "transport",
+            }
+            if paths == "separate":
+                nodes.append({"name": "download-transport", "type": "TcpConnector",
+                              "settings": dict(nodes[2]["settings"])})
         (root / "config.json").write_text(json.dumps({"name": "halfduplex", "nodes": nodes}))
         (root / "core.json").write_text(json.dumps({
             "configs": ["config.json"],
@@ -119,10 +130,14 @@ def interrupted(signum, _frame):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] != "server-close"):
-        raise SystemExit("usage: halfduplex_splice_integration.py BINARY true|false [server-close]")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("binary")
+    parser.add_argument("splice", choices=("true", "false"))
+    parser.add_argument("close_mode", nargs="?", choices=("server-close",))
+    parser.add_argument("--paths", choices=("shared", "separate", "same"), default="shared")
+    args = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupted)
-    server_closes = len(sys.argv) == 4
-    run(str(Path(sys.argv[1]).resolve()), sys.argv[2] == "true", server_closes)
+    server_closes = args.close_mode == "server-close"
+    run(str(Path(args.binary).resolve()), args.splice == "true", server_closes, args.paths)
     print("HalfDuplex TCP response-close passed" if server_closes else
           "HalfDuplex staged TCP splice roundtrip passed")

@@ -1,11 +1,11 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HalfDuplexClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HalfDuplexClient.mdx, and all files must keep the same documentation version.
 -->
 
 # HalfDuplexClient Node
 
-`HalfDuplexClient` takes one normal full-duplex line from the previous node and splits it into two separate outbound connections toward the next node:
+`HalfDuplexClient` takes one normal full-duplex line from the previous node and splits it into two separate outbound connections through either one shared `next` or named upload/download paths:
 
 - one upload connection for client-to-server payload
 - one download connection for server-to-client payload
@@ -15,7 +15,7 @@ In practice, this node is used together with `HalfDuplexServer` on the remote si
 ## What It Does
 
 - Accepts one normal line from the previous node.
-- Creates two outbound lines through the next node.
+- Creates two outbound lines through the selected transport paths.
 - Uses the first payload to introduce and pair the two half-connections.
 - Sends all later upstream payload only on the upload connection.
 - Receives downstream payload back from the download connection and forwards it to the previous node.
@@ -46,6 +46,19 @@ This pair behaves like an adapter between one local full-duplex line and two rem
 }
 ```
 
+Separate transport paths:
+
+```json
+{
+  "name": "halfduplex-client",
+  "type": "HalfDuplexClient",
+  "settings": {
+    "upload": "upload-transport",
+    "download": "download-transport"
+  }
+}
+```
+
 ## Required JSON Fields
 
 ### Top-level fields
@@ -57,15 +70,27 @@ This pair behaves like an adapter between one local full-duplex line and two rem
   Must be exactly `"HalfDuplexClient"`.
 
 - `next` `(string)`
-  The next node that should create the two outbound half-connections.
+  Required when `settings.upload` and `settings.download` are omitted. Both lines use this node.
+  Must be omitted when the two path settings are supplied.
 
 ### `settings`
 
-There are no required tunnel-specific settings in the current implementation.
+| Setting | Type | Description |
+| --- | --- | --- |
+| `upload` | string | Entry node for the upload transport line. Requires `download`. |
+| `download` | string | Entry node for the download transport line. Requires `upload`. |
 
-## Optional `settings` Fields
+Omit both settings to send both lines through the required top-level `next`.
+Supply both settings to select named paths and omit `next` entirely. Supplying only
+one setting, mixing the pair with `next` (including `null`), or using an empty,
+non-string or unknown name rejects startup. Both names may identify the same node;
+that branch is attached once. Self-references, cyclic paths, incompatible layers
+and branches already bound to another predecessor are rejected.
 
-There are no tunnel-specific optional settings in the current implementation.
+Each path must accept a normal layer-4 line. The download path receives upstream
+Init and its pairing intro too; its name describes the application data direction.
+Both paths must ultimately reach the same `HalfDuplexServer` instance. The user is
+responsible for arranging that remote topology; this node cannot validate it.
 
 ## Detailed Behavior
 
@@ -76,7 +101,7 @@ When a new line arrives from the previous node, `HalfDuplexClient` creates:
 - one upload line
 - one download line
 
-Both are initialized through the next node on the same worker.
+Both are initialized through their selected branch entries on the same worker.
 
 The original local line remains the main line. Its line state keeps references to the two transport-side half-connections.
 
@@ -103,8 +128,8 @@ are required.
 
 ### Data flow direction
 
-- Local upstream payload: previous node -> `HalfDuplexClient` -> upload line -> next node
-- Remote downstream payload: next node -> download line -> `HalfDuplexClient` -> previous node
+- Local upstream payload: previous node -> `HalfDuplexClient` -> upload line -> upload path
+- Remote downstream payload: download path -> download line -> `HalfDuplexClient` -> previous node
 
 The upload line is used for normal client-to-server data.
 
@@ -118,7 +143,7 @@ Init waits only until both adjacent child Init calls have admitted their identit
 there is no pairing-handshake gate. Valid payload after that Init can proceed before
 Est. An Est callback can safely submit the first payload or close the pair.
 
-Only temporary Init/intro ordering input is retained, with a 2 MiB / 1,024-buffer
+Only temporary Init/intro ordering input is retained, with a 2 MiB logical-byte / 8 MiB queue-charge
 inclusive bound. First-intro publication precedes callbacks, and input nested during
 the download intro follows the older upload intro with the same pair ID. An admitted
 input can finish through Pause. A later release of Init backlog respects aggregate
@@ -133,6 +158,11 @@ and Finish between the borrowed main line and its owned children cannot use perm
 same-line bypass. Aggregate child pressure and Init-backlog gating are endpoint
 responsibilities, even when this node sits in the middle of the configured chain.
 
+Once both intros have been submitted, upload Finish retires only the upload line;
+the main and download lines remain available for the response. Download or main
+Finish closes the remaining association. Transport loss before upload intro
+submission aborts setup.
+
 Before any outward Finish, all pair links and local state are detached. The client
 synchronously closes both owned children, retaining exact lines across callbacks;
 received Finish is never reflected toward its sender. The borrowed main line is
@@ -141,7 +171,7 @@ finished through its owner. No detached child waits on a cancelable close task.
 ## Notes And Caveats
 
 - `HalfDuplexClient` is intended to be paired with `HalfDuplexServer`.
-- There are no tunnel-specific JSON settings today.
+- Choose either a shared `next` or both `settings.upload` and `settings.download`.
 - The first upstream payload is special because it carries the pairing intro for the upload side.
 - The intro is exactly 17 bytes: one role byte and one fresh 128-bit pair ID.
 - The download line sends only the intro at startup and is then used mainly for return traffic.
@@ -171,12 +201,12 @@ input is fully materialized, preserving its resident prefix and private-pipe
 body in order. The download intro is ordinary too. Later upstream and
 downstream deliveries preserve their original ordinary or splice representation.
 The temporary Init/intro FIFO can retain splice wrappers without materializing
-them; its inclusive 2 MiB and 1,024-buffer limits are unchanged and do not cap
+them; its inclusive 2 MiB logical-byte and 8 MiB queue-charge limits do not cap
 every ready delivery. Allocated outputs retain onward padding.
 
 Both nodes advertise `kNodeFlagSupportsSplice`. The client requires 17 bytes of
 left padding for its upload intro; the server requires zero.
 Actual splice reads require platform/build support, `misc.splice` enabled, and
 support from every node in the expanded chain, including the server's PipeTunnel
-wrapper and all neighbors. Ordinary buffers remain valid in every state. No new
-settings, wire fields, or read-preference requests are introduced.
+wrapper and all neighbors. Ordinary buffers remain valid in every state. Path
+selection does not change the pairing wire format or read-preference behavior.

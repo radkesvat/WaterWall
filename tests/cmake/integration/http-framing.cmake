@@ -14,6 +14,14 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     set_tests_properties(waterwall.halfduplex_tcp_response_close_${splice_mode} PROPERTIES TIMEOUT 60)
     add_waterwall_test_labels(waterwall.halfduplex_tcp_response_close_${splice_mode} "integration" "tunnels")
     add_waterwall_case_resource_lock(waterwall.halfduplex_tcp_response_close_${splice_mode} halfduplex_response_close)
+    foreach(path_mode IN ITEMS separate same)
+      add_waterwall_isolated_test(waterwall.halfduplex_tcp_${path_mode}_paths_${splice_mode}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_splice_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${splice_mode}" "server-close" "--paths" "${path_mode}")
+      set_tests_properties(waterwall.halfduplex_tcp_${path_mode}_paths_${splice_mode} PROPERTIES TIMEOUT 60)
+      add_waterwall_test_labels(waterwall.halfduplex_tcp_${path_mode}_paths_${splice_mode} "integration" "tunnels")
+      add_waterwall_case_resource_lock(waterwall.halfduplex_tcp_${path_mode}_paths_${splice_mode} halfduplex_paths)
+    endforeach()
   endforeach()
 endif()
 

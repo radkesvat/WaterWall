@@ -120,6 +120,15 @@ if(TARGET HttpServer)
 endif()
 
 if(TARGET HalfDuplexClient)
+  waterwall_add_native_executable(halfduplexclient_paths_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexclient_paths_test.c)
+  target_link_libraries(halfduplexclient_paths_test PRIVATE HalfDuplexClient ww)
+  target_link_options(halfduplexclient_paths_test PRIVATE
+    "-Wl,--wrap=nodemanagerGetConfigNodeByHash" "-Wl,--wrap=nodemanagerGetConfigNodeByName")
+  add_dependencies(waterwall_unit_tests halfduplexclient_paths_test)
+  add_waterwall_unit_test(waterwall.halfduplexclient_paths_unit halfduplexclient_paths_test
+    "unit;tunnels;halfduplexclient;configuration;topology")
+
   waterwall_add_native_executable(halfduplexclient_framing_random_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexclient_framing_random_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(halfduplexclient_framing_random_test HalfDuplexClient)

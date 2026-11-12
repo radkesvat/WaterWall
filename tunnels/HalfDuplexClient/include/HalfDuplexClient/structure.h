@@ -12,6 +12,14 @@ enum
     kHLFDIntroSize     = kHLFDPairIdOffset + kHLFDPairIdSize
 };
 
+typedef struct halfduplexclient_tstate_s
+{
+    node_t   *upload_node;
+    node_t   *download_node;
+    tunnel_t *upload_tunnel;
+    tunnel_t *download_tunnel;
+} halfduplexclient_tstate_t;
+
 typedef struct halfduplexclient_lstate_s
 {
     line_t *main_line;
@@ -34,12 +42,14 @@ enum
 {
     kHalfDuplexClientMaxPendingBytes   = 2 * 1024 * 1024,
     kHalfDuplexClientMaxPendingCharge  = 8U * 1024U * 1024U,
-    kTunnelStateSize                   = 0,
+    kTunnelStateSize                   = sizeof(halfduplexclient_tstate_t),
     kLineStateSize                     = sizeof(halfduplexclient_lstate_t)
 };
 
 WW_EXPORT tunnel_t    *halfduplexclientTunnelCreate(node_t *node);
 WW_EXPORT api_result_t halfduplexclientTunnelApi(tunnel_t *instance, sbuf_t *message);
+
+void halfduplexclientTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain);
 
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void halfduplexclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);

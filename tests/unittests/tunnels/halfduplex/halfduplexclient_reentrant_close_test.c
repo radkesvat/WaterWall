@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseSynchronousSiblingCloseSurvivesReentrantMainFinish, runRuntimeCase,
- * caseUploadFinishKeepsResponse
+ * caseUploadFinishKeepsResponse; runtime cases use both shared and distinct branch targets.
  * Checks: Assertion labels include: HalfDuplexClient finished an unexpected sibling; re-entrant main Finish
  * left HalfDuplexClient state alive; synchronous sibling close did not propagate exactly once; outer
  * frame re-finished the re-entrantly closed main line
@@ -19,6 +19,7 @@
 #include "fixtures/protocols/halfduplex_splice_fixture.h"
 
 static bool splice_inputs;
+static bool split_paths;
 
 typedef struct halfduplexclient_fixture_s
 {
@@ -60,6 +61,9 @@ static void fixtureSetup(halfduplexclient_fixture_t *fixture)
     twfRequire(fixture->halfduplex != NULL, "failed to create HalfDuplexClient fixture tunnel");
     tunnelBind(fixture->prev, fixture->halfduplex);
     tunnelBind(fixture->halfduplex, fixture->next);
+    halfduplexclient_tstate_t *ts = tunnelGetState(fixture->halfduplex);
+    ts->upload_tunnel             = fixture->next;
+    ts->download_tunnel           = fixture->next;
     fixture->next->fnFinU = nextFinishReentrantlyClosesMain;
 
     twfLinePoolSetup(&fixture->line_pool, fixture->halfduplex->lstate_size, 6);
@@ -127,7 +131,8 @@ typedef struct runtime_fixture_s
 {
     twf_worker_env_t      env;
     tunnel_chain_t       *chain;
-    tunnel_t             *client, *prev, *next;
+    node_t                client_node;
+    tunnel_t             *client, *prev, *next, *download_next;
     line_t               *main, *upload, *download;
     unsigned              mode, init_count, est_count, pause_count, resume_count, read_pauses, read_resumes;
     unsigned              upload_callbacks, download_callbacks, finishes;
@@ -157,7 +162,7 @@ static void runtimeOwnerFinish(tunnel_t *t, line_t *l)
 }
 static void runtimeChildFinish(tunnel_t *t, line_t *l)
 {
-    discard t;
+    twfRequire(t == (l == r.upload ? r.next : r.download_next), "Finish used the wrong branch");
     twfRequire(l == r.upload || l == r.download, "Finish reached wrong child");
     ++r.finishes;
     if (l == r.upload)
@@ -192,13 +197,13 @@ static void runtimeResume(tunnel_t *t, line_t *l)
 }
 static void runtimeReadPause(tunnel_t *t, line_t *l)
 {
-    discard t;
+    twfRequire(t == r.download_next, "read Pause used the wrong branch");
     twfRequire(l == r.download, "application read Pause used uninitialized/wrong child");
     ++r.read_pauses;
 }
 static void runtimeReadResume(tunnel_t *t, line_t *l)
 {
-    discard t;
+    twfRequire(t == r.download_next, "read Resume used the wrong branch");
     twfRequire(l == r.download, "application read Resume used uninitialized/wrong child");
     ++r.read_resumes;
 }
@@ -217,9 +222,9 @@ static void runtimeEstablished(tunnel_t *t, line_t *l)
 }
 static void runtimeInitialize(tunnel_t *t, line_t *l)
 {
-    discard t;
     lineRef(l);
     ++r.init_count;
+    twfRequire(t == (r.init_count == 1 ? r.next : r.download_next), "Init used the wrong branch");
     if (r.init_count == 1)
         r.upload = l;
     else
@@ -266,7 +271,7 @@ static void runtimeInitialize(tunnel_t *t, line_t *l)
 }
 static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    discard t;
+    twfRequire(t == (l == r.upload ? r.next : r.download_next), "Payload used the wrong branch");
     twfRequire(r.init_count == 2, "pair intro sent before adjacent Init");
     if (r.upload_callbacks == 0 || l == r.download)
         twfRequire(! sbufIsSplice(buf), "intro output must be ordinary");
@@ -334,21 +339,32 @@ static void runtimeResponse(tunnel_t *t, line_t *l, sbuf_t *buf)
 static void runtimeSetup(void)
 {
     twfWorkerEnvSetup(&r.env, 4096, 64);
-    r.client = halfduplexclientTunnelCreate(NULL);
+    r.client_node = (node_t) {.next = (char *) "transport"};
+    r.client      = halfduplexclientTunnelCreate(&r.client_node);
     r.prev   = tunnelCreate(NULL, 0, 0);
     r.next   = tunnelCreate(NULL, 0, 0);
     tunnelBind(r.prev, r.client);
-    tunnelBind(r.client, r.next);
+    r.download_next = split_paths ? tunnelCreate(NULL, 0, 0) : r.next;
+    tunnelBind(r.client, r.download_next);
+    tunnelBindDown(r.client, r.next);
+    halfduplexclient_tstate_t *ts = tunnelGetState(r.client);
+    ts->upload_tunnel             = r.next;
+    ts->download_tunnel           = r.download_next;
     r.prev->fnFinD               = runtimeOwnerFinish;
     r.prev->fnPayloadD           = runtimeResponse;
     r.prev->fnEstD               = runtimeEstablished;
     r.prev->fnPauseD             = runtimePause;
     r.prev->fnResumeD            = runtimeResume;
     r.next->fnInitU              = runtimeInitialize;
+    r.download_next->fnInitU      = runtimeInitialize;
     r.next->fnFinU               = runtimeChildFinish;
+    r.download_next->fnFinU       = runtimeChildFinish;
     r.next->fnPayloadU           = runtimeReceive;
+    r.download_next->fnPayloadU   = runtimeReceive;
     r.next->fnPauseU             = runtimeReadPause;
+    r.download_next->fnPauseU     = runtimeReadPause;
     r.next->fnResumeU            = runtimeReadResume;
+    r.download_next->fnResumeU    = runtimeReadResume;
     r.chain                      = tunnelchainCreate(1);
     r.chain->sum_line_state_size = r.client->lstate_size;
     tunnelchainFinalize(r.chain);
@@ -371,6 +387,8 @@ static void runtimeTeardown(void)
     }
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(r.chain);
+    if (r.download_next != r.next)
+        tunnelDestroy(r.download_next);
     tunnelDestroy(r.next);
     tunnelDestroy(r.prev);
     tunnelDestroy(r.client);
@@ -583,15 +601,20 @@ int main(void)
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
-    for (unsigned mode = 0; mode < 16; ++mode)
-        runRuntimeCase(mode);
-    runUploadFinishCases();
+    for (unsigned paths = 0; paths < 2; ++paths)
+    {
+        split_paths   = paths != 0;
+        splice_inputs = false;
+        for (unsigned mode = 0; mode < 16; ++mode)
+            runRuntimeCase(mode);
+        runUploadFinishCases();
 #if WW_HAVE_SPLICE
-    splice_inputs = true;
-    for (unsigned mode = 0; mode < 16; ++mode)
-        runRuntimeCase(mode);
-    runUploadFinishCases();
+        splice_inputs = true;
+        for (unsigned mode = 0; mode < 16; ++mode)
+            runRuntimeCase(mode);
+        runUploadFinishCases();
 #endif
+    }
     caseSynchronousSiblingCloseSurvivesReentrantMainFinish();
     frandThreadCleanup();
     frandGlobalCleanup();

@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseOrdinaryHeadroom, caseOnePairConsumesExactlyTwoSecureWords,
- * caseSeparatePairsUseIndependentCSPRNGIds, caseRepresentations
+ * caseSeparatePairsUseIndependentCSPRNGIds, caseRepresentations; shared and distinct branch targets.
  * Checks: Assertion labels include: HalfDuplexClient used the wrong framing target; HalfDuplexClient framed
  * an unknown child line; combined intro must be ordinary; output lost onward padding
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -43,10 +43,12 @@ typedef struct client_framing_fixture_s
     tunnel_chain_t  *chain;
     tunnel_t        *halfduplex;
     tunnel_t        *next;
+    tunnel_t        *download_next;
     client_pair_t    pairs[kPairCount];
 } client_framing_fixture_t;
 
 static client_framing_fixture_t *g_fixture;
+static bool                      split_paths;
 
 static const uint8_t kRandomKey[32] = {
     0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE, 0xAF,
@@ -74,11 +76,13 @@ static client_pair_t *findPair(line_t *line, bool *is_upload)
 
 static void captureFramedPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
 {
-    twfRequire(g_fixture != NULL && next == g_fixture->next, "HalfDuplexClient used the wrong framing target");
+    twfRequire(g_fixture != NULL, "missing framing fixture");
 
     bool           is_upload = false;
     client_pair_t *pair      = findPair(line, &is_upload);
     twfRequire(pair != NULL, "HalfDuplexClient framed an unknown child line");
+    twfRequire(next == (is_upload ? g_fixture->next : g_fixture->download_next),
+               "HalfDuplexClient used the wrong framing target");
 
     twfRequire(! sbufIsSplice(buf), "combined intro must be ordinary");
     twfRequire(sbufGetHeadroom(buf) >= (is_upload ? pair->minimum_upload_padding : 64), "output lost onward padding");
@@ -126,7 +130,13 @@ static void fixtureSetup(client_framing_fixture_t *fixture)
     fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
     fixture->next       = tunnelCreate(NULL, 0, 0);
     twfRequire(fixture->halfduplex != NULL && fixture->next != NULL, "failed to create framing fixture tunnels");
-    tunnelBind(fixture->halfduplex, fixture->next);
+    fixture->download_next = split_paths ? tunnelCreate(NULL, 0, 0) : fixture->next;
+    tunnelBind(fixture->halfduplex, fixture->download_next);
+    tunnelBindDown(fixture->halfduplex, fixture->next);
+    halfduplexclient_tstate_t *ts      = tunnelGetState(fixture->halfduplex);
+    ts->upload_tunnel                  = fixture->next;
+    ts->download_tunnel                = fixture->download_next;
+    fixture->download_next->fnPayloadU = captureFramedPayload;
     fixture->next->fnPayloadU = captureFramedPayload;
 
     fixture->chain                      = tunnelchainCreate(1);
@@ -159,6 +169,8 @@ static void fixtureTeardown(client_framing_fixture_t *fixture)
     }
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(fixture->chain);
+    if (fixture->download_next != fixture->next)
+        tunnelDestroy(fixture->download_next);
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->halfduplex);
     g_fixture = NULL;
@@ -338,10 +350,14 @@ int main(void)
     twfRequire(frandGlobalInit(), "fast random global initialization failed");
     frandInit();
 
-    caseRepresentations();
-    caseOrdinaryHeadroom();
-    caseOnePairConsumesExactlyTwoSecureWords();
-    caseSeparatePairsUseIndependentCSPRNGIds();
+    for (unsigned paths = 0; paths < 2; ++paths)
+    {
+        split_paths = paths != 0;
+        caseRepresentations();
+        caseOrdinaryHeadroom();
+        caseOnePairConsumesExactlyTwoSecureWords();
+        caseSeparatePairsUseIndependentCSPRNGIds();
+    }
 
     frandThreadCleanup();
     frandGlobalCleanup();

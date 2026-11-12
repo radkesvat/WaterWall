@@ -42,6 +42,7 @@ bool halfduplexclientDrainPending(tunnel_t *t, line_t *main, bool admitted)
 
 void halfduplexclientClosePair(tunnel_t *t, line_t *line, bool from_prev, bool from_next)
 {
+    halfduplexclient_tstate_t *ts     = tunnelGetState(t);
     halfduplexclient_lstate_t *origin = lineGetState(line, t);
     line_t                    *main   = origin->main_line;
     if (main == NULL)
@@ -72,13 +73,13 @@ void halfduplexclientClosePair(tunnel_t *t, line_t *line, bool from_prev, bool f
         lineDestroy(line);
     if (upload != NULL && lineIsAlive(upload))
     {
-        tunnelNextUpStreamFinish(t, upload);
+        tunnelUpStreamFin(ts->upload_tunnel, upload);
         if (lineIsAlive(upload))
             lineDestroy(upload);
     }
     if (download != NULL && lineIsAlive(download))
     {
-        tunnelNextUpStreamFinish(t, download);
+        tunnelUpStreamFin(ts->download_tunnel, download);
         if (lineIsAlive(download))
             lineDestroy(download);
     }
@@ -93,6 +94,7 @@ void halfduplexclientClosePair(tunnel_t *t, line_t *line, bool from_prev, bool f
 
 void halfduplexclientSetPrevPaused(tunnel_t *t, line_t *main, bool paused)
 {
+    halfduplexclient_tstate_t *ts = tunnelGetState(t);
     halfduplexclient_lstate_t *ls = lineGetState(main, t);
     if (ls->main_line == NULL)
         return;
@@ -104,9 +106,9 @@ void halfduplexclientSetPrevPaused(tunnel_t *t, line_t *main, bool paused)
     }
     ls->pending_read_pause = false;
     if (paused)
-        tunnelNextUpStreamPause(t, download);
+        tunnelUpStreamPause(ts->download_tunnel, download);
     else
-        tunnelNextUpStreamResume(t, download);
+        tunnelUpStreamResume(ts->download_tunnel, download);
 }
 
 void halfduplexclientSetNextPaused(tunnel_t *t, line_t *line, bool paused)
