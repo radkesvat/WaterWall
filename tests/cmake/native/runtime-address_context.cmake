@@ -860,6 +860,7 @@
     ${WATERWALL_UNIT_SOURCE_ROOT}/net/worker/worker_teardown_cases.c
     ${WATERWALL_UNIT_SOURCE_ROOT}/net/worker/pipe_tunnel_cases.c
     ${WATERWALL_UNIT_SOURCE_ROOT}/net/worker/halfduplex_workers_cases.c
+    ${WATERWALL_UNIT_SOURCE_ROOT}/net/worker/connectionstripe_workers_cases.c
       ${CMAKE_SOURCE_DIR}/ww/instance/worker_messages.c
       ${CMAKE_SOURCE_DIR}/ww/net/pipe_tunnel.c)
   set_target_properties(worker_context_helpers_test PROPERTIES UNITY_BUILD OFF)
@@ -880,6 +881,11 @@
     if(TARGET HalfDuplexServer)
       target_link_libraries(worker_context_helpers_test PRIVATE HalfDuplexServer)
       target_compile_definitions(worker_context_helpers_test PRIVATE WW_TEST_HALFDUPLEX_WORKERS=1)
+    endif()
+    if(TARGET ConnectionStripeServer AND NOT MSVC)
+      target_link_libraries(worker_context_helpers_test PRIVATE ConnectionStripeServer ConnectionStripeCommon)
+      target_compile_definitions(worker_context_helpers_test PRIVATE WW_TEST_CONNECTIONSTRIPE_WORKERS=1)
+      target_link_options(worker_context_helpers_test PRIVATE "-Wl,--wrap=fastRand64")
     endif()
     target_link_options(worker_context_helpers_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
   add_dependencies(waterwall_unit_tests worker_context_helpers_test)

@@ -1,0 +1,6 @@
+add_library(ConnectionStripeCommon STATIC src/stripe.c)
+target_include_directories(ConnectionStripeCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(ConnectionStripeCommon PRIVATE ww)
+if(NOT APPLE)
+    target_precompile_headers(ConnectionStripeCommon REUSE_FROM ww)
+endif()

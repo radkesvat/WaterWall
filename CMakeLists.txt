@@ -278,6 +278,8 @@ option(INCLUDE_REALITY_SERVER           "link RealityServer staticly to the core
 option(INCLUDE_REALITY_CLIENT           "link RealityClient staticly to the core"                                   TRUE)
 option(INCLUDE_HALFDUPLEX_SERVER        "link HalfDuplexServer staticly to the core"                                TRUE)
 option(INCLUDE_HALFDUPLEX_CLIENT        "link HalfDuplexClient staticly to the core"                                TRUE)
+option(INCLUDE_CONNECTIONSTRIPE_CLIENT  "link ConnectionStripeClient statically to the core"                        TRUE)
+option(INCLUDE_CONNECTIONSTRIPE_SERVER  "link ConnectionStripeServer statically to the core"                        TRUE)
 option(INCLUDE_BGP4_SERVER              "link Bgp4Server staticly to the core"                                      TRUE)
 option(INCLUDE_BGP4_CLIENT              "link Bgp4Client staticly to the core"                                      TRUE)
 option(INCLUDE_MUX_SERVER               "link MuxServer staticly to the core"                                       TRUE)
@@ -1354,6 +1356,22 @@ if(INCLUDE_HALFDUPLEX_CLIENT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HalfDuplexClient)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/HalfDuplexClient)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} HalfDuplexClient)
+endif()
+
+if(INCLUDE_CONNECTIONSTRIPE_CLIENT OR INCLUDE_CONNECTIONSTRIPE_SERVER)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/ConnectionStripeCommon)
+endif()
+
+if(INCLUDE_CONNECTIONSTRIPE_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_CONNECTIONSTRIPE_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionStripeClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} ConnectionStripeClient)
+endif()
+
+if(INCLUDE_CONNECTIONSTRIPE_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_CONNECTIONSTRIPE_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/ConnectionStripeServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} ConnectionStripeServer)
 endif()
 
 #bgp4server server

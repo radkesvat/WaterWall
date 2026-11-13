@@ -84,6 +84,7 @@ void                          testPipeToRejectsBadWorkers(void);
 void                          testPipePublicationIsLinearizedWithPreStop(void);
 void                          testPipePayloadFinishLateAndRefused(void);
 void                          testHalfDuplexWorkers(void);
+void                          testConnectionStripeWorkers(void);
 const ww_lifecycle_context_t *testShutdownContext(void);
 WTHREAD_ROUTINE(messagePoolForeignRoutine);
 void pipeTunnelAfterFastStopCheckTestSeam(tunnel_t *wrapper, line_t *source_line);

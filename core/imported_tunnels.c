@@ -348,6 +348,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "HalfDuplexClient/interface.h"
 #endif
 
+#ifdef INCLUDE_CONNECTIONSTRIPE_CLIENT
+#include "ConnectionStripeClient/interface.h"
+#endif
+
+#ifdef INCLUDE_CONNECTIONSTRIPE_SERVER
+#include "ConnectionStripeServer/interface.h"
+#endif
+
 #ifdef INCLUDE_BGP4_SERVER
 #include "Bgp4Server/interface.h"
 #endif
@@ -727,6 +735,14 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_HALFDUPLEX_SERVER
     USING(HalfDuplexServer);
+#endif
+
+#ifdef INCLUDE_CONNECTIONSTRIPE_CLIENT
+    USING(ConnectionStripeClient);
+#endif
+
+#ifdef INCLUDE_CONNECTIONSTRIPE_SERVER
+    USING(ConnectionStripeServer);
 #endif
 
 #ifdef INCLUDE_BGP4_SERVER

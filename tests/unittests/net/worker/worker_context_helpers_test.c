@@ -1,9 +1,9 @@
 /*
- * Covers: Worker-context accessors, message admission and settlement, cross-worker pipe/HalfDuplex
+ * Covers: Worker-context accessors, message admission and settlement, cross-worker pipe/HalfDuplex/Stripe
  * callbacks and worker teardown.
  * Setup: The suite-local fixture owns nine real workers and deterministic enqueue/wakeup/timed-rearm
  * seams; individual forked cases retain their process boundaries.
- * Cases: Accessor module, message module, pipe cases, conditional HalfDuplex cases and teardown races
+ * Cases: Accessor module, message module, pipe cases, conditional HalfDuplex/Stripe cases and teardown races
  * are called explicitly below. --line-refcount-publication-only selects the publication case without
  * shared runtime initialization.
  * Checks: Owner authority, FIFO/fairness, task-or-cancel accounting, line/buffer references and shutdown
@@ -27,6 +27,9 @@ static void testMessageAdmissionRacesWorkerTeardown(void)
     testWorkerMessagePoolCrossWorkerReturn();
 #ifdef WW_TEST_HALFDUPLEX_WORKERS
     testHalfDuplexWorkers();
+#endif
+#ifdef WW_TEST_CONNECTIONSTRIPE_WORKERS
+    testConnectionStripeWorkers();
 #endif
     testWorkerMessageBatchOrderingAndFairness();
     testWorkerMessageFullBatchFifoAndFairness();

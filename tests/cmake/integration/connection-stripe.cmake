@@ -1,0 +1,28 @@
+# Real, private-loopback striping over independent TCP and reliable UDP carriers.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
+   TARGET ConnectionStripeClient AND TARGET ConnectionStripeServer AND
+   TARGET TcpListener AND TARGET TcpConnector)
+  foreach(stripe_carrier IN ITEMS tcp tls kcp)
+    if((stripe_carrier STREQUAL "tcp") OR
+       (stripe_carrier STREQUAL "tls" AND TARGET TlsClient AND TARGET TlsServer) OR
+       (stripe_carrier STREQUAL "kcp" AND TARGET KcpClient AND TARGET KcpServer AND
+        TARGET UdpListener AND TARGET UdpConnector))
+      set(stripe_case waterwall.connection_stripe_${stripe_carrier})
+      add_waterwall_isolated_test(${stripe_case}
+        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/connection_stripe_integration.py"
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}")
+      set_tests_properties(${stripe_case} PROPERTIES TIMEOUT 75)
+      add_waterwall_test_labels(${stripe_case} "integration" "tunnels" "connection-stripe" "${stripe_carrier}")
+      add_waterwall_case_resource_lock(${stripe_case} connection_stripe)
+      if(NOT stripe_carrier STREQUAL "kcp" AND TARGET MuxClient AND TARGET MuxServer)
+        set(stripe_mux_case waterwall.connection_stripe_mux_${stripe_carrier})
+        add_waterwall_isolated_test(${stripe_mux_case}
+          "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/connection_stripe_integration.py"
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}" --mux)
+        set_tests_properties(${stripe_mux_case} PROPERTIES TIMEOUT 75)
+        add_waterwall_test_labels(${stripe_mux_case} "integration" "tunnels" "connection-stripe" "mux" "${stripe_carrier}")
+        add_waterwall_case_resource_lock(${stripe_mux_case} connection_stripe)
+      endif()
+    endif()
+  endforeach()
+endif()
