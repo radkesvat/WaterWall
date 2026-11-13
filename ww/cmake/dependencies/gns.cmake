@@ -175,6 +175,11 @@ function(waterwall_enable_gns)
     target_compile_definitions(waterwall_gns PUBLIC OPENBSD)
   elseif(WIN32)
     target_compile_definitions(waterwall_gns PUBLIC _WINDOWS)
+    # Windows has no struct iovec. The library defines one with the layout of
+    # WSABUF and QUICHE defines one with the POSIX layout, and two types of one
+    # name in one program break the One Definition Rule. The library's own
+    # sources see theirs under a name of its own.
+    target_compile_definitions(waterwall_gns PRIVATE iovec=waterwall_gns_iovec)
     if(MSVC)
       target_compile_definitions(waterwall_gns PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
       if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID MATCHES "^ARM")

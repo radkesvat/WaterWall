@@ -1070,11 +1070,8 @@ STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetServiceThreadIni
 //
 /////////////////////////////////////////////////////////////////////////////
 
-#if defined( __GNUC__ ) || defined( __clang__ )
-	#define GNS_EXTERNAL_API extern "C" __attribute__(( visibility("default") ))
-#else
-	#define GNS_EXTERNAL_API extern "C"
-#endif
+// The library is linked statically, so these functions need no export attribute.
+#define GNS_EXTERNAL_API extern "C"
 
 static gns_external_endpoint_t *ExternalEndpointCreate( CExternalEndpoint::ERole eRole, const gns_external_addr_t *pAddr, gns_external_send_fn fnSend, gns_external_event_fn fnEvent, void *pUser )
 {
