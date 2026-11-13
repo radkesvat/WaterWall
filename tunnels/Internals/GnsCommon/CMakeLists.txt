@@ -11,7 +11,8 @@ target_compile_features(gns_engine PRIVATE cxx_std_20)
 set_target_properties(gns_engine PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
 waterwall_configure_runtime_dependency(gns_engine)
 
-add_library(GnsCommon STATIC src/settings.c src/port.c src/session.c $<TARGET_OBJECTS:gns_engine>)
+add_library(GnsCommon STATIC src/settings.c src/port.c src/session.c src/endpoint.c
+    $<TARGET_OBJECTS:gns_engine>)
 target_include_directories(GnsCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/transport)
 target_link_libraries(GnsCommon PUBLIC ww PRIVATE $<LINK_ONLY:WaterWall::Gns>)
 if(NOT APPLE)

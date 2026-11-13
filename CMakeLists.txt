@@ -999,6 +999,19 @@ if(INCLUDE_ENET_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} EnetServer)
 endif()
 
+#gns
+if(INCLUDE_GNS_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_GNS_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/GnsClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} GnsClient)
+endif()
+
+if(INCLUDE_GNS_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_GNS_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/GnsServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} GnsServer)
+endif()
+
 #bridge
 if(INCLUDE_BRIDGE)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_BRIDGE=1)
