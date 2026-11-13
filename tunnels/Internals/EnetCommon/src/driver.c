@@ -143,6 +143,19 @@ static bool enetDriverFlushPending(enet_driver_t *driver)
     return true;
 }
 
+/* Above the limit the hold starts; at or below half of it the hold ends; in between it keeps its state. */
+static void enetDriverUpdateHold(enet_driver_t *driver)
+{
+    if (driver->queued_bytes > driver->config.send_buffer_limit)
+    {
+        driver->send_hold = true;
+    }
+    else if (driver->queued_bytes <= driver->config.send_buffer_limit / 2U)
+    {
+        driver->send_hold = false;
+    }
+}
+
 static void enetDriverFinish(enet_driver_t *driver, enet_driver_close_t why)
 {
     if (driver->state == kEnetDriverStateClosed)
@@ -198,6 +211,8 @@ static void enetDriverRun(enet_driver_t *driver)
         }
         enetDriverHandle(driver, &event);
     }
+    /* Acknowledgements free packets inside the loop, so input alone can release the hold. */
+    enetDriverUpdateHold(driver);
 }
 
 enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_driver_sinks_t *sinks, void *user,
@@ -278,6 +293,10 @@ bool enetDriverWrite(enet_driver_t *driver, const uint8_t *data, size_t length, 
 {
     assert(driver->state == kEnetDriverStateConnecting || driver->state == kEnetDriverStateConnected);
     assert(! driver->close_requested);
+    if (driver->queued_bytes > (size_t) driver->config.send_buffer_limit * 2U)
+    {
+        return false; /* hard cap: a payload accepted below it is admitted whole */
+    }
     enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
     bool                       accepted = true;
     while (length > 0 && accepted)

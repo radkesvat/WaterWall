@@ -165,11 +165,53 @@ static void testWriteBeforeHandshakeIsDelivered(void)
     simDestroy(&world);
 }
 
+static void testSendHoldHysteresisAndHardCap(void)
+{
+    sim_world_t          world;
+    enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    client.send_buffer_limit    = 8192;
+    openConnected(&world, &client, &server, 20);
+    enet_driver_t *driver = world.end[0].driver;
+    uint8_t       *bytes  = simPattern(9000, 5);
+
+    world.cut = true; /* nothing is acknowledged while the link is cut */
+    require(simWrite(&world, 0, bytes, 8192), "write up to the limit was refused");
+    require(! enetDriverSendHold(driver), "reaching the limit exactly must not start the hold");
+    require(simWrite(&world, 0, bytes, 1), "write above the limit was refused");
+    require(enetDriverSendHold(driver), "exceeding the limit must start the hold");
+    require(simWrite(&world, 0, bytes, 8000), "write below the hard cap was refused");
+    require(simWrite(&world, 0, bytes, 9000), "a payload offered below the hard cap must be admitted whole");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, enetDriverQueuedBytes(driver), 25193, "queued byte count is wrong");
+    require(! enetDriverWrite(driver, bytes, 1, world.now), "a payload offered above the hard cap must be refused");
+    require(enetDriverState(driver) == kEnetDriverStateConnected, "a refused payload must not close the driver");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, enetDriverQueuedBytes(driver), 25193, "a refused payload changed the queue");
+
+    world.cut               = false;
+    const uint64_t deadline = world.now + 60000;
+    while (enetDriverQueuedBytes(driver) > 0)
+    {
+        require(world.now < deadline, "queued bytes were never acknowledged");
+        simStep(&world);
+        if (enetDriverQueuedBytes(driver) > 4096)
+        {
+            require(enetDriverSendHold(driver), "the hold was released above half of the limit");
+        }
+    }
+    require(! enetDriverSendHold(driver), "the hold was not released after the queue drained");
+    require(world.end[0].closed_calls == 0, "session closed while draining");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 25193, "server did not receive every accepted byte");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
     TEST_RUN_CASE(testConnectRequestIsNativeAndCarriesSettings);
     TEST_RUN_CASE(testStreamRoundTripInOrder);
     TEST_RUN_CASE(testWriteBeforeHandshakeIsDelivered);
+    TEST_RUN_CASE(testSendHoldHysteresisAndHardCap);
     return 0;
 }
