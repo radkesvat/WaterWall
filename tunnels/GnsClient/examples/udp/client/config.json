@@ -1,0 +1,32 @@
+{
+  "name": "gns-udp-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "gns-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "gns-client",
+      "type": "GnsClient",
+      "next": "transport",
+      "settings": {
+        "send-mtu": 1400,
+        "send-rate": 4194304
+      }
+    },
+    {
+      "name": "transport",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    }
+  ]
+}
