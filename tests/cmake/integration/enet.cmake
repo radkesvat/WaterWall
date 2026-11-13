@@ -12,4 +12,11 @@ if(TARGET EnetClient AND TARGET EnetServer AND
     add_waterwall_integration_test(waterwall.${enet_case} ${enet_case})
     add_waterwall_test_labels(waterwall.${enet_case} "enet")
   endforeach()
+  # The close probes also cross UDP sockets on the namespace's loopback.
+  if(TARGET TcpListener AND TARGET TcpConnector AND TARGET UdpListener AND TARGET UdpConnector)
+    add_waterwall_probe_integration_test(waterwall.enet_service_close_probe enet_service_close_probe 30)
+    add_waterwall_test_labels(waterwall.enet_service_close_probe "enet")
+    add_waterwall_probe_integration_test(waterwall.enet_upload_close_probe enet_upload_close_probe 60)
+    add_waterwall_test_labels(waterwall.enet_upload_close_probe "enet")
+  endif()
 endif()
