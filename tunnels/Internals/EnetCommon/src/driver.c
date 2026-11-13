@@ -1,5 +1,6 @@
 #include "EnetCommon/driver.h"
 
+#include "enet/time.h"
 #include "platform.h"
 
 #include <assert.h>
@@ -166,6 +167,13 @@ static void enetDriverFinish(enet_driver_t *driver, enet_driver_close_t why)
     driver->sinks.closed(driver->user, why);
 }
 
+/* ENet resets these when it resets a peer, so they are applied again once the peer is connected. */
+static void enetDriverApplyPeerSettings(enet_driver_t *driver)
+{
+    enet_peer_timeout(driver->peer, 0, driver->config.no_recv_timeout_ms, driver->config.no_recv_timeout_ms);
+    enet_peer_ping_interval(driver->peer, driver->config.ping_interval_ms);
+}
+
 static void enetDriverBeginDisconnect(enet_driver_t *driver)
 {
     driver->state = kEnetDriverStateClosing;
@@ -179,6 +187,7 @@ static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
     switch (event->type)
     {
     case ENET_EVENT_TYPE_CONNECT:
+        enetDriverApplyPeerSettings(driver);
         driver->state = kEnetDriverStateConnected;
         driver->sinks.connected(driver->user);
         if (! enetDriverFlushPending(driver))
@@ -259,6 +268,11 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
             {
                 enet_host_destroy(driver->host);
                 driver->host = NULL;
+            }
+            else
+            {
+                /* The connect request is a reliable command, so the same timeout bounds a connect attempt. */
+                enetDriverApplyPeerSettings(driver);
             }
         }
     }
@@ -411,10 +425,25 @@ uint64_t enetDriverDroppedDatagrams(const enet_driver_t *driver)
 
 uint32_t enetDriverNextServiceDelayMs(const enet_driver_t *driver, uint64_t now_ms)
 {
-    (void) now_ms;
-    if (driver->state == kEnetDriverStateClosed || driver->peer->state == ENET_PEER_STATE_DISCONNECTED)
+    if (driver->state == kEnetDriverStateClosed)
     {
         return ENET_DRIVER_NO_SERVICE;
     }
-    return kEnetDriverActiveTickMs;
+    ENetPeer *peer = driver->peer;
+    if (peer->state == ENET_PEER_STATE_DISCONNECTED)
+    {
+        return ENET_DRIVER_NO_SERVICE; /* a server that has seen no connect request */
+    }
+    if (peer->state != ENET_PEER_STATE_CONNECTED || enet_peer_has_outgoing_commands(peer))
+    {
+        return kEnetDriverActiveTickMs; /* handshake, unacknowledged commands or a disconnect in progress */
+    }
+    /* Idle: ENet sends a ping once nothing was acknowledged for pingInterval. Wake up exactly then. */
+    uint32_t now = (uint32_t) now_ms;
+    if (now == 0)
+    {
+        now = 1;
+    }
+    const uint32_t silent = ENET_TIME_DIFFERENCE(now, peer->lastReceiveTime);
+    return silent >= peer->pingInterval ? 1U : peer->pingInterval - silent;
 }

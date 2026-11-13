@@ -337,6 +337,54 @@ static void testPeerCloseDeliversPrecedingBytes(void)
     simDestroy(&world);
 }
 
+static void testIdlePingKeepsSessionAndSilenceEndsIt(void)
+{
+    sim_world_t          world;
+    enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    client.ping_interval_ms     = 200;
+    client.no_recv_timeout_ms   = 1000;
+    server.ping_interval_ms     = 200;
+    server.no_recv_timeout_ms   = 1000;
+    openConnected(&world, &client, &server, 10);
+
+    const uint64_t sent_before = world.end[0].datagrams_sent;
+    simAdvance(&world, 3000);
+    require(world.end[0].closed_calls == 0 && world.end[1].closed_calls == 0, "a healthy idle session closed");
+    /* Three seconds at a 200 ms interval: about 13 pings of its own plus about 13 acknowledgements of the peer's. */
+    const uint64_t idle_datagrams = world.end[0].datagrams_sent - sent_before;
+    require(idle_datagrams >= 20 && idle_datagrams <= 40, "idle keepalive rate does not follow ping_interval_ms");
+
+    world.cut             = true;
+    const uint64_t cut_at = world.now;
+    require(simAdvanceUntil(&world, 200 + 2 * 1000 + 500, bothClosed),
+            "a silent link did not end the session within ping interval + 2T");
+    require(world.now - cut_at >= 900, "the session ended before the configured timeout");
+    require(world.end[0].close_reason == kEnetDriverCloseRemote, "client must report a remote close");
+    require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");
+    simDestroy(&world);
+}
+
+static void testIdleDriverSleepsUntilThePingDeadline(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+    simAdvance(&world, 100);
+
+    const uint32_t idle_delay = enetDriverNextServiceDelayMs(world.end[0].driver, world.now);
+    require(idle_delay > 1000 && idle_delay <= 10000,
+            "an idle connected driver must sleep until its ping deadline, not tick");
+
+    static const uint8_t byte = 1;
+    world.cut                 = true;
+    require(simWrite(&world, 0, &byte, 1), "write refused");
+    require(enetDriverNextServiceDelayMs(world.end[0].driver, world.now) == kEnetDriverActiveTickMs,
+            "unacknowledged bytes need the active tick");
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
@@ -349,5 +397,7 @@ int main(void)
     TEST_RUN_CASE(testCloseBeforeHandshakeWithoutBytesEndsNow);
     TEST_RUN_CASE(testAbortTellsPeerOnce);
     TEST_RUN_CASE(testPeerCloseDeliversPrecedingBytes);
+    TEST_RUN_CASE(testIdlePingKeepsSessionAndSilenceEndsIt);
+    TEST_RUN_CASE(testIdleDriverSleepsUntilThePingDeadline);
     return 0;
 }
