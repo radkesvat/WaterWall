@@ -19,4 +19,11 @@ if(TARGET EnetClient AND TARGET EnetServer AND
     add_waterwall_probe_integration_test(waterwall.enet_upload_close_probe enet_upload_close_probe 60)
     add_waterwall_test_labels(waterwall.enet_upload_close_probe "enet")
   endif()
+  # Fixed serial workloads. The reported rate is diagnostic for the host and is not a threshold.
+  if(TARGET SpeedTestClient AND TARGET SpeedTestServer AND TARGET UdpListener AND TARGET UdpConnector)
+    foreach(enet_speedtest IN ITEMS enet_direct_pair enet_udp_sandwich)
+      add_waterwall_speedtest(waterwall.speedtest_${enet_speedtest} ${enet_speedtest})
+      add_waterwall_test_labels(waterwall.speedtest_${enet_speedtest} "enet")
+    endforeach()
+  endif()
 endif()
