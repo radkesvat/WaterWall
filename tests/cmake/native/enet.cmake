@@ -18,4 +18,15 @@ if(TARGET EnetCommon)
     LIBRARIES EnetCommon ww)
   set_target_properties(enet_native_peer_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
   add_waterwall_unit_test(waterwall.enet_native_peer_unit enet_native_peer_test "unit;tunnels;enet;driver;interop")
+  # The archive check needs plain object code; the unit tree builds without IPO.
+  if(CMAKE_NM AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_dependencies(waterwall_unit_tests EnetCommon)
+    add_test(NAME waterwall.enet_no_os_socket_symbols
+      COMMAND "${CMAKE_COMMAND}"
+        "-DNM=${CMAKE_NM}"
+        "-DENET_ARCHIVE=$<TARGET_FILE:EnetCommon>"
+        -P "${CMAKE_SOURCE_DIR}/tests/enet_no_os_socket_symbols.cmake")
+    set_tests_properties(waterwall.enet_no_os_socket_symbols PROPERTIES
+      TIMEOUT 30 LABELS "unit;policy;build;linking;enet")
+  endif()
 endif()
