@@ -590,6 +590,7 @@ if(INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER)
 endif()
 if(INCLUDE_GNS_CLIENT OR INCLUDE_GNS_SERVER)
   include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/gns.cmake")
+  add_subdirectory(tunnels/Internals/GnsCommon)
 endif()
 #--------------------------------------------------------------------------------
 

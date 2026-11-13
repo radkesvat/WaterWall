@@ -29,3 +29,18 @@ if(TARGET WaterWall::Gns)
       TIMEOUT 30 LABELS "unit;policy;build;linking;gns")
   endif()
 endif()
+
+# The node layer uses the WaterWall API: settings, the port between the library's
+# threads and a worker, and the engine calls on top of it.
+if(TARGET GnsCommon)
+  waterwall_add_native_executable(gns_settings_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_settings_test.c
+    LIBRARIES GnsCommon ww)
+  add_waterwall_unit_test(waterwall.gns_settings_unit gns_settings_test "unit;tunnels;gns;settings")
+  waterwall_add_native_executable(gns_port_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_port_test.c
+    LIBRARIES GnsCommon ww)
+  add_waterwall_unit_test(waterwall.gns_port_unit gns_port_test "unit;tunnels;gns;port;engine;close" 180)
+  set_property(TEST waterwall.gns_port_unit APPEND PROPERTY
+    ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
+endif()
