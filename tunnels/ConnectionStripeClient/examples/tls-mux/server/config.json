@@ -1,0 +1,49 @@
+{
+  "name": "connection-stripe-tls-mux-server",
+  "nodes": [
+    {
+      "name": "transport",
+      "type": "TcpListener",
+      "next": "tls-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "tls-server",
+      "type": "TlsServer",
+      "next": "stripe-server",
+      "settings": {
+        "cert-file": "server.crt",
+        "key-file": "server.key",
+        "sni": "stripe.example.test"
+      }
+    },
+    {
+      "name": "stripe-server",
+      "type": "ConnectionStripeServer",
+      "next": "mux-server",
+      "settings": {
+        "max-connections": 32
+      }
+    },
+    {
+      "name": "mux-server",
+      "type": "MuxServer",
+      "next": "destination",
+      "settings": {}
+    },
+    {
+      "name": "destination",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

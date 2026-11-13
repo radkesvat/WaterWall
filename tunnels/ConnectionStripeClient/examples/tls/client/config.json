@@ -1,0 +1,45 @@
+{
+  "name": "connection-stripe-tls-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "stripe-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "stripe-client",
+      "type": "ConnectionStripeClient",
+      "next": "tls-client",
+      "settings": {
+        "connections": 8
+      }
+    },
+    {
+      "name": "tls-client",
+      "type": "TlsClient",
+      "next": "transport",
+      "settings": {
+        "sni": "stripe.example.test",
+        "verify": false,
+        "alpns": [
+          "http/1.1"
+        ]
+      }
+    },
+    {
+      "name": "transport",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
