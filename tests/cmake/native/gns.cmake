@@ -43,4 +43,11 @@ if(TARGET GnsCommon)
   add_waterwall_unit_test(waterwall.gns_port_unit gns_port_test "unit;tunnels;gns;port;engine;close" 180)
   set_property(TEST waterwall.gns_port_unit APPEND PROPERTY
     ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
+  waterwall_add_native_executable(gns_session_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_session_test.c
+    LIBRARIES GnsCommon ww)
+  add_waterwall_unit_test(waterwall.gns_session_unit gns_session_test
+    "unit;tunnels;gns;session;pressure;close" 300)
+  set_property(TEST waterwall.gns_session_unit APPEND PROPERTY
+    ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
 endif()
