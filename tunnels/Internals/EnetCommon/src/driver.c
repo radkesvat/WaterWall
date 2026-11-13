@@ -166,6 +166,14 @@ static void enetDriverFinish(enet_driver_t *driver, enet_driver_close_t why)
     driver->sinks.closed(driver->user, why);
 }
 
+static void enetDriverBeginDisconnect(enet_driver_t *driver)
+{
+    driver->state = kEnetDriverStateClosing;
+    /* enet_peer_disconnect_later sends the disconnect only after every queued reliable command is acknowledged.
+     * enet_peer_disconnect would discard the queues first, so it is never used for a graceful close. */
+    enet_peer_disconnect_later(driver->peer, 0);
+}
+
 static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
 {
     switch (event->type)
@@ -176,6 +184,11 @@ static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
         if (! enetDriverFlushPending(driver))
         {
             enetDriverFinish(driver, kEnetDriverCloseProtocol);
+            break;
+        }
+        if (driver->close_requested)
+        {
+            enetDriverBeginDisconnect(driver);
         }
         break;
     case ENET_EVENT_TYPE_RECEIVE:
@@ -186,7 +199,8 @@ static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
         enet_packet_destroy(event->packet);
         break;
     case ENET_EVENT_TYPE_DISCONNECT:
-        enetDriverFinish(driver, kEnetDriverCloseRemote);
+        enetDriverFinish(driver,
+                         driver->state == kEnetDriverStateClosing ? kEnetDriverCloseLocal : kEnetDriverCloseRemote);
         break;
     default:
         break;
@@ -334,6 +348,44 @@ void enetDriverService(enet_driver_t *driver, uint64_t now_ms)
     }
     enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
     enetDriverRun(driver);
+    enetDriverLeave(driver, previous);
+}
+
+void enetDriverClose(enet_driver_t *driver, uint64_t now_ms)
+{
+    if (driver->state == kEnetDriverStateClosing || driver->state == kEnetDriverStateClosed || driver->close_requested)
+    {
+        return;
+    }
+    enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
+    if (driver->state == kEnetDriverStateConnected)
+    {
+        enetDriverBeginDisconnect(driver);
+        enetDriverRun(driver);
+    }
+    else if (driver->pending_head != NULL)
+    {
+        /* Bytes were accepted before the handshake: deliver them first. The caller's deadline bounds the wait. */
+        driver->close_requested = true;
+    }
+    else
+    {
+        enet_peer_disconnect_now(driver->peer, 0);
+        driver->state = kEnetDriverStateClosed;
+        driver->sinks.closed(driver->user, kEnetDriverCloseLocal);
+    }
+    enetDriverLeave(driver, previous);
+}
+
+void enetDriverAbort(enet_driver_t *driver, uint64_t now_ms)
+{
+    if (driver->state == kEnetDriverStateClosed)
+    {
+        return;
+    }
+    enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
+    enet_peer_disconnect_now(driver->peer, 0);
+    driver->state = kEnetDriverStateClosed;
     enetDriverLeave(driver, previous);
 }
 

@@ -35,6 +35,22 @@ static void openConnected(sim_world_t *world, const enet_driver_config_t *client
     require(simAdvanceUntil(world, 2000, bothConnected), "handshake did not finish");
 }
 
+static bool bothClosed(const sim_world_t *world)
+{
+    return world->end[0].closed_calls == 1 && world->end[1].closed_calls == 1;
+}
+
+static bool serverClosed(const sim_world_t *world)
+{
+    return world->end[1].closed_calls == 1;
+}
+
+static void closeEnd(sim_world_t *world, int index)
+{
+    enetDriverClose(world->end[index].driver, world->now);
+    simSchedule(&world->end[index]);
+}
+
 static void testHandshakeCompletes(void)
 {
     sim_world_t                world;
@@ -206,6 +222,121 @@ static void testSendHoldHysteresisAndHardCap(void)
     simDestroy(&world);
 }
 
+static void testGracefulCloseDeliversEverything(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+
+    uint8_t *bytes = simPattern(300000, 6);
+    require(simWrite(&world, 0, bytes, 300000), "write refused");
+    closeEnd(&world, 0);
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateClosing, "client did not enter the closing state");
+    require(world.end[0].closed_calls == 0, "close must not finish before the bytes are delivered");
+
+    require(simAdvanceUntil(&world, 60000, bothClosed), "graceful close did not finish");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 300000, "server did not receive every byte");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, bytes, 300000, "server stream differs");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT,
+                    world.end[1].stream_length_at_close,
+                    300000,
+                    "server was told about the close before the last bytes");
+    require(world.end[0].close_reason == kEnetDriverCloseLocal, "client must report a local close");
+    require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateClosed, "client is not closed");
+    require(enetDriverState(world.end[1].driver) == kEnetDriverStateClosed, "server is not closed");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
+static void testCloseBeforeHandshakeStillDelivers(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    simOpen(&world, &client, &server, 20);
+
+    uint8_t *bytes = simPattern(50000, 7);
+    require(simWrite(&world, 0, bytes, 50000), "write before the handshake was refused");
+    closeEnd(&world, 0);
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateConnecting,
+            "a close with buffered bytes must wait for the handshake");
+
+    require(simAdvanceUntil(&world, 60000, bothClosed), "close did not finish");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 50000, "server did not receive the buffered bytes");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, bytes, 50000, "server stream differs");
+    require(world.end[0].close_reason == kEnetDriverCloseLocal, "client must report a local close");
+    require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
+static void testCloseBeforeHandshakeWithoutBytesEndsNow(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    simOpen(&world, &client, &server, 20);
+
+    closeEnd(&world, 0);
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateClosed,
+            "a close with nothing to deliver must end at once");
+    require(world.end[0].closed_calls == 1 && world.end[0].close_reason == kEnetDriverCloseLocal,
+            "client must report one local close");
+
+    simAdvance(&world, 1000);
+    require(world.end[1].connected_calls == 0 && world.end[1].closed_calls == 0, "server must never see a session");
+    simDestroy(&world);
+}
+
+static void testAbortTellsPeerOnce(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+    simAdvance(&world, 100);
+
+    const uint64_t sent_before = world.end[0].datagrams_sent;
+    enetDriverAbort(world.end[0].driver, world.now);
+    simSchedule(&world.end[0]);
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateClosed, "abort must close the driver");
+    require(world.end[0].closed_calls == 0, "abort must not report through the closed sink");
+    require(world.end[0].datagrams_sent == sent_before + 1, "abort must send exactly one disconnect datagram");
+
+    require(simAdvanceUntil(&world, 1000, serverClosed), "server did not learn about the abort");
+    require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");
+    simDestroy(&world);
+}
+
+static void testPeerCloseDeliversPrecedingBytes(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+
+    uint8_t *bytes = simPattern(120000, 8);
+    require(simWrite(&world, 1, bytes, 120000), "server write refused");
+    closeEnd(&world, 1);
+
+    require(simAdvanceUntil(&world, 60000, bothClosed), "close did not finish");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[0].stream_length, 120000, "client did not receive every byte");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[0].stream, bytes, 120000, "client stream differs");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT,
+                    world.end[0].stream_length_at_close,
+                    120000,
+                    "client was told about the close before the last bytes");
+    require(world.end[0].close_reason == kEnetDriverCloseRemote, "client must report a remote close");
+    require(world.end[1].close_reason == kEnetDriverCloseLocal, "server must report a local close");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
@@ -213,5 +344,10 @@ int main(void)
     TEST_RUN_CASE(testStreamRoundTripInOrder);
     TEST_RUN_CASE(testWriteBeforeHandshakeIsDelivered);
     TEST_RUN_CASE(testSendHoldHysteresisAndHardCap);
+    TEST_RUN_CASE(testGracefulCloseDeliversEverything);
+    TEST_RUN_CASE(testCloseBeforeHandshakeStillDelivers);
+    TEST_RUN_CASE(testCloseBeforeHandshakeWithoutBytesEndsNow);
+    TEST_RUN_CASE(testAbortTellsPeerOnce);
+    TEST_RUN_CASE(testPeerCloseDeliversPrecedingBytes);
     return 0;
 }
