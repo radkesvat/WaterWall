@@ -163,6 +163,11 @@ static void enetDriverFinish(enet_driver_t *driver, enet_driver_close_t why)
     {
         return;
     }
+    if (why == kEnetDriverCloseProtocol)
+    {
+        /* Tell the peer once, without waiting for an answer, and drop every queue. */
+        enet_peer_disconnect_now(driver->peer, 0);
+    }
     driver->state = kEnetDriverStateClosed;
     driver->sinks.closed(driver->user, why);
 }
@@ -200,13 +205,21 @@ static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
             enetDriverBeginDisconnect(driver);
         }
         break;
-    case ENET_EVENT_TYPE_RECEIVE:
-        if (driver->state == kEnetDriverStateConnected && event->packet->dataLength > 0)
+    case ENET_EVENT_TYPE_RECEIVE: {
+        /* The stream is channel 0, reliable packets only. Anything else would break ordering. */
+        ENetPacket *packet    = event->packet;
+        const bool  in_stream = event->channelID == 0 && (packet->flags & ENET_PACKET_FLAG_RELIABLE) != 0;
+        if (in_stream && packet->dataLength > 0 && driver->state == kEnetDriverStateConnected)
         {
-            driver->sinks.stream(driver->user, event->packet->data, event->packet->dataLength);
+            driver->sinks.stream(driver->user, packet->data, packet->dataLength);
         }
-        enet_packet_destroy(event->packet);
+        enet_packet_destroy(packet);
+        if (! in_stream)
+        {
+            enetDriverFinish(driver, kEnetDriverCloseProtocol);
+        }
         break;
+    }
     case ENET_EVENT_TYPE_DISCONNECT:
         enetDriverFinish(driver,
                          driver->state == kEnetDriverStateClosing ? kEnetDriverCloseLocal : kEnetDriverCloseRemote);
@@ -243,6 +256,7 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
 {
     assert(enet_driver_allocate != NULL);
     assert(config->host_mtu >= kEnetDriverHostMtuMin && config->host_mtu <= kEnetDriverHostMtuMax);
+    assert(config->receive_buffer_limit / 2U >= (uint32_t) kEnetDriverMaxMessage);
 
     enet_driver_t *driver = enet_malloc(sizeof(*driver));
     memset(driver, 0, sizeof(*driver));
@@ -258,7 +272,11 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
     if (driver->host != NULL)
     {
         driver->host->mtu = config->host_mtu;
-        driver->peer      = &driver->host->peers[0];
+        /* ENet allocates a whole fragmented packet when its first fragment arrives, so both limits are always set.
+         * At the waiting-data limit ENet refuses further commands without acknowledging them. */
+        driver->host->maximumPacketSize  = config->receive_buffer_limit / 2U;
+        driver->host->maximumWaitingData = config->receive_buffer_limit;
+        driver->peer                     = &driver->host->peers[0];
         if (config->role == kEnetDriverRoleClient)
         {
             ENetAddress address;
