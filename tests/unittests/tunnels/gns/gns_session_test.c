@@ -3,9 +3,10 @@
  * is handed to the other, unless the test holds or loses it. Everything runs on the test's thread as worker 0,
  * except GameNetworkingSockets' own service thread. Covered: the handshake and the server's promotion, verified
  * transfer in both directions, echo from inside the payload callback, the send hold and its release, the hard cap,
- * the limits on unacknowledged messages and bytes that keep a connection inside GNS's 16-bit bounds, a carrier
- * queue that refuses, graceful close with data in flight from either side, the drain and connect deadlines, abort
- * and quiesce. The library runs in real time: the cases wait with deadlines and assert no timing. */
+ * the limits on unacknowledged messages and bytes that keep a connection inside GNS's 16-bit bounds, a peer that
+ * acknowledges nothing, a carrier queue that refuses, graceful close with data in flight from either side, the
+ * drain and connect deadlines, abort and quiesce. The library runs in real time: the cases wait with deadlines and
+ * assert no timing. */
 
 #include "GnsCommon/port.h"
 #include "GnsCommon/session.h"
@@ -436,6 +437,29 @@ static void caseWindowLimit(void)
     pairStop(&pair);
 }
 
+/* The peer keeps talking and acknowledges nothing: this side's datagrams are lost, the peer's arrive. GNS sees a
+ * live peer and would wait for ever, so the session ends the wait itself after no-recv-timeout-ms. */
+static void caseUnacknowledged(void)
+{
+    static const char settings[] = "{\"send-rate\":20000000,\"no-recv-timeout-ms\":600}";
+    pair_t            pair;
+    pairStart(&pair, settings, kPatient);
+    pairConnect(&pair);
+    pair.client.lose = true;
+    endSend(&pair.client, kChunk);
+    const uint64_t deadline = gnsTestNowMs() + kGnsTestDeadlineMs;
+    while (! pair.client.terminal)
+    {
+        gnsRequire(gnsTestNowMs() < deadline, "a peer that acknowledges nothing never ended the session");
+        endSend(&pair.server, 64);
+        pairStep(&pair);
+        wwSleepMS(1);
+    }
+    gnsRequire(pair.client.result == kGnsSessionPeerClosed, "a peer that acknowledges nothing was reported as else");
+    gnsRequire(pair.client.received > 0, "the peer's bytes did not arrive while it acknowledged nothing");
+    pairStop(&pair);
+}
+
 /* A carrier queue of four datagrams refuses what does not fit. GNS offers it again; nothing is lost. */
 static void caseCarrierQueueRefuses(void)
 {
@@ -530,6 +554,7 @@ static void runCases(void)
     TEST_RUN_CASE(caseMessageLimit);
     TEST_RUN_CASE(caseMessagesAcknowledged);
     TEST_RUN_CASE(caseWindowLimit);
+    TEST_RUN_CASE(caseUnacknowledged);
     TEST_RUN_CASE(caseCarrierQueueRefuses);
     TEST_RUN_CASE(caseDrainTimeout);
     TEST_RUN_CASE(caseConnectTimeout);

@@ -68,7 +68,8 @@ struct gns_session_s
     uint64_t                 connect_deadline;
     uint64_t                 close_deadline;
     uint64_t                 linger_deadline;
-    bool                     opened : 1; /* the listen socket or the connection was asked for */
+    uint64_t                 progress_deadline; /* until when the peer has to acknowledge something */
+    bool                     opened : 1;        /* the listen socket or the connection was asked for */
     bool                     started : 1;
     bool                     driving : 1;
     bool                     dead : 1;
@@ -408,9 +409,29 @@ static void sessionPoll(gns_session_t *s)
         }
     }
 
+    /* GNS ends a connection that hears nothing. A peer that keeps talking and acknowledges nothing would hold
+     * the stream for ever, so the session ends that wait itself. What GNS holds is its last reading plus what
+     * was written since, unless the peer acknowledged something. */
+    const uint64_t reading = (uint64_t) status.queued_bytes + status.unacked_bytes;
+    const uint64_t now     = sessionNow(s);
+    if (! s->connected || reading == 0 || reading < s->outstanding)
+    {
+        s->progress_deadline = sessionDeadline(now, s->config.settings.no_recv_timeout_ms);
+    }
+    else if (now >= s->progress_deadline)
+    {
+        LOGD("Gns%s: closing session: the peer acknowledged nothing for no-recv-timeout-ms "
+             "(%u, unacknowledged_bytes=%llu)",
+             sessionRole(s),
+             s->config.settings.no_recv_timeout_ms,
+             (unsigned long long) reading);
+        sessionFail(s, kGnsSessionPeerClosed);
+        return;
+    }
+
     /* Messages whose last byte is acknowledged leave the ring. GNS counts a few header bytes per message as
      * outstanding, so a message can stay a little longer than it has to; it never leaves early. */
-    s->outstanding              = (uint64_t) status.queued_bytes + status.unacked_bytes;
+    s->outstanding              = reading;
     const uint64_t acknowledged = s->submitted - min(s->submitted, s->outstanding);
     while (! gns_offset_queue_t_is_empty(&s->messages) && *gns_offset_queue_t_front(&s->messages) <= acknowledged)
     {
@@ -682,8 +703,9 @@ gns_session_t *gnsSessionCreate(const gns_session_config_t *config, const gns_se
     *s               = (gns_session_t) {.config = *config, .callbacks = *callbacks, .user = user, .references = 1};
     bufferbudgetInit(&s->budget,
                      (buffer_budget_cost_t) {.bytes = kGnsSessionNestedBytes, .charge = kGnsSessionNestedCharge});
-    s->connect_deadline = sessionDeadline(sessionNow(s), config->settings.timeout_initial_ms);
-    s->port             = gnsPortCreate(config->wid, config->settings.carrier_queue_limit, sessionWake, s);
+    s->connect_deadline  = sessionDeadline(sessionNow(s), config->settings.timeout_initial_ms);
+    s->progress_deadline = UINT64_MAX;
+    s->port              = gnsPortCreate(config->wid, config->settings.carrier_queue_limit, sessionWake, s);
 
     /* Synthetic addresses are only registration keys. The port's token is unique among the ports that exist. */
     const uint64_t key = (uint64_t) gnsPortToken(s->port);
