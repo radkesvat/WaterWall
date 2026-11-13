@@ -1,6 +1,7 @@
-The QUIC dependency embedding retains the following upstream components. Normal
-builds fetch immutable, SHA-256 checked source archives; their licenses are copied
-into `licenses/` and remain present in the downloaded sources.
+The QUIC and GameNetworkingSockets dependency embeddings retain the following
+upstream components. Normal builds fetch immutable, SHA-256 checked source
+archives; their licenses are copied into `licenses/` and remain present in the
+downloaded sources.
 
 | Component | Pinned identity | License |
 | --- | --- | --- |
@@ -12,6 +13,7 @@ into `licenses/` and remain present in the downloaded sources.
 | Google URL ICU UTF helpers | bundled with Google URL | ICU, `licenses/googleurl-icu-LICENSE` |
 | Google URL Mozilla parser | bundled with Google URL | BSD, `licenses/googleurl-mozilla-LICENSE` |
 | zlib | `1.3.1` | zlib, `licenses/zlib-LICENSE` |
+| Valve GameNetworkingSockets | `d534c19aa760df3fb75fd20db13ba1932b8a5463` | BSD 3-Clause, `licenses/gamenetworkingsockets-LICENSE` |
 | WaterWall's prefixed BoringSSL | Chromium `154.0.8037.97`, `ac39ea6853833c1f18fd23614091d11855e71752` plus existing WaterWall patches | `tunnels/TlsClient/boringssl/LICENSE` |
 
 `quiche.cmake` embeds the upstream production `quiche_core` source/dependency
@@ -47,6 +49,37 @@ since libstdc++ 11 does not yet support literal `std::vector` instances. This
 adaptation is generated in the build tree and preserves the read-only list.
 The WebTransport header parser's unsupported-template-branch assertion is made
 dependent for the same pre-CWG2518 compilers; its accepted types stay unchanged.
+
+`gns.cmake` embeds the GameNetworkingSockets client library for plain UDP
+connections, built on the same protobuf-lite, Abseil and prefixed BoringSSL as
+QUICHE. `protobuf.cmake` holds the protobuf, Abseil and native protoc setup that
+both embeddings use. The source list follows upstream `src/CMakeLists.txt`. It
+excludes the ICE and WebRTC transports, `ISteamNetworkingMessages`, the flat C
+interface, tests, examples and tools; `steamnetworkingsockets_p2p.cpp` is
+compiled because the public interface refers to it.
+Upstream's `steamnetworkingsockets_socketthread.cpp` is not compiled.
+`tunnels/Internals/GnsCommon/transport/steamnetworkingsockets_externaltransport.cpp`
+takes its place: it keeps upstream's service thread, thinker scheduling and
+socket-sharing code, hands every outgoing datagram to a callback, receives
+datagrams through a function call, and wakes the service thread with a mutex
+and condition variable. The archive references no OS socket function, and each
+block of that file names the upstream lines it was copied or adapted from. It
+leaves out upstream's fake-network simulation and its hold queue for
+out-of-order packets, which nothing in the open-source library calls: every
+datagram is processed in the call that delivers it. On Windows it keeps
+upstream's `timeBeginPeriod(1)` for the service thread's millisecond sleeps.
+The library is built at upstream's release self-check level
+(`STEAMNETWORKINGSOCKETS_SNP_PARANOIA=1`) in every configuration, because the
+debug level validates the whole in-flight packet map on every packet.
+Six generated overlay files adapt the downloaded sources, which stay unchanged.
+The three message definitions select `LITE_RUNTIME`.
+`steamnetworkingsockets_certs.cpp` tests unknown fields with `empty()`, because
+protobuf-lite keeps them as a string. `crypto_digest_opensslevp.cpp` computes
+HMAC-SHA256 with the one-shot `HMAC()` that its SHA-1 variant already uses,
+because BoringSSL has no `EVP_PKEY_new_mac_key`. `opensslwrapper.cpp` skips the
+custom `RAND` method and `CRYPTO_cleanup_all_ex_data` under
+`OPENSSL_IS_BORINGSSL`. Each replacement must match its upstream text exactly
+once, or the configuration stops.
 
 Runtime dependencies use WaterWall's compiler/runtime, CPU and IPO policy.
 BoringSSL builds the linked `ssl`/`crypto` targets; its unused
