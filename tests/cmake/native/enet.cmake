@@ -43,4 +43,9 @@ if(TARGET EnetTunnelCommon)
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_settings_test.c
     LIBRARIES EnetTunnelCommon ww)
   add_waterwall_unit_test(waterwall.enet_settings_unit enet_settings_test "unit;tunnels;enet;settings")
+  waterwall_add_native_executable(enet_session_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_session_test.c
+    LIBRARIES EnetTunnelCommon ww)
+  add_waterwall_unit_test(waterwall.enet_session_unit enet_session_test
+    "unit;tunnels;enet;session;close;pressure" 120)
 endif()
