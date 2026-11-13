@@ -7,7 +7,8 @@
  * would. EnetClient owns its transport line and EnetServer owns its service line. Worker timers are real; the
  * clock is replaced at link time, so time moves only when a test advances it. Covers line ownership and context,
  * transfer, Est mapping, every Finish path, Pause/Resume composition, the admission deadline, worker shutdown
- * and constructor errors. Linux only: the clock is replaced with the linker's --wrap option. */
+ * with and without a finished handshake, and constructor errors. The whole list runs on two runtimes in one
+ * process. Linux only: the clock is replaced with the linker's --wrap option. */
 
 #include "EnetClient/interface.h"
 #include "EnetServer/interface.h"
@@ -646,6 +647,41 @@ static void caseWorkerStop(void)
     teardown();
 }
 
+/* Worker stop while the native handshake is in flight: the client waits for an answer to its connect request, and
+ * the server has answered a carrier that has no service line yet. */
+static void caseWorkerStopDuringHandshake(void)
+{
+    static fixture_t fixture;
+    setup(&fixture, kDefaultSettings);
+    fixture.hold_wire = true;
+    openApp();
+    enetRequire(fixture.transport != NULL && fixture.carrier != NULL, "the client did not open its carrier");
+    enetRequire(fixture.count_packets == 1 && fixture.queue[0].direction == 0,
+                "the client did not send exactly one connect request");
+    /* Give the server the request and keep its answer on the wire. */
+    sbuf_t *request       = fixture.queue[0].buffer;
+    fixture.count_packets = 0;
+    tunnelNextUpStreamPayload(fixture.wire, fixture.carrier, request);
+    enetRequire(fixture.count_packets >= 1 && fixture.queue[0].direction == 1,
+                "the server did not answer the connect request");
+    enetRequire(fixture.service_inits == 0, "the server created a service line before the native handshake");
+    const ww_lifecycle_context_t *context = wwLifecycleStartupRollback();
+    fixture.client->onQuiesceRequest(fixture.client, context);
+    fixture.server->onQuiesceRequest(fixture.server, context);
+    fixture.client->onWorkerQuiesce(fixture.client, 0, context);
+    fixture.server->onWorkerQuiesce(fixture.server, 0, context);
+    enetRequire(wloopNTimers(getWorkerLoop(0)) == timers_at_start, "worker quiescence left a handshake timer attached");
+    fixture.client->onWorkerStop(fixture.client, 0, context);
+    fixture.server->onWorkerStop(fixture.server, 0, context);
+    enetRequire(! lineIsAlive(fixture.transport) && fixture.transport_finishes == 1,
+                "the client's carrier survived a stop during the handshake");
+    enetRequire(fixture.app_finishes == 1 && fixture.carrier_finishes == 1,
+                "a borrowed line's owner was not told at a stop during the handshake");
+    enetRequire(fixture.service_inits == 0 && fixture.service_finishes == 0,
+                "a stop during the handshake created or finished a service line");
+    teardown();
+}
+
 static void caseConstructorErrors(void)
 {
     static const char *invalid[] = {
@@ -671,17 +707,22 @@ static void caseConstructorErrors(void)
 
 int main(void)
 {
-    enetRuntimeStart();
-    timers_at_start = wloopNTimers(getWorkerLoop(0));
-    TEST_RUN_CASE(caseTransferAndOwnership);
-    TEST_RUN_CASE(caseApplicationFinish);
-    TEST_RUN_CASE(caseServiceFinish);
-    TEST_RUN_CASE(caseCarrierFinish);
-    TEST_RUN_CASE(casePressure);
-    TEST_RUN_CASE(caseAdmissionDeadline);
-    TEST_RUN_CASE(caseWorkerStop);
-    TEST_RUN_CASE(caseConstructorErrors);
-    enetRequire(wloopNTimers(getWorkerLoop(0)) == timers_at_start, "a session timer survived the fixtures");
-    enetRuntimeStop();
+    /* Two runtimes in one process: nothing of the first may be needed by, or left for, the second. */
+    for (int runtime = 0; runtime < 2; ++runtime)
+    {
+        enetRuntimeStart();
+        timers_at_start = wloopNTimers(getWorkerLoop(0));
+        TEST_RUN_CASE(caseTransferAndOwnership);
+        TEST_RUN_CASE(caseApplicationFinish);
+        TEST_RUN_CASE(caseServiceFinish);
+        TEST_RUN_CASE(caseCarrierFinish);
+        TEST_RUN_CASE(casePressure);
+        TEST_RUN_CASE(caseAdmissionDeadline);
+        TEST_RUN_CASE(caseWorkerStop);
+        TEST_RUN_CASE(caseWorkerStopDuringHandshake);
+        TEST_RUN_CASE(caseConstructorErrors);
+        enetRequire(wloopNTimers(getWorkerLoop(0)) == timers_at_start, "a session timer survived the fixtures");
+        enetRuntimeStop();
+    }
     return 0;
 }
