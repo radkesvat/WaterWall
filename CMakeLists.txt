@@ -981,6 +981,18 @@ if(INCLUDE_ENET_CLIENT OR INCLUDE_ENET_SERVER)
   add_subdirectory(tunnels/Internals/EnetCommon)
 endif()
 
+if(INCLUDE_ENET_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_ENET_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/EnetClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} EnetClient)
+endif()
+
+if(INCLUDE_ENET_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_ENET_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/EnetServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} EnetServer)
+endif()
+
 #bridge
 if(INCLUDE_BRIDGE)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_BRIDGE=1)

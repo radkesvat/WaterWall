@@ -232,6 +232,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "KcpServer/interface.h"
 #endif
 
+#ifdef INCLUDE_ENET_CLIENT
+#include "EnetClient/interface.h"
+#endif
+
+#ifdef INCLUDE_ENET_SERVER
+#include "EnetServer/interface.h"
+#endif
+
 #ifdef INCLUDE_UDP_STATELESS_SOCKET
 #include "UdpStatelessSocket/interface.h"
 #endif
@@ -619,6 +627,14 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_KCP_SERVER
     USING(KcpServer);
+#endif
+
+#ifdef INCLUDE_ENET_CLIENT
+    USING(EnetClient);
+#endif
+
+#ifdef INCLUDE_ENET_SERVER
+    USING(EnetServer);
 #endif
 
 #ifdef INCLUDE_UDP_STATELESS_SOCKET

@@ -48,4 +48,13 @@ if(TARGET EnetTunnelCommon)
     LIBRARIES EnetTunnelCommon ww)
   add_waterwall_unit_test(waterwall.enet_session_unit enet_session_test
     "unit;tunnels;enet;session;close;pressure" 120)
+  # The pair test replaces the clock at link time, which needs GNU ld's --wrap option.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND TARGET EnetClient AND TARGET EnetServer)
+    waterwall_add_native_executable(enet_pair_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_pair_test.c
+      LIBRARIES EnetClient EnetServer EnetTunnelCommon ww)
+    target_link_options(enet_pair_test PRIVATE "-Wl,--wrap=getHRTimeUs")
+    add_waterwall_unit_test(waterwall.enet_pair_unit enet_pair_test
+      "unit;tunnels;enet;line;close;pressure;lifecycle" 120)
+  endif()
 endif()
