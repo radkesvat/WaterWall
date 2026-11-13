@@ -1,0 +1,39 @@
+{
+  "name": "enet-stripe-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "stripe-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "stripe-client",
+      "type": "ConnectionStripeClient",
+      "next": "enet-client",
+      "settings": {
+        "connections": 8
+      }
+    },
+    {
+      "name": "enet-client",
+      "type": "EnetClient",
+      "next": "transport",
+      "settings": {
+        "send-mtu": 1400
+      }
+    },
+    {
+      "name": "transport",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    }
+  ]
+}
