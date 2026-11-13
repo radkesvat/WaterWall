@@ -18,6 +18,12 @@ if(TARGET EnetCommon)
     LIBRARIES EnetCommon ww)
   set_target_properties(enet_native_peer_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
   add_waterwall_unit_test(waterwall.enet_native_peer_unit enet_native_peer_test "unit;tunnels;enet;driver;interop")
+  waterwall_add_native_executable(enet_throughput_sim_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_throughput_sim_test.c
+    LIBRARIES EnetCommon ww)
+  set_target_properties(enet_throughput_sim_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  add_waterwall_unit_test(waterwall.enet_throughput_sim_unit enet_throughput_sim_test
+    "unit;tunnels;enet;driver;throughput")
   # The archive check needs plain object code; the unit tree builds without IPO.
   if(CMAKE_NM AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_dependencies(waterwall_unit_tests EnetCommon)
