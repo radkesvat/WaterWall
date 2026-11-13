@@ -1,0 +1,30 @@
+{
+  "name": "gns-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "gns-client"
+    },
+    {
+      "name": "gns-client",
+      "type": "GnsClient",
+      "settings": {
+        "send-rate": 10485760
+      },
+      "next": "gns-server"
+    },
+    {
+      "name": "gns-server",
+      "type": "GnsServer",
+      "settings": {
+        "send-rate": 10485760
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
