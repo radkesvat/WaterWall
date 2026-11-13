@@ -177,6 +177,11 @@ function(waterwall_enable_gns)
     target_compile_definitions(waterwall_gns PUBLIC _WINDOWS)
     if(MSVC)
       target_compile_definitions(waterwall_gns PRIVATE _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+      if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID MATCHES "^ARM")
+        # Upstream's platform header does not know MSVC's names for Arm
+        # targets. Windows on Arm is little-endian.
+        target_compile_definitions(waterwall_gns PRIVATE VALVE_LITTLE_ENDIAN=1)
+      endif()
     else()
       target_compile_definitions(waterwall_gns PRIVATE __STDC_FORMAT_MACROS=1 __USE_MINGW_ANSI_STDIO=0)
     endif()
