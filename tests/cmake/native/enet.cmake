@@ -36,3 +36,11 @@ if(TARGET EnetCommon)
       TIMEOUT 30 LABELS "unit;policy;build;linking;enet")
   endif()
 endif()
+
+# The node layer uses the WaterWall API: settings, the worker session and the tunnel logic of both roles.
+if(TARGET EnetTunnelCommon)
+  waterwall_add_native_executable(enet_settings_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_settings_test.c
+    LIBRARIES EnetTunnelCommon ww)
+  add_waterwall_unit_test(waterwall.enet_settings_unit enet_settings_test "unit;tunnels;enet;settings")
+endif()

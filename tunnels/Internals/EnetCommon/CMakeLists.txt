@@ -27,3 +27,11 @@ target_link_libraries(EnetCommon PUBLIC ww)
 # WaterWall API headers define helpers that call the OS (wproc.h's execCmd uses
 # poll). The archive must reference no OS socket function in any configuration.
 set_target_properties(EnetCommon PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+
+# WaterWall half shared by EnetClient and EnetServer: the node settings, the worker session around the driver and
+# the tunnel logic of both roles. It uses the WaterWall API, so it is a separate archive from the checked EnetCommon.
+add_library(EnetTunnelCommon STATIC src/settings.c)
+target_link_libraries(EnetTunnelCommon PUBLIC EnetCommon PRIVATE ww)
+if(NOT APPLE)
+    target_precompile_headers(EnetTunnelCommon REUSE_FROM ww)
+endif()
