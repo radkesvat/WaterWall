@@ -57,4 +57,24 @@ if(TARGET EnetTunnelCommon)
     add_waterwall_unit_test(waterwall.enet_pair_unit enet_pair_test
       "unit;tunnels;enet;line;close;pressure;lifecycle" 120)
   endif()
+  # The socket interop test runs a plain ENet application in a second process: the vendored core with upstream's
+  # own socket layer, which defines the same functions as EnetCommon's platform layer.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    waterwall_add_native_executable(enet_stock_peer
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_stock_peer.c
+              ${CMAKE_SOURCE_DIR}/ww/vendor/enet/unix.c
+              $<TARGET_OBJECTS:enet_protocol>
+      INCLUDES ${CMAKE_SOURCE_DIR}/ww/vendor/enet/include
+      LIBRARIES waterwall_runtime_options
+      DEFINITIONS HAS_FCNTL=1 HAS_POLL=1 HAS_INET_PTON=1 HAS_INET_NTOP=1 HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1
+                  HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1)
+    set_target_properties(enet_stock_peer PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+    waterwall_add_native_executable(enet_socket_interop_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_socket_interop_test.c
+      LIBRARIES EnetTunnelCommon ww
+      DEFINITIONS ENET_STOCK_PEER="$<TARGET_FILE:enet_stock_peer>")
+    add_dependencies(enet_socket_interop_test enet_stock_peer)
+    add_waterwall_unit_test(waterwall.enet_socket_interop_unit enet_socket_interop_test
+      "unit;tunnels;enet;session;interop" 60)
+  endif()
 endif()
