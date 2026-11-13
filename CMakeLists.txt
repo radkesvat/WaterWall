@@ -241,6 +241,8 @@ option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the c
 option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"                                TRUE)
 option(INCLUDE_KCP_CLIENT               "link KcpClient staticly to the core"                                       TRUE)
 option(INCLUDE_KCP_SERVER               "link KcpServer staticly to the core"                                       TRUE)
+option(INCLUDE_ENET_CLIENT              "link EnetClient statically to the core"                                    TRUE)
+option(INCLUDE_ENET_SERVER              "link EnetServer statically to the core"                                    TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"                                          TRUE)
 option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"                                     TRUE)
 option(INCLUDE_ROUTER                   "link Router staticly to the core"                                          TRUE)
@@ -972,6 +974,11 @@ if(INCLUDE_KCP_SERVER)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpServer)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/KcpServer)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} KcpServer)
+endif()
+
+#enet
+if(INCLUDE_ENET_CLIENT OR INCLUDE_ENET_SERVER)
+  add_subdirectory(tunnels/Internals/EnetCommon)
 endif()
 
 #bridge

@@ -2,7 +2,9 @@
 """ENet vendor source policy.
 
 ww/vendor/enet must stay byte-identical to upstream lsalzman/enet at the pinned
-commit (line endings aside), and it must not gain extra C sources or headers.
+commit (line endings aside), it must not gain extra C sources or headers, and
+tunnels/Internals/EnetCommon/CMakeLists.txt must build the protocol core without
+ever naming upstream's socket layer (unix.c, win32.c).
 CTest selection: waterwall.enet_vendor_source_policy. Direct run:
 python3 tests/enet_vendor_source_policy_test.py
 """
@@ -37,6 +39,10 @@ EXPECTED = {
     "include/enet/win32.h": "4edb38055710520fa980bac74cc84702bf8d5d43bf0c9a5df0427bd764f41f3a",
 }
 
+BUILD_LIST = ROOT / "tunnels" / "Internals" / "EnetCommon" / "CMakeLists.txt"
+REQUIRED_CORE = ("callbacks.c", "host.c", "list.c", "packet.c", "peer.c", "protocol.c")
+SOCKET_LAYER = ("unix.c", "win32.c")
+
 
 def vendor_failures():
     failures = []
@@ -56,8 +62,22 @@ def vendor_failures():
     return failures
 
 
+def build_list_failures():
+    if not BUILD_LIST.is_file():
+        return ["tunnels/Internals/EnetCommon/CMakeLists.txt: missing"]
+    text = BUILD_LIST.read_text(encoding="utf-8")
+    failures = []
+    for name in REQUIRED_CORE:
+        if f"/{name}" not in text:
+            failures.append(f"tunnels/Internals/EnetCommon/CMakeLists.txt: does not build {name}")
+    for name in SOCKET_LAYER:
+        if name in text:
+            failures.append(f"tunnels/Internals/EnetCommon/CMakeLists.txt: must not mention {name}")
+    return failures
+
+
 def main():
-    failures = vendor_failures()
+    failures = vendor_failures() + build_list_failures()
     for failure in failures:
         print(failure)
     if failures:
