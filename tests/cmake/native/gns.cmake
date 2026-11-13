@@ -59,4 +59,33 @@ if(TARGET GnsCommon)
     set_property(TEST waterwall.gns_pair_unit APPEND PROPERTY
       ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
   endif()
+  # The socket interop test runs a plain GameNetworkingSockets application in a
+  # second process. That program compiles upstream's own socket file, which
+  # defines every low-level function the library calls, so the linker never
+  # takes the external transport out of the archive: two definitions of those
+  # functions would stop the link.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    FetchContent_GetProperties(ww_gns)
+    set(gns_socket_file
+      "${ww_gns_SOURCE_DIR}/src/steamnetworkingsockets/clientlib/steamnetworkingsockets_socketthread.cpp")
+    waterwall_add_native_executable(gns_stock_peer
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_stock_peer.cc "${gns_socket_file}"
+      LIBRARIES WaterWall::Gns waterwall_cpu_options)
+    target_include_directories(gns_stock_peer PRIVATE $<TARGET_PROPERTY:waterwall_gns,INCLUDE_DIRECTORIES>)
+    target_compile_definitions(gns_stock_peer PRIVATE $<TARGET_PROPERTY:waterwall_gns,COMPILE_DEFINITIONS>)
+    # Upstream's file is built as the library builds its sources, not with the
+    # warnings of WaterWall's tests.
+    set_source_files_properties("${gns_socket_file}" PROPERTIES COMPILE_OPTIONS "-w;-fno-strict-aliasing")
+    target_compile_features(gns_stock_peer PRIVATE cxx_std_20)
+    set_target_properties(gns_stock_peer PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+    waterwall_add_native_executable(gns_socket_interop_test SUPPORT
+      SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_socket_interop_test.c
+      LIBRARIES GnsCommon ww
+      DEFINITIONS GNS_STOCK_PEER="$<TARGET_FILE:gns_stock_peer>")
+    add_dependencies(gns_socket_interop_test gns_stock_peer)
+    add_waterwall_unit_test(waterwall.gns_socket_interop_unit gns_socket_interop_test
+      "unit;tunnels;gns;session;interop" 120)
+    set_property(TEST waterwall.gns_socket_interop_unit APPEND PROPERTY
+      ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
+  endif()
 endif()
