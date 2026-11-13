@@ -7,4 +7,9 @@ if(TARGET EnetCommon)
     LIBRARIES EnetCommon ww)
   set_target_properties(enet_platform_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
   add_waterwall_unit_test(waterwall.enet_platform_unit enet_platform_test "unit;tunnels;enet;platform")
+  waterwall_add_native_executable(enet_driver_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/enet/enet_driver_test.c
+    LIBRARIES EnetCommon ww)
+  set_target_properties(enet_driver_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  add_waterwall_unit_test(waterwall.enet_driver_unit enet_driver_test "unit;tunnels;enet;driver;close;pressure")
 endif()

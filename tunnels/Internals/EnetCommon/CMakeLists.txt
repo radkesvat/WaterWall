@@ -18,7 +18,7 @@ target_link_libraries(enet_protocol PRIVATE waterwall_runtime_options)
 # Upstream sources share file-local helper names.
 set_target_properties(enet_protocol PROPERTIES UNITY_BUILD OFF)
 
-add_library(EnetCommon STATIC src/platform.c $<TARGET_OBJECTS:enet_protocol>)
+add_library(EnetCommon STATIC src/platform.c src/driver.c $<TARGET_OBJECTS:enet_protocol>)
 target_include_directories(EnetCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_include_directories(EnetCommon SYSTEM PUBLIC ${ENET_VENDOR_DIR}/include)
 target_include_directories(EnetCommon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
