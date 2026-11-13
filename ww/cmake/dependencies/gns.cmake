@@ -138,6 +138,7 @@ function(waterwall_enable_gns)
 
   add_library(waterwall_gns STATIC ${gns_sources})
   add_library(WaterWall::Gns ALIAS waterwall_gns)
+  add_dependencies(waterwall_gns waterwall_host_protoc)
   target_include_directories(waterwall_gns SYSTEM PUBLIC "${ww_gns_SOURCE_DIR}/include")
   target_include_directories(waterwall_gns PUBLIC "${transport}")
   # The overlay and transport sources use the include lines of the directories

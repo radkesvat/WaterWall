@@ -256,6 +256,7 @@ auto InitHeaderFields(Header& header) {
 
   add_library(waterwall_quiche STATIC ${quiche_sources})
   add_library(WaterWall::Quiche ALIAS waterwall_quiche)
+  add_dependencies(waterwall_quiche waterwall_host_protoc)
   target_include_directories(waterwall_quiche SYSTEM PUBLIC "${ww_quiche_SOURCE_DIR}"
     "${ww_quiche_SOURCE_DIR}/quiche/common/platform/default" "${generated_root}")
   if(WIN32)

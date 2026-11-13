@@ -141,6 +141,10 @@ function(waterwall_enable_protobuf)
     DEPENDS "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/host-protoc/CMakeLists.txt"
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/build_host_protoc.cmake"
     VERBATIM COMMENT "Building pinned native protoc 31.1")
+  # More than one library generates sources with this protoc. The Xcode
+  # generator accepts that only when all of them depend on one target that
+  # builds it.
+  add_custom_target(waterwall_host_protoc DEPENDS "${host_protoc}")
   set_property(GLOBAL PROPERTY WATERWALL_HOST_PROTOC "${host_protoc}")
 endfunction()
 
