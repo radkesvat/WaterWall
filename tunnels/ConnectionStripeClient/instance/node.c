@@ -8,7 +8,7 @@ node_t nodeConnectionStripeClientGet(void)
                      .hash_type             = calcHashBytes(type, stringLength(type)),
                      .version               = 1,
                      .createHandle          = connectionstripeclientTunnelCreate,
-                     .flags                 = kNodeFlagBlocksSplice,
+                     .flags                 = kNodeFlagSupportsSplice,
                      .required_padding_left = kStripeHeaderSize,
                      .layer_group           = kNodeLayer4,
                      .layer_group_next_node = kNodeLayer4,

@@ -200,7 +200,7 @@ Use security nodes on the transport path when those properties are needed.
 | Symptom | Checks |
 | --- | --- |
 | Transport connects, but the application receives no data | Every member must join the same Stripe server before the group becomes ready. Check the remote transport chain, server `max-connections`, setup deadline and destination connection. Transport Est alone does not mean the group is ready. |
-| Increasing `connections` does not improve throughput | Check the shared link, destination connection, slowest member and CPU load. Each group has one reassembly worker and uses ordinary buffers. |
+| Increasing `connections` does not improve throughput | Check the shared link, destination connection, slowest member and CPU load. Each group has one reassembly worker and can fall back to ordinary buffers. |
 | The application closes when a member disconnects | This is the whole-group failure policy. Check that member's transport errors and timeouts; remaining members do not replace it. |
 | Sessions close under load | Check per-worker session admission, local queue/parser limits, and the neighboring transport's own limits. A larger receive window does not increase those separate limits. |
 
@@ -210,7 +210,7 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagBlocksSplice` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
@@ -219,8 +219,14 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 | `required_padding_left` | `24` bytes (`kStripeHeaderSize`) |
 
 `can_have_next` describes topology capability; this node's constructor requires
-`next`. Splice is disabled for chains containing this node, and framing uses
-ordinary buffers.
+`next`. Both directions accept ordinary, pipe-backed splice, and mixed input.
+DATA can retain its private pipe through framing and receive reordering when
+`misc.splice` is enabled and every node in the expanded chain supports splice.
+Plain TCP and Mux/TCP can use this path. TLS and KCP still block splice for their
+entire chains, including the existing TLS examples. JOIN worker replay, bounded
+storage canonicalization, and pipe checkout or transfer refusal can copy to
+ordinary storage immediately. Splice support does not establish a throughput or
+CPU improvement; performance remains unmeasured.
 
 See the [complete TLS example](../../WaterWall-Docs/docs/03-examples/tunnels/connection-stripe-tls.mdx)
 and runnable configurations [with Mux](examples/tls-mux)

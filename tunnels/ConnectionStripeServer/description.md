@@ -196,7 +196,7 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagBlocksSplice` |
+| node flags | `kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
@@ -205,9 +205,16 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 | `required_padding_left` | `24` bytes (`kStripeHeaderSize`) |
 
 `can_have_next` describes topology capability; this node's constructor requires
-`next`. Splice is disabled for chains containing this node. Its internal
-PipeTunnel handles worker handoff and does not change the configured node's
-layer requirements or application-side `next`.
+`next`. Its internal PipeTunnel preserves splice capability and handles worker
+handoff without changing the configured node's layer requirements or
+application-side `next`. Both directions accept ordinary, pipe-backed splice,
+and mixed input. DATA can retain its private pipe through framing, reordering,
+and application delivery when `misc.splice` and the complete expanded chain
+permit it. Plain TCP and Mux/TCP can use splice; TLS and KCP still block their
+entire chains, including the existing TLS examples. JOIN worker replay, bounded
+storage canonicalization, and pipe checkout or transfer refusal can copy to
+ordinary storage immediately. Performance remains unmeasured; support does not
+promise zero-copy delivery or a speedup.
 
 See the [complete TLS example](../../WaterWall-Docs/docs/03-examples/tunnels/connection-stripe-tls.mdx)
 and runnable configurations [with Mux](../ConnectionStripeClient/examples/tls-mux)

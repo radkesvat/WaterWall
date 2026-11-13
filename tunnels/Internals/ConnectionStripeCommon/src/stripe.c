@@ -346,6 +346,27 @@ static sbuf_t *stripeBuffer(stripe_session_t *s, size_t length)
     return buf;
 }
 
+/* Match stripeBuffer's exact allocation geometry without checking out storage.
+ * Lengths are bounded by validated settings or the DATA frame limit. */
+static size_t stripeCanonicalCharge(stripe_session_t *s, size_t length)
+{
+    size_t     capacity = 0, charge = 0;
+    const bool valid =
+        sbufTryComputeCapacity(length, s->padding, &capacity) && sbufTryComputeQueueCharge(capacity, &charge);
+    assert(valid);
+    discard valid;
+    return charge;
+}
+
+static sbuf_t *stripeCanonicalCopy(stripe_session_t *s, sbuf_t *source)
+{
+    const size_t length = sbufGetLength(source);
+    sbuf_t      *copy   = stripeBuffer(s, length);
+    sbufReadRangeToMemory(source, sbufGetMutablePtr(copy), length);
+    bufferpoolReuseBuffer(s->pool, source);
+    return copy;
+}
+
 static void stripeHeader(uint8_t *p, uint8_t type, uint32_t length, uint64_t offset, uint64_t aux)
 {
     p[0] = type;
@@ -501,11 +522,17 @@ static bool stripeTransmit(stripe_session_t *s)
     size_t length = min(sbufGetLength(s->tx_active), (size_t) kStripeMaxFrame);
     length        = (size_t) min((uint64_t) length, s->peer_window - (s->tx_offset - s->tx_ack_offset));
     assert(length != 0);
-    sbuf_t  *out = stripeBuffer(s, kStripeHeaderSize + length);
-    uint8_t *p   = sbufGetMutablePtr(out);
-    stripeHeader(p, kStripeData, (uint32_t) length, s->tx_offset, s->tx_index);
-    memoryCopy(p + kStripeHeaderSize, sbufGetRawPtr(s->tx_active), length);
-    sbufShiftRight(s->tx_active, length);
+    sbuf_t *out = sbufIsSplice(s->tx_active) && length > sbufGetResidentPrefixLength(s->tx_active)
+                      ? bufferpoolGetSpliceBuffer(s->pool)
+                      : NULL;
+    if (out && sbufGetHeadroom(out) < s->padding)
+    {
+        bufferpoolReuseBuffer(s->pool, out);
+        out = NULL;
+    }
+    out = sbufMoveRangeTo(s->pool, s->tx_active, out, length, length, s->padding);
+    sbufShiftLeft(out, kStripeHeaderSize);
+    stripeHeader(sbufGetMutablePtr(out), kStripeData, (uint32_t) length, s->tx_offset, s->tx_index);
     bufferbudgetReservationSetBytes(&s->tx_reservation, sbufGetLength(s->tx_active));
     if (sbufGetLength(s->tx_active) == 0)
     {
@@ -610,7 +637,6 @@ void connectionstripeApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         stripeUnref(s);
         return;
     }
-    assert(! sbufIsSplice(buf));
     if (length > stripeState(t)->max_buffered || UINT64_MAX - s->tx_accepted < length)
     {
         bufferpoolReuseBuffer(s->pool, buf);
@@ -620,13 +646,16 @@ void connectionstripeApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         stripeUnref(s);
         return;
     }
-    /* Canonical storage avoids retaining a large adapter allocation for one byte. */
-    sbuf_t *copy = stripeBuffer(s, length);
-    memoryCopy(sbufGetMutablePtr(copy), sbufGetRawPtr(buf), length);
-    bufferpoolReuseBuffer(s->pool, buf);
-    if (! bufferqueueTryPushBack(&s->tx_queue, &copy))
+    /* Keep suitable pipe input, but never retain a large allocation for a tiny
+     * payload. Queue charge is local policy, not kernel pipe memory. */
+    size_t                     charge;
+    const buffer_budget_cost_t used = bufferbudgetGetUsage(&s->tx_budget);
+    if (! sbufIsSplice(buf) || ! sbufTryGetQueueCharge(buf, &charge) || charge > stripeCanonicalCharge(s, length) ||
+        charge > stripeState(t)->max_buffered - used.charge)
+        buf = stripeCanonicalCopy(s, buf);
+    if (! bufferqueueTryPushBack(&s->tx_queue, &buf))
     {
-        bufferpoolReuseBuffer(s->pool, copy);
+        bufferpoolReuseBuffer(s->pool, buf);
         stripeAbort(s, "application queue byte or allocation-charge limit exceeded");
     }
     else
@@ -645,10 +674,10 @@ static bool stripeAcceptData(stripe_session_t *s, uint64_t offset, uint64_t inde
         offset < s->rx_offset || offset - s->rx_offset > window || length > window - (offset - s->rx_offset) ||
         UINT64_MAX - offset < length || s->rx_bytes > window - length ||
         (s->remote_close && (index >= s->rx_final_index || offset + length > s->rx_final_offset)))
-        return false;
+        goto reject;
     stripe_record_t *slot = &s->records[index % kStripeFrameWindow];
     if (slot->body)
-        return false;
+        goto reject;
     for (unsigned i = 0; i < kStripeFrameWindow; ++i)
     {
         stripe_record_t *other = &s->records[i];
@@ -656,15 +685,20 @@ static bool stripeAcceptData(stripe_session_t *s, uint64_t offset, uint64_t inde
             continue;
         if ((other->index < index && other->offset + sbufGetLength(other->body) > offset) ||
             (other->index > index && offset + length > other->offset))
-            return false;
+            goto reject;
     }
-    /* Pool frame extraction can retain a large tier. Reorder storage instead
-     * has a deterministic bound: window bytes plus 256 canonical allocations. */
-    sbuf_t *copy = stripeBuffer(s, length);
-    memoryCopy(sbufGetMutablePtr(copy), sbufGetRawPtr(body), length);
-    *slot = (stripe_record_t) {.body = copy, .offset = offset, .index = index};
+    /* Preserve a private pipe or a suitably sized ordinary extraction, with
+     * the same window-plus-record storage allowance as exact ordinary copies. */
+    size_t charge;
+    if (sbufGetHeadroom(body) < s->padding || ! sbufTryGetQueueCharge(body, &charge) ||
+        charge > stripeCanonicalCharge(s, length))
+        body = stripeCanonicalCopy(s, body);
+    *slot = (stripe_record_t) {.body = body, .offset = offset, .index = index};
     s->rx_bytes += length;
     return true;
+reject:
+    bufferpoolReuseBuffer(s->pool, body);
+    return false;
 }
 
 static bool stripeAcceptControl(stripe_session_t *s, uint8_t type, uint64_t offset, uint64_t aux)
@@ -754,7 +788,6 @@ static void stripeReadFrames(tunnel_t *t, line_t *line, sbuf_t *buf)
         {
             sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, length);
             valid        = stripeAcceptData(s, offset, aux, body);
-            bufferpoolReuseBuffer(s->pool, body);
         }
         else
         {
@@ -785,7 +818,7 @@ static void stripeLineInit(tunnel_t *t, line_t *line, stripe_session_t *s, strip
                               kStripeHeaderSize,
                               stripeState(t)->max_buffered,
                               stripeState(t)->max_buffered,
-                              false);
+                              tunnelGetChain(t)->supports_splice);
 }
 
 static void stripeServerReady(stripe_session_t *s)
@@ -828,9 +861,8 @@ static void stripeServerJoin(tunnel_t *t, line_t *line, sbuf_t *buf)
         goto reject;
     }
     const size_t take = min(sbufGetLength(buf), (size_t) (kStripeJoinSize - ls->intro_have));
-    memoryCopy(ls->intro + ls->intro_have, sbufGetRawPtr(buf), take);
+    sbufReadRangeToMemory(buf, ls->intro + ls->intro_have, take);
     ls->intro_have += (uint16_t) take;
-    sbufShiftRight(buf, take);
     if (ls->intro_have != kStripeJoinSize)
     {
         lineReuseBuffer(line, buf);
@@ -860,7 +892,7 @@ static void stripeServerJoin(tunnel_t *t, line_t *line, sbuf_t *buf)
         sbuf_t        *replay = sbufCreateWithPadding(length, bufferpoolGetSmallBufferPadding(pool));
         sbufSetLength(replay, length);
         memoryCopy(sbufGetMutablePtr(replay), ls->intro, kStripeJoinSize);
-        memoryCopy(sbufGetMutablePtr(replay) + kStripeJoinSize, sbufGetRawPtr(buf), sbufGetLength(buf));
+        sbufReadRangeToMemory(buf, sbufGetMutablePtr(replay) + kStripeJoinSize, sbufGetLength(buf));
         bufferpoolReuseBuffer(pool, buf);
         const bool paused = ls->paused;
         stripeLineClear(t, line);
@@ -923,7 +955,6 @@ reject:
 
 void connectionstripeTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
-    assert(! sbufIsSplice(buf));
     stripe_line_t *ls = lineGetState(line, t);
     assert(ls->role == kStripeTransportLine);
     if (! ls->session)
