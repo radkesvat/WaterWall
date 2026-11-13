@@ -12,4 +12,11 @@ if(TARGET GnsClient AND TARGET GnsServer AND
     add_waterwall_probe_integration_test(waterwall.gns_upload_close_probe gns_upload_close_probe 60)
     add_waterwall_test_labels(waterwall.gns_upload_close_probe "gns")
   endif()
+  # Fixed serial workloads. The reported rate is diagnostic for the host and is not a threshold.
+  if(TARGET SpeedTestClient AND TARGET SpeedTestServer AND TARGET UdpListener AND TARGET UdpConnector)
+    foreach(gns_speedtest IN ITEMS gns_direct_pair gns_udp_sandwich)
+      add_waterwall_speedtest(waterwall.speedtest_${gns_speedtest} ${gns_speedtest})
+      add_waterwall_test_labels(waterwall.speedtest_${gns_speedtest} "gns")
+    endforeach()
+  endif()
 endif()
