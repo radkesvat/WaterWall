@@ -4,43 +4,7 @@
 # dependency targets mirror quiche/BUILD.bazel at the revision below.
 include_guard(GLOBAL)
 include(FetchContent)
-
-function(waterwall_quic_source name url sha256)
-  FetchContent_Declare(${name} URL "${url}" URL_HASH "SHA256=${sha256}"
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-  FetchContent_GetProperties(${name})
-  if(NOT ${name}_POPULATED)
-    FetchContent_Populate(${name})
-  endif()
-  set(${name}_SOURCE_DIR "${${name}_SOURCE_DIR}" PARENT_SCOPE)
-endfunction()
-
-function(waterwall_quic_runtime_tree directory runtime_crt)
-  get_property(dependencies DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
-  foreach(dependency IN LISTS dependencies)
-    get_target_property(kind ${dependency} TYPE)
-    if(kind MATCHES "^(STATIC_LIBRARY|OBJECT_LIBRARY)$")
-      waterwall_configure_runtime_dependency(${dependency})
-      # Upstream targets use both link signatures. Copy only the CPU options
-      # rather than changing their signature or importing application headers.
-      get_target_property(cpu_options waterwall_cpu_options INTERFACE_COMPILE_OPTIONS)
-      if(cpu_options)
-        target_compile_options(${dependency} PRIVATE ${cpu_options})
-      endif()
-      set_target_properties(${dependency} PROPERTIES CXX_STANDARD 20
-        CXX_STANDARD_REQUIRED ON UNITY_BUILD OFF DISABLE_PRECOMPILE_HEADERS ON)
-      if(MSVC)
-        # Abseil/protobuf each select their own CRT in their directory scope.
-        # Preserve WaterWall's compiler-specific choice, including Clang Debug.
-        set_target_properties(${dependency} PROPERTIES MSVC_RUNTIME_LIBRARY "${runtime_crt}")
-      endif()
-    endif()
-  endforeach()
-  get_property(children DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
-  foreach(child IN LISTS children)
-    waterwall_quic_runtime_tree("${child}" "${runtime_crt}")
-  endforeach()
-endfunction()
+include("${CMAKE_CURRENT_LIST_DIR}/protobuf.cmake")
 
 function(waterwall_enable_quiche)
   set(runtime_crt "${CMAKE_MSVC_RUNTIME_LIBRARY}")
@@ -56,16 +20,10 @@ function(waterwall_enable_quiche)
     message(FATAL_ERROR "Google QUICHE supports little-endian targets only")
   endif()
 
-  waterwall_quic_source(ww_quiche
+  waterwall_dependency_source(ww_quiche
     "https://codeload.github.com/google/quiche/tar.gz/0ded66479add86dae9ae2039bb78c25d4f04c535"
     704efd37c83f273f070fd05dede4a234ff9cecbd16ec57ddf3c3d6726eb7e34e)
-  waterwall_quic_source(ww_quic_abseil
-    "https://codeload.github.com/abseil/abseil-cpp/tar.gz/refs/tags/20260107.0"
-    4c124408da902be896a2f368042729655709db5e3004ec99f57e3e14439bc1b2)
-  waterwall_quic_source(ww_quic_protobuf
-    "https://codeload.github.com/protocolbuffers/protobuf/tar.gz/refs/tags/v31.1"
-    c3a0a9ece8932e31c3b736e2db18b1c42e7070cd9b881388b26d01aa71e24ca2)
-  waterwall_quic_source(ww_quic_googleurl
+  waterwall_dependency_source(ww_quic_googleurl
     "https://codeload.github.com/google/gurl/tar.gz/94ff147fe0b96b4cca5d6d316b9af6210c0b8051"
     d8a701123250e03b3c0865babdfc78540d66374db78f74aafd09bf08545c00bd)
 
@@ -135,7 +93,7 @@ function(waterwall_enable_quiche)
       file(WRITE "${gurl_overlay}/${header}" "${contents}")
     endif()
   endforeach()
-  waterwall_quic_source(ww_quic_zlib
+  waterwall_dependency_source(ww_quic_zlib
     "https://codeload.github.com/madler/zlib/tar.gz/refs/tags/v1.3.1"
     17e88863f3600672ab49182f217281b6fc4d3c762bde361935e436a95214d05c)
 
@@ -145,90 +103,12 @@ function(waterwall_enable_quiche)
   set(CMAKE_UNITY_BUILD OFF)
   set(BUILD_SHARED_LIBS OFF)
   set(BUILD_TESTING OFF)
-  set(ABSL_BUILD_TESTING OFF)
-  set(ABSL_ENABLE_INSTALL OFF)
-  set(ABSL_PROPAGATE_CXX_STD ON)
-  set(ABSL_MSVC_STATIC_RUNTIME ON)
-  set(protobuf_BUILD_TESTS OFF)
-  set(protobuf_BUILD_EXAMPLES OFF)
-  set(protobuf_BUILD_CONFORMANCE OFF)
-  set(protobuf_BUILD_SHARED_LIBS OFF)
-  set(protobuf_MSVC_STATIC_RUNTIME ON)
-  set(protobuf_BUILD_PROTOC_BINARIES OFF)
-  set(protobuf_BUILD_LIBPROTOC OFF)
-  set(protobuf_BUILD_LIBUPB OFF)
-  set(protobuf_INSTALL OFF)
-  set(protobuf_LOCAL_DEPENDENCIES_ONLY ON)
-  set(protobuf_WITH_ZLIB OFF)
   set(ZLIB_BUILD_EXAMPLES OFF)
-  add_subdirectory("${ww_quic_abseil_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ww-dependencies/abseil" EXCLUDE_FROM_ALL)
-  add_subdirectory("${ww_quic_protobuf_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ww-dependencies/protobuf" EXCLUDE_FROM_ALL)
   add_subdirectory("${ww_quic_zlib_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/ww-dependencies/zlib" EXCLUDE_FROM_ALL)
+  waterwall_dependency_runtime_tree("${ww_quic_zlib_SOURCE_DIR}" "${runtime_crt}")
 
-  # On targets without native 64-bit atomics protobuf exports bare -latomic.
-  # Compiler-runtime static flags do not make that library static on Linux.
-  get_directory_property(protobuf_needs_atomic DIRECTORY "${ww_quic_protobuf_SOURCE_DIR}"
-    DEFINITION protobuf_LINK_LIBATOMIC)
-  if(protobuf_needs_atomic AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT ANDROID)
-    find_library(WW_QUIC_ATOMIC_STATIC_LIBRARY NAMES libatomic.a
-      HINTS ${CMAKE_CXX_IMPLICIT_LINK_DIRECTORIES} REQUIRED)
-    foreach(link_property IN ITEMS LINK_LIBRARIES INTERFACE_LINK_LIBRARIES)
-      get_target_property(protobuf_libraries libprotobuf-lite ${link_property})
-      set(static_libraries "")
-      foreach(library IN LISTS protobuf_libraries)
-        if(library STREQUAL "atomic")
-          set(library "${WW_QUIC_ATOMIC_STATIC_LIBRARY}")
-        elseif(library STREQUAL "$<LINK_ONLY:atomic>")
-          set(library "$<LINK_ONLY:${WW_QUIC_ATOMIC_STATIC_LIBRARY}>")
-        endif()
-        list(APPEND static_libraries "${library}")
-      endforeach()
-      set_property(TARGET libprotobuf-lite PROPERTY ${link_property} "${static_libraries}")
-    endforeach()
-  endif()
-  foreach(dependency_directory IN ITEMS "${ww_quic_abseil_SOURCE_DIR}"
-      "${ww_quic_protobuf_SOURCE_DIR}" "${ww_quic_zlib_SOURCE_DIR}")
-    waterwall_quic_runtime_tree("${dependency_directory}" "${runtime_crt}")
-  endforeach()
-
-  # A distinct host build must never execute the cross-built protoc or inherit
-  # the application's toolchain, IPO, CPU selection or sanitizer flags.
-  set(host_generator Ninja)
-  if(CMAKE_HOST_WIN32 AND CMAKE_GENERATOR MATCHES "^Visual Studio")
-    set(host_generator "${CMAKE_GENERATOR}")
-    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
-      set(host_platform ARM64)
-    else()
-      set(host_platform x64)
-    endif()
-  else()
-    find_program(WW_HOST_PROTOC_CC NAMES cc clang gcc cl NO_CMAKE_FIND_ROOT_PATH
-      DOC "Native C compiler for the independent protoc build" REQUIRED)
-    find_program(WW_HOST_PROTOC_CXX NAMES c++ clang++ g++ cl NO_CMAKE_FIND_ROOT_PATH
-      DOC "Native C++ compiler for the independent protoc build" REQUIRED)
-    set(host_cc "${WW_HOST_PROTOC_CC}")
-    set(host_cxx "${WW_HOST_PROTOC_CXX}")
-  endif()
-  string(SHA256 host_identity "31.1;20260107.0;${CMAKE_HOST_SYSTEM_NAME};${CMAKE_HOST_SYSTEM_PROCESSOR};${host_cc};${host_cxx};${host_generator}")
-  string(SUBSTRING "${host_identity}" 0 12 host_identity)
-  set(host_build "${PROJECT_SOURCE_DIR}/build/quic-protoc-host-${host_identity}")
-  set(host_protoc "${host_build}/bin/protoc${CMAKE_HOST_EXECUTABLE_SUFFIX}")
-  if(CMAKE_HOST_WIN32)
-    set(host_protoc "${host_build}/bin/protoc.exe")
-  endif()
-  add_custom_command(OUTPUT "${host_protoc}"
-    COMMAND "${CMAKE_COMMAND}"
-      "-DWW_HOST_PROTOC_SOURCE=${CMAKE_CURRENT_FUNCTION_LIST_DIR}/host-protoc"
-      "-DWW_HOST_PROTOC_BUILD=${host_build}"
-      "-DWW_HOST_PROTOC_GENERATOR=${host_generator}"
-      "-DWW_HOST_PROTOC_PLATFORM=${host_platform}"
-      "-DWW_HOST_PROTOC_CC=${host_cc}" "-DWW_HOST_PROTOC_CXX=${host_cxx}"
-      "-DWW_ABSEIL_SOURCE=${ww_quic_abseil_SOURCE_DIR}"
-      "-DWW_PROTOBUF_SOURCE=${ww_quic_protobuf_SOURCE_DIR}"
-      -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/build_host_protoc.cmake"
-    DEPENDS "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/host-protoc/CMakeLists.txt"
-      "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/build_host_protoc.cmake"
-    VERBATIM COMMENT "Building pinned native protoc 31.1")
+  # protobuf.cmake builds the native protoc that matches the pinned runtime.
+  get_property(host_protoc GLOBAL PROPERTY WATERWALL_HOST_PROTOC)
 
   file(READ "${ww_quiche_SOURCE_DIR}/build/source_list.json" manifest)
   set(quiche_sources "")
