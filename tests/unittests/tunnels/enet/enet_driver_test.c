@@ -4,8 +4,8 @@
  * carries the configured MTU, ordered stream delivery in both directions,
  * buffering before the handshake, send-hold hysteresis and the hard send cap,
  * graceful close, abort, peer-close ordering, liveness timeout, service
- * scheduling and transfer over an impaired link. No WaterWall runtime, socket
- * or wall clock is used. */
+ * scheduling, transfer over an impaired link, and a lost command that meets
+ * the receive limit. No WaterWall runtime, socket or wall clock is used. */
 
 #include "enet_sim.h"
 
@@ -451,6 +451,42 @@ static void testTransferSurvivesLossDuplicationAndReordering(void)
     simDestroy(&world);
 }
 
+/* ENet acknowledges what arrives after a lost command, so the sender keeps going, and at the waiting-data limit
+ * ENet refuses every new command. The lost command must still be accepted when it arrives again. */
+static void testLostCommandPassesTheReceiveLimit(void)
+{
+    enum
+    {
+        kBulk = 4 * kEnetDriverMaxMessage
+    };
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    enet_driver_config_t       server = simConfig(kEnetDriverRoleServer);
+    server.receive_buffer_limit       = kEnetDriverReceiveBufferMin; /* room for two messages of the largest size */
+    openConnected(&world, &client, &server, 20);
+    simAdvance(&world, 100);
+
+    /* One byte travels alone in a small datagram, which is lost. The bulk behind it fills the receive limit long
+     * before ENet sends the byte again. */
+    uint8_t *bytes          = simPattern(1 + kBulk, 12);
+    world.end[0].lose_small = 1;
+    require(simWrite(&world, 0, bytes, 1), "write refused");
+    simAdvance(&world, 2);
+    require(world.end[0].lose_small == 0, "the single byte did not travel in a datagram of its own");
+    require(simWrite(&world, 0, bytes + 1, kBulk), "write refused");
+
+    expected_bytes[0] = 0;
+    expected_bytes[1] = 1 + kBulk;
+    require(simAdvanceUntil(&world, 20000, expectedBytesArrived),
+            "the stream stalled behind a lost command at the receive limit");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 1 + kBulk, "server received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, bytes, 1 + kBulk, "server stream differs");
+    require(world.end[0].closed_calls == 0 && world.end[1].closed_calls == 0, "the session closed");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
@@ -467,5 +503,6 @@ int main(void)
     TEST_RUN_CASE(testIdleDriverSleepsUntilThePingDeadline);
     TEST_RUN_CASE(testRefusedDatagramsAreRecoveredAsLoss);
     TEST_RUN_CASE(testTransferSurvivesLossDuplicationAndReordering);
+    TEST_RUN_CASE(testLostCommandPassesTheReceiveLimit);
     return 0;
 }

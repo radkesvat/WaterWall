@@ -273,7 +273,8 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
     {
         driver->host->mtu = config->host_mtu;
         /* ENet allocates a whole fragmented packet when its first fragment arrives, so both limits are always set.
-         * At the waiting-data limit ENet refuses further commands without acknowledging them. */
+         * At the waiting-data limit ENet refuses further commands without acknowledging them. enetDriverInput
+         * raises that limit for the one datagram the waiting data is waiting for. */
         driver->host->maximumPacketSize  = config->receive_buffer_limit / 2U;
         driver->host->maximumWaitingData = config->receive_buffer_limit;
         driver->peer                     = &driver->host->peers[0];
@@ -320,6 +321,78 @@ void enetDriverDestroy(enet_driver_t *driver)
     enet_free(driver);
 }
 
+/* Whether a datagram carries the next reliable command of the stream.
+ *
+ * ENet acknowledges reliable commands that arrive ahead of a lost one, so the sender keeps going while the receiver
+ * holds what it cannot deliver yet. At the waiting-data limit ENet refuses every new command, including the lost one
+ * when it arrives again, and then nothing could ever be delivered. The datagram found here is fed with a higher
+ * limit. It is read the way ENet's own parser reads it, and anything unexpected counts as "no": ENet validates the
+ * datagram itself afterwards. */
+static bool enetDriverCarriesNextCommand(const enet_driver_t *driver, const uint8_t *datagram, size_t length)
+{
+    const ENetPeer *peer = driver->peer;
+    if (peer->state != ENET_PEER_STATE_CONNECTED || peer->channelCount == 0 || length < sizeof(enet_uint16))
+    {
+        return false;
+    }
+    const enet_uint16 next = (enet_uint16) (peer->channels[0].incomingReliableSequenceNumber + 1U);
+    enet_uint16       field;
+    memcpy(&field, datagram, sizeof(field));
+    const enet_uint16 flags = ENET_NET_TO_HOST_16(field) & ENET_PROTOCOL_HEADER_FLAG_MASK;
+    size_t            offset =
+        (flags & ENET_PROTOCOL_HEADER_FLAG_SENT_TIME) != 0 ? sizeof(ENetProtocolHeader) : sizeof(enet_uint16);
+    if ((flags & ENET_PROTOCOL_HEADER_FLAG_COMPRESSED) != 0 || offset > length)
+    {
+        return false;
+    }
+    while (length - offset >= sizeof(ENetProtocolCommandHeader))
+    {
+        ENetProtocol     command;
+        const enet_uint8 number = datagram[offset] & ENET_PROTOCOL_COMMAND_MASK;
+        const size_t     size   = number < ENET_PROTOCOL_COMMAND_COUNT ? enet_protocol_command_size(number) : 0;
+        if (size == 0 || size > length - offset)
+        {
+            return false;
+        }
+        memcpy(&command, datagram + offset, size);
+        size_t data_length = 0;
+        switch (number)
+        {
+        case ENET_PROTOCOL_COMMAND_SEND_RELIABLE:
+            if (command.header.channelID == 0 && ENET_NET_TO_HOST_16(command.header.reliableSequenceNumber) == next)
+            {
+                return true;
+            }
+            data_length = ENET_NET_TO_HOST_16(command.sendReliable.dataLength);
+            break;
+        case ENET_PROTOCOL_COMMAND_SEND_FRAGMENT:
+            if (command.header.channelID == 0 && ENET_NET_TO_HOST_16(command.sendFragment.startSequenceNumber) == next)
+            {
+                return true;
+            }
+            data_length = ENET_NET_TO_HOST_16(command.sendFragment.dataLength);
+            break;
+        case ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE_FRAGMENT:
+            data_length = ENET_NET_TO_HOST_16(command.sendFragment.dataLength);
+            break;
+        case ENET_PROTOCOL_COMMAND_SEND_UNRELIABLE:
+            data_length = ENET_NET_TO_HOST_16(command.sendUnreliable.dataLength);
+            break;
+        case ENET_PROTOCOL_COMMAND_SEND_UNSEQUENCED:
+            data_length = ENET_NET_TO_HOST_16(command.sendUnsequenced.dataLength);
+            break;
+        default:
+            break;
+        }
+        if (data_length > length - offset - size)
+        {
+            return false;
+        }
+        offset += size + data_length;
+    }
+    return false;
+}
+
 void enetDriverInput(enet_driver_t *driver, const uint8_t *datagram, size_t length, uint64_t now_ms)
 {
     if (driver->state == kEnetDriverStateClosed || length == 0 || length > (size_t) kEnetDriverHostMtuMax)
@@ -327,8 +400,13 @@ void enetDriverInput(enet_driver_t *driver, const uint8_t *datagram, size_t leng
         return;
     }
     enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
-    driver->transport.input             = datagram;
-    driver->transport.input_length      = length;
+    /* A sender that honours ENet's window has at most 65,536 bytes in flight, so the doubled limit always leaves
+     * room for the missing command, and retention stays below two and a half times receive_buffer_limit. */
+    driver->host->maximumWaitingData = enetDriverCarriesNextCommand(driver, datagram, length)
+                                           ? (size_t) driver->config.receive_buffer_limit * 2U
+                                           : (size_t) driver->config.receive_buffer_limit;
+    driver->transport.input          = datagram;
+    driver->transport.input_length   = length;
     enetDriverRun(driver);
     driver->transport.input        = NULL;
     driver->transport.input_length = 0;

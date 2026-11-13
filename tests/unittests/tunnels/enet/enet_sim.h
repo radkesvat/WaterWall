@@ -21,7 +21,8 @@
 
 enum
 {
-    kSimDatagramCapacity = 4096
+    kSimDatagramCapacity = 4096,
+    kSimSmallDatagram    = 128
 };
 
 typedef struct sim_datagram_s
@@ -47,6 +48,7 @@ typedef struct sim_end_s
     uint64_t            next_service_at;
     uint64_t            datagrams_sent;
     unsigned            refuse_datagrams; /* the datagram sink returns NULL this many more times */
+    unsigned            lose_small;       /* this many more datagrams below kSimSmallDatagram bytes are lost */
     unsigned            connected_calls;
     unsigned            closed_calls;
     enet_driver_close_t close_reason;
@@ -102,6 +104,11 @@ static inline uint8_t *simDatagramSink(void *user, size_t length)
     {
         end->refuse_datagrams -= 1;
         return NULL; /* a full carrier queue */
+    }
+    if (end->lose_small > 0 && length < kSimSmallDatagram)
+    {
+        end->lose_small -= 1;
+        return world->lost;
     }
     if (world->cut || simChance(world, world->loss_permille))
     {
