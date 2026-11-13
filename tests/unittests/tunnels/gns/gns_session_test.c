@@ -3,9 +3,9 @@
  * is handed to the other, unless the test holds or loses it. Everything runs on the test's thread as worker 0,
  * except GameNetworkingSockets' own service thread. Covered: the handshake and the server's promotion, verified
  * transfer in both directions, echo from inside the payload callback, the send hold and its release, the hard cap,
- * the limit on unacknowledged messages that keeps a connection inside GNS's 16-bit bounds, a carrier queue that
- * refuses, graceful close with data in flight from either side, the drain and connect deadlines, abort and
- * quiesce. The library runs in real time: the cases wait with deadlines and assert no timing. */
+ * the limits on unacknowledged messages and bytes that keep a connection inside GNS's 16-bit bounds, a carrier
+ * queue that refuses, graceful close with data in flight from either side, the drain and connect deadlines, abort
+ * and quiesce. The library runs in real time: the cases wait with deadlines and assert no timing. */
 
 #include "GnsCommon/port.h"
 #include "GnsCommon/session.h"
@@ -309,7 +309,9 @@ static void caseEcho(void)
 /* While the peer acknowledges nothing, the producer is held above send-buffer-limit and released at half of it. */
 static void casePressure(void)
 {
-    static const char settings[] = "{\"send-rate\":20000000,\"send-buffer-limit\":65536}";
+    /* At this rate the limit's worth of bytes takes a second to leave, so the peer acknowledges it in small
+     * steps. */
+    static const char settings[] = "{\"send-rate\":65536,\"send-buffer-limit\":65536}";
     pair_t            pair;
     pairStart(&pair, settings, settings);
     pairConnect(&pair);
@@ -323,9 +325,18 @@ static void casePressure(void)
     gnsRequire(gnsSessionOutstandingBytes(pair.client.session) > 65536, "the hold came without the bytes behind it");
     gnsRequire(! pair.client.terminal, "a payload below the hard cap ended the session");
 
-    pair.client.hold = false;
-    pairUntil(&pair, ! pair.client.pressured, "the producer was not released after the peer acknowledged");
-    gnsRequire(gnsSessionOutstandingBytes(pair.client.session) <= 32768, "the hold was released above half the limit");
+    /* The wire opens. The unacknowledged bytes fall a few datagrams at a time, and the hold has to last through
+     * every reading above half of the limit. */
+    pair.client.hold        = false;
+    const uint64_t deadline = gnsTestNowMs() + kGnsTestDeadlineMs;
+    while (pair.client.pressured)
+    {
+        gnsRequire(gnsTestNowMs() < deadline, "the producer was not released after the peer acknowledged");
+        pairStep(&pair);
+        gnsRequire(pair.client.pressured || gnsSessionOutstandingBytes(pair.client.session) <= 32768,
+                   "the hold was released above half the limit");
+        wwSleepMS(1);
+    }
     gnsRequire(pair.client.pressure_calls == 2, "the hold changed more often than it had to");
     pairUntil(&pair, pair.server.received == pair.client.sent, "held bytes did not arrive after the release");
     pairStop(&pair);
@@ -396,6 +407,32 @@ static void caseMessagesAcknowledged(void)
     pairUntil(
         &pair, gnsSessionOutstandingMessages(pair.client.session) == 0, "acknowledged messages stayed in the count");
     gnsRequire(pair.server.received == kGnsMessagesHold, "small messages were lost");
+    pairStop(&pair);
+}
+
+/* GNS carries 16 bits of each packet number, so the session never lets more than 16,000 packets' worth of bytes
+ * wait for acknowledgement, whatever send-buffer-limit says. Here the peer hears nothing, the producer ignores the
+ * hold, and the library has sent the whole window when the next payload is refused. */
+static void caseWindowLimit(void)
+{
+    static const char settings[] =
+        "{\"send-rate\":20000000,\"send-buffer-limit\":134217728,\"no-recv-timeout-ms\":600000}";
+    const uint64_t window = (uint64_t) kGnsWindowPackets * (kGnsPacketSizeMaximum - kGnsPacketOverhead);
+    pair_t         pair;
+    pairStart(&pair, settings, kPatient);
+    pairConnect(&pair);
+    pair.client.lose = true;
+    while (! pair.client.terminal && gnsSessionOutstandingBytes(pair.client.session) <= window)
+    {
+        endSend(&pair.client, kChunk);
+    }
+    gnsRequire(! pair.client.terminal, "bytes inside the packet window were refused");
+    gnsRequire(pair.client.pressured, "half a packet window of unacknowledged bytes did not hold the producer");
+    pairUntil(&pair, pair.client.emitted >= kGnsWindowPackets, "the library did not send the whole window");
+    gnsRequire(! pair.client.terminal, "a full packet window ended the session");
+    endSend(&pair.client, 1);
+    gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure,
+               "a payload beyond the packet window was not refused");
     pairStop(&pair);
 }
 
@@ -492,6 +529,7 @@ static void runCases(void)
     TEST_RUN_CASE(caseHardCap);
     TEST_RUN_CASE(caseMessageLimit);
     TEST_RUN_CASE(caseMessagesAcknowledged);
+    TEST_RUN_CASE(caseWindowLimit);
     TEST_RUN_CASE(caseCarrierQueueRefuses);
     TEST_RUN_CASE(caseDrainTimeout);
     TEST_RUN_CASE(caseConnectTimeout);

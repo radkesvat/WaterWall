@@ -365,6 +365,17 @@ static bool pumpUntil(bool (*done)(void))
     return done();
 }
 
+/* Lets real time pass while the worker and the wire keep moving. */
+static void pumpFor(unsigned milliseconds)
+{
+    const uint64_t end = gnsTestNowMs() + milliseconds;
+    while (gnsTestNowMs() < end)
+    {
+        step();
+        wwSleepMS(1);
+    }
+}
+
 /* The worker loop's clock, which is the one the sessions read. */
 static uint64_t loopNowMs(void)
 {
@@ -636,9 +647,12 @@ static void casePressure(void)
     gnsRequire(pumpUntil(appPaused) && fixture.app_pauses == 2, "the local send hold did not pause the application");
     tunnelPrevDownStreamPause(fixture.wire, fixture.transport);
     gnsRequire(fixture.app_pauses == 2, "a second reason paused the application again");
-    /* Acknowledgements clear the local hold, but the carrier is still paused. */
+    /* Acknowledgements clear the local hold a moment after the last byte has arrived. The carrier is still paused,
+     * so the application hears no resume however long the test waits; the wait only gives a wrong resume time to
+     * show. */
     fixture.hold_wire = false;
     gnsRequire(pumpUntil(transferDone), "held bytes were not delivered");
+    pumpFor(300);
     gnsRequire(fixture.app_resumes == 1, "clearing the local hold released the carrier's pause");
     tunnelPrevDownStreamResume(fixture.wire, fixture.transport);
     gnsRequire(pumpUntil(appResumed) && fixture.app_resumes == 2,
