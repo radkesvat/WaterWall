@@ -84,6 +84,65 @@ static bool enetDriverTransportSend(enet_platform_transport_t *transport, const 
     return true;
 }
 
+static void ENET_CALLBACK enetDriverPacketFreed(ENetPacket *packet)
+{
+    /* ENet frees a reliable packet once the peer acknowledged every fragment, or when its queues are reset. */
+    enet_driver_t *driver = packet->userData;
+    assert(driver->queued_bytes >= packet->dataLength);
+    driver->queued_bytes -= packet->dataLength;
+}
+
+/* Hands one message to ENet. Its bytes are already counted in queued_bytes. */
+static bool enetDriverSubmit(enet_driver_t *driver, const uint8_t *data, size_t length)
+{
+    ENetPacket *packet   = enet_packet_create(data, length, ENET_PACKET_FLAG_RELIABLE);
+    packet->userData     = driver;
+    packet->freeCallback = enetDriverPacketFreed;
+    if (enet_peer_send(driver->peer, 0, packet) != 0)
+    {
+        enet_packet_destroy(packet); /* runs enetDriverPacketFreed, which uncounts the bytes */
+        return false;
+    }
+    return true;
+}
+
+static void enetDriverAppendPending(enet_driver_t *driver, const uint8_t *data, size_t length)
+{
+    enet_driver_pending_t *entry = enet_malloc(sizeof(*entry) + length);
+    entry->next                  = NULL;
+    entry->length                = length;
+    memcpy(entry + 1, data, length);
+    if (driver->pending_tail != NULL)
+    {
+        driver->pending_tail->next = entry;
+    }
+    else
+    {
+        driver->pending_head = entry;
+    }
+    driver->pending_tail = entry;
+}
+
+static bool enetDriverFlushPending(enet_driver_t *driver)
+{
+    while (driver->pending_head != NULL)
+    {
+        enet_driver_pending_t *entry = driver->pending_head;
+        driver->pending_head         = entry->next;
+        if (driver->pending_head == NULL)
+        {
+            driver->pending_tail = NULL;
+        }
+        const bool sent = enetDriverSubmit(driver, (const uint8_t *) (entry + 1), entry->length);
+        enet_free(entry);
+        if (! sent)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void enetDriverFinish(enet_driver_t *driver, enet_driver_close_t why)
 {
     if (driver->state == kEnetDriverStateClosed)
@@ -101,8 +160,16 @@ static void enetDriverHandle(enet_driver_t *driver, ENetEvent *event)
     case ENET_EVENT_TYPE_CONNECT:
         driver->state = kEnetDriverStateConnected;
         driver->sinks.connected(driver->user);
+        if (! enetDriverFlushPending(driver))
+        {
+            enetDriverFinish(driver, kEnetDriverCloseProtocol);
+        }
         break;
     case ENET_EVENT_TYPE_RECEIVE:
+        if (driver->state == kEnetDriverStateConnected && event->packet->dataLength > 0)
+        {
+            driver->sinks.stream(driver->user, event->packet->data, event->packet->dataLength);
+        }
         enet_packet_destroy(event->packet);
         break;
     case ENET_EVENT_TYPE_DISCONNECT:
@@ -205,6 +272,39 @@ void enetDriverInput(enet_driver_t *driver, const uint8_t *datagram, size_t leng
     driver->transport.input        = NULL;
     driver->transport.input_length = 0;
     enetDriverLeave(driver, previous);
+}
+
+bool enetDriverWrite(enet_driver_t *driver, const uint8_t *data, size_t length, uint64_t now_ms)
+{
+    assert(driver->state == kEnetDriverStateConnecting || driver->state == kEnetDriverStateConnected);
+    assert(! driver->close_requested);
+    enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
+    bool                       accepted = true;
+    while (length > 0 && accepted)
+    {
+        const size_t chunk = length < (size_t) kEnetDriverMaxMessage ? length : (size_t) kEnetDriverMaxMessage;
+        driver->queued_bytes += chunk;
+        if (driver->state == kEnetDriverStateConnected)
+        {
+            accepted = enetDriverSubmit(driver, data, chunk);
+        }
+        else
+        {
+            enetDriverAppendPending(driver, data, chunk);
+        }
+        data += chunk;
+        length -= chunk;
+    }
+    if (accepted)
+    {
+        enetDriverRun(driver);
+    }
+    else
+    {
+        enetDriverFinish(driver, kEnetDriverCloseProtocol);
+    }
+    enetDriverLeave(driver, previous);
+    return accepted;
 }
 
 void enetDriverService(enet_driver_t *driver, uint64_t now_ms)

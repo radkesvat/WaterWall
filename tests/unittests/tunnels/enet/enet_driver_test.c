@@ -21,6 +21,20 @@ static uint32_t readBigEndian32(const uint8_t *bytes)
     return ((uint32_t) bytes[0] << 24) | ((uint32_t) bytes[1] << 16) | ((uint32_t) bytes[2] << 8) | (uint32_t) bytes[3];
 }
 
+static size_t expected_bytes[2];
+
+static bool expectedBytesArrived(const sim_world_t *world)
+{
+    return world->end[0].stream_length >= expected_bytes[0] && world->end[1].stream_length >= expected_bytes[1];
+}
+
+static void openConnected(sim_world_t *world, const enet_driver_config_t *client, const enet_driver_config_t *server,
+                          uint32_t delay_ms)
+{
+    simOpen(world, client, server, delay_ms);
+    require(simAdvanceUntil(world, 2000, bothConnected), "handshake did not finish");
+}
+
 static void testHandshakeCompletes(void)
 {
     sim_world_t                world;
@@ -78,9 +92,84 @@ static void testConnectRequestIsNativeAndCarriesSettings(void)
     simDestroy(&world);
 }
 
+static void testStreamRoundTripInOrder(void)
+{
+    static const size_t        sizes[] = {1, 1000, 65536, 65537, 200000};
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+
+    size_t total = 0;
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
+    {
+        total += sizes[i];
+    }
+    uint8_t *up     = simPattern(total, 1);
+    uint8_t *down   = simPattern(total, 2);
+    size_t   offset = 0;
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
+    {
+        require(simWrite(&world, 0, up + offset, sizes[i]), "client write refused");
+        require(simWrite(&world, 1, down + offset, sizes[i]), "server write refused");
+        offset += sizes[i];
+    }
+
+    expected_bytes[0] = total;
+    expected_bytes[1] = total;
+    require(simAdvanceUntil(&world, 60000, expectedBytesArrived), "stream bytes did not arrive");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, total, "server received a different length");
+    TEST_EQUAL_BYTES(
+        TEST_FAILURE_EXIT, world.end[1].stream, up, total, "server stream differs from the client's bytes");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[0].stream_length, total, "client received a different length");
+    TEST_EQUAL_BYTES(
+        TEST_FAILURE_EXIT, world.end[0].stream, down, total, "client stream differs from the server's bytes");
+
+    simAdvance(&world, 500);
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, enetDriverQueuedBytes(world.end[0].driver), 0, "client bytes stayed queued");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, enetDriverQueuedBytes(world.end[1].driver), 0, "server bytes stayed queued");
+    require(world.end[0].closed_calls == 0 && world.end[1].closed_calls == 0, "session closed during transfer");
+
+    free(up);
+    free(down);
+    simDestroy(&world);
+}
+
+static void testWriteBeforeHandshakeIsDelivered(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    simOpen(&world, &client, &server, 20);
+
+    uint8_t *up   = simPattern(150000, 3);
+    uint8_t *down = simPattern(70000, 4);
+    require(simWrite(&world, 0, up, 150000), "client write before the handshake was refused");
+    require(simWrite(&world, 1, down, 70000), "server write before the handshake was refused");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT,
+                    enetDriverQueuedBytes(world.end[0].driver),
+                    150000,
+                    "bytes buffered before the handshake are not counted");
+    require(enetDriverState(world.end[0].driver) == kEnetDriverStateConnecting, "client connected too early");
+
+    expected_bytes[0] = 70000;
+    expected_bytes[1] = 150000;
+    require(simAdvanceUntil(&world, 60000, expectedBytesArrived), "buffered bytes did not arrive");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 150000, "server received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, up, 150000, "server stream differs");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[0].stream_length, 70000, "client received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[0].stream, down, 70000, "client stream differs");
+
+    free(up);
+    free(down);
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
     TEST_RUN_CASE(testConnectRequestIsNativeAndCarriesSettings);
+    TEST_RUN_CASE(testStreamRoundTripInOrder);
+    TEST_RUN_CASE(testWriteBeforeHandshakeIsDelivered);
     return 0;
 }

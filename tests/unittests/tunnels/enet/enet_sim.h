@@ -254,3 +254,26 @@ static inline void simDestroy(sim_world_t *world)
         free(datagram);
     }
 }
+
+/* Deterministic bytes for payload comparison. The caller frees the result. */
+static inline uint8_t *simPattern(size_t length, uint32_t seed)
+{
+    uint8_t *bytes = malloc(length != 0 ? length : 1);
+    simRequire(bytes != NULL, "out of memory");
+    uint32_t state = seed;
+    for (size_t i = 0; i < length; ++i)
+    {
+        state    = state * 1664525U + 1013904223U;
+        bytes[i] = (uint8_t) (state >> 24);
+    }
+    return bytes;
+}
+
+/* Writes application bytes at one end and reschedules that end. */
+static inline bool simWrite(sim_world_t *world, int index, const uint8_t *data, size_t length)
+{
+    sim_end_t *end      = &world->end[index];
+    const bool accepted = enetDriverWrite(end->driver, data, length, world->now);
+    simSchedule(end);
+    return accepted;
+}
