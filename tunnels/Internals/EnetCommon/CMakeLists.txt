@@ -27,6 +27,11 @@ target_link_libraries(EnetCommon PUBLIC ww)
 # WaterWall API headers define helpers that call the OS (wproc.h's execCmd uses
 # poll). The archive must reference no OS socket function in any configuration.
 set_target_properties(EnetCommon PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+# Clang on Windows without MSVC compatibility sees wplatform.h define stricmp and strnicmp twice. A target that
+# reuses ww's precompiled header never parses that header again; this one does, with ww's -Werror.
+if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    target_compile_options(EnetCommon PRIVATE -Wno-macro-redefined)
+endif()
 
 # WaterWall half shared by EnetClient and EnetServer: the node settings, the worker session around the driver and
 # the tunnel logic of both roles. It uses the WaterWall API, so it is a separate archive from the checked EnetCommon.
