@@ -77,16 +77,17 @@ struct side_t
     gns_external_endpoint_t *endpoint = nullptr;
     bool                     released = false; /* the test released it before the link ends */
     std::atomic<int>         sent{0};
-    std::atomic<int>         idle{0};
-    std::atomic<int>         closed{0};
+    std::atomic<int>         refuse_every{0}; /* when positive, every this-many-th datagram is refused */
+    std::atomic<int>         refused{0};
 };
 
-void ignoreSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
+bool ignoreSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
 {
     (void) user;
     (void) data;
     (void) length;
     (void) to;
+    return true;
 }
 
 /* The wire between a listening and a connecting endpoint. */
@@ -95,8 +96,8 @@ class link_t
   public:
     link_t() : server_address(syntheticAddress(1, 4000)), client_address(syntheticAddress(2, 5000))
     {
-        server.endpoint = gns_external_endpoint_create_listen(&server_address, serverSend, serverEvent, this);
-        client.endpoint = gns_external_endpoint_create_connect(&server_address, clientSend, clientEvent, this);
+        server.endpoint = gns_external_endpoint_create_listen(&server_address, serverSend, this);
+        client.endpoint = gns_external_endpoint_create_connect(&server_address, clientSend, this);
         REQUIRE(server.endpoint != nullptr && client.endpoint != nullptr);
         wire = std::thread([this] { run(); });
     }
@@ -142,42 +143,30 @@ class link_t
         ready.notify_one();
     }
 
-    static void serverSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
+    static bool serverSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
     {
         link_t *link = static_cast<link_t *>(user);
         REQUIRE(std::memcmp(to, &link->client_address, sizeof(*to)) == 0);
         link->server.sent.fetch_add(1);
         link->push(false, data, length);
+        return true;
     }
 
-    static void clientSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
+    static bool clientSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
     {
         link_t *link = static_cast<link_t *>(user);
         REQUIRE(std::memcmp(to, &link->server_address, sizeof(*to)) == 0);
+        const int every = link->client.refuse_every.load();
+        if (every > 0 && link->client.sent.load() % every == every - 1)
+        {
+            /* The wire is full: the library keeps what was in the datagram and offers it again. */
+            link->client.sent.fetch_add(1);
+            link->client.refused.fetch_add(1);
+            return false;
+        }
         link->client.sent.fetch_add(1);
         link->push(true, data, length);
-    }
-
-    static void record(side_t &side, gns_external_event_t event)
-    {
-        if (event == GNS_EXTERNAL_EVENT_IDLE)
-        {
-            side.idle.fetch_add(1);
-        }
-        else if (event == GNS_EXTERNAL_EVENT_CLOSED)
-        {
-            side.closed.fetch_add(1);
-        }
-    }
-
-    static void serverEvent(void *user, gns_external_event_t event)
-    {
-        record(static_cast<link_t *>(user)->server, event);
-    }
-
-    static void clientEvent(void *user, gns_external_event_t event)
-    {
-        record(static_cast<link_t *>(user)->client, event);
+        return true;
     }
 
     void run()
@@ -341,7 +330,7 @@ void transfer(HSteamNetConnection from, HSteamNetConnection to, size_t count, ui
     REQUIRE(received == count);
 }
 
-/* Connect through the ordinary public calls, move data both ways, close, and see what the transport reports. */
+/* Connect through the ordinary public calls, move data both ways, and close. */
 void caseTransferAndClose()
 {
     startLibrary();
@@ -357,8 +346,8 @@ void caseTransferAndClose()
         const uint8_t stray[4] = {1, 2, 3, 4};
         REQUIRE(! gns_external_receive(link.server.endpoint, &link.client_address, stray, sizeof(stray)));
         /* An address can be registered once per role. */
-        REQUIRE(gns_external_endpoint_create_listen(&link.server_address, ignoreSend, nullptr, nullptr) == nullptr);
-        REQUIRE(gns_external_endpoint_create_connect(&link.server_address, ignoreSend, nullptr, nullptr) == nullptr);
+        REQUIRE(gns_external_endpoint_create_listen(&link.server_address, ignoreSend, nullptr) == nullptr);
+        REQUIRE(gns_external_endpoint_create_connect(&link.server_address, ignoreSend, nullptr) == nullptr);
 
         const SteamNetworkingIPAddr address = libraryAddress(link.server_address);
         const HSteamListenSocket    listen  = sockets->CreateListenSocketIP(address, 3, options);
@@ -375,19 +364,19 @@ void caseTransferAndClose()
         transfer(client, server, kStreamBytes, 7);
         transfer(server, client, kStreamBytes, 91);
 
-        /* The client closes after its data is delivered. The server sees it and closes its side, which leaves the
-         * listen endpoint without a remote host. */
+        /* A wire that refuses every fifth datagram loses nothing: a refusal is not a loss. */
+        link.client.refuse_every.store(5);
+        transfer(client, server, kStreamBytes / 4, 33);
+        link.client.refuse_every.store(0);
+        REQUIRE(link.client.refused.load() > 0);
+
+        /* The client closes after its data is delivered, and the server sees it. The library keeps a closed
+         * connection for a few seconds more; the link ends before that, which releases both endpoints while the
+         * library still holds them. */
         REQUIRE(sockets->CloseConnection(client, 0, "done", true));
         WAIT_FOR(g_status.closed_by_peer.load() == 1);
-        REQUIRE(link.server.idle.load() == 0);
         REQUIRE(sockets->CloseConnection(server, 0, nullptr, false));
-        WAIT_FOR(link.server.idle.load() == 1);
-        /* The library closes the client's endpoint when its connection is gone. */
-        WAIT_FOR(link.client.closed.load() == 1);
-        REQUIRE(link.server.closed.load() == 0);
         REQUIRE(sockets->CloseListenSocket(listen));
-        WAIT_FOR(link.server.closed.load() == 1);
-        REQUIRE(link.server.idle.load() == 1 && link.client.idle.load() == 0);
         REQUIRE(g_status.problems.load() == 0);
     }
     GameNetworkingSockets_Kill();
@@ -413,7 +402,6 @@ void caseReleaseWhileBound()
         std::this_thread::sleep_for(std::chrono::milliseconds(1200)); /* two of the library's connect retries */
         REQUIRE(link.client.sent.load() == sent_at_release);
         REQUIRE(sockets->CloseConnection(client, 0, nullptr, false));
-        REQUIRE(link.client.closed.load() == 0);
     }
     GameNetworkingSockets_Kill();
 }

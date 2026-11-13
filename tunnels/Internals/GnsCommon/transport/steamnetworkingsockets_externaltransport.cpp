@@ -173,8 +173,8 @@ public:
 		k_ERole_Connect, // found by OpenUDPSocketBoundToHost, key is the remote address
 	};
 
-	CExternalEndpoint( ERole eRole, const netadr_t &adrKey, gns_external_send_fn fnSend, gns_external_event_fn fnEvent, void *pUser )
-	: m_eRole( eRole ), m_adrKey( adrKey ), m_fnSend( fnSend ), m_fnEvent( fnEvent ), m_pUser( pUser )
+	CExternalEndpoint( ERole eRole, const netadr_t &adrKey, gns_external_send_fn fnSend, void *pUser )
+	: m_eRole( eRole ), m_adrKey( adrKey ), m_fnSend( fnSend ), m_pUser( pUser )
 	{
 		m_boundAddr.Clear();
 	}
@@ -184,18 +184,9 @@ public:
 	/// Synthetic address this endpoint is registered under
 	const netadr_t m_adrKey;
 
-	/// Where outgoing datagrams and events go.  Cleared when the owner releases the endpoint.
+	/// Where outgoing datagrams go.  Cleared when the owner releases the endpoint.
 	gns_external_send_fn m_fnSend;
-	gns_external_event_fn m_fnEvent;
 	void *m_pUser;
-
-	/// Tell the owner, if it is still there, what the library did with us
-	void NotifyOwner( gns_external_event_t eEvent ) const
-	{
-		SteamNetworkingGlobalLock::AssertHeldByCurrentThread();
-		if ( m_fnEvent )
-			(*m_fnEvent)( m_pUser, eEvent );
-	}
 
 	/// Who to notify when we receive a packet on this endpoint.
 	/// This is null while no listen socket or connection is bound to us.
@@ -294,12 +285,10 @@ bool CExternalEndpoint::BSendRawPacketGather( int nChunks, const iovec *pChunks,
 	gns_external_addr_t to;
 	NetAdrToExternalAddr( to, adrTo );
 
-	// Single chunk: pass it straight through
+	// Single chunk: pass it straight through.  A refusal is reported like a
+	// failed sendto().
 	if ( nChunks == 1 )
-	{
-		(*m_fnSend)( m_pUser, (const uint8_t *)pChunks->iov_base, (size_t)pChunks->iov_len, &to );
-		return true;
-	}
+		return (*m_fnSend)( m_pUser, (const uint8_t *)pChunks->iov_base, (size_t)pChunks->iov_len, &to );
 
 	// The callback takes one contiguous datagram, so gather the chunks.
 	// (Same idea as upstream's sendto_gather, 356-377.)
@@ -317,8 +306,7 @@ bool CExternalEndpoint::BSendRawPacketGather( int nChunks, const iovec *pChunks,
 		memcpy( d, chunk.iov_base, chunk.iov_len );
 		d += chunk.iov_len;
 	}
-	(*m_fnSend)( m_pUser, pkt, (size_t)( d - pkt ), &to );
-	return true;
+	return (*m_fnSend)( m_pUser, pkt, (size_t)( d - pkt ), &to );
 }
 
 // [NEW] (upstream 1316-1359 puts the socket on a cleanup queue, because the
@@ -336,12 +324,9 @@ void CExternalEndpoint::Close()
 	m_bOpen = false;
 
 	// If the owner has already let go of us, then nobody else has a pointer to us.
-	// Otherwise we stay registered and can be opened again, and the owner hears
-	// that the library is done with us.
+	// Otherwise we stay registered and can be opened again.
 	if ( m_bOwnerReleased )
 		delete this;
-	else
-		NotifyOwner( GNS_EXTERNAL_EVENT_CLOSED );
 }
 
 // [NEW] Replaces upstream 2181-2288 (and OpenRawUDPSocketInternal, 1504-1782).
@@ -745,7 +730,7 @@ bool CreateBoundSocketPair( CRecvPacketCallback callback1, CRecvPacketCallback c
 	return false;
 }
 
-// [COPIED 3572-3670]  One addition, marked [NEW], in CloseRemoteHostByIndex.
+// [COPIED 3572-3670]
 CSharedSocket::CSharedSocket()
 {
 	m_pRawSock = nullptr;
@@ -811,12 +796,6 @@ void CSharedSocket::CloseRemoteHostByIndex( int idx )
 	delete m_mapRemoteHosts[ idx ];
 	m_mapRemoteHosts[idx] = nullptr; // just for grins
 	m_mapRemoteHosts.RemoveAt( idx );
-
-	// [NEW] Tell the owner of the endpoint when the last remote host is gone.
-	// m_pRawSock is null while the shared socket itself is being closed (Kill);
-	// the owner hears about that from CExternalEndpoint::Close.
-	if ( m_pRawSock && m_mapRemoteHosts.Count() == 0 )
-		assert_cast<CExternalEndpoint *>( m_pRawSock )->NotifyOwner( GNS_EXTERNAL_EVENT_IDLE );
 }
 
 IBoundUDPSocket *CSharedSocket::AddRemoteHost( const netadr_t &adrRemote, CRecvPacketCallback callback )
@@ -1073,7 +1052,7 @@ STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetServiceThreadIni
 // The library is linked statically, so these functions need no export attribute.
 #define GNS_EXTERNAL_API extern "C"
 
-static gns_external_endpoint_t *ExternalEndpointCreate( CExternalEndpoint::ERole eRole, const gns_external_addr_t *pAddr, gns_external_send_fn fnSend, gns_external_event_fn fnEvent, void *pUser )
+static gns_external_endpoint_t *ExternalEndpointCreate( CExternalEndpoint::ERole eRole, const gns_external_addr_t *pAddr, gns_external_send_fn fnSend, void *pUser )
 {
 	if ( !pAddr || !fnSend )
 		return nullptr;
@@ -1086,22 +1065,22 @@ static gns_external_endpoint_t *ExternalEndpointCreate( CExternalEndpoint::ERole
 	if ( map.HasElement( adrKey ) )
 		return nullptr;
 
-	CExternalEndpoint *pSock = new CExternalEndpoint( eRole, adrKey, fnSend, fnEvent, pUser );
+	CExternalEndpoint *pSock = new CExternalEndpoint( eRole, adrKey, fnSend, pUser );
 	map.Insert( adrKey, pSock );
 	return reinterpret_cast<gns_external_endpoint_t *>( pSock );
 }
 
-GNS_EXTERNAL_API gns_external_endpoint_t *gns_external_endpoint_create_listen( const gns_external_addr_t *local, gns_external_send_fn send, gns_external_event_fn event, void *user )
+GNS_EXTERNAL_API gns_external_endpoint_t *gns_external_endpoint_create_listen( const gns_external_addr_t *local, gns_external_send_fn send, void *user )
 {
 	// A listen socket refuses port 0 (CSteamNetworkListenSocketDirectUDP::BInit)
 	if ( !local || local->port == 0 )
 		return nullptr;
-	return ExternalEndpointCreate( CExternalEndpoint::k_ERole_Listen, local, send, event, user );
+	return ExternalEndpointCreate( CExternalEndpoint::k_ERole_Listen, local, send, user );
 }
 
-GNS_EXTERNAL_API gns_external_endpoint_t *gns_external_endpoint_create_connect( const gns_external_addr_t *remote, gns_external_send_fn send, gns_external_event_fn event, void *user )
+GNS_EXTERNAL_API gns_external_endpoint_t *gns_external_endpoint_create_connect( const gns_external_addr_t *remote, gns_external_send_fn send, void *user )
 {
-	return ExternalEndpointCreate( CExternalEndpoint::k_ERole_Connect, remote, send, event, user );
+	return ExternalEndpointCreate( CExternalEndpoint::k_ERole_Connect, remote, send, user );
 }
 
 GNS_EXTERNAL_API bool gns_external_receive( gns_external_endpoint_t *endpoint, const gns_external_addr_t *from, const uint8_t *data, size_t length )
@@ -1172,10 +1151,9 @@ GNS_EXTERNAL_API void gns_external_endpoint_release( gns_external_endpoint_t *en
 	else
 		AssertMsg( false, "External endpoint table corruption!" );
 
-	// From here on, outgoing datagrams are discarded and no event is reported
+	// From here on, outgoing datagrams are discarded
 	pSock->m_bOwnerReleased = true;
 	pSock->m_fnSend = nullptr;
-	pSock->m_fnEvent = nullptr;
 	pSock->m_pUser = nullptr;
 
 	// If the library still has a listen socket or connection on it, it will
