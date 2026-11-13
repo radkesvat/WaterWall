@@ -46,6 +46,7 @@ typedef struct sim_end_s
     size_t              stream_length_at_close;
     uint64_t            next_service_at;
     uint64_t            datagrams_sent;
+    unsigned            refuse_datagrams; /* the datagram sink returns NULL this many more times */
     unsigned            connected_calls;
     unsigned            closed_calls;
     enet_driver_close_t close_reason;
@@ -97,6 +98,11 @@ static inline uint8_t *simDatagramSink(void *user, size_t length)
     sim_world_t *world = end->world;
     simRequire(length <= kSimDatagramCapacity, "driver produced a datagram above the ENet maximum");
     end->datagrams_sent += 1;
+    if (end->refuse_datagrams > 0)
+    {
+        end->refuse_datagrams -= 1;
+        return NULL; /* a full carrier queue */
+    }
     if (world->cut || simChance(world, world->loss_permille))
     {
         return world->lost; /* sent, but it never arrives */

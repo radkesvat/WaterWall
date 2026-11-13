@@ -385,6 +385,72 @@ static void testIdleDriverSleepsUntilThePingDeadline(void)
     simDestroy(&world);
 }
 
+static void testRefusedDatagramsAreRecoveredAsLoss(void)
+{
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+    simAdvance(&world, 100);
+
+    uint8_t *bytes                = simPattern(20000, 11);
+    world.end[0].refuse_datagrams = 5;
+    require(simWrite(&world, 0, bytes, 20000), "write refused");
+
+    expected_bytes[0] = 0;
+    expected_bytes[1] = 20000;
+    require(simAdvanceUntil(&world, 60000, expectedBytesArrived), "bytes did not arrive after refused datagrams");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, 20000, "server received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, bytes, 20000, "server stream differs");
+    TEST_EQUAL_UINT(TEST_FAILURE_EXIT,
+                    (uint32_t) enetDriverDroppedDatagrams(world.end[0].driver),
+                    5,
+                    "refused datagrams were not counted");
+    require(world.end[0].closed_calls == 0 && world.end[1].closed_calls == 0,
+            "a refused datagram must not close the session");
+
+    free(bytes);
+    simDestroy(&world);
+}
+
+static void testTransferSurvivesLossDuplicationAndReordering(void)
+{
+    enum
+    {
+        kTotal = 400000,
+        kPiece = 20000
+    };
+    sim_world_t                world;
+    const enet_driver_config_t client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    openConnected(&world, &client, &server, 20);
+    world.loss_permille      = 50;
+    world.duplicate_permille = 50;
+    world.jitter_ms          = 30;
+
+    uint8_t *up   = simPattern(kTotal, 9);
+    uint8_t *down = simPattern(kTotal, 10);
+    for (size_t offset = 0; offset < kTotal; offset += kPiece)
+    {
+        require(simWrite(&world, 0, up + offset, kPiece), "client write refused");
+        require(simWrite(&world, 1, down + offset, kPiece), "server write refused");
+        simAdvance(&world, 5);
+    }
+
+    expected_bytes[0] = kTotal;
+    expected_bytes[1] = kTotal;
+    require(simAdvanceUntil(&world, 600000, expectedBytesArrived), "bytes did not arrive over the impaired link");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[1].stream_length, kTotal, "server received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[1].stream, up, kTotal, "server stream differs");
+    TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, world.end[0].stream_length, kTotal, "client received a different length");
+    TEST_EQUAL_BYTES(TEST_FAILURE_EXIT, world.end[0].stream, down, kTotal, "client stream differs");
+    require(world.end[0].closed_calls == 0 && world.end[1].closed_calls == 0, "session closed on an impaired link");
+
+    free(up);
+    free(down);
+    simDestroy(&world);
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testHandshakeCompletes);
@@ -399,5 +465,7 @@ int main(void)
     TEST_RUN_CASE(testPeerCloseDeliversPrecedingBytes);
     TEST_RUN_CASE(testIdlePingKeepsSessionAndSilenceEndsIt);
     TEST_RUN_CASE(testIdleDriverSleepsUntilThePingDeadline);
+    TEST_RUN_CASE(testRefusedDatagramsAreRecoveredAsLoss);
+    TEST_RUN_CASE(testTransferSurvivesLossDuplicationAndReordering);
     return 0;
 }
