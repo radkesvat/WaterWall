@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""CLI/environment/stdin config selection and aliases, verbose modes, input-error version ordering and
-malformed/duplicate options. Bounded real startup commands in private inputs; selected diagnostics
-and exact statuses, no live network workload. Complete captured outputs are retained. CTest:
-waterwall.core_json_input."""
+"""CLI/environment/stdin config selection and aliases, verbose modes, missing-file diagnostics,
+input-error version ordering and malformed/duplicate options. Bounded real startup commands in private
+inputs; selected diagnostics and exact statuses, no live network workload. Complete captured outputs
+are retained. CTest: waterwall.core_json_input."""
 
+import errno
 import json
 import os
 import subprocess
@@ -89,13 +90,14 @@ def test_version_arguments(binary, run_dir):
 def test_input_error_versions(binary, run_dir):
     version_line = run_waterwall(binary, run_dir, ["--version"]).stdout.strip()
     missing_path = run_dir / "missing core.json"
+    missing_default_error = 'Could not open core settings file "core.json": file not found'
+    missing_path_error = f'Could not open core settings file "{missing_path}": file not found'
     for restricted in (False, True):
         arguments = ["--restricted-config"] if restricted else []
         cases = (
-            ("missing default input", arguments, UNSET, "Could not open core settings file"),
-            ("missing CLI input", [*arguments, f"--config:{missing_path}"], UNSET,
-             "Could not open core settings file"),
-            ("missing environment input", arguments, str(missing_path), "Could not open core settings file"),
+            ("missing default input", arguments, UNSET, missing_default_error),
+            ("missing CLI input", [*arguments, f"--config:{missing_path}"], UNSET, missing_path_error),
+            ("missing environment input", arguments, str(missing_path), missing_path_error),
             ("empty stdin", [*arguments, "--config:stdin"], UNSET, "Could not read core settings JSON"),
         )
         for name, args, environment_input, error in cases:
@@ -109,6 +111,7 @@ def test_input_error_versions(binary, run_dir):
 
     result = run_waterwall(binary, run_dir, [f"--config:{run_dir}"])
     expect_error(result, ("Could not open core settings file", "Could not read core settings file"), "directory input")
+    require("file not found" not in result.stdout, f"directory input: incorrect missing-file diagnostic\n{result.stdout}")
     require(result.stdout.splitlines()[0] == version_line,
             f"directory input: version must precede the input error\n{result.stdout}")
 
@@ -241,7 +244,17 @@ def test_invalid_inputs(binary, run_dir):
     invalid_json_path.write_text("{", encoding="utf-8")
 
     result = run_waterwall(binary, run_dir, [f"--config:{missing_path}"])
-    expect_error(result, "Could not open core settings file", "missing config path")
+    expect_error(result, f'Could not open core settings file "{missing_path}": file not found', "missing config path")
+
+    if os.name == "posix":
+        regular_file = run_dir / "regular-file"
+        regular_file.write_text("", encoding="utf-8")
+        invalid_path = regular_file / "core.json"
+        result = run_waterwall(binary, run_dir, [f"--config:{invalid_path}"])
+        expect_error(result, f'Could not open core settings file "{invalid_path}": {os.strerror(errno.ENOTDIR)}',
+                     "non-directory parent")
+        require("file not found" not in result.stdout,
+                f"non-directory parent: incorrect missing-file diagnostic\n{result.stdout}")
 
     result = run_waterwall(binary, run_dir, [f"--config:{run_dir}"])
     expect_error(result, ("Could not open core settings file", "Could not read core settings file"), "directory config path")
