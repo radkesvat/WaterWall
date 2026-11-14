@@ -38,8 +38,7 @@ typedef struct rawsocket_tstate_s
     char         *raw_device_name;
     raw_device_t *raw_device;
 
-    int  firewall_mark;
-    bool bypass_conntrack;
+    uint32_t firewall_mark;
 
 } rawsocket_tstate_t;
 

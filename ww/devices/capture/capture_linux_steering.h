@@ -15,7 +15,7 @@ enum
  * ordinary opaque packets to the separate random class. Every fragment uses
  * address/protocol fallback, including fragment zero. Invalid/unsupported input
  * selects lane zero for ordinary reader validation. Protocol exclusions remain
- * a separate match shared with NOTRACK. Stateful consumers establish ownership
+ * a separate match on each queue rule. Stateful consumers establish ownership
  * independently after preceding packet transformations. */
 void captureLinuxBuildSteeringFilter(uint16_t queue_count, uint16_t lane_index, device_opaque_flow_mode_t mode,
                                      char output[kCaptureLinuxSteeringFilterSize]);

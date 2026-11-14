@@ -128,31 +128,15 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
     LABELS "integration;linux;privileged;capture;nfqueue;network-isolated"
   )
   add_test(
-    NAME waterwall.capture_linux_conntrack_enabled
+    NAME waterwall.capture_linux_protocols_bypass
     COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux_notrack_integration.py"
-      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --tracked
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" --exclude-protocols
   )
-  set_tests_properties(waterwall.capture_linux_conntrack_enabled PROPERTIES
+  set_tests_properties(waterwall.capture_linux_protocols_bypass PROPERTIES
     TIMEOUT 60
     LABELS "integration;linux;privileged;capture;nfqueue;conntrack;network-isolated"
   )
-  foreach(policy IN ITEMS bypass tracked)
-    set(protocol_test_args --exclude-protocols)
-    if(policy STREQUAL "tracked")
-      list(APPEND protocol_test_args --tracked)
-    endif()
-    add_test(
-      NAME waterwall.capture_linux_protocols_${policy}
-      COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_in_network_namespace.sh"
-        "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/capture_linux_notrack_integration.py"
-        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" ${protocol_test_args}
-    )
-    set_tests_properties(waterwall.capture_linux_protocols_${policy} PROPERTIES
-      TIMEOUT 60
-      LABELS "integration;linux;privileged;capture;nfqueue;conntrack;network-isolated"
-    )
-  endforeach()
   if(TARGET RawSocket AND TARGET PingServer AND TARGET PacketsToStream AND TARGET TcpConnector)
     foreach(queue_mode IN ITEMS multi single)
       add_test(

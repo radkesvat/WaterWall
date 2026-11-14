@@ -28,10 +28,10 @@ static bool             fake_raw_device_up;
 static bool             fake_capture_mode_applied;
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             uint32_t capture_range_count, bool skip_sysctl,
                                              const capture_protocol_filter_t *protocol_filter, void *userdata,
                                              CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy);
-raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata);
+raw_device_t     *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata);
 void              __wrap_capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque_flow_mode_t mode);
 bool              __wrap_caputredeviceBringUp(capture_device_t *cdev);
 bool              __wrap_rawdeviceBringUp(raw_device_t *rdev);
@@ -65,7 +65,7 @@ void rawsocketOnIPPacketReceived(struct capture_device_s *cdev, void *userdata, 
 }
 
 capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *capture_ranges,
-                                             uint32_t capture_range_count, bool skip_sysctl, bool bypass_conntrack,
+                                             uint32_t capture_range_count, bool skip_sysctl,
                                              const capture_protocol_filter_t *protocol_filter, void *userdata,
                                              CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy)
 {
@@ -73,7 +73,6 @@ capture_device_t *__wrap_caputredeviceCreate(const char *name, const ipmask_t *c
     require(capture_ranges != NULL, "RawSocket did not pass capture ranges");
     require(capture_range_count == 1, "RawSocket passed the wrong capture range count");
     require(skip_sysctl, "RawSocket did not pass skip-sysctl to the capture device");
-    require(! bypass_conntrack, "RawSocket did not disable capture conntrack bypass alongside output");
     require(captureProtocolFilterExcludes(protocol_filter, 1) && captureProtocolFilterExcludes(protocol_filter, 6) &&
                 ! captureProtocolFilterExcludes(protocol_filter, 17),
             "RawSocket lost its capture protocol exclusions");
@@ -100,10 +99,9 @@ void __wrap_capturedeviceSetOpaqueFlowMode(capture_device_t *cdev, device_opaque
     fake_capture_mode_applied = true;
 }
 
-raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
+raw_device_t *__wrap_rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 {
     require(name != NULL, "RawSocket did not pass a raw device name");
-    require(! bypass_conntrack, "custom-mark fixture unexpectedly enabled conntrack bypass");
     require(mark == 7, "RawSocket passed the wrong firewall mark");
     require(userdata != NULL, "RawSocket did not pass tunnel userdata to raw device");
 

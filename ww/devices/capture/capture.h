@@ -37,11 +37,11 @@ void capturedeviceConfigureKernelQueue(capture_device_t *cdev, bool enabled, uin
 /* Called on each event worker during quiescence, before BringDown. */
 void capturedeviceWorkerQuiesce(capture_device_t *cdev, wid_t wid);
 
-/* skip_sysctl suppresses only optional Linux kernel tuning. bypass_conntrack
- * controls Linux NOTRACK rules; NFQUEUE capture remains enabled either way. */
+/* skip_sysctl suppresses only optional Linux kernel tuning. Linux capture
+ * always uses raw PREROUTING for selected local-unicast input before conntrack. */
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, bool bypass_conntrack,
-                                      const capture_protocol_filter_t *protocol_filter, void *userdata,
-                                      CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy);
+                                      bool skip_sysctl, const capture_protocol_filter_t *protocol_filter,
+                                      void *userdata, CaptureReadEventHandle cb,
+                                      device_fragment_policy_t fragment_policy);
 
 void capturedeviceDestroy(capture_device_t *cdev);

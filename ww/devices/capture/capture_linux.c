@@ -324,7 +324,7 @@ bool caputredeviceBringUp(capture_device_t *cdev)
 
     /* Before capture activation, the command supervisor services these queues
      * with NF_ACCEPT. No packet can enter the chain before its queued Init. */
-    if (! capturedeviceInstallRuleKind(cdev, false))
+    if (! capturedeviceInstallRules(cdev))
     {
         if (cdev->queue_count == 1 || ! capturedeviceRemoveInstalledRules(cdev) ||
             capturedevicePendingRangeCount(cdev) != 0 || ! captureReaderDrain(cdev))
@@ -334,11 +334,10 @@ bool caputredeviceBringUp(capture_device_t *cdev)
             goto failed;
         captureReaderOpen(cdev);
         LOGW("CaptureDevice: multiqueue routing unavailable; using worker 0");
-        if (! capturedeviceInstallRuleKind(cdev, false))
+        if (! capturedeviceInstallRules(cdev))
             goto failed;
     }
-    if ((cdev->bypass_conntrack && ! capturedeviceInstallRuleKind(cdev, true)) ||
-        ! capturedeviceReaderOperational(cdev) || ! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
+    if (! capturedeviceReaderOperational(cdev) || ! captureLifecycleTransitionStartingToUp(&cdev->lifecycle))
         goto failed;
     captureLogQueueLimits(cdev);
     atomicStoreRelaxed(&cdev->capture_active, true);
@@ -384,17 +383,17 @@ bool caputredeviceBringDown(capture_device_t *cdev)
     else
     {
         cdev->queue_restartable = false;
-        LOGE("CaptureDevice: rule cleanup incomplete; closed queues bypass capture. Remaining WWCAP_NOTRACK rules "
-             "must be removed to restore host connection tracking");
+        LOGE("CaptureDevice: rule cleanup incomplete; closed queues bypass capture. Remaining owned NFQUEUE rules "
+             "must be removed from raw PREROUTING");
     }
     captureLifecycleTransitionStoppingToDown(&cdev->lifecycle);
     return result;
 }
 
 capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_ranges, uint32_t capture_range_count,
-                                      bool skip_sysctl, bool bypass_conntrack,
-                                      const capture_protocol_filter_t *protocol_filter, void *userdata,
-                                      CaptureReadEventHandle cb, device_fragment_policy_t fragment_policy)
+                                      bool skip_sysctl, const capture_protocol_filter_t *protocol_filter,
+                                      void *userdata, CaptureReadEventHandle cb,
+                                      device_fragment_policy_t fragment_policy)
 {
     if (capture_ranges == NULL || capture_range_count == 0)
     {
@@ -434,7 +433,6 @@ capture_device_t *caputredeviceCreate(const char *name, const ipmask_t *capture_
     cdev->multi_queue         = true;
     cdev->kernel_queue_tune    = true;
     cdev->kernel_queue_profile = RAM_PROFILE;
-    cdev->bypass_conntrack    = bypass_conntrack;
     cdev->skip_sysctl         = skip_sysctl;
     cdev->rule_token          = fastRand64();
     cdev->queue_restartable   = true;

@@ -3,7 +3,7 @@
  * Setup: The included implementation/API and the deterministic inputs shown below; no integration
  * topology is implied.
  * Cases: testAliasesAcceptSingleAndArray, testMissingOrEmptyCaptureListEnablesWriteOnlyMode,
- * testSkipSysctlSetting, testInvalidCaptureElementIsRejected, testConntrackSetting,
+ * testSkipSysctlSetting, testInvalidCaptureElementIsRejected, testOutputMark,
  * testProtocolExclusions, testMultiQueueSetting
  * Checks: Assertion labels include: RawSocket did not default fragment-policy to reassemble; RawSocket
  * rejected a supported capture-ip/capture-ips shape; RawSocket loaded the wrong number of capture
@@ -239,38 +239,46 @@ static void testOpaqueFlowModeSetting(void)
     }
 }
 
-static void testConntrackSetting(void)
+static void testOutputMark(void)
 {
-    static const char *enabled[] = {"{}", "{\"bypass-conntrack\":true}"};
-    for (size_t i = 0; i < ARRAY_SIZE(enabled); ++i)
+    static const struct
+    {
+        const char *settings;
+        uint32_t    mark;
+    } valid[] = {{"{}", 0},
+                 {"{\"mark\":1}", 1},
+                 {"{\"mark\":99}", 99},
+                 {"{\"mark\":2147483648}", UINT32_C(2147483648)},
+                 {"{\"mark\":4294967295}", UINT32_MAX}};
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
     {
         cJSON    *settings;
-        tunnel_t *t = createRawSocket(enabled[i], &settings);
-        require(t != NULL && ((rawsocket_tstate_t *) tunnelGetState(t))->bypass_conntrack,
-                "RawSocket did not enable outbound conntrack bypass");
+        tunnel_t *t = createRawSocket(valid[i].settings, &settings);
+        require(t != NULL, "RawSocket rejected an automatic or valid explicit mark");
+        require(((rawsocket_tstate_t *) tunnelGetState(t))->firewall_mark == valid[i].mark,
+                "RawSocket narrowed or changed the configured mark");
         destroyRawSocket(t, settings);
     }
-
-    cJSON    *settings;
-    tunnel_t *t = createRawSocket("{\"bypass-conntrack\":false,\"mark\":42}", &settings);
-    require(t != NULL, "RawSocket rejected a custom mark with conntrack bypass disabled");
-    rawsocket_tstate_t *state = tunnelGetState(t);
-    require(! state->bypass_conntrack && state->firewall_mark == 42, "RawSocket lost the explicit mark opt-out");
-    destroyRawSocket(t, settings);
-
-    static const char *invalid[] = {
-        "{\"mark\":42}",
-        "{\"mark\":0}",
-        "{\"mark\":null}",
-        "{\"bypass-conntrack\":true,\"mark\":42}",
-        "{\"bypass-conntrack\":\"true\"}",
-        "{\"bypass-conntrack\":0}",
-        "{\"bypass-conntrack\":null}",
-    };
+    static const char *invalid[] = {"{\"mark\":0}",
+                                    "{\"mark\":-1}",
+                                    "{\"mark\":1.5}",
+                                    "{\"mark\":4294967296}",
+                                    "{\"mark\":null}",
+                                    "{\"mark\":true}",
+                                    "{\"mark\":\"99\"}",
+                                    "{\"mark\":[]}",
+                                    "{\"mark\":{}}",
+                                    "{\"bypass-conntrack\":true}",
+                                    "{\"bypass-conntrack\":false}",
+                                    "{\"bypass-conntrack\":false,\"mark\":99}",
+                                    "{\"bypass-conntrack\":\"true\"}",
+                                    "{\"bypass-conntrack\":0}",
+                                    "{\"bypass-conntrack\":null}"};
     for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
     {
-        t = createRawSocket(invalid[i], &settings);
-        require(t == NULL, "RawSocket accepted a conflicting mark or a non-boolean bypass setting");
+        cJSON    *settings;
+        tunnel_t *t = createRawSocket(invalid[i], &settings);
+        require(t == NULL, "RawSocket accepted an invalid mark or unsupported conntrack setting");
         destroyRawSocket(t, settings);
     }
 }
@@ -422,7 +430,7 @@ int main(void)
     testOpaqueFlowModeSetting();
     testKernelQueueSettings();
     testInvalidCaptureElementIsRejected();
-    testConntrackSetting();
+    testOutputMark();
     testProtocolExclusions();
     testProtocolAllowlist();
     testAllProtocolsAllowed();

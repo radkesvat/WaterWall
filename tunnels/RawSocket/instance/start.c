@@ -54,7 +54,6 @@ void rawsocketOnStart(tunnel_t *t)
                                                     state->capture_ranges,
                                                     state->capture_range_count,
                                                     state->skip_sysctl,
-                                                    state->bypass_conntrack,
                                                     &state->capture_protocol_filter,
                                                     t,
                                                     rawsocketOnIPPacketReceived,
@@ -72,7 +71,7 @@ void rawsocketOnStart(tunnel_t *t)
             state->capture_device, state->kernel_queue_tune, state->kernel_queue_packets, state->kernel_receive_buffer);
     }
 
-    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, state->bypass_conntrack, t);
+    state->raw_device = rawdeviceCreate(state->raw_device_name, state->firewall_mark, t);
     if (state->raw_device == NULL)
     {
         rawsocketDestroyStartupDevices(state);

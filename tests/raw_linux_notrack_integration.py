@@ -79,8 +79,8 @@ def run(binary, directory):
         iptables("-t", "mangle", "-A", "WWRAW_TEST_CT", "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED")
         iptables("-t", "mangle", "-A", "WWRAW_TEST_CT", "-m", "mark", "--mark", "0x13572468")
 
-        names = ("auto-default", "auto-explicit", "custom-mark")
-        policies = ({}, {"bypass-conntrack": True}, {"bypass-conntrack": False, "mark": 0x13572468})
+        names = ("auto-default", "auto-second", "custom-mark")
+        policies = ({}, {}, {"mark": 0x13572468})
         nodes = []
         listeners = []
         reservations = []
@@ -125,8 +125,8 @@ def run(binary, directory):
                 rules = iptables("-t", "raw", "-S", "OUTPUT")
                 owned = [line for line in rules.splitlines() if "WWRAW_NOTRACK_" in line]
                 marks = [int(re.search(r"--mark (0x[0-9a-f]+)", line)[1], 16) for line in owned]
-                assert len(marks) == len(set(marks)) == 2, rules
-                assert all(mark >= 0x10000 and mark & 0x80ff0000 == 0 for mark in marks), marks
+                assert len(marks) == len(set(marks)) == 3 and 0x13572468 in marks, rules
+                assert all(mark >= 0x10000 and mark & 0x80ff0000 == 0 for mark in marks if mark != 0x13572468), marks
                 assert "WWCAP" not in iptables("-S", "INPUT")
                 streams = [stack.enter_context(connect_listener(process, p, deadline))
                            for p in listeners]
@@ -134,18 +134,18 @@ def run(binary, directory):
                     payload = names[index].encode()
                     stream.sendall(b"".join(packets(port, payload, index + 1)))
                     assert receiver.recv(65535) == payload
-                expect_counts((2, 1, 1))
+                expect_counts((3, 0, 1))
 
                 # The normal OUTPUT defrag hook still reassembles fragments,
                 # and the reassembled datagram retains the NOTRACK mark.
                 payload = bytes(1400)
                 streams[0].sendall(b"".join(packets(port, payload, 4, fragmented=True)))
                 assert receiver.recv(65535) == payload
-                expect_counts((3, 1, 1))
+                expect_counts((4, 0, 1))
                 unrelated = stack.enter_context(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
                 unrelated.sendto(b"unrelated", receiver.getsockname())
                 assert receiver.recv(65535) == b"unrelated"
-                expect_counts((3, 2, 1))
+                expect_counts((4, 1, 1))
 
                 process.terminate()
                 assert process.wait(timeout=15) in (0, 143)
@@ -165,7 +165,7 @@ def main():
             if log.exists():
                 print(log.read_text()[-20000:], file=sys.stderr)
             raise
-    print("Raw output NOTRACK, opt-out, mark allocation, fragments, and cleanup passed")
+    print("Raw output NOTRACK, explicit and automatic marks, fragments, and cleanup passed")
 
 
 if __name__ == "__main__":

@@ -622,7 +622,7 @@ def run(binary, directory, tun, multi_queue, tcp, encrypted=False):
             process.terminate()
             assert process.wait(timeout=15) in (0, 143), "peer failed orderly shutdown"
         assert "WWCAP" not in iptables("-S", "INPUT"), "capture rules survived shutdown"
-        assert "WWCAP_NOTRACK" not in iptables("-t", "raw", "-S", "PREROUTING")
+        assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING"), "early capture rules survived shutdown"
         assert "WWRAW_NOTRACK" not in iptables("-t", "raw", "-S", "OUTPUT")
 
 

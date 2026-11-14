@@ -3,13 +3,13 @@
  * suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testInsertBuildsExactArgv, testDeleteBuildsExactArgv, testNotrackRulesStayInRawPrerouting,
- * testNotrackInspectionUsesRawPrerouting, testIptablesTimeoutIsDistinctFromNonzeroExit,
+ * Cases: testInsertBuildsExactArgv, testDeleteBuildsExactArgv,
+ * testEarlyQueueInspectionUsesRawPrerouting, testIptablesTimeoutIsDistinctFromNonzeroExit,
  * testInputInspectionUsesLargeSnapshotCap, testInputInspectionRejectsEmptySnapshot,
  * testQueueSelectionAvoidsReferencedNumbers; the driver lists the remaining cases
  * Checks: Assertion labels include: Capture must pass a complete request to the process runner; too many
  * recorded command calls; too many recorded command arguments; the iptables argv must have exactly
- * sixteen elements
+ * twenty-two elements
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.capture_linux_command_unit
@@ -70,6 +70,7 @@ static size_t          dropped_result_count = 0;
 static fake_outcome_t fake_outcome   = kFakeOutcomeSuccess;
 static size_t         fail_from_call = SIZE_MAX;
 static const char    *fake_success_output;
+static const char    *fake_prerouting_output;
 static size_t         fake_success_output_len;
 static bool           fake_reader_operational   = true;
 static size_t         reader_failure_after_call = SIZE_MAX;
@@ -86,15 +87,17 @@ bool __wrap_capturedeviceReaderOperational(capture_device_t *cdev)
     return fake_reader_operational;
 }
 
-static bool completeSuccessfulCommand(proc_command_result_t *out)
+static bool completeSuccessfulCommand(proc_command_result_t *out, bool prerouting)
 {
     out->exit_code = 0;
-    if (fake_success_output != NULL)
+    const char *output = prerouting && fake_prerouting_output != NULL ? fake_prerouting_output : fake_success_output;
+    if (output != NULL)
     {
-        out->output = memoryAllocate(fake_success_output_len + 1U);
-        memoryCopy(out->output, fake_success_output, fake_success_output_len);
-        out->output[fake_success_output_len] = '\0';
-        out->output_len                      = fake_success_output_len;
+        const size_t length = output == fake_success_output ? fake_success_output_len : stringLength(output);
+        out->output         = memoryAllocate(length + 1U);
+        memoryCopy(out->output, output, length);
+        out->output[length] = '\0';
+        out->output_len     = length;
     }
     return true;
 }
@@ -117,6 +120,7 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
         ++call->argc;
     }
 
+    const bool   prerouting = call->argc > 5 && strcmp(argv[4], "raw") == 0 && strcmp(argv[5], "-S") == 0;
     const size_t call_index = recorded_call_count++;
     if (recorded_call_count >= reader_failure_after_call)
     {
@@ -128,7 +132,7 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
 
     if (call_index < fail_from_call)
     {
-        return completeSuccessfulCommand(out);
+        return completeSuccessfulCommand(out, prerouting);
     }
 
     switch (fake_outcome)
@@ -147,7 +151,7 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
         return false;
     case kFakeOutcomeSuccess:
     default:
-        return completeSuccessfulCommand(out);
+        return completeSuccessfulCommand(out, prerouting);
     }
 }
 
@@ -168,6 +172,7 @@ static void resetRecording(fake_outcome_t outcome, size_t first_failing_call)
     fake_outcome              = outcome;
     fail_from_call            = first_failing_call;
     fake_success_output       = NULL;
+    fake_prerouting_output    = NULL;
     fake_success_output_len   = 0;
     fake_reader_operational   = true;
     reader_failure_after_call = SIZE_MAX;
@@ -190,30 +195,21 @@ static void requireInspectionOptions(const recorded_call_t *call, const char *me
 static void requireIptablesArgv(const recorded_call_t *call, const char *operation, const char *cidr,
                                 const char *queue_number, const char *rule_comment)
 {
-    static const char *const prefix[] = {"iptables", "-w", "5"};
-    static const char *const suffix[] = {"INPUT", "-s"};
-
-    require(call->argc == 16, "the iptables argv must have exactly sixteen elements");
-    requireEqStr(call->file, "iptables", "iptables must be executed by name through execvp");
-    for (size_t i = 0; i < sizeof(prefix) / sizeof(prefix[0]); ++i)
-    {
-        requireEqStr(call->argv[i], prefix[i], "iptables argv prefix mismatch");
-    }
-    requireEqStr(call->argv[3], operation, "iptables operation mismatch");
-    for (size_t i = 0; i < sizeof(suffix) / sizeof(suffix[0]); ++i)
-    {
-        requireEqStr(call->argv[4 + i], suffix[i], "iptables chain/source argv mismatch");
-    }
-    requireEqStr(call->argv[6], cidr, "iptables source CIDR mismatch");
-    requireEqStr(call->argv[7], "-m", "iptables comment match flag mismatch");
-    requireEqStr(call->argv[8], "comment", "iptables comment match mismatch");
-    requireEqStr(call->argv[9], "--comment", "iptables comment option mismatch");
-    requireEqStr(call->argv[10], rule_comment, "iptables rule comment mismatch");
-    requireEqStr(call->argv[11], "-j", "iptables jump flag mismatch");
-    requireEqStr(call->argv[12], "NFQUEUE", "iptables jump target mismatch");
-    requireEqStr(call->argv[13], "--queue-num", "iptables queue flag mismatch");
-    requireEqStr(call->argv[14], queue_number, "iptables queue number mismatch");
-    requireEqStr(call->argv[15], "--queue-bypass", "iptables queue-bypass flag mismatch");
+    const char *const expected[] = {"iptables",   "-w",
+                                    "5",          "-t",
+                                    "raw",        operation,
+                                    "PREROUTING", "-s",
+                                    cidr,         "-m",
+                                    "addrtype",   "--dst-type",
+                                    "LOCAL",      "-m",
+                                    "comment",    "--comment",
+                                    rule_comment, "-j",
+                                    "NFQUEUE",    "--queue-num",
+                                    queue_number, "--queue-bypass"};
+    requireEqStr(call->file, "iptables", "iptables must be executed directly");
+    require(call->argc == ARRAY_SIZE(expected), "capture rule argument count mismatch");
+    for (size_t i = 0; i < ARRAY_SIZE(expected); ++i)
+        requireEqStr(call->argv[i], expected[i], "capture rule must use raw PREROUTING and local-unicast scope");
 }
 
 // Nothing Capture runs may be handed to a shell: neither the executable nor any
@@ -259,60 +255,32 @@ static void testDeleteBuildsExactArgv(void)
     require(dropped_result_count == 1, "deletion must drop its command result exactly once");
 }
 
-static void testNotrackRulesStayInRawPrerouting(void)
-{
-    const char *const operations[] = {"-I", "-D"};
-    for (size_t op = 0; op < sizeof(operations) / sizeof(operations[0]); ++op)
-    {
-        resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-        require(capturedeviceRunIptablesNotrackRule(operations[op], "203.0.113.0/24", "WWCAP_NOTRACK_TEST", "") ==
-                    kCapturedeviceCommandOk,
-                "NOTRACK mutation failed");
-        const char *const expected[] = {
-            "iptables",           "-w", "5",        "-t",         "raw",   operations[op], "PREROUTING", "-s",
-            "203.0.113.0/24",     "-m", "addrtype", "--dst-type", "LOCAL", "-m",           "comment",    "--comment",
-            "WWCAP_NOTRACK_TEST", "-j", "CT",       "--notrack",
-        };
-        require(recorded_call_count == 1, "NOTRACK mutation must issue exactly one command");
-        const recorded_call_t *call = &recorded_calls[0];
-        requireEqStr(call->file, "iptables", "NOTRACK must invoke iptables directly");
-        require(call->argc == sizeof(expected) / sizeof(expected[0]), "NOTRACK argument count mismatch");
-        for (size_t i = 0; i < call->argc; ++i)
-        {
-            requireEqStr(
-                call->argv[i], expected[i], "NOTRACK must match only the selected source and local destination");
-        }
-        requireMutationOptions(call, "NOTRACK must retain the bounded mutation policy");
-        requireNoShellInvocation();
-        require(dropped_result_count == 1, "NOTRACK mutation leaked its command result");
-    }
-}
-
-static void testNotrackInspectionUsesRawPrerouting(void)
+static void testEarlyQueueInspectionUsesRawPrerouting(void)
 {
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     fake_success_output     = "-P PREROUTING ACCEPT\n";
     fake_success_output_len = strlen(fake_success_output);
     char *rules             = NULL;
-    require(capturedeviceReadIptablesNotrackRules(&rules) == kCapturedeviceCommandOk, "NOTRACK rule inspection failed");
-    requireEqStr(rules, fake_success_output, "NOTRACK inspection lost its snapshot");
+    require(capturedeviceReadIptablesPreroutingRules(&rules) == kCapturedeviceCommandOk,
+            "early queue rule inspection failed");
+    requireEqStr(rules, fake_success_output, "early queue inspection lost its snapshot");
     memoryFree(rules);
 
     const char *const expected[] = {"iptables", "-w", "5", "-t", "raw", "-S", "PREROUTING"};
-    require(recorded_call_count == 1, "NOTRACK inspection must issue exactly one command");
+    require(recorded_call_count == 1, "early queue inspection must issue exactly one command");
     require(recorded_calls[0].argc == sizeof(expected) / sizeof(expected[0]),
-            "NOTRACK inspection argument count mismatch");
+            "early queue inspection argument count mismatch");
     for (size_t i = 0; i < recorded_calls[0].argc; ++i)
     {
-        requireEqStr(recorded_calls[0].argv[i], expected[i], "NOTRACK inspection queried the wrong chain/table");
+        requireEqStr(recorded_calls[0].argv[i], expected[i], "early queue inspection queried the wrong chain/table");
     }
-    requireInspectionOptions(&recorded_calls[0], "NOTRACK inspection used the wrong command bounds");
-    require(dropped_result_count == 1, "NOTRACK inspection leaked its command result");
+    requireInspectionOptions(&recorded_calls[0], "early queue inspection used the wrong command bounds");
+    require(dropped_result_count == 1, "early queue inspection leaked its command result");
 
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     rules = NULL;
-    require(capturedeviceReadIptablesNotrackRules(&rules) == kCapturedeviceCommandFailed && rules == NULL,
-            "NOTRACK inspection must reject a lost snapshot");
+    require(capturedeviceReadIptablesPreroutingRules(&rules) == kCapturedeviceCommandFailed && rules == NULL,
+            "early queue inspection must reject a lost snapshot");
 }
 
 static void testIptablesTimeoutIsDistinctFromNonzeroExit(void)
@@ -366,9 +334,9 @@ static void testInputInspectionUsesLargeSnapshotCap(void)
             "the large INPUT snapshot was not transferred intact");
     require(recorded_call_count == 1, "INPUT inspection must run exactly one command");
     requireInspectionOptions(&recorded_calls[0], "INPUT inspection did not use its separate one-megabyte cap");
-    require(recorded_calls[0].argc == 5, "INPUT inspection argv must be `iptables -w 5 -S INPUT`");
-    requireEqStr(recorded_calls[0].argv[3], "-S", "INPUT inspection must use the list-rules operation");
-    requireEqStr(recorded_calls[0].argv[4], "INPUT", "INPUT inspection must target the INPUT chain");
+    require(recorded_calls[0].argc == 7, "INPUT inspection argv must be `iptables -w 5 -t filter -S INPUT`");
+    requireEqStr(recorded_calls[0].argv[5], "-S", "INPUT inspection must use the list-rules operation");
+    requireEqStr(recorded_calls[0].argv[6], "INPUT", "INPUT inspection must target the INPUT chain");
     require(dropped_result_count == 1, "INPUT inspection must drop its transferred command result exactly once");
 
     memoryFree(captured);
@@ -400,11 +368,11 @@ static void testQueueSelectionAvoidsReferencedNumbers(void)
                            "-A INPUT -j NFQUEUE --queue-num 0 --queue-bypass\n";
     uint16_t    selected = 0;
 
-    require(capturedeviceSelectUnusedQueueNumber(snapshot, 7, &selected) && selected == 8,
+    require(capturedeviceSelectUnusedQueueNumber(snapshot, "", 7, &selected) && selected == 8,
             "queue selection did not skip an exact stale queue reference");
-    require(capturedeviceSelectUnusedQueueNumber(snapshot, 10, &selected) && selected == 13,
+    require(capturedeviceSelectUnusedQueueNumber(snapshot, "", 10, &selected) && selected == 13,
             "queue selection did not skip an existing queue-balance range");
-    require(capturedeviceSelectUnusedQueueNumber(snapshot, UINT16_MAX, &selected) && selected == 1,
+    require(capturedeviceSelectUnusedQueueNumber(snapshot, "", UINT16_MAX, &selected) && selected == 1,
             "queue selection did not skip stale queue references across uint16 wraparound");
 }
 
@@ -414,19 +382,55 @@ static void testQueueRangeSelection(void)
                            "-A INPUT -j NFQUEUE --queue-num 8\n"
                            "-A INPUT -j NFQUEUE --queue-balance 12:14\n";
     uint16_t    selected = 0;
-    require(capturedeviceSelectUnusedQueueRange(snapshot, 7, 3, &selected) && selected == 9,
+    require(capturedeviceSelectUnusedQueueRange(snapshot, "", 7, 3, &selected) && selected == 9,
             "queue range selection did not skip an overlapping single queue");
-    require(capturedeviceSelectUnusedQueueRange(snapshot, 10, 3, &selected) && selected == 15,
+    require(capturedeviceSelectUnusedQueueRange(snapshot, "", 10, 3, &selected) && selected == 15,
             "queue range selection did not skip an overlapping balanced range");
-    require(capturedeviceSelectUnusedQueueRange(snapshot, UINT16_MAX - 1, 3, &selected) && selected == 1,
+    require(capturedeviceSelectUnusedQueueRange(snapshot, "", UINT16_MAX - 1, 3, &selected) && selected == 1,
             "queue range wrapped across 65535 instead of selecting a contiguous range");
-    require(capturedeviceSelectUnusedQueueRange("-P INPUT ACCEPT\n", UINT16_MAX - 2, 3, &selected) &&
+    require(capturedeviceSelectUnusedQueueRange("-P INPUT ACCEPT\n", "", UINT16_MAX - 2, 3, &selected) &&
                 selected == UINT16_MAX - 2,
             "queue range ending exactly at 65535 was rejected");
     selected = 123;
-    require(! capturedeviceSelectUnusedQueueRange("-A INPUT -j NFQUEUE --queue-balance 0:65534\n", 0, 2, &selected) &&
-                selected == 123,
-            "queue range exhaustion changed the caller's selection or accepted a partial range");
+    require(
+        ! capturedeviceSelectUnusedQueueRange("-A INPUT -j NFQUEUE --queue-balance 0:65534\n", "", 0, 2, &selected) &&
+            selected == 123,
+        "queue range exhaustion changed the caller's selection or accepted a partial range");
+    const char *early = "-A PREROUTING -j NFQUEUE --queue-num 9\n"
+                        "-A PREROUTING -j NFQUEUE --queue-balance 15:17\n";
+    require(capturedeviceSelectUnusedQueueRange(snapshot, early, 7, 3, &selected) && selected == 18,
+            "selection reused an INPUT or raw PREROUTING reference");
+    require(capturedeviceSelectUnusedQueueNumber("", early, 15, &selected) && selected == 18,
+            "selection ignored an early balanced queue range");
+}
+
+static void testQueueSelectionInspectsBothHooks(void)
+{
+    const uint16_t saved_start              = GSTATE.capturedevice_queue_start_number;
+    GSTATE.capturedevice_queue_start_number = 7;
+    resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+    fake_success_output     = "-A INPUT -j NFQUEUE --queue-num 7\n";
+    fake_success_output_len = stringLength(fake_success_output);
+    fake_prerouting_output  = "-A PREROUTING -j NFQUEUE --queue-num 8\n";
+    uint16_t selected       = 123;
+    require(capturedeviceChooseQueueRange(1, &selected) && selected == 9,
+            "queue setup did not exclude both hooks' stale rules");
+    require(recorded_call_count == 2 && dropped_result_count == 2, "queue setup did not inspect both hooks once");
+    requireEqStr(recorded_calls[0].argv[6], "INPUT", "queue setup did not inspect INPUT");
+    requireEqStr(recorded_calls[1].argv[4], "raw", "queue setup did not inspect raw");
+    requireEqStr(recorded_calls[1].argv[6], "PREROUTING", "queue setup did not inspect PREROUTING");
+    for (size_t failure = 0; failure < 2; ++failure)
+    {
+        resetRecording(kFakeOutcomeTimeout, failure);
+        fake_success_output     = "-P INPUT ACCEPT\n";
+        fake_success_output_len = stringLength(fake_success_output);
+        selected                = 123;
+        require(! capturedeviceChooseQueueRange(1, &selected) && selected == 123,
+                "queue selection used incomplete firewall evidence");
+        require(recorded_call_count == failure + 1 && dropped_result_count == failure + 1,
+                "failed queue inspection leaked its result or continued");
+    }
+    GSTATE.capturedevice_queue_start_number = saved_start;
 }
 
 enum
@@ -496,14 +500,14 @@ static void testDeterministicModesInstallOnlyOwnedFlowRules(void)
         for (uint16_t lane = 0; lane < kRuleTestQueues; ++lane)
             captureLinuxBuildSteeringFilter(kRuleTestQueues, lane, mode, fixture.queues[lane].steering_filter);
         resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-        require(capturedeviceInstallRuleKind(&fixture.device, false), "deterministic mode installation failed");
+        require(capturedeviceInstallRules(&fixture.device), "deterministic mode installation failed");
         require(recorded_call_count == kRuleTestRanges * kRuleTestQueues,
                 "deterministic mode installed random opaque rules");
         for (size_t i = 0; i < recorded_call_count; ++i)
         {
             require(fixture.states[i].queue == kCaptureRuleInstalled && fixture.states[i].opaque == kCaptureRuleAbsent,
                     "deterministic mode published the wrong rule inventory");
-            require(recorded_calls[i].argc == 24, "deterministic rule acquired statistic matcher arguments");
+            require(recorded_calls[i].argc == 30, "deterministic rule acquired statistic matcher arguments");
         }
         require(capturedeviceRemoveInstalledRules(&fixture.device), "deterministic mode cleanup failed");
         require(capturedevicePendingRangeCount(&fixture.device) == 0, "deterministic mode retained rule ownership");
@@ -515,9 +519,8 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
     capture_rule_fixture_t fixture;
     prepareRuleFixture(&fixture);
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    require(capturedeviceInstallRuleKind(&fixture.device, false), "multiqueue rule installation failed");
-    require(capturedeviceInstallRuleKind(&fixture.device, true), "multiqueue NOTRACK installation failed");
-    require(recorded_call_count == 14, "multiqueue rules did not install both lane sets and two NOTRACK rules");
+    require(capturedeviceInstallRules(&fixture.device), "multiqueue rule installation failed");
+    require(recorded_call_count == 12, "multiqueue rules did not install both lane sets");
     require(capturedevicePendingRangeCount(&fixture.device) == kRuleTestRanges,
             "pending accounting counted queue lanes as capture ranges");
     for (size_t index = 0; index < kRuleTestRanges * kRuleTestQueues; ++index)
@@ -529,53 +532,42 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
         stringNPrintf(queue_number, sizeof(queue_number), "%u", fixture.queues[lane].number);
         stringNPrintf(comment, sizeof(comment), "WWCAP_1234567890ABCDEF_%016zX", index);
         requireEqStr(
-            call->argv[6], fixture.cidrs[index / kRuleTestQueues], "queue lane matched the wrong source range");
-        requireEqStr(call->argv[10], comment, "queue lane did not get a unique rule comment");
-        requireEqStr(call->argv[14], queue_number, "queue lane targeted the wrong NFQUEUE");
-        require(call->argc == 24, "multiqueue rule did not keep two independent BPF predicates");
-        requireEqStr(call->argv[19], fixture.device.protocol_filter, "queue lane changed the protocol exclusion");
-        requireEqStr(call->argv[23], fixture.queues[lane].steering_filter, "queue lane changed the steering predicate");
+            call->argv[8], fixture.cidrs[index / kRuleTestQueues], "queue lane matched the wrong source range");
+        requireEqStr(call->argv[16], comment, "queue lane did not get a unique rule comment");
+        requireEqStr(call->argv[20], queue_number, "queue lane targeted the wrong NFQUEUE");
+        require(call->argc == 30, "multiqueue rule did not keep two independent BPF predicates");
+        requireEqStr(call->argv[25], fixture.device.protocol_filter, "queue lane changed the protocol exclusion");
+        requireEqStr(call->argv[29], fixture.queues[lane].steering_filter, "queue lane changed the steering predicate");
         require(fixture.states[index].queue == kCaptureRuleInstalled, "queue rule state was not published");
         const recorded_call_t *opaque = &recorded_calls[6 + index];
         char                   opaque_filter[kCaptureLinuxSteeringFilterSize];
         captureLinuxBuildOpaqueFilter(opaque_filter);
         stringNPrintf(comment, sizeof(comment), "WWCAP_OPAQUE_1234567890ABCDEF_%016zX", index);
-        requireEqStr(opaque->argv[10], comment, "opaque queue lost its independent owned identity");
-        requireEqStr(opaque->argv[14], queue_number, "opaque queue targeted the wrong lane");
-        requireEqStr(opaque->argv[19], fixture.device.protocol_filter, "opaque queue lost protocol exclusions");
-        requireEqStr(opaque->argv[23], opaque_filter, "opaque queue lost its disjoint classification");
-        require(opaque->argc == (lane == 0 ? 24 : 30), "opaque queue has incorrect random arguments or no tail");
+        requireEqStr(opaque->argv[16], comment, "opaque queue lost its independent owned identity");
+        requireEqStr(opaque->argv[20], queue_number, "opaque queue targeted the wrong lane");
+        requireEqStr(opaque->argv[25], fixture.device.protocol_filter, "opaque queue lost protocol exclusions");
+        requireEqStr(opaque->argv[29], opaque_filter, "opaque queue lost its disjoint classification");
+        require(opaque->argc == (lane == 0 ? 30 : 36), "opaque queue has incorrect random arguments or no tail");
         if (lane != 0)
         {
             const char *probability = lane == 1 ? "0.500000000000" : "0.333333333333";
-            requireEqStr(opaque->argv[24], "-m", "opaque queue omitted statistic module option");
-            requireEqStr(opaque->argv[25], "statistic", "opaque queue omitted kernel statistic matcher");
-            requireEqStr(opaque->argv[26], "--mode", "opaque queue omitted statistic mode option");
-            requireEqStr(opaque->argv[27], "random", "opaque receive retained a shared nth counter");
-            requireEqStr(opaque->argv[28], "--probability", "opaque queue omitted its conditional probability");
+            requireEqStr(opaque->argv[30], "-m", "opaque queue omitted statistic module option");
+            requireEqStr(opaque->argv[31], "statistic", "opaque queue omitted kernel statistic matcher");
+            requireEqStr(opaque->argv[32], "--mode", "opaque queue omitted statistic mode option");
+            requireEqStr(opaque->argv[33], "random", "opaque receive retained a shared nth counter");
+            requireEqStr(opaque->argv[34], "--probability", "opaque queue omitted its conditional probability");
             requireEqStr(
-                opaque->argv[29], probability, "random cascade probability does not match reverse INSERT order");
+                opaque->argv[35], probability, "random cascade probability does not match reverse INSERT order");
         }
         require(fixture.states[index].opaque == kCaptureRuleInstalled, "opaque rule state was not published");
-        require(fixture.states[index].notrack == (lane == 0 ? kCaptureRuleInstalled : kCaptureRuleAbsent),
-                "NOTRACK state was multiplied across queue lanes");
     }
-    for (size_t range = 0; range < kRuleTestRanges; ++range)
-    {
-        const recorded_call_t *call = &recorded_calls[12 + range];
-        require(call->argc == 24, "NOTRACK gained a steering predicate");
-        requireEqStr(call->argv[23], fixture.device.protocol_filter, "NOTRACK lost the common protocol exclusion");
-    }
-
     require(capturedeviceRemoveInstalledRules(&fixture.device), "multiqueue cleanup failed");
-    require(recorded_call_count == 28 && capturedevicePendingRangeCount(&fixture.device) == 0,
+    require(recorded_call_count == 24 && capturedevicePendingRangeCount(&fixture.device) == 0,
             "multiqueue cleanup did not retire every owned rule exactly once");
-    requireMatchingDelete(&recorded_calls[13], &recorded_calls[14], 5);
-    requireMatchingDelete(&recorded_calls[12], &recorded_calls[15], 5);
     for (size_t index = 0; index < 6; ++index)
     {
-        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[16 + index], 3);
-        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[22 + index], 3);
+        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[12 + index], 5);
+        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[18 + index], 5);
     }
     for (size_t call = 0; call < recorded_call_count; ++call)
     {
@@ -584,12 +576,43 @@ static void testMultiqueueRulesRetainExactLifecycle(void)
     requireNoShellInvocation();
 }
 
+static void testUnknownInsertReconciliation(void)
+{
+    capture_rule_fixture_t fixture;
+    prepareRuleFixture(&fixture);
+    /* Reconcile a possibly committed early rule in the same table, including
+     * the case where the failed command did not actually install it. */
+    for (unsigned present = 0; present < 2; ++present)
+    {
+        resetRecording(kFakeOutcomeTimeout, 1);
+        require(! capturedeviceInstallRules(&fixture.device), "unknown early insertion was accepted");
+        require(fixture.states[0].queue == kCaptureRuleInstalled &&
+                    fixture.states[1].queue == kCaptureRuleOutcomeUnknown,
+                "early insertion lost ownership");
+        char snapshot[128];
+        stringNPrintf(snapshot,
+                      sizeof(snapshot),
+                      present
+                          ? "-A PREROUTING -m comment --comment WWCAP_1234567890ABCDEF_0000000000000001 -j NFQUEUE\n"
+                          : "-P PREROUTING ACCEPT\n");
+        resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
+        fake_success_output     = snapshot;
+        fake_success_output_len = stringLength(snapshot);
+        require(capturedeviceRemoveInstalledRules(&fixture.device), "early reconciliation failed");
+        require(recorded_call_count == 2U + present && capturedevicePendingRangeCount(&fixture.device) == 0,
+                "early reconciliation deleted an absent rule or missed a present one");
+        requireEqStr(recorded_calls[0].argv[4], "raw", "early reconciliation read the wrong table");
+        requireEqStr(recorded_calls[0].argv[5], "-S", "early reconciliation did not inspect rules");
+        requireEqStr(recorded_calls[0].argv[6], "PREROUTING", "early reconciliation read the wrong chain");
+    }
+}
+
 static void testMultiqueuePartialInstallReconciliation(void)
 {
     capture_rule_fixture_t fixture;
     prepareRuleFixture(&fixture);
     resetRecording(kFakeOutcomeTimeout, 1);
-    require(! capturedeviceInstallRuleKind(&fixture.device, false), "timed-out queue insertion was accepted");
+    require(! capturedeviceInstallRules(&fixture.device), "timed-out queue insertion was accepted");
     require(recorded_call_count == 2 && fixture.states[0].queue == kCaptureRuleInstalled &&
                 fixture.states[1].queue == kCaptureRuleOutcomeUnknown && fixture.states[2].queue == kCaptureRuleAbsent,
             "partial multiqueue insertion lost exact known and unknown ownership");
@@ -597,23 +620,23 @@ static void testMultiqueuePartialInstallReconciliation(void)
 
     char snapshot[kMaxArgLength + 64];
     stringNPrintf(
-        snapshot, sizeof(snapshot), "-A INPUT -m comment --comment %s -j NFQUEUE\n", recorded_calls[1].argv[10]);
+        snapshot, sizeof(snapshot), "-A PREROUTING -m comment --comment %s -j NFQUEUE\n", recorded_calls[1].argv[16]);
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     fake_success_output     = snapshot;
     fake_success_output_len = stringLength(snapshot);
     require(capturedeviceRemoveInstalledRules(&fixture.device), "reconciled partial multiqueue cleanup failed");
     require(recorded_call_count == 3 && capturedevicePendingRangeCount(&fixture.device) == 0,
             "partial cleanup did not inspect once and delete exactly two rules");
-    requireEqStr(recorded_calls[0].argv[3], "-S", "unknown queue outcome was not inspected before deletion");
-    requireEqStr(recorded_calls[1].argv[14], "71", "unknown queue lane was not retired first");
-    requireEqStr(recorded_calls[2].argv[14], "70", "previously installed queue lane was not retired");
+    requireEqStr(recorded_calls[0].argv[5], "-S", "unknown queue outcome was not inspected before deletion");
+    requireEqStr(recorded_calls[1].argv[20], "71", "unknown queue lane was not retired first");
+    requireEqStr(recorded_calls[2].argv[20], "70", "previously installed queue lane was not retired");
     for (size_t call = 0; call < recorded_call_count; ++call)
     {
         requireRuleProgress(&recorded_calls[call], &fixture.device);
     }
 }
 
-static void testMultiqueueNotrackFailureStillRemovesQueues(void)
+static void testOpaqueFailureStillRemovesFlowRules(void)
 {
     capture_rule_fixture_t fixture;
     prepareRuleFixture(&fixture);
@@ -621,16 +644,16 @@ static void testMultiqueueNotrackFailureStillRemovesQueues(void)
     {
         fixture.states[index].queue = kCaptureRuleInstalled;
     }
-    fixture.states[0].notrack               = kCaptureRuleInstalled;
-    fixture.states[kRuleTestQueues].notrack = kCaptureRuleInstalled;
+    fixture.states[0].opaque               = kCaptureRuleInstalled;
+    fixture.states[kRuleTestQueues].opaque = kCaptureRuleInstalled;
     resetRecording(kFakeOutcomeNonzeroExit, 0);
     require(! capturedeviceRemoveInstalledRules(&fixture.device), "failed cleanup was accepted");
-    require(recorded_call_count == 2, "NOTRACK failure prevented the independent queue cleanup attempt");
-    requireEqStr(recorded_calls[0].argv[6], "PREROUTING", "cleanup did not attempt NOTRACK first");
-    requireEqStr(recorded_calls[1].argv[4], "INPUT", "cleanup did not attempt queues after NOTRACK failure");
+    require(recorded_call_count == 2, "opaque failure prevented the independent flow cleanup attempt");
+    require(strstr(recorded_calls[0].argv[16], "WWCAP_OPAQUE_") != NULL, "cleanup did not attempt opaque first");
+    require(strstr(recorded_calls[1].argv[16], "WWCAP_OPAQUE_") == NULL, "cleanup did not attempt flow rules");
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
-            "cleanup retry did not settle the retained NOTRACK and queue ownership");
+            "cleanup retry did not settle retained rule ownership");
     require(recorded_call_count == 8, "cleanup retry changed the exact retained rule inventory");
 }
 
@@ -639,26 +662,26 @@ static void testOpaqueUnknownInstallCleanup(void)
     capture_rule_fixture_t fixture;
     prepareRuleFixture(&fixture);
     resetRecording(kFakeOutcomeTimeout, 7);
-    require(! capturedeviceInstallRuleKind(&fixture.device, false), "unknown opaque insertion was accepted");
+    require(! capturedeviceInstallRules(&fixture.device), "unknown opaque insertion was accepted");
     require(fixture.states[0].opaque == kCaptureRuleInstalled &&
                 fixture.states[1].opaque == kCaptureRuleOutcomeUnknown &&
                 fixture.states[2].opaque == kCaptureRuleAbsent,
             "partial opaque insertion lost exact ownership");
     char snapshot[kMaxArgLength + 64];
     stringNPrintf(
-        snapshot, sizeof(snapshot), "-A INPUT -m comment --comment %s -j NFQUEUE\n", recorded_calls[7].argv[10]);
+        snapshot, sizeof(snapshot), "-A PREROUTING -m comment --comment %s -j NFQUEUE\n", recorded_calls[7].argv[16]);
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     fake_success_output     = snapshot;
     fake_success_output_len = stringLength(snapshot);
     require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
             "opaque outcome reconciliation did not retire both rule sets");
-    require(recorded_call_count == 9 && strstr(recorded_calls[1].argv[10], "WWCAP_OPAQUE_") != NULL &&
-                strstr(recorded_calls[3].argv[10], "WWCAP_OPAQUE_") == NULL,
+    require(recorded_call_count == 9 && strstr(recorded_calls[1].argv[16], "WWCAP_OPAQUE_") != NULL &&
+                strstr(recorded_calls[3].argv[16], "WWCAP_OPAQUE_") == NULL,
             "opaque cleanup inspected or removed the wrong rule family");
-    require(recorded_calls[1].argc == 30 && recorded_calls[2].argc == 24,
+    require(recorded_calls[1].argc == 36 && recorded_calls[2].argc == 30,
             "unknown insertion cleanup lost the random rule or unconditional tail");
-    requireEqStr(recorded_calls[1].argv[27], "random", "unknown insertion cleanup changed the statistic mode");
-    requireEqStr(recorded_calls[1].argv[29], "0.500000000000", "unknown insertion cleanup changed probability");
+    requireEqStr(recorded_calls[1].argv[33], "random", "unknown insertion cleanup changed the statistic mode");
+    requireEqStr(recorded_calls[1].argv[35], "0.500000000000", "unknown insertion cleanup changed probability");
 }
 
 static void testMultiqueueUnknownDeleteReconciliation(void)
@@ -683,12 +706,12 @@ static void testMultiqueueUnknownDeleteReconciliation(void)
         {
             stringNPrintf(snapshot,
                           sizeof(snapshot),
-                          "-A INPUT -m comment --comment %s -j NFQUEUE\n",
-                          recorded_calls[2].argv[10]);
+                          "-A PREROUTING -m comment --comment %s -j NFQUEUE\n",
+                          recorded_calls[2].argv[16]);
         }
         else
         {
-            stringNPrintf(snapshot, sizeof(snapshot), "-P INPUT ACCEPT\n");
+            stringNPrintf(snapshot, sizeof(snapshot), "-P PREROUTING ACCEPT\n");
         }
 
         resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
@@ -697,10 +720,10 @@ static void testMultiqueueUnknownDeleteReconciliation(void)
         require(capturedeviceRemoveInstalledRules(&fixture.device), "unknown deletion could not be reconciled");
         require(recorded_call_count == 4U + present && capturedevicePendingRangeCount(&fixture.device) == 0,
                 "reconciliation deleted an absent lane or missed a remaining lane");
-        requireEqStr(recorded_calls[1].argv[6],
+        requireEqStr(recorded_calls[1].argv[8],
                      fixture.cidrs[present ? 1 : 0],
                      "reconciliation resumed cleanup at the wrong source range");
-        requireEqStr(recorded_calls[1].argv[14],
+        requireEqStr(recorded_calls[1].argv[20],
                      present ? "70" : "72",
                      "reconciliation resumed cleanup at the wrong queue lane");
         for (size_t call = 0; call < recorded_call_count; ++call)
@@ -710,29 +733,30 @@ static void testMultiqueueUnknownDeleteReconciliation(void)
     }
 }
 
-static void testMultiqueueUnknownNotrackAndInspectionFailure(void)
+static void testUnknownOpaqueAndInspectionFailure(void)
 {
     capture_rule_fixture_t fixture;
     prepareRuleFixture(&fixture);
-    fixture.states[0].notrack               = kCaptureRuleInstalled;
-    fixture.states[kRuleTestQueues].notrack = kCaptureRuleOutcomeUnknown;
-    fixture.states[2].queue                 = kCaptureRuleInstalled;
+    fixture.states[0].opaque               = kCaptureRuleInstalled;
+    fixture.states[kRuleTestQueues].opaque = kCaptureRuleOutcomeUnknown;
+    fixture.states[2].queue                = kCaptureRuleInstalled;
     resetRecording(kFakeOutcomeTimeout, 0);
     require(! capturedeviceRemoveInstalledRules(&fixture.device), "failed reconciliation was accepted");
-    require(recorded_call_count == 2 && fixture.states[kRuleTestQueues].notrack == kCaptureRuleOutcomeUnknown &&
+    require(recorded_call_count == 2 && fixture.states[kRuleTestQueues].opaque == kCaptureRuleOutcomeUnknown &&
                 fixture.states[2].queue == kCaptureRuleOutcomeUnknown,
-            "failed NOTRACK inspection suppressed queue cleanup or erased uncertain ownership");
+            "failed opaque inspection suppressed flow cleanup or erased uncertain ownership");
 
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    fake_success_output = "-A PREROUTING -m comment --comment WWCAP_NOTRACK_1234567890ABCDEF_0000000000000001 -j CT\n";
+    fake_success_output =
+        "-A PREROUTING -m comment --comment WWCAP_OPAQUE_1234567890ABCDEF_0000000000000003 -j NFQUEUE\n";
     fake_success_output_len = stringLength(fake_success_output);
     require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
-            "retry did not settle uncertain NOTRACK and queue outcomes");
-    require(recorded_call_count == 4, "retry did not inspect each rule kind and remove only present NOTRACK rules");
-    requireEqStr(recorded_calls[0].argv[6], "PREROUTING", "NOTRACK reconciliation inspected the wrong chain");
-    requireEqStr(recorded_calls[1].argv[8], fixture.cidrs[1], "NOTRACK flat state mapped to the wrong source range");
-    requireEqStr(recorded_calls[2].argv[8], fixture.cidrs[0], "NOTRACK cleanup skipped the first source range");
-    requireEqStr(recorded_calls[3].argv[4], "INPUT", "queue reconciliation inspected the wrong chain");
+            "retry did not settle uncertain opaque and flow outcomes");
+    require(recorded_call_count == 4, "retry did not inspect each rule kind and remove only present opaque rules");
+    requireEqStr(recorded_calls[0].argv[6], "PREROUTING", "opaque reconciliation inspected the wrong chain");
+    requireEqStr(recorded_calls[1].argv[8], fixture.cidrs[1], "opaque state mapped to the wrong source range");
+    requireEqStr(recorded_calls[2].argv[8], fixture.cidrs[0], "opaque cleanup skipped the first source range");
+    requireEqStr(recorded_calls[3].argv[6], "PREROUTING", "flow reconciliation inspected the wrong chain");
 }
 
 static void testRuleInstallationStopsWhenReaderFails(void)
@@ -741,11 +765,11 @@ static void testRuleInstallationStopsWhenReaderFails(void)
     prepareRuleFixture(&fixture);
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     fake_reader_operational = false;
-    require(! capturedeviceInstallRuleKind(&fixture.device, false) && recorded_call_count == 0,
+    require(! capturedeviceInstallRules(&fixture.device) && recorded_call_count == 0,
             "queue rules were installed without an operational reader");
     fake_reader_operational   = true;
     reader_failure_after_call = 1;
-    require(! capturedeviceInstallRuleKind(&fixture.device, false) && recorded_call_count == 1 &&
+    require(! capturedeviceInstallRules(&fixture.device) && recorded_call_count == 1 &&
                 fixture.states[0].queue == kCaptureRuleInstalled && fixture.states[1].queue == kCaptureRuleAbsent,
             "reader failure after mutation lost ownership or allowed later rule installation");
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
@@ -862,20 +886,17 @@ static void testProtocolFilterUsesTheSamePredicateForEveryRule(void)
         require(capturedeviceRunIptablesQueueRule(operations[i], "192.0.2.0/24", 77, "WWCAP_TEST", bytecode) ==
                     kCapturedeviceCommandOk,
                 "filtered NFQUEUE mutation failed");
-        require(capturedeviceRunIptablesNotrackRule(operations[i], "192.0.2.0/24", "WWCAP_NOTRACK_TEST", bytecode) ==
-                    kCapturedeviceCommandOk,
-                "filtered NOTRACK mutation failed");
     }
-    require(recorded_call_count == 4, "filtered rules changed the number of mutations");
+    require(recorded_call_count == 2, "filtered rules changed the number of mutations");
     for (size_t i = 0; i < recorded_call_count; ++i)
     {
         const recorded_call_t *call   = &recorded_calls[i];
-        const size_t           offset = i % 2 == 0 ? 16 : 20;
+        const size_t           offset = 22;
         require(call->argc == offset + 4, "protocol match has the wrong argument count");
         requireEqStr(call->argv[offset], "-m", "protocol matcher lost its module flag");
         requireEqStr(call->argv[offset + 1], "bpf", "protocol matcher uses the wrong module");
         requireEqStr(call->argv[offset + 2], "--bytecode", "protocol matcher lost its bytecode flag");
-        requireEqStr(call->argv[offset + 3], bytecode, "capture/NOTRACK insertion/deletion predicates differ");
+        requireEqStr(call->argv[offset + 3], bytecode, "insertion/deletion protocol predicates differ");
         requireMutationOptions(call, "filtered mutation lost its deadline");
     }
     requireNoShellInvocation();
@@ -1031,61 +1052,49 @@ static void testProtocolAndSteeringUseSeparateMatchesOnEveryRule(void)
     captureLinuxBuildProtocolFilter(&filter, fixture.device.protocol_filter);
 
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
-    require(capturedeviceInstallRuleKind(&fixture.device, false), "protocol-filtered queue installation failed");
-    require(capturedeviceInstallRuleKind(&fixture.device, true), "protocol-filtered NOTRACK installation failed");
-    require(recorded_call_count == 14, "protocol-filtered capture changed the owned rule inventory");
+    require(capturedeviceInstallRules(&fixture.device), "protocol-filtered queue installation failed");
+    require(recorded_call_count == 12, "protocol-filtered capture changed the owned rule inventory");
     for (size_t i = 0; i < 12; ++i)
     {
         const recorded_call_t *call = &recorded_calls[i];
         const size_t           lane = (i % 6) % kRuleTestQueues;
         char                   opaque_filter[kCaptureLinuxSteeringFilterSize];
         captureLinuxBuildOpaqueFilter(opaque_filter);
-        requireEqStr(call->argv[4], "INPUT", "protocol-filtered capture rule left INPUT");
-        requireBpfMatch(call, 16, fixture.device.protocol_filter, "INPUT rule lost its protocol predicate");
+        requireEqStr(call->argv[6], "PREROUTING", "protocol-filtered capture rule left PREROUTING");
+        requireBpfMatch(call, 22, fixture.device.protocol_filter, "capture rule lost its protocol predicate");
         requireBpfMatch(call,
-                        20,
+                        26,
                         i < 6 ? fixture.queues[lane].steering_filter : opaque_filter,
-                        "INPUT rule lost its steering predicate");
-        require(call->argc == (i < 6 || lane == 0 ? 24 : 30), "INPUT rule has the wrong argument count");
+                        "capture rule lost its steering predicate");
+        require(call->argc == (i < 6 || lane == 0 ? 30 : 36), "capture rule has the wrong argument count");
     }
-    for (size_t i = 12; i < 14; ++i)
-    {
-        const recorded_call_t *call = &recorded_calls[i];
-        requireEqStr(call->argv[6], "PREROUTING", "protocol-filtered NOTRACK rule left raw PREROUTING");
-        require(call->argc == 24, "NOTRACK rule has the wrong argument count");
-        requireBpfMatch(call, 20, fixture.device.protocol_filter, "NOTRACK rule lost its protocol predicate");
-    }
-
     require(capturedeviceRemoveInstalledRules(&fixture.device), "protocol-filtered cleanup failed");
-    require(recorded_call_count == 28 && capturedevicePendingRangeCount(&fixture.device) == 0,
+    require(recorded_call_count == 24 && capturedevicePendingRangeCount(&fixture.device) == 0,
             "protocol-filtered cleanup did not retire every owned rule");
-    requireMatchingDelete(&recorded_calls[13], &recorded_calls[14], 5);
-    requireMatchingDelete(&recorded_calls[12], &recorded_calls[15], 5);
     for (size_t index = 0; index < 6; ++index)
     {
-        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[16 + index], 3);
-        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[22 + index], 3);
+        requireMatchingDelete(&recorded_calls[11 - index], &recorded_calls[12 + index], 5);
+        requireMatchingDelete(&recorded_calls[5 - index], &recorded_calls[18 + index], 5);
     }
 
     /* Startup rollback after a failed insertion deletes the same predicates. */
     resetRecording(kFakeOutcomeNonzeroExit, 2);
-    require(! capturedeviceInstallRuleKind(&fixture.device, false), "failed protocol-filtered insertion was accepted");
+    require(! capturedeviceInstallRules(&fixture.device), "failed protocol-filtered insertion was accepted");
     require(recorded_call_count == 3, "failed protocol-filtered insertion continued");
     recorded_call_t inserted[2] = {recorded_calls[0], recorded_calls[1]};
     resetRecording(kFakeOutcomeSuccess, SIZE_MAX);
     require(capturedeviceRemoveInstalledRules(&fixture.device) && capturedevicePendingRangeCount(&fixture.device) == 0,
             "protocol-filtered rollback did not settle ownership");
     require(recorded_call_count == 2, "protocol-filtered rollback changed the installed inventory");
-    requireMatchingDelete(&inserted[1], &recorded_calls[0], 3);
-    requireMatchingDelete(&inserted[0], &recorded_calls[1], 3);
+    requireMatchingDelete(&inserted[1], &recorded_calls[0], 5);
+    requireMatchingDelete(&inserted[0], &recorded_calls[1], 5);
     requireNoShellInvocation();
 }
 
 int main(void)
 {
     testCaseSet("capture_linux_command_test");
-    testNotrackRulesStayInRawPrerouting();
-    testNotrackInspectionUsesRawPrerouting();
+    testEarlyQueueInspectionUsesRawPrerouting();
     testInsertBuildsExactArgv();
     testDeleteBuildsExactArgv();
     testIptablesTimeoutIsDistinctFromNonzeroExit();
@@ -1093,13 +1102,15 @@ int main(void)
     testInputInspectionRejectsEmptySnapshot();
     testQueueSelectionAvoidsReferencedNumbers();
     testQueueRangeSelection();
+    testQueueSelectionInspectsBothHooks();
     testDeterministicModesInstallOnlyOwnedFlowRules();
     testMultiqueueRulesRetainExactLifecycle();
+    testUnknownInsertReconciliation();
     testMultiqueuePartialInstallReconciliation();
     testOpaqueUnknownInstallCleanup();
-    testMultiqueueNotrackFailureStillRemovesQueues();
+    testOpaqueFailureStillRemovesFlowRules();
     testMultiqueueUnknownDeleteReconciliation();
-    testMultiqueueUnknownNotrackAndInspectionFailure();
+    testUnknownOpaqueAndInspectionFailure();
     testRuleInstallationStopsWhenReaderFails();
     testRuleCleanupBeforeQueueConstruction();
     testSysctlUsesDirectArgvWithGroupedValues();

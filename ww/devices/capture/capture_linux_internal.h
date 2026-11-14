@@ -54,22 +54,21 @@ typedef enum capturedevice_command_status_e
 capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *operation, const char *cidr,
                                                                  uint32_t queue_number, const char *rule_comment,
                                                                  const char *protocol_filter);
-capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *operation, const char *cidr,
-                                                                   const char *rule_comment,
-                                                                   const char *protocol_filter);
 void                           captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
                                                                char                             output[kCaptureLinuxProtocolFilterSize]);
 capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules);
-capturedevice_command_status_t capturedeviceReadIptablesNotrackRules(char **notrack_rules);
+capturedevice_command_status_t capturedeviceReadIptablesPreroutingRules(char **prerouting_rules);
 void                           capturedeviceApplySysctls(bool skip_sysctl);
 
 // Select the first queue at or after `start` (with uint16_t wraparound) that is
-// not referenced by an existing `--queue-num` or `--queue-balance` rule in an
-// `iptables -S INPUT` snapshot. This prevents an old fail-open rule from
+// not referenced by a `--queue-num` or `--queue-balance` rule in either
+// filter INPUT or raw PREROUTING. This prevents an old fail-open rule from
 // becoming active again merely because a later process reused its queue number.
-bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t start, uint16_t *selected);
+bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, const char *prerouting_rules, uint16_t start,
+                                          uint16_t *selected);
 /* Select count adjacent unreferenced queues. A selected range never wraps at
  * UINT16_MAX; the search for its first queue retains uint16_t wraparound. */
-bool capturedeviceSelectUnusedQueueRange(const char *input_rules, uint16_t start, uint16_t count, uint16_t *selected);
+bool capturedeviceSelectUnusedQueueRange(const char *input_rules, const char *prerouting_rules, uint16_t start,
+                                         uint16_t count, uint16_t *selected);
 
 #endif

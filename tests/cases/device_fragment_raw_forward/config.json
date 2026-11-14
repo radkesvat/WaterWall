@@ -5,6 +5,6 @@
       "fragment-policy":"preserve-fragments","device-name":"wwfragraw0",
       "device-ip":"10.253.81.1/24","device-mtu":1500,"route-table":"off"}},
     {"name":"raw","type":"RawSocket","settings":{
-      "fragment-policy":"preserve-fragments","bypass-conntrack":false,"mark":99}}
+      "fragment-policy":"preserve-fragments","mark":99}}
   ]
 }

@@ -366,10 +366,9 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return true;
 }
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 {
     discard getCurrentWorker();
-    discard bypass_conntrack;
     if (! windivertManagerEnsureLoaded())
         return NULL;
     HANDLE handle = windivertOpen("false", WINDIVERT_LAYER_NETWORK, 0, WINDIVERT_FLAG_SEND_ONLY);
