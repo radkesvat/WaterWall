@@ -1,0 +1,7 @@
+No changes to the upstream ENet sources in this directory.
+
+WaterWall-specific integration lives outside it:
+- tunnels/Internals/EnetCommon/src/platform.c replaces unix.c and win32.c in
+  production builds.
+- tests/enet_vendor_source_policy_test.py pins every file to upstream commit
+  5a9c537fd464b3c6d3c55e1d3bd47588faf71b42.

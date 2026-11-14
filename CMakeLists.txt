@@ -241,6 +241,10 @@ option(INCLUDE_UDP_OVER_TCP_CLIENT      "link UdpOverTcpClient staticly to the c
 option(INCLUDE_UDP_OVER_TCP_SERVER      "link UdpOverTcpServer staticly to the core"                                TRUE)
 option(INCLUDE_KCP_CLIENT               "link KcpClient staticly to the core"                                       TRUE)
 option(INCLUDE_KCP_SERVER               "link KcpServer staticly to the core"                                       TRUE)
+option(INCLUDE_ENET_CLIENT              "link EnetClient statically to the core"                                    TRUE)
+option(INCLUDE_ENET_SERVER              "link EnetServer statically to the core"                                    TRUE)
+option(INCLUDE_GNS_CLIENT               "link GnsClient statically to the core"                                     TRUE)
+option(INCLUDE_GNS_SERVER               "link GnsServer statically to the core"                                     TRUE)
 option(INCLUDE_BRIDGE                   "link Bridge staticly to the core"                                          TRUE)
 option(INCLUDE_SNIFF_ROUTER             "link SniffRouter staticly to the core"                                     TRUE)
 option(INCLUDE_ROUTER                   "link Router staticly to the core"                                          TRUE)
@@ -577,12 +581,16 @@ endif()
 #--------------------------------------------------------------------------------
 # Tunnel Libraries
 
-if(INCLUDE_TLS_CLIENT OR INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER)
+if(INCLUDE_TLS_CLIENT OR INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER OR INCLUDE_GNS_CLIENT OR INCLUDE_GNS_SERVER)
   include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/boringssl.cmake")
 endif()
 if(INCLUDE_QUIC_CLIENT OR INCLUDE_QUIC_SERVER)
   include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/quiche.cmake")
   add_subdirectory(tunnels/Internals/QuicCommon)
+endif()
+if(INCLUDE_GNS_CLIENT OR INCLUDE_GNS_SERVER)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/ww/cmake/dependencies/gns.cmake")
+  add_subdirectory(tunnels/Internals/GnsCommon)
 endif()
 #--------------------------------------------------------------------------------
 
@@ -972,6 +980,36 @@ if(INCLUDE_KCP_SERVER)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/KcpServer)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_BINARY_DIR}/tunnels/KcpServer)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} KcpServer)
+endif()
+
+#enet
+if(INCLUDE_ENET_CLIENT OR INCLUDE_ENET_SERVER)
+  add_subdirectory(tunnels/Internals/EnetCommon)
+endif()
+
+if(INCLUDE_ENET_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_ENET_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/EnetClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} EnetClient)
+endif()
+
+if(INCLUDE_ENET_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_ENET_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/EnetServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} EnetServer)
+endif()
+
+#gns
+if(INCLUDE_GNS_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_GNS_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/GnsClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} GnsClient)
+endif()
+
+if(INCLUDE_GNS_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_GNS_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/GnsServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} GnsServer)
 endif()
 
 #bridge

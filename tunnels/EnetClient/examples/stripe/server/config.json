@@ -1,0 +1,40 @@
+{
+  "name": "enet-stripe-server",
+  "nodes": [
+    {
+      "name": "transport",
+      "type": "UdpListener",
+      "next": "enet-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    },
+    {
+      "name": "enet-server",
+      "type": "EnetServer",
+      "next": "stripe-server",
+      "settings": {
+        "send-mtu": 1400
+      }
+    },
+    {
+      "name": "stripe-server",
+      "type": "ConnectionStripeServer",
+      "next": "destination",
+      "settings": {
+        "max-connections": 32
+      }
+    },
+    {
+      "name": "destination",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

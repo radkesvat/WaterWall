@@ -1,0 +1,31 @@
+{
+  "name": "enet-udp-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "enet-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "enet-client",
+      "type": "EnetClient",
+      "next": "transport",
+      "settings": {
+        "send-mtu": 1400
+      }
+    },
+    {
+      "name": "transport",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    }
+  ]
+}
