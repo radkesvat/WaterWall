@@ -1,0 +1,60 @@
+{
+  "name": "enet-upload-close-probe",
+  "nodes": [
+    {
+      "name": "udp-path-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26674, "nodelay": true },
+      "next": "udp-path-client"
+    },
+    {
+      "name": "udp-path-client",
+      "type": "EnetClient",
+      "next": "udp-out"
+    },
+    {
+      "name": "udp-out",
+      "type": "UdpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26675 }
+    },
+    {
+      "name": "udp-in",
+      "type": "UdpListener",
+      "settings": { "address": "127.0.0.1", "port": 26675 },
+      "next": "udp-path-server"
+    },
+    {
+      "name": "udp-path-server",
+      "type": "EnetServer",
+      "settings": { "incoming-bandwidth": 65536 },
+      "next": "udp-path-service"
+    },
+    {
+      "name": "udp-path-service",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26677, "fastopen": false }
+    },
+    {
+      "name": "direct-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26676, "nodelay": true },
+      "next": "direct-client"
+    },
+    {
+      "name": "direct-client",
+      "type": "EnetClient",
+      "next": "direct-server"
+    },
+    {
+      "name": "direct-server",
+      "type": "EnetServer",
+      "settings": { "incoming-bandwidth": 65536 },
+      "next": "direct-service"
+    },
+    {
+      "name": "direct-service",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26677, "fastopen": false }
+    }
+  ]
+}
