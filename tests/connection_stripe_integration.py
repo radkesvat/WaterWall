@@ -7,8 +7,10 @@ both directions after a server-first greeting, exercise both EOF directions, and
 leave a final session alive during orderly runtime shutdown. The TCP relay counts
 lane identities and verifies every carrier transports application data in both
 directions. It forwards later DATA before held earlier DATA, forwards CLOSE
-before held DATA in both directions, drops a carrier from another session, and
-checks expiry of an incomplete introduction and an incomplete carrier group.
+before held DATA in both directions, and drops a carrier from another session.
+Valid sessions use the production setup deadline. A separate runtime with a
+short deadline checks expiry of an incomplete introduction and an incomplete
+carrier group, for both splice settings.
 Four workers exercise actual worker handoff. Explicit splice on/off TCP variants
 check post-setup pipe-to-socket output at all four endpoints using strace; TLS
 and KCP remain splice blockers for their complete chains.
@@ -242,7 +244,7 @@ def topology(carrier, *, relay=False, mux=False):
         ]
     nodes += [
         {"name": "stripe-server", "type": "ConnectionStripeServer", "next": "mux-server" if mux else "backend",
-         "settings": {"max-connections": LANES, **({"setup-timeout-ms": 100} if relay and not mux else {})}},
+         "settings": {"max-connections": LANES}},
         {"name": "backend", "type": "TcpConnector",
          "settings": {"address": HOST, "port": BACKEND_PORT, "nodelay": True, "fastopen": False}},
     ]
@@ -370,7 +372,9 @@ def setup_expiry(process, backend):
     incomplete_group = (struct.pack("!B3sIQQ", 1, b"\0\0\0", 24, 0, 0) +
                         b"unpaired-session" + struct.pack("!HHI", 0, LANES, 1 << 20))
     for introduction in (b"\x01\x00", incomplete_group):
-        with socket.create_connection((HOST, WIRE_PORT), timeout=3) as connection:
+        with connect_when_ready(process, (HOST, WIRE_PORT), deadline=time.monotonic() + 10,
+                                failure=lambda: AssertionError("stripe runtime exited before expiry connection"),
+                                timeout=3) as connection:
             connection.settimeout(3)
             connection.sendall(introduction)
             assert connection.recv(1) == b"", "incomplete stripe setup did not expire"
@@ -378,10 +382,14 @@ def setup_expiry(process, backend):
         assert_no_extra_backend(backend)
 
 
-def write_configuration(root, carrier, *, relay=False, mux=False, splice=True):
+def write_configuration(root, carrier, *, relay=False, mux=False, splice=True, setup_timeout_ms=None):
     for name in ("server.crt", "server.key"):
         shutil.copyfile(CERTIFICATES / name, root / name)
-    (root / "config.json").write_text(json.dumps({"name": "connection-stripe", "nodes": topology(carrier, relay=relay, mux=mux)}))
+    nodes = topology(carrier, relay=relay, mux=mux)
+    if setup_timeout_ms is not None:
+        server_settings = next(node["settings"] for node in nodes if node["name"] == "stripe-server")
+        server_settings["setup-timeout-ms"] = setup_timeout_ms
+    (root / "config.json").write_text(json.dumps({"name": "connection-stripe", "nodes": nodes}))
     (root / "core.json").write_text(json.dumps(core_config(workers=1 if mux else 4, ram_profile="minimal", splice=splice)))
 
 
@@ -410,6 +418,19 @@ def check_trace(root, boundary, *, enabled, carrier):
                             ("client download", f"{HOST}:{APP_PORT}->")):
         assert any(endpoint in call for call in outputs), \
             f"{label}: no successful post-setup pipe-to-socket DATA output (pipe prerequisites may be unavailable)"
+
+
+def run_setup_expiry(binary, *, enabled, trace):
+    # Keep the short negative-case deadline out of valid, traced relay sessions.
+    with RunDirectory("waterwall-connection-stripe-setup-expiry-") as root:
+        write_configuration(root, "tcp", splice=enabled, setup_timeout_ms=100)
+        with socket.socket() as backend:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with Process(runtime_command(binary, root, trace), cwd=root, log_path=root / "stdout.log") as process:
+                setup_expiry(process, backend)
+                process.send_signal(signal.SIGTERM)
+                assert process.wait(timeout=10) == 128 + signal.SIGTERM, "stripe expiry runtime shutdown failed"
+    print("ConnectionStripe TCP: incomplete introduction and incomplete group expiry passed")
 
 
 def run_mux(binary, carrier, *, enabled=True, trace=False):
@@ -500,7 +521,6 @@ def run(binary, carrier, *, enabled=True, trace=False):
                     relay.assert_exercised()
                     assert all(min(member["bytes"]) > 16384 for member in relay.connections), \
                         "a carrier did not carry application data in both directions"
-                    setup_expiry(process, backend)
                     relay_close(process, backend, relay, SESSIONS + 1, 0)
                     relay_close(process, backend, relay, SESSIONS + 2, 1)
                     relay_failure(process, backend, relay, SESSIONS + 3)
@@ -513,6 +533,8 @@ def run(binary, carrier, *, enabled=True, trace=False):
                     shutdown_active(process, client, peer)
         if trace:
             check_trace(root, boundary, enabled=enabled, carrier=carrier)
+    if carrier == "tcp":
+        run_setup_expiry(binary, enabled=enabled, trace=trace)
     detail = ", reordered DATA/CLOSE and member loss" if carrier == "tcp" else ""
     print(f"ConnectionStripe {carrier}: eight carriers, concurrent full-duplex streams, server-first, EOF{detail} and shutdown passed")
 
