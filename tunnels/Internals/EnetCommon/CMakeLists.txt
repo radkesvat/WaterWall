@@ -1,6 +1,6 @@
 set(ENET_VENDOR_DIR ${CMAKE_SOURCE_DIR}/ww/vendor/enet)
 
-# Vendored ENet protocol core, byte-identical to the pinned upstream commit (see
+# Vendored ENet protocol core, pinned upstream base plus documented local patches (see
 # ww/vendor/enet/README.waterwall.md). Upstream's socket layer is never compiled
 # here: src/platform.c supplies ENet's platform functions, so ENet cannot
 # create, poll or close an OS socket. Like kcp_protocol, the core links only the

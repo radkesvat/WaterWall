@@ -4,17 +4,25 @@ Upstream: https://github.com/lsalzman/enet
 Pinned commit: `5a9c537fd464b3c6d3c55e1d3bd47588faf71b42` (2026-06-23), version 1.3.18.
 License: MIT; see `LICENSE`.
 
-This directory is an unmodified copy of the upstream files WaterWall uses:
+This directory contains the upstream files WaterWall uses, with the local patch
+described below:
 
 - `callbacks.c`, `compress.c`, `host.c`, `list.c`, `packet.c`, `peer.c`, `protocol.c`
 - `unix.c`, `win32.c`
 - `include/enet/*.h`
 - `LICENSE`
 
-Local changes: none. `tests/enet_vendor_source_policy_test.py` holds the SHA-256
-of every file at the pinned commit and fails when one differs or when another C
-source or header appears here. No download occurs during builds. The local
-`.clang-format` disables formatting so the files stay byte-identical.
+Local change: `peer.c` initializes newly allocated fragment-reassembly storage
+when no initial data is supplied. This covers reliable and unreliable fragments
+and prevents unwritten gaps from exposing uninitialized memory; it does not add
+fragment-coverage validation. The patch matches
+[`2a2312f` in radkesvat/enet](https://github.com/radkesvat/enet/commit/2a2312fa92c437abfb626140434230f19a6b490a).
+See `radkesvat_changes.txt` for the local change record.
+
+`tests/enet_vendor_source_policy_test.py` holds the SHA-256 of every vendored file,
+including this local patch, and fails when one differs or when another C source
+or header appears here. No download occurs during builds. The local
+`.clang-format` disables formatting to preserve the vendored source layout.
 
 `tunnels/Internals/EnetCommon/CMakeLists.txt` compiles the protocol core
 (`callbacks.c`, `host.c`, `list.c`, `packet.c`, `peer.c`, `protocol.c`) into the
@@ -40,6 +48,9 @@ WaterWall relies on these upstream details. Re-check them when the pin moves:
   `extern` rather than `ENET_API`, and the driver calls them.
 - A received reliable packet carries `ENET_PACKET_FLAG_RELIABLE` in its flags.
 
-To refresh: copy the listed files from the new upstream commit, update the pin
-above, replace the digests in `tests/enet_vendor_source_policy_test.py`, and run
+To refresh: copy the listed files from the new upstream commit and update the pin
+above. Check whether upstream already provides the reassembly initialization;
+retain the local patch if it is still needed, then update this record and
+`radkesvat_changes.txt`. Replace the digests in
+`tests/enet_vendor_source_policy_test.py` with the final vendored contents and run
 the `waterwall.enet_*` tests.
