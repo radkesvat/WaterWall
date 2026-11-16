@@ -67,14 +67,16 @@ bool routerIpRangesParse(const router_string_list_t *patterns, router_ip_range_t
     {
         const char *pattern = patterns->items[i];
 
-        if (stringStartsWithIgnoreCase(pattern, "geoip:"))
+        if (routerGeoipTokenHasPrefix(pattern))
         {
             continue;
         }
 
         if (! routerParseIpEntry(pattern, &ranges[count]))
         {
-            LOGF("JSON Error: %s : \"%s\" is not a valid IP or CIDR range", json_path, pattern);
+            LOGF("JSON Error: %s : \"%s\" is not a valid IP, CIDR range, geoip:<cc> or !geoip:<cc> token",
+                 json_path,
+                 pattern);
             memoryFree(ranges);
             return false;
         }
