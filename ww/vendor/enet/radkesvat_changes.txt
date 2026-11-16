@@ -6,9 +6,16 @@ Local source changes:
   path. This prevents unwritten gaps from exposing uninitialized memory without
   changing enet_packet_create(NULL, ...) or adding fragment-coverage validation.
   Matches radkesvat/enet commit 2a2312fa92c437abfb626140434230f19a6b490a.
+- peer.c: include packet/command structures and fragment bitmaps, in addition to
+  payload bytes, in totalWaitingData. Release the identical charge on delivery
+  and discard, validate fragment count before allocation, and reject size-sum
+  overflow. Preserve the existing admission threshold and its one-packet
+  overshoot. Allocator overhead and application-owned packets are not charged.
+- include/enet/enet.h: document the updated receive counter and threshold units;
+  public structure layouts and the wire protocol are unchanged.
 
 WaterWall-specific integration lives outside it:
 - tunnels/Internals/EnetCommon/src/platform.c replaces unix.c and win32.c in
   production builds.
 - tests/enet_vendor_source_policy_test.py pins every vendored file to the
-  upstream base plus the local source change above.
+  upstream base plus the local source changes above.

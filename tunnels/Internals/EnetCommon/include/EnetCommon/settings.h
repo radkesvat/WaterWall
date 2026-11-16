@@ -24,7 +24,7 @@ typedef struct enet_settings_s
     uint32_t ping_interval_ms;       /* silence after which ENet sends a ping */
     uint32_t no_recv_timeout_ms;     /* T: an unacknowledged command ends the session between T and 2T */
     uint32_t send_buffer_limit;      /* producer hold threshold; the hard cap is twice this */
-    uint32_t receive_buffer_limit;   /* decoded bytes ENet may retain; the largest message is half of it */
+    uint32_t receive_buffer_limit;   /* native receive allocation threshold; maximum packet payload is half of it */
     uint32_t carrier_queue_limit;    /* outgoing datagrams staged per session before ENet's output is dropped */
     uint32_t close_drain_timeout_ms; /* how long a graceful close may wait for the peer */
     uint32_t incoming_bandwidth;     /* bytes per second, 0 = unlimited */

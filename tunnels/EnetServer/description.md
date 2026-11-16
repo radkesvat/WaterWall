@@ -64,7 +64,7 @@ outside the range rejects startup with a message that names the setting.
 | `no-recv-timeout-ms` | `30000` | Liveness timeout `T`, from `1` to `2147483647`. A connection whose packets stay unacknowledged ends between `T` and about `2T`. A carrier without an accepted connection is finished after `T`. |
 | `ping-interval-ms` | `10000` | Silence after which ENet sends a ping, from `1`. It must be smaller than `no-recv-timeout-ms`. |
 | `send-buffer-limit` | `524288` | Accepted but unacknowledged bytes above which the next node is paused, from `4096` to `134217728`. |
-| `receive-buffer-limit` | `1048576` | Limit for received data that waits behind a missing packet, from `131072` to `268435456`. The largest accepted ENet packet is half of it. |
+| `receive-buffer-limit` | `1048576` | Admission threshold for queued ENet receive allocations, including payload and bookkeeping, from `131072` to `268435456`. The largest accepted packet payload is half of it. |
 | `carrier-queue-limit` | `256` | Datagrams that one ENet call may hand to the previous node, from `1` to `65535`. |
 | `close-drain-timeout-ms` | `30000` | How long a closing connection may wait for the peer to acknowledge the remaining bytes, from `1` to `2147483647`. |
 | `incoming-bandwidth` | `0` | ENet's incoming bandwidth in bytes per second, from `0` to `4294967295`. `0` means unlimited. |
@@ -143,12 +143,15 @@ up native compatibility.
 - When the next node pauses the upstream direction, `EnetServer` pauses the
   previous node, which stops datagram intake. That also stops acknowledgements:
   a pause longer than the liveness timeout can end the connection.
-- At `receive-buffer-limit` ENet stops acknowledging data that arrives ahead of
-  a missing packet, and the peer sends it again later. The missing packet itself
-  is still accepted, so a loss cannot lock the stream. Acknowledged bytes are
-  never discarded, and one connection holds less than two and a half times the
-  limit. A received ENet packet larger than half of the limit is never
-  acknowledged, so that connection ends by the peer's timeout.
+- At `receive-buffer-limit` ENet stops admitting new queued messages. Refused
+  reliable data is not acknowledged, so the peer can send it again later.
+  To make room for loss recovery, the driver doubles the threshold for a datagram
+  carrying the next missing reliable command. The native receive queue stays
+  below twice the limit plus one admitted packet's payload and bookkeeping.
+  The charge includes packet and command structures and fragment bitmaps, even
+  for empty messages. It excludes allocator overhead, other ENet allocations and
+  buffers already delivered to WaterWall. A packet payload larger than half the
+  limit is never acknowledged, so that connection ends by the peer's timeout.
 - Datagrams above `carrier-queue-limit` in one ENet call are dropped and ENet
   sends them again after its timeout. The connection stays open.
 

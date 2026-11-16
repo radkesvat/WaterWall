@@ -4,7 +4,7 @@ Upstream: https://github.com/lsalzman/enet
 Pinned commit: `5a9c537fd464b3c6d3c55e1d3bd47588faf71b42` (2026-06-23), version 1.3.18.
 License: MIT; see `LICENSE`.
 
-This directory contains the upstream files WaterWall uses, with the local patch
+This directory contains the upstream files WaterWall uses, with the local patches
 described below:
 
 - `callbacks.c`, `compress.c`, `host.c`, `list.c`, `packet.c`, `peer.c`, `protocol.c`
@@ -12,15 +12,28 @@ described below:
 - `include/enet/*.h`
 - `LICENSE`
 
-Local change: `peer.c` initializes newly allocated fragment-reassembly storage
+Local changes:
+
+`peer.c` initializes newly allocated fragment-reassembly storage
 when no initial data is supplied. This covers reliable and unreliable fragments
 and prevents unwritten gaps from exposing uninitialized memory; it does not add
 fragment-coverage validation. The patch matches
 [`2a2312f` in radkesvat/enet](https://github.com/radkesvat/enet/commit/2a2312fa92c437abfb626140434230f19a6b490a).
-See `radkesvat_changes.txt` for the local change record.
+
+`peer.c` also charges each queued incoming command for its packet structure,
+command structure, payload and fragment bitmap in `totalWaitingData`. Empty
+messages therefore consume the receive budget. Delivery and discard release
+the same charge. Fragment counts and size additions are checked before allocation.
+The comments in `include/enet/enet.h` document the updated counter semantics.
+The existing admission rule is preserved: a packet admitted below
+`maximumWaitingData` may cross that threshold once. This counts requested queue
+allocation sizes, excluding allocator overhead and packets already handed to
+the application; it is not a limit on all ENet or process memory. WaterWall's
+existing temporary threshold increase for a missing reliable command remains in
+the driver. See `radkesvat_changes.txt` for the local change record.
 
 `tests/enet_vendor_source_policy_test.py` holds the SHA-256 of every vendored file,
-including this local patch, and fails when one differs or when another C source
+including these local patches, and fails when one differs or when another C source
 or header appears here. No download occurs during builds. The local
 `.clang-format` disables formatting to preserve the vendored source layout.
 
@@ -49,8 +62,9 @@ WaterWall relies on these upstream details. Re-check them when the pin moves:
 - A received reliable packet carries `ENET_PACKET_FLAG_RELIABLE` in its flags.
 
 To refresh: copy the listed files from the new upstream commit and update the pin
-above. Check whether upstream already provides the reassembly initialization;
-retain the local patch if it is still needed, then update this record and
+above. Check whether upstream already provides reassembly initialization and
+receive-queue allocation accounting; retain each local patch still needed, then
+update this record and
 `radkesvat_changes.txt`. Replace the digests in
 `tests/enet_vendor_source_policy_test.py` with the final vendored contents and run
 the `waterwall.enet_*` tests.
