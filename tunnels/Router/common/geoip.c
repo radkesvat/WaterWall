@@ -113,7 +113,7 @@ static bool routerGeoipContextToSockaddr(const address_context_t *ctx, sockaddr_
 /**
  * Read a two-letter ISO country code out of one MaxMind map.
  *
- * A missing entry is an ordinary no-country result. Any MaxMind access error, or a malformed ISO code,
+ * A missing entry is an ordinary no-country result. Any MaxMind access error, malformed container or ISO code
  * is a request-local evaluation failure: it is reported through @p out_evaluation_failed so the caller can refuse
  * to route the line instead of silently falling through to a later rule.
  */
@@ -125,6 +125,26 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
 
     if (status == MMDB_LOOKUP_PATH_DOES_NOT_MATCH_DATA_ERROR)
     {
+        // A path mismatch can mean an absent key or a non-map parent. Inspect
+        // the country container, or the record root if that key is also absent.
+        // Successful traversal of our nonnumeric keys already proves their
+        // ancestors are maps; only a map can make the missing ISO path ordinary.
+        status = MMDB_get_value(entry, &data, map_name, NULL);
+        if (status == MMDB_LOOKUP_PATH_DOES_NOT_MATCH_DATA_ERROR)
+        {
+            status = MMDB_get_value(entry, &data, NULL);
+        }
+
+        if (UNLIKELY(status != MMDB_SUCCESS))
+        {
+            LOGE("Router: MaxMind parent lookup failed for %s.iso_code: %s", map_name, MMDB_strerror(status));
+            *out_evaluation_failed = true;
+        }
+        else if (UNLIKELY(! data.has_data || data.type != MMDB_DATA_TYPE_MAP))
+        {
+            LOGE("Router: MaxMind parent of %s.iso_code is not a map", map_name);
+            *out_evaluation_failed = true;
+        }
         return false;
     }
 

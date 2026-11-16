@@ -5,7 +5,7 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseClassificationStopsAtEvaluationError, caseUndecidedLineIsClosedSafely,
  * caseHealthyGeoipStillRoutes, caseInitMetadataErrorBeforeProtocol, caseGeoipLookupOutcome,
- * caseNoEligibleAddress, caseNumericShortCircuit, caseTokenOrAndRuleOrdering
+ * caseNoEligibleAddress, caseNumericShortCircuit, caseTokenOrAndRuleOrdering, caseGeoipRecordStructure
  * Checks: Assertion labels include: the evaluation-error flag and the classification result disagree; a
  * runtime evaluation error did not surface as kRouterClassifyError; an evaluation error still selected a
  * rule target; Router opened a branch before it decided on a route
@@ -51,6 +51,8 @@ typedef enum router_injection_e
 static router_injection_t g_injection = kInjectNothing;
 static uint32_t           g_lookup_calls;
 static uint32_t           g_value_calls;
+static const char        *g_record;
+static uint32_t           g_record_size;
 
 MMDB_lookup_result_s __wrap_MMDB_lookup_sockaddr(const MMDB_s *const mmdb, const struct sockaddr *const sockaddr,
                                                  int *const mmdb_error);
@@ -93,9 +95,27 @@ int __wrap_MMDB_get_value(MMDB_entry_s *const start, MMDB_entry_data_s *const en
     ++g_value_calls;
     va_list args;
     va_start(args, entry_data);
+    if (g_record != NULL)
+    {
+        // Decode small MMDB records with the real library: path mismatch means
+        // either an absent key or a wrong container type, depending on the bytes.
+        const MMDB_s database = {.data_section = (const uint8_t *) g_record, .data_section_size = g_record_size};
+        MMDB_entry_s entry    = {.mmdb = &database, .offset = 0};
+        const int    status   = MMDB_vget_value(&entry, entry_data, args);
+        va_end(args);
+        return status;
+    }
     const char *map_name = va_arg(args, const char *);
+    const char *field_name = map_name != NULL ? va_arg(args, const char *) : NULL;
     va_end(args);
     memoryZero(entry_data, sizeof(*entry_data));
+
+    if (map_name == NULL)
+    {
+        entry_data->has_data = true;
+        entry_data->type     = MMDB_DATA_TYPE_MAP;
+        return MMDB_SUCCESS;
+    }
 
     if (g_injection == kInjectNoCountryPath ||
         ((g_injection == kInjectRegisteredCountry || g_injection == kInjectBadRegisteredCountry) &&
@@ -107,6 +127,13 @@ int __wrap_MMDB_get_value(MMDB_entry_s *const start, MMDB_entry_data_s *const en
     if (g_injection == kInjectGetValueError || g_injection == kInjectBadRegisteredCountry)
     {
         return MMDB_INVALID_DATA_ERROR;
+    }
+
+    if (field_name == NULL)
+    {
+        entry_data->has_data = true;
+        entry_data->type     = MMDB_DATA_TYPE_MAP;
+        return MMDB_SUCCESS;
     }
 
     if (g_injection == kInjectBadIsoCode)
@@ -606,8 +633,115 @@ static void caseTokenOrAndRuleOrdering(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseGeoipRecordStructure(void)
+{
+    // MMDB map headers e0/e1/e2 encode 0/1/2 entries; 00 04 is an empty array.
+    // G, H, R and B are UTF-8 control bytes for 7, 8, 18 and 2-byte strings.
+    static const struct
+    {
+        const char *name;
+        const char *record;
+        uint32_t    size;
+        bool        has_country;
+        bool        failed;
+    } cases[] = {
+#define RECORD_CASE(name, record, has_country, failed) {name, record, sizeof(record) - 1, has_country, failed}
+        RECORD_CASE("string record", "BIR", false, true),
+        RECORD_CASE("array record", "\x00\x04", false, true),
+        RECORD_CASE("string country", "\xe1GcountryBIR", false, true),
+        RECORD_CASE("array country", "\xe1Gcountry\x00\x04", false, true),
+        RECORD_CASE("string registered country", "\xe1Rregistered_countryBIR", false, true),
+        RECORD_CASE("array registered country", "\xe1Rregistered_country\x00\x04", false, true),
+        RECORD_CASE(
+            "bad country before healthy fallback", "\xe2GcountryBIRRregistered_country\xe1Hiso_codeBIR", false, true),
+        RECORD_CASE("absent countries", "\xe0", false, false),
+        RECORD_CASE("country maps without ISO codes", "\xe2Gcountry\xe0Rregistered_country\xe0", false, false),
+        RECORD_CASE("registered fallback with absent country", "\xe1Rregistered_country\xe1Hiso_codeBIR", true, false),
+        RECORD_CASE("registered fallback with absent primary ISO",
+                    "\xe2Gcountry\xe0Rregistered_country\xe1Hiso_codeBIR",
+                    true,
+                    false),
+        RECORD_CASE("healthy primary skips malformed fallback",
+                    "\xe2Gcountry\xe1Hiso_codeBIRRregistered_country\x00\x04",
+                    true,
+                    false),
+#undef RECORD_CASE
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        for (unsigned source = 0; source < 2; ++source)
+        {
+            for (unsigned negated = 0; negated < 2; ++negated)
+            {
+                twfSetCase(cases[i].name);
+                router_fixture_t fixture;
+                fixtureSetup(&fixture);
+                useGeoipRule(&fixture);
+                fixture.geoip_code.negated = negated != 0;
+                if (source)
+                {
+                    fixture.rules[0].destination_ip.present       = false;
+                    fixture.rules[0].source_ips.present           = true;
+                    fixture.rules[0].source_ips.geoip_codes       = &fixture.geoip_code;
+                    fixture.rules[0].source_ips.geoip_codes_count = 1;
+                }
+                fixture.rules[1].target_tunnel = fixture.next;
+                router_tstate_t *ts            = tunnelGetState(fixture.router);
+                line_t          *line          = makeIpv4Line(&fixture);
+                routerLinestateInitialize(lineGetState(line, fixture.router));
+                g_record      = cases[i].record;
+                g_record_size = cases[i].size;
+
+                // Cover both Init/deferred classification and refusal to select
+                // either a later catch-all rule or the default on malformed data.
+                for (unsigned later_rule = 0; later_rule < 2; ++later_rule)
+                {
+                    ts->rules_count = 1 + later_rule;
+                    for (unsigned during_init = 0; during_init < 2; ++during_init)
+                    {
+                        router_match_ctx_t mctx = {
+                            .router_state = ts,
+                            .line         = line,
+                            .line_state   = lineGetState(line, fixture.router),
+                            .payload      = (const uint8_t *) "hi",
+                            .payload_len  = 2,
+                        };
+                        router_match_t match =
+                            during_init ? routerClassifyDuringInit(ts, &mctx) : routerClassify(ts, &mctx);
+                        twfRequire(mctx.evaluation_failed == cases[i].failed,
+                                   "GeoIP record structure produced the wrong evaluation status");
+                        if (cases[i].failed)
+                        {
+                            twfRequire(match.result == kRouterClassifyError && match.target == NULL,
+                                       "malformed GeoIP container selected a target or default");
+                        }
+                        else
+                        {
+                            const bool expected = cases[i].has_country != (negated != 0);
+                            twfRequire(match.result ==
+                                           (expected || later_rule ? kRouterClassifyTarget : kRouterClassifyDefault),
+                                       "valid GeoIP record changed country matching");
+                            twfRequire(match.target == (expected     ? fixture.rule_target
+                                                        : later_rule ? fixture.next
+                                                                     : NULL),
+                                       "valid GeoIP record selected the wrong route");
+                        }
+                    }
+                }
+                g_record      = NULL;
+                g_record_size = 0;
+                routerLinestateDestroy(line, lineGetState(line, fixture.router));
+                twfLineDestroy(line);
+                fixtureTeardown(&fixture);
+            }
+        }
+    }
+}
+
 int main(void)
 {
+    caseGeoipRecordStructure();
     for (unsigned source = 0; source < 2; ++source)
     {
         for (unsigned negated = 0; negated < 2; ++negated)
@@ -621,8 +755,8 @@ int main(void)
                 kInjectBadRegisteredCountry, false, negated, source, "registered country read error");
             caseGeoipLookupOutcome(kInjectNoEntry, negated, source, 0, "no country record");
             caseGeoipLookupOutcome(kInjectNoCountry, negated, source, 2, "record without country codes");
-            caseGeoipLookupOutcome(kInjectNoCountryPath, negated, source, 2, "country maps absent");
-            caseGeoipLookupOutcome(kInjectRegisteredCountry, negated, source, 2, "registered country fallback");
+            caseGeoipLookupOutcome(kInjectNoCountryPath, negated, source, 6, "country maps absent");
+            caseGeoipLookupOutcome(kInjectRegisteredCountry, negated, source, 4, "registered country fallback");
             caseGeoipLookupOutcome(kInjectIpv6InIpv4Database, negated, source, 0, "IPv6 in IPv4 database");
         }
     }
