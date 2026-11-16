@@ -1,5 +1,5 @@
 <!--
-Documentation version: 160
+Documentation version: 161
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -17,7 +17,7 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
 - Applies checksum recalculation before writing when the packet buffer requests it.
-- Bypasses Linux conntrack by default for capture ranges and raw output; output uses an automatically selected socket mark.
+- Bypasses Linux conntrack for active captured input and raw output; output uses a dedicated explicit or automatic socket mark.
 
 ## Typical Placement
 
@@ -59,8 +59,7 @@ unrelated Echo Reply.
     "capture-ips": [
       "192.0.2.10",
       "198.51.100.0/24"
-    ],
-    "bypass-conntrack": true
+    ]
   },
   "next": "next-node-name"
 }
@@ -74,8 +73,7 @@ For write-only packet injection, omit all capture-range keys:
   "type": "RawSocket",
   "settings": {
     "fragment-policy": "preserve-fragments",
-    "raw-device-name": "raw-out",
-    "bypass-conntrack": true
+    "raw-device-name": "raw-out"
   }
 }
 ```
@@ -108,10 +106,9 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `[]` (also used when omitted)
 
-  Excluded incoming packets skip this node's capture and incoming NOTRACK rules,
-  including when `bypass-conntrack` is enabled. They continue through normal host
-  conntrack and firewall processing. This setting does not restrict raw output:
-  packets sent by WaterWall's raw socket still follow `bypass-conntrack`.
+  Excluded incoming packets skip this node's capture rules and continue through
+  normal host conntrack and firewall processing. This setting does not restrict
+  raw output: packets sent by WaterWall's raw socket still bypass conntrack.
 
   For example, these settings leave incoming ICMP and TCP to the host:
 
@@ -127,7 +124,7 @@ For write-only packet injection, omit all capture-range keys:
   `dont-capture-protocols` are mutually exclusive, even for empty lists.
 
   The allowlist is compiled once into the existing protocol predicate: Linux
-  uses fixed-size cBPF in both NFQUEUE and incoming NOTRACK rules; Windows uses
+  uses fixed-size cBPF on every NFQUEUE rule; Windows uses
   WinDivert. Unselected protocols stay in the host stack and retain normal
   conntrack/firewall processing. Raw output is unaffected. Nonempty exclusions,
   including those produced from this allowlist, require Linux's iptables `bpf`
@@ -209,30 +206,21 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `"unnamed-raw-device"`
 
-- `bypass-conntrack` `(boolean)`
-  On Linux, control conntrack bypass for both configured capture ranges and this
-  node's raw output socket. When enabled, WaterWall installs source-range NOTRACK
-  rules in `raw PREROUTING` and an exact-mark rule in `raw OUTPUT` using an
-  automatically selected socket mark. In write-only mode, only the output rule
-  is needed. Setting this to `false` installs neither kind of NOTRACK rule;
-  NFQUEUE capture and drop-and-dispatch remain active. The setting has no effect
-  on the Windows WinDivert backend.
-
-  Default: `true`
-
 - `mark` `(integer)`
-  Explicit firewall mark for the raw output device where supported. This field
-  is permitted only with `"bypass-conntrack": false`; even an explicit `0` is
-  rejected while bypass is enabled. With bypass disabled, WaterWall installs no
-  capture or output NOTRACK rules and preserves the configured mark.
+  Optional Linux output socket mark, an integer from `1` through `4294967295`.
+  It must be dedicated to WaterWall traffic: the output NOTRACK exemption matches
+  this exact mark, so unrelated traffic sharing it would also bypass conntrack.
+  Zero, negative, fractional and nonnumeric values are rejected. An explicit mark
+  is preserved exactly for routing and NOTRACK, including across device restarts.
 
-  Default when bypass is disabled: `0`
+  When omitted, WaterWall selects an automatic mark on each start using the
+  collision checks described below. WinDivert does not apply Linux socket marks.
 
   For explicit policy routing, use:
 
   ```json
   "settings": {
-    "fragment-policy": "preserve-fragments", "bypass-conntrack": false, "mark": 10 }
+    "fragment-policy": "preserve-fragments", "mark": 10 }
   ```
 
 ## Detailed Behavior
@@ -383,14 +371,18 @@ packet until completion; the native completion notification schedules owner-work
 work and never borrows a worker pool. Stop closes admission, quiesces notifications,
 cancels pending writes, and waits for completion before releasing retained packets.
 
-On Linux, output bypass requires `iptables`, `iptables-save`, `ip` from
-iproute2, and permission to manage firewall rules (`CAP_NET_ADMIN`). Before
-enabling the writer, WaterWall checks IPv4 firewall and routing
-snapshots, selects a random mark, sets `SO_MARK`, and inserts its NOTRACK rule.
-Failure to inspect policy, find a suitable mark, set the socket mark, or install
-the rule fails startup and attempts cleanup.
+On Linux, raw output always bypasses conntrack and requires `iptables` and
+permission to manage firewall rules (`CAP_NET_ADMIN`). Before enabling the
+writer, WaterWall sets `SO_MARK` and installs an exact-mark NOTRACK rule in
+`raw OUTPUT`. An explicit `mark` is used unchanged for both operations and must
+be dedicated to WaterWall; other traffic using the same mark would also bypass
+conntrack. Without `mark`, WaterWall reads IPv4 firewall and routing snapshots
+and selects a random mark on each start. Automatic selection additionally
+requires `iptables-save` and `ip` from iproute2. Failure to select or apply the
+mark, inspect required policy, or install the rule fails startup and attempts
+cleanup.
 
-Selection prefers `0x80000000..0xffffffff`, falls back below that range when
+Automatic selection prefers `0x80000000..0xffffffff`, falls back below that range when
 necessary, and avoids values below `0x00010000`. It checks mark comparisons and
 literal mark assignments exposed by `iptables-save`, plus `ip -4 rule show`,
 including masks and the match results that an unmarked packet would have had.
@@ -401,8 +393,7 @@ sockets, concurrent changes, and future programs may not be visible to it.
 The exemption avoids conntrack; ordinary routing and firewall processing still
 apply. Exempted output cannot rely on host conntrack-based NAT or stateful
 filtering. Normal raw-table priority, fragment handling, and MTU limits remain
-unchanged. `bypass-conntrack=false` disables this node's capture and output
-exemptions; other administrators' rules remain independent.
+unchanged. Other administrators' rules remain independent.
 
 Output admission closes and admitted native writes finish before the
 `WWRAW_NOTRACK_...` rule is removed. Queued output is discarded during stop;
@@ -424,8 +415,8 @@ Current implementation behavior:
 
 On Linux, nonempty protocol exclusions, whether configured directly or derived
 from `capture-protocols`, require the iptables `bpf` match (`xt_bpf`). One
-fixed-size classic BPF predicate checks the IPv4 Protocol byte in both the
-NFQUEUE and incoming NOTRACK rules. It also handles fragments and protocol zero
+fixed-size classic BPF predicate checks the IPv4 Protocol byte in every
+NFQUEUE rule. It also handles fragments and protocol zero
 without interpreting transport headers. Insertion, rollback and deletion use
 identical predicates. Missing matcher support fails startup and rolls back
 installed rules. An unrestricted protocol selection adds no protocol matcher.
@@ -438,43 +429,36 @@ backlogs and other TCP parameters before creating NFQUEUE resources. The core
 only Capture's sysctl tuning batch. Per-device `kernel-queue-tune`, the netlink
 operations and iptables commands needed to configure NFQUEUE remain independent.
 
-When `bypass-conntrack` is enabled (the default), Linux capture installs a
-matching `CT --notrack` rule in `raw PREROUTING` for each capture source range, with the same protocol exclusions as capture.
-The exemption also requires `--dst-type LOCAL`: it covers packets addressed to a local unicast address,
-without exempting ordinary transit traffic, broadcasts, or multicast. The INPUT
-capture rule checks the source range and protocol exclusions without this
-destination-type restriction. Raw-table matching is before DNAT, so exempted
-traffic cannot rely on this host's conntrack-based NAT
-or stateful firewall handling. Setting `bypass-conntrack=false` disables these
-capture exemptions along with the output exemption. NFQUEUE capture continues
-with its existing drop-and-dispatch behavior.
+Linux capture installs
+NFQUEUE rules in `raw PREROUTING`, matching each source range and its protocol
+filters with `--dst-type LOCAL`. This captures local-unicast destinations only;
+ordinary transit traffic, broadcasts and multicast remain in the host stack.
+Active capture returns `NF_DROP` before conntrack, DNAT and the normal routing
+decision, then dispatches the captured copy. Selected input does not traverse
+later host firewall hooks. No incoming NOTRACK rules are installed.
 
-The rules use normal raw-table priority, leaving fragment reassembly and the
-1,500-byte capture limit unchanged. They do not change interface MTU or provide
+The rules use normal raw-table priority, leaving fragment reassembly ordering and
+the 1,500-byte capture limit unchanged. They do not change interface MTU or provide
 PMTU discovery; necessary ICMP errors still need to reach the responsible stack.
-`skip-sysctl` does not disable NOTRACK setup.
+`skip-sysctl` does not disable queue-rule setup.
 
-All INPUT queue rules are installed before any enabled NOTRACK rules. The
-coordinator services the inactive queues with `NF_ACCEPT` during these supervised
-rule commands. Capture activates once its selected rules are installed.
-If multiqueue rule installation fails, WaterWall removes the partial rules and
-retries one receive queue. Failed single-queue installation, NOTRACK installation,
-or incomplete rollback fails startup.
-Cleanup attempts NOTRACK removal before NFQUEUE removal and tracks failed or
-outcome-unknown commands independently in their respective tables. A NOTRACK
-cleanup failure does not prevent an attempt to remove the queue rules. Reader
-failure requests orderly shutdown, whose lifecycle owner performs rule cleanup.
-Removing NOTRACK restores tracking for subsequent packets; already-untracked
-packets are not retroactively tracked. `--queue-bypass` affects only NFQUEUE:
-abrupt process death or failed cleanup can leave `WWCAP_NOTRACK_...` rules that
-an administrator must remove from `raw PREROUTING` to restore tracking.
+The coordinator services prepared inactive queues with `NF_ACCEPT` during rule
+installation. Capture activates once all selected queue rules are installed.
+If multiqueue installation fails, WaterWall removes the partial rules and retries
+one receive queue. Failed single-queue installation or incomplete rollback fails
+startup. Cleanup tracks failed or outcome-unknown queue commands against the
+raw PREROUTING chain, retaining ownership for retry. Reader failure requests
+orderly shutdown, whose lifecycle owner performs rule cleanup.
 
 On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
 on the queue, matching packets continue through the host firewall instead of
-being dropped by an absent queue. This is a fail-open availability policy:
+being dropped by an absent queue. Acceptance resumes at later tables; subsequent
+rules in the queued table are skipped. With early capture, accepted input can
+undergo normal conntrack processing. This is a fail-open availability policy:
 packets are not captured or transformed while no listener exists. It does not
 make queue overflow fail-open while WaterWall remains bound to the queue.
-WaterWall avoids queue numbers already referenced by existing INPUT rules. A
+WaterWall avoids queue numbers already referenced by either filter INPUT or
+raw PREROUTING rules. A
 failed startup closes its queues; complete rollback permits a later restart.
 Unresolved rule cleanup or an inactive queue I/O failure makes that capture-device
 object non-restartable. Closing the queues activates `--queue-bypass` for any

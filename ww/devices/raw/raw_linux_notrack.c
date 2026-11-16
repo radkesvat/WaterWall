@@ -172,7 +172,7 @@ bool rawLinuxSelectNotrackMark(const char *iptables_rules, const char *routing_r
             return true;
         }
     }
-    LOGE("RawDevice: no suitable automatic mark found; disable bypass-conntrack to use explicit mark/routing policy");
+    LOGE("RawDevice: no suitable automatic mark found; configure a dedicated nonzero mark for explicit routing policy");
     return false;
 }
 
@@ -230,29 +230,26 @@ static bool rawLinuxNotrackRule(raw_device_t *rdev, const char *operation)
 
 bool rawLinuxNotrackInstall(raw_device_t *rdev)
 {
-    if (! rdev->bypass_conntrack)
-    {
-        return true;
-    }
     assert(! rdev->notrack_rule_pending);
 
-    const char *const firewall_argv[] = {"iptables-save", NULL};
-    const char *const routing_argv[]  = {"ip", "-4", "rule", "show", NULL};
-    char             *firewall        = NULL;
-    char             *routing         = NULL;
-    uint32_t          mark;
-    const bool        selected =
-        rawLinuxNotrackCommand(firewall_argv, &firewall) && rawLinuxNotrackCommand(routing_argv, &routing) &&
-        rawLinuxSelectNotrackMark(firewall != NULL ? firewall : "", routing != NULL ? routing : "", &mark);
-    memoryFree(firewall);
-    memoryFree(routing);
-    if (! selected)
+    uint32_t mark = rdev->configured_mark;
+    if (mark == 0)
     {
-        return false;
+        const char *const firewall_argv[] = {"iptables-save", NULL};
+        const char *const routing_argv[]  = {"ip", "-4", "rule", "show", NULL};
+        char             *firewall        = NULL;
+        char             *routing         = NULL;
+        const bool        selected =
+            rawLinuxNotrackCommand(firewall_argv, &firewall) && rawLinuxNotrackCommand(routing_argv, &routing) &&
+            rawLinuxSelectNotrackMark(firewall != NULL ? firewall : "", routing != NULL ? routing : "", &mark);
+        memoryFree(firewall);
+        memoryFree(routing);
+        if (! selected)
+            return false;
     }
     if (setsockopt(rdev->socket, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
     {
-        LOGE("RawDevice: unable to set automatic socket mark: %s", strerror(errno));
+        LOGE("RawDevice: unable to set output socket mark: %s", strerror(errno));
         return false;
     }
 

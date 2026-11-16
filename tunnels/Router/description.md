@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Router.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Router.mdx, and all files must keep the same documentation version.
 -->
 
@@ -146,7 +146,7 @@ object:
 | `sniffing` | array | no | domain-sniffing modes: `http1`, `http2`, `http`, `tls`, `quic`, `http3` (see [Domain sniffing](#domain-sniffing)). Missing or empty disables domain sniffing |
 | `sniff-even-if-domain-is-already-provided` | boolean | no | default `false` (see [When domain sniffing runs](#when-domain-sniffing-runs)) |
 | `dns-behaviour` | object | no | Optional [DNS resolution before routing](#resolving-domains-before-routing); disabled by default. Resolve an unresolved hostname when rules need its IP. |
-| `geoip-db-path` | string | only with `geoip:` tokens | path to a MaxMind country database used by `geoip:<cc>` (see [GeoIP](#geoip)) |
+| `geoip-db-path` | string | only with `geoip:` or `!geoip:` tokens | path to a MaxMind country database used by either country token form (see [GeoIP](#geoip)) |
 | `geosite-db-path` | string | only with `geosite:` tokens | path to a Router geosite JSON database used by `geosite:<list>` (see [GeoSite](#geosite)) |
 
 A `Router` with no `rules` still sends every connection to `next` (a warning is
@@ -171,10 +171,10 @@ are ignored with a warning.
 
 | condition | accepts | meaning & notes |
 |-----------|---------|-----------------|
-| `source-ips` | string or array | Match the line **source** IP against single IPs, CIDR ranges, or `geoip:<cc>` country tokens (e.g. `["10.0.0.0/8", "geoip:ir"]`). A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined. |
+| `source-ips` | string or array | Match the line **source** IP against single IPs, CIDR ranges, or `geoip:<cc>` / `!geoip:<cc>` country tokens (e.g. `["10.0.0.0/8", "geoip:ir"]`). A bare IP is a `/32` (or `/128`) host route. Numeric and GeoIP entries are OR-combined. |
 | `source-port` | integer or array of integers | Match `src_ctx.port` — the local/inbound port the peer connected to (resolved per-connection, even on multiport backends; i.e. the destination port in the peer's packets) — against exact ports, e.g. `53` or `[80, 443]`. |
 | `source-port-range` | two-integer array | Match `src_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `source-port`, the exact ports and range are OR-combined. |
-| `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match; enable [DNS resolution](#resolving-domains-before-routing) when needed. |
+| `destination-ip` | string or array | Match the line **destination** IP (`dest_ctx`) against single IPs, CIDR ranges, or `geoip:<cc>` / `!geoip:<cc>`. Numeric and GeoIP entries are OR-combined. A domain-only destination has no IP and does not match; enable [DNS resolution](#resolving-domains-before-routing) when needed. |
 | `destination-port` | integer or array of integers | Match `dest_ctx.port` against exact ports, e.g. `53` or `[80, 443]`. |
 | `destination-port-range` | two-integer array | Match `dest_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `destination-port`, the exact ports and range are OR-combined. |
 | `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or GeoSite lists (`geosite:cn`, see [GeoSite](#geosite)). The domain may come from an earlier tunnel or from [domain sniffing](#domain-sniffing). |
@@ -639,20 +639,86 @@ lowercase strings listed above.
 
 ## GeoIP & GeoSite databases
 
-`geoip:<cc>` and `geosite:<list>` tokens need their databases configured, but
+`geoip:<cc>`, `!geoip:<cc>` and `geosite:<list>` tokens need their databases configured, but
 only when a parsed rule actually uses them.
 
 ### GeoIP
 
-`geoip-db-path` points to a **MaxMind country database** and enables
-`geoip:<cc>` tokens in `source-ips` and `destination-ip`. Country codes are
-two-letter ISO-3166 codes, parsed case-insensitively (e.g. `geoip:ir`,
-`geoip:us`).
+`geoip:<cc>` and `!geoip:<cc>` work in `source-ips` and `destination-ip`,
+as scalar strings or array entries. A leading `!` negates that country token
+only: `!geoip:ir` matches a valid IP that does not match `geoip:ir`. The prefix
+and two ASCII country letters are case-insensitive, so `!GeoIP:iR` is valid.
+Exactly one optional `!` is accepted; whitespace, negated IPs/CIDRs and negated
+GeoSite tokens are invalid.
 
-- Required only when at least one parsed rule uses a `geoip:` token.
-- An IP that is not found in the database simply does not match.
-- A domain-only destination has no IP to look up; combine with
-  `dns-behaviour: {"resolve": true}` when needed.
+A readable MaxMind country database must be configured with `geoip-db-path`
+whenever any parsed rule uses either form, including negative-only rules.
+Router reads `country.iso_code`, falling back to `registered_country.iso_code`
+when the first is absent.
+
+| Address or lookup result | `geoip:ir` | `!geoip:ir` |
+| --- | --- | --- |
+| Country is IR | Match | No match |
+| Country is another country | No match | Match |
+| Valid IP without a country record or either country code | No match | Match |
+| IPv6 address in an IPv4-only database | No match | Match |
+| Missing IP, domain-only address or unsupported address family | No match | No match |
+
+A domain-only destination needs [DNS resolution before routing](#resolving-domains-before-routing)
+to match either country form. A MaxMind access error or malformed country data
+stops classification and closes the line; it cannot become a negative match or
+select a later rule or the default route.
+
+Arrays retain `OR` semantics:
+
+- `["10.0.0.0/8", "!geoip:ir"]` matches the CIDR or the negative country token.
+  A numeric match skips GeoIP evaluation for that field.
+- `["geoip:ir", "!geoip:ir"]` matches every eligible IPv4/IPv6 address when
+  evaluation succeeds.
+- `["!geoip:ir", "!geoip:de"]` also matches every eligible IP; it does not
+  exclude both countries. Other fields in the rule still combine with `AND`,
+  and the first matching rule wins.
+
+This complete node configuration sends non-Iranian source IPs **and IPs without
+a known country** to `non_iran_path`. Iranian sources use `iran_path`:
+
+```json
+{
+  "name": "country-routing",
+  "nodes": [
+    {
+      "name": "country-in",
+      "type": "TcpListener",
+      "settings": { "address": "0.0.0.0", "port": 8443 },
+      "next": "country-router"
+    },
+    {
+      "name": "country-router",
+      "type": "Router",
+      "settings": {
+        "geoip-db-path": "/var/lib/waterwall/GeoLite2-Country.mmdb",
+        "rules": [
+          { "source-ips": "!geoip:ir", "target": "non_iran_path" }
+        ]
+      },
+      "next": "iran_path"
+    },
+    {
+      "name": "non_iran_path",
+      "type": "TcpConnector",
+      "settings": { "address": "192.0.2.10", "port": 443 }
+    },
+    {
+      "name": "iran_path",
+      "type": "TcpConnector",
+      "settings": { "address": "198.51.100.10", "port": 443 }
+    }
+  ]
+}
+```
+
+The database path, branch names and backend addresses are placeholders for your
+configuration. Both referenced branches are defined in the example.
 
 ### GeoSite
 

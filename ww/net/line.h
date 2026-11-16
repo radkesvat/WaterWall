@@ -202,6 +202,27 @@ void lineSetAuthenticatedCredentials(line_t *const line, const char *username, c
 void lineCopyUsers(line_t *const dest, const line_t *const src);
 
 /**
+ * @brief Copy routing context and user identity to a newly created companion line.
+ *
+ * Both lines must be distinct, live normal lines owned by the current worker.
+ * The destination must be newly created and unpublished, with no user markers
+ * or credentials. Node-local state may already be initialized.
+ *
+ * Copies both address contexts, including their protocol and optional metadata,
+ * the listener/source ports, and all user markers and credentials through the
+ * existing copy helpers. The caller selects the final endpoints and protocols
+ * before Init. No callback is dispatched and no association is created.
+ *
+ * Lifetime, pool/worker ownership, established state, tunnel state and bypass
+ * mask remain unchanged. Read preferences, fallback and close-linger policy
+ * remain the caller's responsibility.
+ *
+ * @param dest Newly created destination line.
+ * @param src Source line whose routing context and user identity are inherited.
+ */
+void lineCopyContext(line_t *const dest, const line_t *const src);
+
+/**
  * @brief Returns the latest user handle marker added to the line.
  *
  * @param line Pointer to the line.

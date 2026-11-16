@@ -1,5 +1,5 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KcpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KcpClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -137,7 +137,7 @@ There are no required tunnel-specific settings.
 
 ### KCP transport model
 
-During application Init, the client borrows that application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. Application context is TCP; transport context is UDP. Actual transport Est is relayed promptly to the attached application, independently of handshake readiness.
+During application Init, the client borrows that application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. The application's source and destination protocols are preserved. Both source and destination protocols on the new transport line are set to UDP. Actual transport Est is relayed promptly to the attached application, independently of handshake readiness.
 
 The peers establish a fresh session through HELLO, CHALLENGE, CONFIRM and READY. Independent 128-bit client/server nonces identify every KCP/FEC datagram before decoding. Handshake messages carry the close interval and exact FEC settings. The client retries its current request every 250 ms within the original `no-recv-timeout-ms` deadline. The server initializes a distinct service line only after fresh confirmation. Delayed traffic cannot reset an established session or recreate an old service. These identifiers provide no authentication or encryption.
 

@@ -178,8 +178,8 @@ static bool rawsocketLoadProtocolFilter(capture_protocol_filter_t *filter, const
     }
     if (allow != NULL)
     {
-        /* Compile the allowlist once into the existing kernel predicate. This
-         * also applies to NOTRACK; no packet crosses userspace just to reject it. */
+        /* Compile the allowlist once into the kernel capture predicate;
+         * unselected protocols remain in the host stack. */
         for (size_t i = 0; i < kCaptureProtocolWordCount; ++i)
             filter->excluded[i] = ~filter->excluded[i];
     }
@@ -281,18 +281,19 @@ tunnel_t *rawsocketCreate(node_t *node)
     }
     state->multi_queue_requested = multi_queue == NULL || cJSON_IsTrue(multi_queue);
 
-    const cJSON *bypass_conntrack = cJSON_GetObjectItemCaseSensitive(settings, "bypass-conntrack");
-    if (bypass_conntrack != NULL && ! cJSON_IsBool(bypass_conntrack))
+    if (cJSON_GetObjectItemCaseSensitive(settings, "bypass-conntrack") != NULL)
     {
-        LOGF("JSON Error: RawSocket->settings->bypass-conntrack (boolean field) : expected true or false");
+        LOGF("JSON Error: RawSocket->settings->bypass-conntrack is not supported; Linux conntrack bypass is mandatory");
         rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
-    state->bypass_conntrack = bypass_conntrack == NULL || cJSON_IsTrue(bypass_conntrack);
-    if (state->bypass_conntrack && cJSON_GetObjectItemCaseSensitive(settings, "mark") != NULL)
+    int64_t                   mark;
+    const json_value_status_t mark_status = jsonGetObjectIntegerInRange(settings, "mark", 1, UINT32_MAX, &mark);
+    if (mark_status == kJsonValuePresent)
+        state->firewall_mark = (uint32_t) mark;
+    else if (cJSON_GetObjectItemCaseSensitive(settings, "mark") != NULL)
     {
-        LOGF("JSON Error: RawSocket->settings->mark requires bypass-conntrack=false; conntrack bypass owns the "
-             "output socket mark");
+        LOGF("JSON Error: RawSocket->settings->mark : expected an integer from 1 to 4294967295 dedicated to WaterWall");
         rawsocketDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
@@ -321,6 +322,5 @@ tunnel_t *rawsocketCreate(node_t *node)
         }
     }
 
-    getIntFromJsonObjectOrDefault((&state->firewall_mark), settings, "mark", 0);
     return t;
 }

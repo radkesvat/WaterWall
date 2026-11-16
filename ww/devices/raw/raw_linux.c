@@ -348,9 +348,8 @@ bool rawdeviceBringDown(raw_device_t *rdev)
     return true;
 }
 
-raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_conntrack, void *userdata)
+raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, void *userdata)
 {
-    assert(! bypass_conntrack || mark == 0);
     int rsocket = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
     if (rsocket < 0)
     {
@@ -359,20 +358,6 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
         return NULL;
     }
 
-    if (mark != 0)
-    {
-        if (setsockopt(rsocket, SOL_SOCKET, SO_MARK, &mark, sizeof(mark)) != 0)
-        {
-            const int error = errno;
-            LOGE("RawDevice: unable to set raw socket mark for %s (mark=%u, errno=%d: %s)",
-                 name,
-                 mark,
-                 error,
-                 strerror(error));
-            close(rsocket);
-            return NULL;
-        }
-    }
     int one = 1;
     if (setsockopt(rsocket, IPPROTO_IP, IP_HDRINCL, &one, sizeof(one)) < 0)
     {
@@ -411,8 +396,7 @@ raw_device_t *rawdeviceCreate(const char *name, uint32_t mark, bool bypass_connt
     raw_device_t *rdev     = memoryAllocateZero(sizeof(*rdev));
     rdev->name             = stringDuplicate(name);
     rdev->socket           = rsocket;
-    rdev->mark             = mark;
-    rdev->bypass_conntrack = bypass_conntrack;
+    rdev->configured_mark  = mark;
     rdev->userdata         = userdata;
     atomic_init(&rdev->lifecycle, kRawLifecycleDown);
     rawWriterInit(&rdev->writer);

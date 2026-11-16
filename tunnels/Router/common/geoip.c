@@ -2,17 +2,28 @@
 
 #include "loggers/network_logger.h"
 
+bool routerGeoipTokenHasPrefix(const char *pattern)
+{
+    return stringStartsWithIgnoreCase(pattern + (pattern[0] == '!'), "geoip:");
+}
+
 static bool routerGeoipCodeParse(const char *pattern, router_geoip_code_t *out, const char *json_path)
 {
-    if (stringLength(pattern) != 8U || ! asciiIsAlpha((uint8_t) pattern[6]) || ! asciiIsAlpha((uint8_t) pattern[7]))
+    const bool  negated = pattern[0] == '!';
+    const char *token   = pattern + negated;
+    if (stringLength(token) != 8U || ! stringStartsWithIgnoreCase(token, "geoip:") ||
+        ! asciiIsAlpha((uint8_t) token[6]) || ! asciiIsAlpha((uint8_t) token[7]))
     {
-        LOGF("JSON Error: %s : \"%s\" is not a valid geoip:<ISO-3166-alpha-2> token", json_path, pattern);
+        LOGF("JSON Error: %s : \"%s\" is not a valid geoip:<ISO-3166-alpha-2> or !geoip:<ISO-3166-alpha-2> token",
+             json_path,
+             pattern);
         return false;
     }
 
-    out->code[0] = (char) asciiUpper((uint8_t) pattern[6]);
-    out->code[1] = (char) asciiUpper((uint8_t) pattern[7]);
+    out->code[0] = (char) asciiUpper((uint8_t) token[6]);
+    out->code[1] = (char) asciiUpper((uint8_t) token[7]);
     out->code[2] = '\0';
+    out->negated = negated;
     return true;
 }
 
@@ -33,7 +44,7 @@ bool routerGeoipCodesParse(const router_string_list_t *patterns, router_geoip_co
     for (uint32_t i = 0; i < patterns->count; ++i)
     {
         const char *pattern = patterns->items[i];
-        if (! stringStartsWithIgnoreCase(pattern, "geoip:"))
+        if (! routerGeoipTokenHasPrefix(pattern))
         {
             continue;
         }
@@ -102,7 +113,7 @@ static bool routerGeoipContextToSockaddr(const address_context_t *ctx, sockaddr_
 /**
  * Read a two-letter ISO country code out of one MaxMind map.
  *
- * A missing entry is a normal no-match. Any MaxMind access error, or an ISO code with an unexpected type or size,
+ * A missing entry is an ordinary no-country result. Any MaxMind access error, malformed container or ISO code
  * is a request-local evaluation failure: it is reported through @p out_evaluation_failed so the caller can refuse
  * to route the line instead of silently falling through to a later rule.
  */
@@ -114,6 +125,26 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
 
     if (status == MMDB_LOOKUP_PATH_DOES_NOT_MATCH_DATA_ERROR)
     {
+        // A path mismatch can mean an absent key or a non-map parent. Inspect
+        // the country container, or the record root if that key is also absent.
+        // Successful traversal of our nonnumeric keys already proves their
+        // ancestors are maps; only a map can make the missing ISO path ordinary.
+        status = MMDB_get_value(entry, &data, map_name, NULL);
+        if (status == MMDB_LOOKUP_PATH_DOES_NOT_MATCH_DATA_ERROR)
+        {
+            status = MMDB_get_value(entry, &data, NULL);
+        }
+
+        if (UNLIKELY(status != MMDB_SUCCESS))
+        {
+            LOGE("Router: MaxMind parent lookup failed for %s.iso_code: %s", map_name, MMDB_strerror(status));
+            *out_evaluation_failed = true;
+        }
+        else if (UNLIKELY(! data.has_data || data.type != MMDB_DATA_TYPE_MAP))
+        {
+            LOGE("Router: MaxMind parent of %s.iso_code is not a map", map_name);
+            *out_evaluation_failed = true;
+        }
         return false;
     }
 
@@ -132,6 +163,13 @@ static bool routerGeoipReadIsoCode(MMDB_entry_s *entry, const char *map_name, ch
     if (UNLIKELY(data.type != MMDB_DATA_TYPE_UTF8_STRING || data.data_size != 2U))
     {
         LOGE("Router: MaxMind %s.iso_code is not a two-letter string", map_name);
+        *out_evaluation_failed = true;
+        return false;
+    }
+
+    if (UNLIKELY(! asciiIsAlpha((uint8_t) data.utf8_string[0]) || ! asciiIsAlpha((uint8_t) data.utf8_string[1])))
+    {
+        LOGE("Router: MaxMind %s.iso_code is not two ASCII letters", map_name);
         *out_evaluation_failed = true;
         return false;
     }
@@ -164,7 +202,7 @@ static bool routerGeoipLookupCountry(router_tstate_t *ts, const address_context_
 
     if (mmdb_error == MMDB_IPV6_LOOKUP_IN_IPV4_DATABASE_ERROR)
     {
-        // an IPv6 address looked up in an IPv4-only database is a normal no-match
+        // An IPv6 address in an IPv4-only database has no country; negative tokens may still match.
         return false;
     }
 
@@ -201,15 +239,20 @@ bool routerGeoipCodesMatch(router_tstate_t *ts, const address_context_t *ctx, co
         return false;
     }
 
-    char country_code[3] = {0};
-    if (! routerGeoipLookupCountry(ts, ctx, country_code, out_evaluation_failed))
+    char       country_code[3] = {0};
+    const bool has_country     = routerGeoipLookupCountry(ts, ctx, country_code, out_evaluation_failed);
+    // Lookup checks the required-open-database invariant even for an absent address.
+    // Only an actual IP can match a negative token; lookup errors never become matches.
+    if (*out_evaluation_failed || ! addresscontextIsIpType(ctx) ||
+        (ctx->ip_address.type != IPADDR_TYPE_V4 && ctx->ip_address.type != IPADDR_TYPE_V6))
     {
         return false;
     }
 
     for (uint32_t i = 0; i < count; ++i)
     {
-        if (codes[i].code[0] == country_code[0] && codes[i].code[1] == country_code[1])
+        const bool equal = has_country && codes[i].code[0] == country_code[0] && codes[i].code[1] == country_code[1];
+        if (equal != codes[i].negated)
         {
             return true;
         }

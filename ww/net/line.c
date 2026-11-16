@@ -145,6 +145,22 @@ void lineCopyUsers(line_t *const dest, const line_t *const src)
     }
 }
 
+void lineCopyContext(line_t *const dest, const line_t *const src)
+{
+    assert(dest != NULL && src != NULL && dest != src);
+    assert(lineIsOnCurrentWorker(dest) && lineIsOnCurrentWorker(src));
+    assert(lineIsAlive(dest) && lineIsAlive(src));
+    assert(dest->user_count == 0);
+
+    routing_context_t       *destination = &dest->routing_context;
+    const routing_context_t *source      = &src->routing_context;
+    addresscontextCopy(&destination->src_ctx, &source->src_ctx);
+    addresscontextCopy(&destination->dest_ctx, &source->dest_ctx);
+    destination->local_listener_port = source->local_listener_port;
+    destination->peer_source_port    = source->peer_source_port;
+    lineCopyUsers(dest, src);
+}
+
 void lineClearUsers(line_t *const line)
 {
     if (line == NULL)

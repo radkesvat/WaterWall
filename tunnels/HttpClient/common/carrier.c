@@ -84,13 +84,7 @@ void httpclientCarrierStart(tunnel_t *t, line_t *application)
     ls->application_line    = application;
     ls->startup_in_progress = true;
 
-    routing_context_t *source      = lineGetRoutingContext(application);
-    routing_context_t *destination = lineGetRoutingContext(carrier);
-    addresscontextCopy(&destination->src_ctx, &source->src_ctx);
-    addresscontextCopy(&destination->dest_ctx, &source->dest_ctx);
-    destination->local_listener_port = source->local_listener_port;
-    destination->peer_source_port    = source->peer_source_port;
-    lineCopyUsers(carrier, application);
+    lineCopyContext(carrier, application);
 
     assert(wid < ts->worker_count);
     ls->inventory_next = ts->carrier_heads[wid];

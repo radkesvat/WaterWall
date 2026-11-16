@@ -18,7 +18,6 @@
       "type": "RawSocket",
       "settings": {
         "fragment-policy": "preserve-fragments",
-        "bypass-conntrack": false,
         "mark": 99
       }
     }

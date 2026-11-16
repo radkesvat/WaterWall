@@ -144,18 +144,12 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
         return false;
 
     line_t *transport = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
-    addresscontextCopy(lineGetSourceAddressContext(transport), lineGetSourceAddressContext(application));
-    addresscontextCopy(lineGetDestinationAddressContext(transport), lineGetDestinationAddressContext(application));
-    transport->routing_context.local_listener_port = application->routing_context.local_listener_port;
-    transport->routing_context.peer_source_port    = application->routing_context.peer_source_port;
-    lineCopyUsers(transport, application);
+    lineCopyContext(transport, application);
     transport->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
     transport->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
     transport->fallback_mode          = application->fallback_mode;
     if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
         lineRequestCloseLinger(transport, kLineCloseLingerPeerWriteShutdown);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(transport), IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(transport), IP_PROTO_UDP);
 

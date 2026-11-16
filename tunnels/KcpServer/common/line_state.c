@@ -108,7 +108,5 @@ bool kcpserverLinestateInitialize(kcpserver_lstate_t *ls, line_t *l, tunnel_t *t
     }
     worker->carriers = carrier;
     *ls              = (kcpserver_lstate_t) {.kind = kKcpServerCarrier, .carrier = carrier};
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_UDP);
     return true;
 }

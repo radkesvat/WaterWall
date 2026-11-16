@@ -235,7 +235,7 @@ void captureLinuxBuildProtocolFilter(const capture_protocol_filter_t *filter,
     /* One fixed-size cBPF bitmap lookup covers every literal protocol byte,
      * including zero (iptables -p 0 means "all"). X holds the bit index;
      * A selects one of eight 32-bit words, then returns !excluded[protocol].
-     * The same bytecode is used by NFQUEUE and NOTRACK, including deletion. */
+     * The same bytecode is used by every NFQUEUE rule, including deletion. */
     enum
     {
         kResultOffset     = 5 + 3 * (kCaptureProtocolWordCount - 1) + 1,
@@ -310,15 +310,21 @@ static capturedevice_command_status_t capturedeviceRunIptablesQueueRuleWithConte
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
 
-    /* Sixteen base arguments, two four-argument BPF matches, six statistic
+    /* Twenty-two base arguments, two four-argument BPF matches, six statistic
      * arguments and the terminating NULL. */
-    const char *argv[31] = {"iptables",
+    const char *argv[37] = {"iptables",
                             "-w",
                             lock_wait_arg,
+                            "-t",
+                            "raw",
                             operation,
-                            "INPUT",
+                            "PREROUTING",
                             "-s",
                             cidr,
+                            "-m",
+                            "addrtype",
+                            "--dst-type",
+                            "LOCAL",
                             "-m",
                             "comment",
                             "--comment",
@@ -361,42 +367,14 @@ capturedevice_command_status_t capturedeviceRunIptablesQueueRule(const char *ope
         NULL, operation, cidr, queue_number, rule_comment, protocol_filter, "", 0);
 }
 
-static capturedevice_command_status_t capturedeviceRunIptablesNotrackRuleWithContext(capture_device_t *cdev,
-                                                                                     const char       *operation,
-                                                                                     const char       *cidr,
-                                                                                     const char       *rule_comment,
-                                                                                     const char       *protocol_filter)
+static capturedevice_command_status_t capturedeviceReadIptablesRules(capture_device_t *cdev, const char *table,
+                                                                     const char *chain, char **rules)
 {
     char lock_wait_arg[16];
     stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
-
-    // INPUT captures local delivery. Do not exempt transit traffic from
-    // conntrack merely because it shares a captured source range. Keep the
-    // ordinary raw priority: fragment reassembly still precedes this rule.
-    /* Twenty base arguments, one four-argument BPF match and the terminating NULL. */
-    const char *argv[25] = {"iptables", "-w",        lock_wait_arg, "-t",       "raw",        operation,   "PREROUTING",
-                            "-s",       cidr,        "-m",          "addrtype", "--dst-type", "LOCAL",     "-m",
-                            "comment",  "--comment", rule_comment,  "-j",       "CT",         "--notrack", NULL};
-    capturedeviceAppendProtocolFilter(argv, ARRAY_SIZE(argv), protocol_filter);
-    return capturedeviceRunCommand(cdev, "iptables", argv);
-}
-
-capturedevice_command_status_t capturedeviceRunIptablesNotrackRule(const char *operation, const char *cidr,
-                                                                   const char *rule_comment,
-                                                                   const char *protocol_filter)
-{
-    return capturedeviceRunIptablesNotrackRuleWithContext(NULL, operation, cidr, rule_comment, protocol_filter);
-}
-
-static capturedevice_command_status_t capturedeviceReadIptablesRules(capture_device_t *cdev, bool notrack, char **rules)
-{
-    char lock_wait_arg[16];
-    stringNPrintf(lock_wait_arg, sizeof(lock_wait_arg), "%d", kCaptureIptablesLockWaitSeconds);
-
-    const char *const input_argv[]   = {"iptables", "-w", lock_wait_arg, "-S", "INPUT", NULL};
-    const char *const notrack_argv[] = {"iptables", "-w", lock_wait_arg, "-t", "raw", "-S", "PREROUTING", NULL};
-    const capturedevice_command_status_t status = capturedeviceRunCommandCapture(
-        cdev, "iptables", notrack ? notrack_argv : input_argv, kCaptureInspectionMaxOutputBytes, rules);
+    const char *const                    argv[] = {"iptables", "-w", lock_wait_arg, "-t", table, "-S", chain, NULL};
+    const capturedevice_command_status_t status =
+        capturedeviceRunCommandCapture(cdev, "iptables", argv, kCaptureInspectionMaxOutputBytes, rules);
 
     // Listing a built-in chain always prints at least the policy line, so an
     // empty snapshot after a clean exit means the output was lost. Accepting it
@@ -413,12 +391,12 @@ static capturedevice_command_status_t capturedeviceReadIptablesRules(capture_dev
 
 capturedevice_command_status_t capturedeviceReadIptablesInputRules(char **input_rules)
 {
-    return capturedeviceReadIptablesRules(NULL, false, input_rules);
+    return capturedeviceReadIptablesRules(NULL, "filter", "INPUT", input_rules);
 }
 
-capturedevice_command_status_t capturedeviceReadIptablesNotrackRules(char **notrack_rules)
+capturedevice_command_status_t capturedeviceReadIptablesPreroutingRules(char **prerouting_rules)
 {
-    return capturedeviceReadIptablesRules(NULL, true, notrack_rules);
+    return capturedeviceReadIptablesRules(NULL, "raw", "PREROUTING", prerouting_rules);
 }
 
 static const char *capturedeviceCommandStatusName(capturedevice_command_status_t status)
@@ -496,13 +474,16 @@ static void capturedeviceMarkQueueOption(const char *input_rules, const char *op
     }
 }
 
-bool capturedeviceSelectUnusedQueueRange(const char *input_rules, uint16_t start, uint16_t count, uint16_t *selected)
+bool capturedeviceSelectUnusedQueueRange(const char *input_rules, const char *prerouting_rules, uint16_t start,
+                                         uint16_t count, uint16_t *selected)
 {
-    assert(input_rules != NULL && selected != NULL && count > 0);
+    assert(input_rules != NULL && prerouting_rules != NULL && selected != NULL && count > 0);
 
     bool *used = memoryAllocateZero(((size_t) UINT16_MAX + 1U) * sizeof(*used));
     capturedeviceMarkQueueOption(input_rules, "--queue-num", false, used);
     capturedeviceMarkQueueOption(input_rules, "--queue-balance", true, used);
+    capturedeviceMarkQueueOption(prerouting_rules, "--queue-num", false, used);
+    capturedeviceMarkQueueOption(prerouting_rules, "--queue-balance", true, used);
 
     for (uint32_t offset = 0; offset <= UINT16_MAX; ++offset)
     {
@@ -536,9 +517,10 @@ bool capturedeviceSelectUnusedQueueRange(const char *input_rules, uint16_t start
     return false;
 }
 
-bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, uint16_t start, uint16_t *selected)
+bool capturedeviceSelectUnusedQueueNumber(const char *input_rules, const char *prerouting_rules, uint16_t start,
+                                          uint16_t *selected)
 {
-    return capturedeviceSelectUnusedQueueRange(input_rules, start, 1, selected);
+    return capturedeviceSelectUnusedQueueRange(input_rules, prerouting_rules, start, 1, selected);
 }
 
 bool capturedeviceChooseQueueRange(uint16_t count, uint16_t *selected)
@@ -552,9 +534,20 @@ bool capturedeviceChooseQueueRange(uint16_t count, uint16_t *selected)
         return false;
     }
 
-    const bool found =
-        capturedeviceSelectUnusedQueueRange(input_rules, GSTATE.capturedevice_queue_start_number, count, selected);
+    char *prerouting_rules = NULL;
+    status                 = capturedeviceReadIptablesPreroutingRules(&prerouting_rules);
+    if (status != kCapturedeviceCommandOk)
+    {
+        LOGE(
+            "CaptureDevice: cannot safely select an NFQUEUE number because raw PREROUTING rules could not be read (%s)",
+            capturedeviceCommandStatusName(status));
+        memoryFree(input_rules);
+        return false;
+    }
+    const bool found = capturedeviceSelectUnusedQueueRange(
+        input_rules, prerouting_rules, GSTATE.capturedevice_queue_start_number, count, selected);
     memoryFree(input_rules);
+    memoryFree(prerouting_rules);
     if (! found)
     {
         LOGE("CaptureDevice: no contiguous range of %u unreferenced NFQUEUE numbers is available",
@@ -578,7 +571,6 @@ enum
 typedef enum capture_owned_rule_kind_e
 {
     kCaptureOwnedFlow,
-    kCaptureOwnedNotrack,
     kCaptureOwnedOpaque
 } capture_owned_rule_kind_t;
 
@@ -588,9 +580,7 @@ static void capturedeviceFormatRuleComment(const capture_device_t *cdev, size_t 
     stringNPrintf(comment,
                   comment_size,
                   "%s_%016llX_%016zX",
-                  kind == kCaptureOwnedNotrack  ? "WWCAP_NOTRACK"
-                  : kind == kCaptureOwnedOpaque ? "WWCAP_OPAQUE"
-                                                : "WWCAP",
+                  kind == kCaptureOwnedOpaque ? "WWCAP_OPAQUE" : "WWCAP",
                   (unsigned long long) cdev->rule_token,
                   index);
 }
@@ -605,7 +595,7 @@ uint32_t capturedevicePendingRangeCount(const capture_device_t *cdev)
     for (uint32_t i = 0; i < cdev->capture_range_count; ++i)
     {
         const size_t first         = (size_t) i * cdev->queue_count;
-        bool         range_pending = cdev->rule_states[first].notrack != kCaptureRuleAbsent;
+        bool         range_pending = false;
         for (uint16_t lane = 0; lane < cdev->queue_count && ! range_pending; ++lane)
         {
             range_pending = cdev->rule_states[first + lane].queue != kCaptureRuleAbsent ||
@@ -625,32 +615,25 @@ static size_t capturedeviceRuleCount(const capture_device_t *cdev, capture_owned
     {
         return 0;
     }
-    return kind == kCaptureOwnedNotrack ? cdev->capture_range_count
-                                        : (size_t) cdev->capture_range_count * cdev->queue_count;
+    return (size_t) cdev->capture_range_count * cdev->queue_count;
 }
 
 static capture_rule_state_t *capturedeviceRuleState(capture_device_t *cdev, size_t index,
                                                     capture_owned_rule_kind_t kind)
 {
-    if (kind == kCaptureOwnedNotrack)
-        return &cdev->rule_states[index * cdev->queue_count].notrack;
     return kind == kCaptureOwnedOpaque ? &cdev->rule_states[index].opaque : &cdev->rule_states[index].queue;
 }
 
-static const char *capturedeviceRuleCidr(const capture_device_t *cdev, size_t index, capture_owned_rule_kind_t kind)
+static const char *capturedeviceRuleCidr(const capture_device_t *cdev, size_t index)
 {
-    return cdev->capture_cidrs[kind == kCaptureOwnedNotrack ? index : index / cdev->queue_count];
+    return cdev->capture_cidrs[index / cdev->queue_count];
 }
 
 static capturedevice_command_status_t capturedeviceRunOwnedRule(capture_device_t *cdev, size_t index,
                                                                 capture_owned_rule_kind_t kind, const char *operation,
                                                                 const char *comment)
 {
-    const char *cidr = capturedeviceRuleCidr(cdev, index, kind);
-    if (kind == kCaptureOwnedNotrack)
-    {
-        return capturedeviceRunIptablesNotrackRuleWithContext(cdev, operation, cidr, comment, cdev->protocol_filter);
-    }
+    const char                         *cidr  = capturedeviceRuleCidr(cdev, index);
     const struct capture_linux_queue_s *queue = &cdev->queues[index % cdev->queue_count];
     char                                opaque_filter[kCaptureLinuxSteeringFilterSize];
     if (kind == kCaptureOwnedOpaque)
@@ -683,11 +666,11 @@ static bool capturedeviceReconcileUnknownRules(capture_device_t *cdev, capture_o
     }
 
     char                          *rules  = NULL;
-    capturedevice_command_status_t status = capturedeviceReadIptablesRules(cdev, kind == kCaptureOwnedNotrack, &rules);
+    capturedevice_command_status_t status = capturedeviceReadIptablesRules(cdev, "raw", "PREROUTING", &rules);
     if (status != kCapturedeviceCommandOk)
     {
         LOGE("CaptureDevice: could not reconcile outcome-unknown %s rules (%s)",
-             kind == kCaptureOwnedNotrack ? "NOTRACK" : "NFQUEUE",
+             kind == kCaptureOwnedOpaque ? "opaque NFQUEUE" : "flow NFQUEUE",
              capturedeviceCommandStatusName(status));
         return false;
     }
@@ -738,8 +721,8 @@ static bool capturedeviceRemoveRuleKind(capture_device_t *cdev, capture_owned_ru
 
             LOGE("CaptureDevice: failed to remove iptables %s rule for %s (%s); %u capture ranges remain pending or "
                  "outcome-unknown",
-                 kind == kCaptureOwnedNotrack ? "NOTRACK" : "NFQUEUE",
-                 capturedeviceRuleCidr(cdev, index, kind),
+                 kind == kCaptureOwnedOpaque ? "opaque NFQUEUE" : "flow NFQUEUE",
+                 capturedeviceRuleCidr(cdev, index),
                  capturedeviceCommandStatusName(status),
                  capturedevicePendingRangeCount(cdev));
             return false;
@@ -753,12 +736,9 @@ static bool capturedeviceRemoveRuleKind(capture_device_t *cdev, capture_owned_ru
 
 bool capturedeviceRemoveInstalledRules(capture_device_t *cdev)
 {
-    // Restore tracking first. Still retire the queue rules if NOTRACK cleanup
-    // fails; each kind retains its own state for the next bounded cleanup pass.
-    const bool notrack_ok = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedNotrack);
     const bool opaque_ok  = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedOpaque);
     const bool queue_ok   = capturedeviceRemoveRuleKind(cdev, kCaptureOwnedFlow);
-    return notrack_ok && opaque_ok && queue_ok;
+    return opaque_ok && queue_ok;
 }
 
 char *capturedeviceFormatCidrString(const ipmask_t *range)
@@ -791,7 +771,7 @@ static bool capturedeviceInstallOwnedRuleKind(capture_device_t *cdev, capture_ow
         if (! capturedeviceReaderOperational(cdev))
         {
             LOGE("CaptureDevice: reader failed before %s rule %zu could be installed",
-                 kind == kCaptureOwnedNotrack ? "NOTRACK" : "NFQUEUE",
+                 kind == kCaptureOwnedOpaque ? "opaque NFQUEUE" : "flow NFQUEUE",
                  i);
             return false;
         }
@@ -808,8 +788,8 @@ static bool capturedeviceInstallOwnedRuleKind(capture_device_t *cdev, capture_ow
                 *state = kCaptureRuleOutcomeUnknown;
             }
             LOGE("CaptureDevice: failed to install iptables %s rule for %s (%s)",
-                 kind == kCaptureOwnedNotrack ? "NOTRACK" : "NFQUEUE",
-                 capturedeviceRuleCidr(cdev, i, kind),
+                 kind == kCaptureOwnedOpaque ? "opaque NFQUEUE" : "flow NFQUEUE",
+                 capturedeviceRuleCidr(cdev, i),
                  capturedeviceCommandStatusName(status));
             return false;
         }
@@ -818,7 +798,7 @@ static bool capturedeviceInstallOwnedRuleKind(capture_device_t *cdev, capture_ow
         if (! capturedeviceReaderOperational(cdev))
         {
             LOGE("CaptureDevice: reader failed after %s rule %zu was installed",
-                 kind == kCaptureOwnedNotrack ? "NOTRACK" : "NFQUEUE",
+                 kind == kCaptureOwnedOpaque ? "opaque NFQUEUE" : "flow NFQUEUE",
                  i);
             return false;
         }
@@ -826,10 +806,8 @@ static bool capturedeviceInstallOwnedRuleKind(capture_device_t *cdev, capture_ow
     return true;
 }
 
-bool capturedeviceInstallRuleKind(capture_device_t *cdev, bool notrack)
+bool capturedeviceInstallRules(capture_device_t *cdev)
 {
-    if (notrack)
-        return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedNotrack);
     return capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedFlow) &&
            (cdev->opaque_flow_mode != kDeviceOpaqueFlowSpread ||
             capturedeviceInstallOwnedRuleKind(cdev, kCaptureOwnedOpaque));

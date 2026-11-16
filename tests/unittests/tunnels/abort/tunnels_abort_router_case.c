@@ -30,7 +30,7 @@ int tunnelsAbortRouterGeoipUnopenedDatabaseCase(void)
     address_context_t ctx;
     memoryZero(&ctx, sizeof(ctx));
 
-    router_geoip_code_t code           = {.code = {'I', 'R', '\0'}};
+    router_geoip_code_t code           = {.code = {'I', 'R', '\0'}, .negated = true};
     bool                evaluation_bad = false;
 
     discard routerGeoipCodesMatch(&ts, &ctx, &code, 1, &evaluation_bad);
