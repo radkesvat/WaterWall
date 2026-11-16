@@ -34,7 +34,8 @@ if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
 endif()
 
 # WaterWall half shared by EnetClient and EnetServer: the node settings, the worker session around the driver and
-# the tunnel logic of both roles. It uses the WaterWall API, so it is a separate archive from the checked EnetCommon.
+# shared association lifetime and flow handling. It uses the WaterWall API, so it is a separate archive from the
+# checked EnetCommon.
 add_library(EnetTunnelCommon STATIC src/settings.c src/session.c src/endpoint.c)
 target_link_libraries(EnetTunnelCommon PUBLIC EnetCommon PRIVATE ww)
 if(NOT APPLE)

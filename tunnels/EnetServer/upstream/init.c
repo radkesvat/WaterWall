@@ -1,6 +1,14 @@
 #include "EnetServer/structure.h"
 
-void enetserverTunnelUpStreamInit(tunnel_t *t, line_t *line)
+void enetserverTunnelUpStreamInit(tunnel_t *t, line_t *carrier)
 {
-    enetEndpointServerInit(t, line);
+    /* The UDP source owns this carrier. Its service line is created only after the ENet handshake. */
+    if (! enetEndpointPrepareInit(t, carrier) || ! enetEndpointAttachServer(t, carrier))
+    {
+        tunnelPrevDownStreamFinish(t, carrier);
+        return;
+    }
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
+    enetEndpointStartServer(t, carrier);
 }
