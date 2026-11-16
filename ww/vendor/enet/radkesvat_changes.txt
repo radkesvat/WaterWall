@@ -21,6 +21,8 @@ Local source changes:
   from sent commands and queued retransmissions after acknowledgements or
   successful reliable-command removal (including the CONNECT handshake).
   Resetting queues clears that origin. No structure-layout or wire changes.
+  Check timeouts only on the first send pass per peer in each send-function
+  invocation, avoiding repeated scans of an unreliable backlog per datagram.
   Regular servicing remains required; blocking socket waits are unchanged.
 
 WaterWall-specific integration lives outside it:

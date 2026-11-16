@@ -26,7 +26,7 @@ EXPECTED = {
     "list.c": "c5350bfa7b7d3cc49fa4b2ebab92e359995e4b1ca47c2c17b0fa338dad87e5a4",
     "packet.c": "748eb4df8ec5d4c43476f7cde2d426337be4995e6e4bbca5b7fdba6a5d876fed",
     "peer.c": "8e5433a8432b21b063d9b5ac5113537b29618f00aea31a3c46b1c87b6e179140",
-    "protocol.c": "8fcebba7a1160d89bdc4e5ebc01fa15c4743d2f2bd1197b9a82ef1fa2d2c6d70",
+    "protocol.c": "c28b4031dc4556680be9b30016c54f1090a49663988730b389f3a9ad967115f4",
     "unix.c": "00f402d35728971b6c9b0034c4071dd0b500d0fe0ea1dc2d70eb8a57ad3b6c14",
     "win32.c": "f0fac54476f530d83d4ad2936ae8780988c4200ea19ed06093963e8fbde7085b",
     "include/enet/callbacks.h": "7614442f4fda137bbb4969cf6e9286e50bf2f444c9c50a1cecd0f4d7bbddf9cb",

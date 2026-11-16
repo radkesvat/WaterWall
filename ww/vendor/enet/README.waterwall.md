@@ -36,7 +36,9 @@ the driver. See `radkesvat_changes.txt` for the local change record.
 settings to 12 hours, preserving zero-as-default and the retry multiplier.
 Initial and doubled retry durations saturate safely at that limit; retry counts
 cannot wrap or produce an oversized shift. Maximum timeouts are checked on
-protocol service passes independently of retry expiration. A bit in the existing
+protocol service passes independently of retry expiration, once per peer per
+send-function invocation. Later datagram-building passes use the same cached
+time and do not repeat queue reconstruction. A bit in the existing
 peer flags distinguishes an active timeout origin from a valid timestamp of
 zero. Queue reset clears it; acknowledgements and successful reliable-command
 removal, including the CONNECT handshake, invalidate it so the origin is rebuilt
