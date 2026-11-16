@@ -151,11 +151,7 @@ bool quicSurvived(const quic_context_t *context)
 
 static void quicCopyContext(line_t *next, line_t *previous, const quic_tstate_t *state)
 {
-    addresscontextCopy(lineGetSourceAddressContext(next), lineGetSourceAddressContext(previous));
-    addresscontextCopy(lineGetDestinationAddressContext(next), lineGetDestinationAddressContext(previous));
-    lineGetRoutingContext(next)->local_listener_port = lineGetRoutingContext(previous)->local_listener_port;
-    lineGetRoutingContext(next)->peer_source_port    = lineGetRoutingContext(previous)->peer_source_port;
-    lineCopyUsers(next, previous);
+    lineCopyContext(next, previous);
     if (lineIsFallback(previous))
     {
         lineMarkFallback(next);

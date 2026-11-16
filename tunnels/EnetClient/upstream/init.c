@@ -10,11 +10,7 @@ void enetclientTunnelUpStreamInit(tunnel_t *t, line_t *application)
 
     /* Borrow the application line and create the UDP carrier on the same worker. */
     line_t *carrier = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(application));
-    addresscontextCopy(lineGetSourceAddressContext(carrier), lineGetSourceAddressContext(application));
-    addresscontextCopy(lineGetDestinationAddressContext(carrier), lineGetDestinationAddressContext(application));
-    carrier->routing_context.local_listener_port = application->routing_context.local_listener_port;
-    carrier->routing_context.peer_source_port    = application->routing_context.peer_source_port;
-    lineCopyUsers(carrier, application);
+    lineCopyContext(carrier, application);
     carrier->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
     carrier->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
     carrier->fallback_mode          = application->fallback_mode;

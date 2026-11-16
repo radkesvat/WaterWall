@@ -204,11 +204,7 @@ static kcpserver_session_t *findSession(kcpserver_carrier_t *carrier, const tou_
 
 static void copyServiceContext(line_t *service, line_t *carrier)
 {
-    addresscontextCopy(lineGetSourceAddressContext(service), lineGetSourceAddressContext(carrier));
-    addresscontextCopy(lineGetDestinationAddressContext(service), lineGetDestinationAddressContext(carrier));
-    lineGetRoutingContext(service)->local_listener_port = lineGetRoutingContext(carrier)->local_listener_port;
-    lineGetRoutingContext(service)->peer_source_port    = lineGetRoutingContext(carrier)->peer_source_port;
-    lineCopyUsers(service, carrier);
+    lineCopyContext(service, carrier);
     if (lineIsFallback(carrier))
     {
         lineMarkFallback(service);
