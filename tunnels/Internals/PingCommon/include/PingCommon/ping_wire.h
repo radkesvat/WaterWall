@@ -45,6 +45,7 @@ typedef struct ping_wire_envelope_s
     uint16_t       total_length;
     uint16_t       icmp_payload_length;
     uint16_t       ip_header_length;
+    uint16_t       echo_offset; /* Distinct from IPv4 IHL when an IPv6 base header is present. */
     uint16_t       native_body_length;
     uint8_t        native_protocol;
     uint16_t       identifier;
@@ -137,6 +138,9 @@ WW_EXPORT const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uin
 /* Resolve an explicit identifier or accept one injected random candidate. */
 WW_EXPORT bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_candidate,
                                         uint16_t *identifier_out);
+
+/* Shared native geometry, including permitted UDP padding and opaque protocols. */
+WW_EXPORT bool pingwireNativeShape(const uint8_t *body, uint16_t length, uint8_t protocol);
 
 /* Parse the selected visible protocol; the chain owns address/peer selection. */
 WW_EXPORT ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t length,

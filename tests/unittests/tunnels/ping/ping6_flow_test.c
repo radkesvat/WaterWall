@@ -83,6 +83,44 @@ struct flow_fixture_s
     bool             server;
 };
 
+static ping6_wire_mode_t test_mode;
+
+static uint16_t testOverhead(void)
+{
+    const ping6_wire_config_t cfg = {.mode = test_mode};
+    return ping6wireOverhead(&cfg);
+}
+
+static uint16_t echoOffset(const uint8_t *packet)
+{
+    return (uint16_t) ((packet[0] & 15U) * 4U + testOverhead() - 9U);
+}
+
+/* Fixture-only checksum writer: malformed admission cases need independently
+ * valid checksums without asking the production repair API to admit them. */
+static void repairFixtureCarrier(sbuf_t *buf)
+{
+    uint8_t       *packet = sbufGetMutablePtr(buf);
+    const uint16_t offset = echoOffset(packet);
+    const uint16_t length = (uint16_t) (sbufGetLength(buf) - offset);
+    uint32_t       sum    = (uint32_t) length + 58U;
+    if (test_mode == kPing6WireIpv6InIpv4)
+    {
+        const uint8_t *ipv6 = packet + (packet[0] & 15U) * 4U;
+        for (size_t i = 8; i < 40; i += 2)
+            sum += GET_BE16(ipv6 + i);
+    }
+    PUT_BE16(packet + offset + 2, 0);
+    for (size_t i = 0; i + 1 < length; i += 2)
+        sum += GET_BE16(packet + offset + i);
+    if (length & 1U)
+        sum += (uint32_t) packet[offset + length - 1U] << 8U;
+    while (sum >> 16U)
+        sum = (sum & 65535U) + (sum >> 16U);
+    PUT_BE16(packet + offset + 2, (uint16_t) ~sum);
+    twfRequire(calcIpv4HeaderChecksum(packet, sbufGetLength(buf)), "fixture IPv4 checksum failed");
+}
+
 static char     captured_log[2048];
 static int      captured_log_level;
 static uint32_t captured_log_count;
@@ -145,6 +183,7 @@ static ping6_wire_config_t peerConfig(const flow_fixture_t *fixture)
         .local_ipv6 = endpoint.peer_ipv6,
         .peer_ipv6  = endpoint.local_ipv6,
         .identifier = fixture->server ? kFlowClientIdentifier : kFlowServerIdentifier,
+        .mode       = endpoint.mode,
     };
 }
 
@@ -242,6 +281,12 @@ static cJSON *endpointSettings(bool server, const char *send_replies_json)
         twfRequire(send_replies != NULL && cJSON_AddItemToObject(settings, "send-replies", send_replies),
                    "failed to add Ping reply setting");
     }
+    if (test_mode == kPing6WireIpv6InIpv4)
+    {
+        cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
+        cJSON_AddStringToObject(settings, "local-ipv6", server ? "fd00:1234::2" : "fd00:1234::1");
+        cJSON_AddStringToObject(settings, "peer-ipv6", server ? "fd00:1234::1" : "fd00:1234::2");
+    }
     return settings;
 }
 
@@ -251,15 +296,6 @@ static void fixtureSetupWorkers(flow_fixture_t *fixture, bool server, const char
     fixture->server = server;
 
     tosWorkerEnvSetup(&fixture->env, workers, 8192, kMaxAllowedPacketLength);
-    for (wid_t wid = 0; wid < workers; ++wid)
-    {
-        bufferpoolUpdateAllocationPaddings(fixture->env.pools[wid],
-                                           kPing6WireEncapsulationOverhead,
-                                           kPing6WireEncapsulationOverhead,
-                                           kPing6WireEncapsulationOverhead,
-                                           kPing6WireEncapsulationOverhead);
-    }
-
     fixture->settings                = endpointSettings(server, send_replies_json);
     fixture->node.node_settings_json = fixture->settings;
 
@@ -268,6 +304,12 @@ static void fixtureSetupWorkers(flow_fixture_t *fixture, bool server, const char
 
     fixture->endpoint = server ? ping6serverCreate(&fixture->node) : ping6clientCreate(&fixture->node);
     twfRequire(fixture->endpoint != NULL, "failed to create Ping endpoint");
+    twfRequire(fixture->node.required_padding_left == testOverhead(), "per-instance Ping6 padding is wrong");
+    for (wid_t wid = 0; wid < workers; ++wid)
+    {
+        const uint16_t padding = fixture->node.required_padding_left;
+        bufferpoolUpdateAllocationPaddings(fixture->env.pools[wid], padding, padding, padding, padding);
+    }
 
     fixture->prev      = createSink(fixture, 'P');
     fixture->next      = createSink(fixture, 'N');
@@ -343,6 +385,7 @@ static sbuf_t *bufferFromCapture(line_t *line, const captured_packet_t *packet)
     twfRequire(sbufGetWritableCapacity(buf) >= packet->length, "captured Ping packet does not fit its buffer");
     sbufSetLength(buf, packet->length);
     memoryCopy(sbufGetMutablePtr(buf), packet->bytes, packet->length);
+    sbufSetRecalculateChecksum(buf, packet->checksum_requested);
     return buf;
 }
 
@@ -368,7 +411,8 @@ static sbuf_t *peerRequest(flow_fixture_t *fixture, line_t *line, uint16_t seque
 
 static captured_packet_t captureBuffer(const sbuf_t *buffer)
 {
-    captured_packet_t captured = {.length = sbufGetLength(buffer)};
+    captured_packet_t captured = {.length             = sbufGetLength(buffer),
+                                  .checksum_requested = sbufGetRecalculateChecksum(buffer)};
     twfRequire(captured.length <= sizeof(captured.bytes), "Ping fixture capture exceeds storage");
     memoryCopy(captured.bytes, sbufGetRawPtr(buffer), captured.length);
     return captured;
@@ -459,9 +503,10 @@ static flow_sink_t *decodedInnerSink(flow_fixture_t *fixture)
 static void requireCapturedRequest(const captured_packet_t *packet, uint16_t expected_identifier,
                                    uint16_t expected_sequence)
 {
-    twfRequire(packet->length >= kPing6WireEncapsulationOverhead, "captured request is too short");
-    twfRequire(packet->bytes[9] == kPing6WireProtocol, "captured local packet does not use outer Protocol 58");
-    const struct icmp6_echo_hdr *icmp = (const struct icmp6_echo_hdr *) (packet->bytes + kPing6WireIpv4HeaderLength);
+    twfRequire(packet->length >= testOverhead(), "captured request is too short");
+    twfRequire(packet->bytes[9] == (test_mode == kPing6WireDirect ? 58 : 41),
+               "captured local packet does not use outer Protocol 58");
+    const struct icmp6_echo_hdr *icmp = (const struct icmp6_echo_hdr *) (packet->bytes + echoOffset(packet->bytes));
     twfRequire(icmp->type == kPing6WireEchoRequest && icmp->code == 0, "captured local packet is not an Echo Request");
     twfRequire(lwip_ntohs(icmp->id) == expected_identifier, "deterministic endpoint identifier override changed");
     twfRequire(lwip_ntohs(icmp->seqno) == expected_sequence, "endpoint emitted the wrong request sequence");
@@ -489,7 +534,7 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     sbufSetRecalculateChecksum(short_padding, true);
     sendLocal(fixture, 0, short_padding);
 
-    sbuf_t *oversized = makeInnerPacket(line_a, kPing6WireMaxInnerPacketLength + 1U);
+    sbuf_t *oversized = makeInnerPacket(line_a, kMaxAllowedPacketLength - testOverhead() + 1U);
     sbufSetRecalculateChecksum(oversized, true);
     sendLocal(fixture, 0, oversized);
     twfRequireEqualU32(atomicLoadRelaxed(nextSequence(fixture)),
@@ -503,7 +548,7 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     requireCapturedRequest(&wire->packets[0], endpointConfig(fixture).identifier, UINT16_MAX);
     twfRequire(! wire->packets[0].checksum_requested, "dropped request leaked into the next packet");
 
-    sbuf_t        *reply       = replyFromRequest(fixture, line_b, &wire->packets[0]);
+    sbuf_t *reply                                           = replyFromRequest(fixture, line_b, &wire->packets[0]);
     ((struct ip_hdr *) sbufGetMutablePtr(reply))->src.addr  = ipv4Address("203.0.113.80");
     ((struct ip_hdr *) sbufGetMutablePtr(reply))->dest.addr = ipv4Address("203.0.113.90");
     twfRequire(calcIpv4HeaderChecksum(sbufGetMutablePtr(reply), sbufGetLength(reply)), "rewritten reply header failed");
@@ -520,11 +565,10 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
     sendLocal(fixture, 0, makeInnerPacket(line_a, 86));
     twfRequireEqualU32(wire->count, 3, "request for mismatch test was not emitted");
     sbuf_t                *mismatch = replyFromRequest(fixture, line_b, &wire->packets[2]);
-    struct icmp6_echo_hdr *icmp = (struct icmp6_echo_hdr *) (sbufGetMutablePtr(mismatch) + kPing6WireIpv4HeaderLength);
-    icmp->id                    = lwip_htons((uint16_t) (lwip_ntohs(icmp->id) + 1U));
-    const ping6_wire_config_t peer = peerConfig(fixture);
-    twfRequire(ping6wireRecalculateCarrierChecksums(mismatch, &peer.local_ipv6, &peer.peer_ipv6),
-               "mismatched reply checksum rebuild failed");
+    struct icmp6_echo_hdr *icmp =
+        (struct icmp6_echo_hdr *) (sbufGetMutablePtr(mismatch) + echoOffset(sbufGetRawPtr(mismatch)));
+    icmp->id = lwip_htons((uint16_t) (lwip_ntohs(icmp->id) + 1U));
+    repairFixtureCarrier(mismatch);
     uint8_t        expected[kFlowPacketBytes];
     const uint32_t mismatch_length = sbufGetLength(mismatch);
     memoryCopy(expected, sbufGetRawPtr(mismatch), mismatch_length);
@@ -547,10 +591,10 @@ static void caseCrossWorkerCorrelationAndSequence(flow_fixture_t *fixture)
 static bool decodedOpaqueMatches(const captured_packet_t *decoded, const captured_packet_t *carrier)
 {
     const uint16_t header = (uint16_t) ((carrier->bytes[0] & 15U) * 4U);
-    const uint16_t total  = (uint16_t) (carrier->length - 9U);
+    const uint16_t total  = (uint16_t) (carrier->length - testOverhead());
     uint8_t        expected[kFlowPacketBytes];
     memoryCopy(expected, carrier->bytes, header);
-    memoryCopy(expected + header, carrier->bytes + header + 8U, total - header);
+    memoryCopy(expected + header, carrier->bytes + echoOffset(carrier->bytes) + 8U, total - header);
     expected[9] = carrier->bytes[carrier->length - 1U];
     PUT_BE16(expected + 2, total);
     PUT_BE16(expected + 10, 0);
@@ -577,9 +621,9 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
     /* Another worker may have an older cache; reply IDs must still advance. */
     fixture->env.loops[2]->cur_hrtime = (cached_ms - 100) * 1000;
 
-    sbuf_t           *request = peerRequest(fixture, fixture->packet_lines[1], 77);
-    captured_packet_t wire_request;
-    wire_request.length = sbufGetLength(request);
+    sbuf_t           *request      = peerRequest(fixture, fixture->packet_lines[1], 77);
+    captured_packet_t wire_request = {0};
+    wire_request.length            = sbufGetLength(request);
     memoryCopy(wire_request.bytes, sbufGetRawPtr(request), wire_request.length);
 
     const bool send_replies = endpointSendsReplies(fixture);
@@ -593,7 +637,7 @@ static void casePeerRequestReplay(flow_fixture_t *fixture)
                        "peer request reply emission did not honor send-replies");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "peer request did not deliver one inner packet");
     const captured_packet_t *decoded = &decodedInnerSink(fixture)->packets[0];
-    twfRequire(decoded->wid == 1 && decoded->length == wire_request.length - kPing6WireEncapsulationOverhead &&
+    twfRequire(decoded->wid == 1 && decoded->length == wire_request.length - testOverhead() &&
                    decodedOpaqueMatches(decoded, &wire_request),
                "opaque peer request did not preserve its arrival worker and complete inner packet");
 
@@ -724,9 +768,9 @@ static void caseUnrelatedIpv4Options(flow_fixture_t *fixture)
     twfSetCase(fixture->server ? "Ping6Server unrelated IPv4 options" : "Ping6Client unrelated IPv4 options");
     resetSinks(fixture);
 
-    line_t                   *line   = fixture->packet_lines[1];
-    sbuf_t                   *packet = makeInnerPacket(line, 96);
-    struct ip_hdr            *ip     = (struct ip_hdr *) sbufGetMutablePtr(packet);
+    line_t        *line   = fixture->packet_lines[1];
+    sbuf_t        *packet = makeInnerPacket(line, 96);
+    struct ip_hdr *ip     = (struct ip_hdr *) sbufGetMutablePtr(packet);
     IPH_VHL_SET(ip, 4, 6);
     ip->src.addr  = ipv4Address("198.51.100.10");
     ip->dest.addr = ipv4Address("192.0.2.10");
@@ -735,8 +779,8 @@ static void caseUnrelatedIpv4Options(flow_fixture_t *fixture)
                "unrelated IPv4 options checksum build failed");
     sbufSetRecalculateChecksum(packet, true);
 
-    captured_packet_t expected;
-    expected.length = sbufGetLength(packet);
+    captured_packet_t expected = {0};
+    expected.length            = sbufGetLength(packet);
     memoryCopy(expected.bytes, sbufGetRawPtr(packet), expected.length);
     sendInbound(fixture, 1, packet);
 
@@ -769,19 +813,18 @@ static void caseUnmatchedReplyPayloads(flow_fixture_t *fixture)
 {
     twfSetCase("valid unmatched Echo Replies preserve arbitrary payloads without native parsing");
     resetSinks(fixture);
-    const ping6_wire_config_t peer = peerConfig(fixture);
-    discard                   peer;
     for (unsigned length = 0; length < 3; ++length)
     {
         sbuf_t *packet = peerRequest(fixture, fixture->packet_lines[3], (uint16_t) (60000 + length));
-        sbufSetLength(packet, IP_HLEN + 8U + length);
+        sbufSetLength(packet, IP_HLEN + testOverhead() - 1U + length);
         uint8_t *bytes = sbufGetMutablePtr(packet);
         PUT_BE16(bytes + 2, (uint16_t) sbufGetLength(packet));
-        bytes[IP_HLEN] = 129;
+        bytes[echoOffset(bytes)] = 129;
+        if (test_mode == kPing6WireIpv6InIpv4)
+            PUT_BE16(bytes + IP_HLEN + 4U, 8U + length);
         if (length)
-            bytes[IP_HLEN + 8U + length - 1U] = IP_PROTO_TCP; /* deliberately too short for native TCP */
-        twfRequire(ping6wireRecalculateCarrierChecksums(packet, &peer.local_ipv6, &peer.peer_ipv6),
-                   "unmatched reply checksum setup failed");
+            bytes[echoOffset(bytes) + 8U + length - 1U] = IP_PROTO_TCP; /* deliberately too short for native TCP */
+        repairFixtureCarrier(packet);
         const captured_packet_t expected = captureBuffer(packet);
         sendInbound(fixture, 3, packet);
         const captured_packet_t *forwarded = &unmatchedReplySink(fixture)->packets[length];
@@ -818,12 +861,12 @@ static void caseChecksumRequestBoundaries(flow_fixture_t *fixture)
     captured_packet_t expected = captureBuffer(request);
     expected.bytes[8] ^= 1U;
     sbufGetMutablePtr(request)[8] ^= 1U;
-    sbufGetMutablePtr(request)[kPing6WireIpv4HeaderLength + 2U] ^= 1U;
+    sbufGetMutablePtr(request)[echoOffset(sbufGetRawPtr(request)) + 2U] ^= 1U;
     sbufSetRecalculateChecksum(request, true);
     sendInbound(fixture, 0, request);
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "marked outer packet was not repaired before validation");
     const captured_packet_t *decoded = &decodedInnerSink(fixture)->packets[0];
-    twfRequire(! decoded->checksum_requested && decoded->length == expected.length - kPing6WireEncapsulationOverhead &&
+    twfRequire(! decoded->checksum_requested && decoded->length == expected.length - testOverhead() &&
                    decodedOpaqueMatches(decoded, &expected),
                "outer repair request leaked into or changed the decoded inner packet");
     if (endpointSendsReplies(fixture))
@@ -841,21 +884,23 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
 {
     twfSetCase(fixture->server ? "Ping6Server packet diagnostics" : "Ping6Client packet diagnostics");
     resetSinks(fixture);
-    line_t                   *line            = fixture->packet_lines[0];
-    const unsigned int        sequence_before = atomicLoadRelaxed(nextSequence(fixture));
-    const ping6_wire_config_t peer            = peerConfig(fixture);
+    line_t            *line            = fixture->packet_lines[0];
+    const unsigned int sequence_before = atomicLoadRelaxed(nextSequence(fixture));
 
     resetDropLog(fixture);
-    sbuf_t *oversized = makeInnerPacket(line, kPing6WireMaxInnerPacketLength + 1U);
+    sbuf_t *oversized = makeInnerPacket(line, kMaxAllowedPacketLength - testOverhead() + 1U);
     sbufSetRecalculateChecksum(oversized, true);
     sendLocal(fixture, 0, oversized);
-    requireErrorLog("native IPv4 packet exceeds the 1491-byte limit");
+    requireErrorLog(test_mode == kPing6WireDirect ? "1491-byte direct limit" : "1451-byte ipv6-in-ipv4 limit");
     twfRequire(
-        strstr(captured_log, "packet-bytes=1492") != NULL && strstr(captured_log, "max-inner-bytes=1491") != NULL &&
-            strstr(captured_log, "overhead-bytes=9") != NULL && strstr(captured_log, "max-carrier-bytes=1500") != NULL,
+        strstr(captured_log, test_mode == kPing6WireDirect ? "packet-bytes=1492" : "packet-bytes=1452") != NULL &&
+            strstr(captured_log, test_mode == kPing6WireDirect ? "max-inner-bytes=1491" : "max-inner-bytes=1451") !=
+                NULL &&
+            strstr(captured_log, test_mode == kPing6WireDirect ? "overhead-bytes=9" : "overhead-bytes=49") != NULL &&
+            strstr(captured_log, "max-carrier-bytes=1500") != NULL,
         "oversize diagnostic omitted sizing parameters");
     /* The existing shared five-second gate suppresses immediate repeat errors. */
-    sendLocal(fixture, 0, makeInnerPacket(line, kPing6WireMaxInnerPacketLength + 1U));
+    sendLocal(fixture, 0, makeInnerPacket(line, kMaxAllowedPacketLength - testOverhead() + 1U));
     twfRequireEqualU32(captured_log_count, 1, "Ping packet diagnostics lost their rate limit");
 
     resetDropLog(fixture);
@@ -865,9 +910,12 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
     memoryCopy(sbufGetMutablePtr(short_headroom), sbufGetRawPtr(source), 72);
     lineReuseBuffer(line, source);
     sendLocal(fixture, 0, short_headroom);
-    requireErrorLog("insufficient left headroom for Echo header and final protocol byte");
+    requireErrorLog(test_mode == kPing6WireDirect ? "headroom for nine-byte direct"
+                                                  : "headroom for 49-byte ipv6-in-ipv4");
     twfRequire(strstr(captured_log, "headroom-bytes=0") != NULL &&
-                   strstr(captured_log, "required-headroom-bytes=9") != NULL,
+                   strstr(captured_log,
+                          test_mode == kPing6WireDirect ? "required-headroom-bytes=9" : "required-headroom-bytes=49") !=
+                       NULL,
                "headroom diagnostic omitted available/required sizing");
 
     resetDropLog(fixture);
@@ -885,7 +933,7 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
 
     resetDropLog(fixture);
     sbuf_t *bad_icmp = peerRequest(fixture, line, 111);
-    sbufGetMutablePtr(bad_icmp)[IP_HLEN + 8U] ^= 1U;
+    sbufGetMutablePtr(bad_icmp)[echoOffset(sbufGetRawPtr(bad_icmp)) + 8U] ^= 1U;
     sendInbound(fixture, 0, bad_icmp);
     requireErrorLog("invalid Echo carrier checksum");
 
@@ -906,27 +954,24 @@ static void casePacketDiagnostics(flow_fixture_t *fixture)
     requireErrorLog("fragmented IPv4 datagram requires adapter reassembly before Ping");
 
     resetDropLog(fixture);
-    sbuf_t *bad_code                                                          = peerRequest(fixture, line, 113);
-    ((struct icmp6_echo_hdr *) (sbufGetMutablePtr(bad_code) + IP_HLEN))->code = 1;
-    twfRequire(ping6wireRecalculateCarrierChecksums(bad_code, &peer.local_ipv6, &peer.peer_ipv6),
-               "ICMPv6 code diagnostic fixture checksum failed");
+    sbuf_t *bad_code = peerRequest(fixture, line, 113);
+    ((struct icmp6_echo_hdr *) (sbufGetMutablePtr(bad_code) + echoOffset(sbufGetRawPtr(bad_code))))->code = 1;
+    repairFixtureCarrier(bad_code);
     sendInbound(fixture, 0, bad_code);
-    requireErrorLog("unsupported Echo code");
+    requireErrorLog("unsupported ICMPv6 type/code");
 
     resetDropLog(fixture);
-    sbuf_t *bad_type                                                          = peerRequest(fixture, line, 114);
-    ((struct icmp6_echo_hdr *) (sbufGetMutablePtr(bad_type) + IP_HLEN))->type = ICMP_DUR;
-    twfRequire(ping6wireRecalculateCarrierChecksums(bad_type, &peer.local_ipv6, &peer.peer_ipv6),
-               "ICMPv6 type diagnostic fixture checksum failed");
+    sbuf_t *bad_type = peerRequest(fixture, line, 114);
+    ((struct icmp6_echo_hdr *) (sbufGetMutablePtr(bad_type) + echoOffset(sbufGetRawPtr(bad_type))))->type = ICMP_DUR;
+    repairFixtureCarrier(bad_type);
     sendInbound(fixture, 0, bad_type);
-    requireErrorLog("unsupported carrier type");
+    requireErrorLog("unsupported ICMPv6 type/code");
 
     resetDropLog(fixture);
-    sbuf_t *bad_inner                                             = peerRequest(fixture, line, 115);
-    sbufGetMutablePtr(bad_inner)[sbufGetLength(bad_inner) - 1U]   = IP_PROTO_TCP;
-    sbufGetMutablePtr(bad_inner)[IP_HLEN + 8U + 12U]              = 0;
-    twfRequire(ping6wireRecalculateCarrierChecksums(bad_inner, &peer.local_ipv6, &peer.peer_ipv6),
-               "inner IPv4 diagnostic fixture checksum failed");
+    sbuf_t *bad_inner                                                             = peerRequest(fixture, line, 115);
+    sbufGetMutablePtr(bad_inner)[sbufGetLength(bad_inner) - 1U]                   = IP_PROTO_TCP;
+    sbufGetMutablePtr(bad_inner)[echoOffset(sbufGetRawPtr(bad_inner)) + 8U + 12U] = 0;
+    repairFixtureCarrier(bad_inner);
     sendInbound(fixture, 0, bad_inner);
     requireErrorLog("Echo Request has invalid native TCP, UDP, or ICMP geometry");
 
@@ -981,8 +1026,10 @@ static void caseGeneratedReplySuccessfulReentry(flow_fixture_t *fixture)
         twfRequire(ping6wireParseInbound(reply_sink->packets[i].bytes, reply_sink->packets[i].length, &peer, &reply) ==
                        kPingWireInboundEchoReply,
                    "reentry emitted an invalid Echo Reply");
-        twfRequire(reply.icmp_payload_length == captured.length - IP_HLEN - 8U &&
-                       memoryEqual(reply.icmp_payload, captured.bytes + IP_HLEN + 8U, reply.icmp_payload_length),
+        twfRequire(reply.icmp_payload_length == captured.length - echoOffset(captured.bytes) - 8U &&
+                       memoryEqual(reply.icmp_payload,
+                                   captured.bytes + echoOffset(captured.bytes) + 8U,
+                                   reply.icmp_payload_length),
                    "reentry changed the mirrored inner packet");
     }
 }
@@ -1044,9 +1091,9 @@ static void caseConfigurationValidation(bool server)
     node_t    node     = {.node_settings_json = settings};
     tunnel_t *endpoint = createEndpoint(server, &node);
     twfRequire(endpoint != NULL, "minimal Ping6 settings were rejected");
-    const ping6_wire_config_t config     = server ? ((ping6server_tstate_t *) tunnelGetState(endpoint))->wire
-                                                  : ((ping6client_tstate_t *) tunnelGetState(endpoint))->wire;
-    ip6_addr_t                expected   = {0};
+    const ping6_wire_config_t config   = server ? ((ping6server_tstate_t *) tunnelGetState(endpoint))->wire
+                                                : ((ping6client_tstate_t *) tunnelGetState(endpoint))->wire;
+    ip6_addr_t                expected = {0};
     twfRequire(memoryEqual(config.local_ipv6.addr, expected.addr, 16) &&
                    memoryEqual(config.peer_ipv6.addr, expected.addr, 16),
                "default checksum addresses are not independently ::");
@@ -1054,6 +1101,7 @@ static void caseConfigurationValidation(bool server)
     cJSON_Delete(settings);
 
     settings = endpointSettings(server, NULL);
+    cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
     twfRequire(cJSON_AddItemToObject(settings, "local-ipv6", cJSON_CreateString("2001:db8::10")) &&
                    cJSON_AddItemToObject(settings, "peer-ipv6", cJSON_CreateString("2001:db8::20")),
                "failed to add explicit Ping6 addresses");
@@ -1088,7 +1136,14 @@ static void caseConfigurationValidation(bool server)
                                         "\"2001:db8::12345\"",
                                         "\"::ffff:192.0.2\""};
     for (size_t i = 0; i < ARRAY_SIZE(invalid_ipv6); ++i)
-        requireRejectedField(server, "local-ipv6", invalid_ipv6[i]);
+        for (unsigned peer = 0; peer < 2; ++peer)
+        {
+            settings = endpointSettings(server, NULL);
+            cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
+            cJSON_AddStringToObject(settings, peer ? "local-ipv6" : "peer-ipv6", "fd00::1");
+            cJSON_AddItemToObject(settings, peer ? "peer-ipv6" : "local-ipv6", cJSON_Parse(invalid_ipv6[i]));
+            requireRejectedSettings(server, settings);
+        }
     requireRejectedField(server, "local-ipv4", "\"not-an-ip\"");
     requireRejectedField(server, "peer-ipv4", "\"not-an-ip\"");
     const char *const lenient_ipv4[] = {"\"192.0.2.10 x\"", "\"192.0.2\"", "\"0xc0.0.2.10\"", "\"192.0.2.010\""};
@@ -1104,6 +1159,96 @@ static void caseConfigurationValidation(bool server)
     requireRejectedNulField(server, "\"local-ipv4\":\"192.0.2.10\\u0000suffix\"");
     requireRejectedNulField(server, "\"identifier\":\"random\\u0000suffix\"");
     requireRejectedNulField(server, "\"local-ipv6\":\"2001:db8::1\\u0000suffix\"");
+}
+
+static void caseModeSettings(bool server)
+{
+    const char *invalid_modes[] = {"null",
+                                   "true",
+                                   "false",
+                                   "0",
+                                   "1",
+                                   "[]",
+                                   "{}",
+                                   "\"\"",
+                                   "\"Direct\"",
+                                   "\"ipv6-in-ipv4 \"",
+                                   "\"unknown\"",
+                                   "\"direct\\u0000suffix\""};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_modes); ++i)
+        requireRejectedField(server, "mode", invalid_modes[i]);
+    const char *direct_values[] = {"null", "\"::\"", "\"fd00::1\""};
+    for (unsigned explicit_direct = 0; explicit_direct < 2; ++explicit_direct)
+        for (unsigned keys = 1; keys <= 3; ++keys)
+            for (size_t i = 0; i < ARRAY_SIZE(direct_values); ++i)
+            {
+                cJSON *settings = cJSON_CreateObject();
+                if (explicit_direct)
+                    cJSON_AddStringToObject(settings, "mode", "direct");
+                if (keys & 1U)
+                    cJSON_AddItemToObject(settings, "local-ipv6", cJSON_Parse(direct_values[i]));
+                if (keys & 2U)
+                    cJSON_AddItemToObject(settings, "peer-ipv6", cJSON_Parse(direct_values[i]));
+                requireRejectedSettings(server, settings);
+            }
+    for (unsigned keys = 0; keys < 3; ++keys)
+    {
+        cJSON *settings = cJSON_CreateObject();
+        cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
+        if (keys & 1U)
+            cJSON_AddStringToObject(settings, "local-ipv6", "fd00::1");
+        if (keys & 2U)
+            cJSON_AddStringToObject(settings, "peer-ipv6", "fd00::2");
+        requireRejectedSettings(server, settings);
+    }
+    const char *excluded[] = {"::",
+                              "::1",
+                              "ff02::1",
+                              "::ffff:192.0.2.1",
+                              "::ffff:c000:201",
+                              "fe80::1%eth0",
+                              "fe80::1/64",
+                              "[fe80::1]",
+                              "2001:db8:::1",
+                              "::ffff:192.0.2.01",
+                              "fd00::1\\u0000suffix",
+                              "\xc0\x80"};
+    for (size_t i = 0; i < ARRAY_SIZE(excluded); ++i)
+        for (unsigned peer = 0; peer < 2; ++peer)
+        {
+            cJSON *settings = cJSON_CreateObject();
+            cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
+            cJSON_AddStringToObject(settings, peer ? "local-ipv6" : "peer-ipv6", "fd00::1");
+            if (i + 2 == ARRAY_SIZE(excluded))
+                cJSON_AddItemToObject(
+                    settings, peer ? "peer-ipv6" : "local-ipv6", cJSON_Parse("\"fd00::1\\u0000suffix\""));
+            else
+                cJSON_AddStringToObject(settings, peer ? "peer-ipv6" : "local-ipv6", excluded[i]);
+            requireRejectedSettings(server, settings);
+        }
+    requireRejectedNulField(server, "\"mode\":\"ipv6-in-ipv4\\u0000suffix\"");
+    requireRejectedField(server, "mode", "\"\xc0\x80\"");
+    const char *accepted[] = {"fd00:1234::1", "2001:db8::192.0.2.1", "fe80::1"};
+    for (size_t i = 0; i < ARRAY_SIZE(accepted); ++i)
+        for (unsigned mirror = 0; mirror < 2; ++mirror)
+        {
+            cJSON *settings = cJSON_CreateObject();
+            cJSON_AddStringToObject(settings, "mode", "ipv6-in-ipv4");
+            cJSON_AddStringToObject(settings, "local-ipv6", mirror ? "fd00::2" : accepted[i]);
+            cJSON_AddStringToObject(settings, "peer-ipv6", mirror ? accepted[i] : "fd00::2");
+            node_t    node     = {.node_settings_json = settings};
+            tunnel_t *endpoint = createEndpoint(server, &node);
+            twfRequire(endpoint != NULL && node.required_padding_left == 49,
+                       "valid new-mode endpoints or padding rejected");
+            endpoint->onDestroy(endpoint, wwLifecycleStartupRollback());
+            cJSON_Delete(settings);
+        }
+    cJSON    *settings = cJSON_Parse("{\"mode\":\"direct\"}");
+    node_t    node     = {.node_settings_json = settings};
+    tunnel_t *endpoint = createEndpoint(server, &node);
+    twfRequire(endpoint != NULL && node.required_padding_left == 9, "explicit direct mode rejected");
+    endpoint->onDestroy(endpoint, wwLifecycleStartupRollback());
+    cJSON_Delete(settings);
 }
 
 static void caseInvalidReplySettings(bool server)
@@ -1150,18 +1295,25 @@ static void caseIpOverriderComposition(flow_fixture_t *fixture)
     state->rules[kIpOverriderDirectionUp][kIpOverriderModeDest].ov_4       = ipv4Address("198.51.100.80");
     overrider->next                                                        = fixture->next;
     for (unsigned proto = 0; proto < 2; ++proto)
-        for (unsigned mode = 0; mode < 3; ++mode)
+        for (unsigned mode = 0; mode < 5; ++mode)
         {
             resetSinks(fixture);
             const uint8_t protocol = proto ? IP_PROTO_UDP : IP_PROTO_TCP;
             sbuf_t       *packet   = makeTransportPacket(fixture->packet_lines[0], protocol, 2);
             uint8_t      *bytes    = sbufGetMutablePtr(packet);
-            if (mode == 1)
+            if (mode == 1 || mode == 3 || mode == 4)
                 bytes[sbufGetLength(packet) - 1U] ^= 0x80;
             if (mode == 2 && proto)
                 PUT_BE16(bytes + IP_HLEN + 6, 0);
             const uint16_t residual = nativeResidual(bytes, sbufGetLength(packet), protocol);
-            wrapPeerRequest(fixture, packet, (uint16_t) (45000 + proto * 3 + mode));
+            if (mode == 3)
+                sbufSetRecalculateChecksum(packet, true);
+            wrapPeerRequest(fixture, packet, (uint16_t) (45000 + proto * 5 + mode));
+            if (mode == 4)
+            {
+                sbufGetMutablePtr(packet)[echoOffset(sbufGetRawPtr(packet)) + 2U] ^= 1U;
+                sbufSetRecalculateChecksum(packet, true);
+            }
             ipoverriderApplyUpStreamPayload(overrider, fixture->packet_lines[0], packet);
             twfRequireEqualU32(fixture->next_sink->count, 1, "IpOverrider failed to forward carrier");
             const captured_packet_t carrier = fixture->next_sink->packets[0];
@@ -1174,7 +1326,7 @@ static void caseIpOverriderComposition(flow_fixture_t *fixture)
             if (mode == 2 && proto)
                 twfRequire(GET_BE16(decoded->bytes + IP_HLEN + 6) == 0, "IpOverrider enabled disabled UDP checksum");
             else
-                twfRequire(nativeResidual(decoded->bytes, decoded->length, protocol) == residual,
+                twfRequire(nativeResidual(decoded->bytes, decoded->length, protocol) == (mode == 3 ? 0 : residual),
                            "IpOverrider composition lost native checksum residual");
         }
     tunnelDestroy(overrider);
@@ -1217,6 +1369,73 @@ static void caseRemovedSettingsAndDefaults(bool server)
         }
 }
 
+static void caseTrailerSensitiveTracking(flow_fixture_t *fixture)
+{
+    resetSinks(fixture);
+    line_t *line = fixture->packet_lines[0];
+    sendLocal(fixture, 0, makeInnerPacket(line, 84));
+    const captured_packet_t request       = localRequestSink(fixture)->packets[0];
+    sbuf_t                 *exact         = replyFromRequest(fixture, line, &request);
+    const captured_packet_t exact_capture = captureBuffer(exact);
+    sbuf_t                 *different     = bufferFromCapture(line, &exact_capture);
+    sbufGetMutablePtr(different)[sbufGetLength(different) - 1U] ^= 1U;
+    repairFixtureCarrier(different);
+    resetSinks(fixture);
+    sendInbound(fixture, 0, different);
+    twfRequireEqualU32(unmatchedReplySink(fixture)->count, 1, "different reply trailer consumed outstanding identity");
+    sendInbound(fixture, 0, exact);
+    twfRequireEqualU32(
+        unmatchedReplySink(fixture)->count, 1, "exact reply no longer correlated after trailer mismatch");
+    resetSinks(fixture);
+    sbuf_t           *peer  = peerRequest(fixture, line, 42000);
+    captured_packet_t first = captureBuffer(peer);
+    sendInbound(fixture, 0, peer);
+    peer = bufferFromCapture(line, &first);
+    sbufGetMutablePtr(peer)[sbufGetLength(peer) - 1U] ^= 1U;
+    repairFixtureCarrier(peer);
+    sendInbound(fixture, 0, peer);
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 2, "different request trailer was treated as a replay");
+}
+
+static void caseBoundedRings(flow_fixture_t *fixture)
+{
+    line_t           *line   = fixture->packet_lines[0];
+    captured_packet_t oldest = {0};
+    captured_packet_t newest = {0};
+    for (unsigned i = 0; i <= kPingWireOutstandingCapacity; ++i)
+    {
+        resetSinks(fixture);
+        sendLocal(fixture, 0, makeInnerPacket(line, 84));
+        if (i == 0)
+            oldest = localRequestSink(fixture)->packets[0];
+        if (i == kPingWireOutstandingCapacity)
+            newest = localRequestSink(fixture)->packets[0];
+    }
+    resetSinks(fixture);
+    sendInbound(fixture, 0, replyFromRequest(fixture, line, &oldest));
+    twfRequireEqualU32(unmatchedReplySink(fixture)->count, 1, "evicted outstanding reply was consumed");
+    sendInbound(fixture, 0, replyFromRequest(fixture, line, &newest));
+    twfRequireEqualU32(unmatchedReplySink(fixture)->count, 1, "newest outstanding reply failed to correlate");
+    sendInbound(fixture, 0, replyFromRequest(fixture, line, &newest));
+    twfRequireEqualU32(unmatchedReplySink(fixture)->count, 2, "consumed outstanding entry was retained");
+    for (unsigned i = 0; i <= kPingWireReplayCapacity; ++i)
+    {
+        resetSinks(fixture);
+        sbuf_t *peer = peerRequest(fixture, line, (uint16_t) (5000 + i));
+        if (i == 0)
+            oldest = captureBuffer(peer);
+        if (i == kPingWireReplayCapacity)
+            newest = captureBuffer(peer);
+        sendInbound(fixture, 0, peer);
+        twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "new replay-ring generation was suppressed");
+    }
+    resetSinks(fixture);
+    sendInbound(fixture, 0, bufferFromCapture(line, &newest));
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 0, "remembered replay delivered twice");
+    sendInbound(fixture, 0, bufferFromCapture(line, &oldest));
+    twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "evicted replay identity was not admitted");
+}
+
 static void runEndpointCases(bool server, const char *send_replies_json)
 {
     flow_fixture_t fixture;
@@ -1236,6 +1455,8 @@ static void runEndpointCases(bool server, const char *send_replies_json)
     caseDecodedTransportArrivalWorker(&fixture);
     caseDecodedFragmentArrivalWorker(&fixture);
     caseForeignWorkerAdmissionIrrelevant(&fixture);
+    caseTrailerSensitiveTracking(&fixture);
+    caseBoundedRings(&fixture);
     if (expected_replies)
     {
         caseGeneratedReplySuccessfulReentry(&fixture);
@@ -1261,15 +1482,21 @@ int main(void)
     for (unsigned int server = 0; server < 2; ++server)
     {
         caseConfigurationValidation(server != 0);
+        caseModeSettings(server != 0);
         caseRemovedSettingsAndDefaults(server != 0);
         caseInvalidReplySettings(server != 0);
-        runEndpointCases(server != 0, NULL);
-        runEndpointCases(server != 0, "false");
-        runEndpointCases(server != 0, "true");
-        flow_fixture_t single;
-        fixtureSetupWorkers(&single, server != 0, "true", 1);
-        caseDecodedTransportArrivalWorker(&single);
-        fixtureTeardown(&single);
+        for (unsigned mode = 0; mode < 2; ++mode)
+        {
+            test_mode = mode == 0 ? kPing6WireDirect : kPing6WireIpv6InIpv4;
+            runEndpointCases(server != 0, NULL);
+            runEndpointCases(server != 0, "false");
+            runEndpointCases(server != 0, "true");
+            flow_fixture_t single;
+            fixtureSetupWorkers(&single, server != 0, "true", 1);
+            caseDecodedTransportArrivalWorker(&single);
+            fixtureTeardown(&single);
+        }
+        test_mode = kPing6WireDirect;
     }
 
     wCryptoGlobalCleanup();

@@ -45,7 +45,8 @@
       "type": "Ping6Server",
       "next": "user-tun",
       "settings": {
-        "send-replies": false
+        "send-replies": false,
+        "mode": "direct"
       }
     },
     {

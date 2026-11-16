@@ -1,0 +1,59 @@
+{
+  "name": "ping6-ipv6-in-ipv4-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 9,
+        "packet-ipv4": {
+          "source-ip": "10.80.0.1",
+          "dest-ip": "10.80.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "ping6-client"
+    },
+    {
+      "name": "ping6-client",
+      "type": "Ping6Client",
+      "settings": {
+        "identifier": 4660,
+        "sequence-start": 10,
+        "mode": "ipv6-in-ipv4",
+        "local-ipv6": "fd00:1234::1",
+        "peer-ipv6": "fd00:1234::2"
+      },
+      "next": "ping6-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 9,
+        "packet-ipv4": {
+          "source-ip": "10.80.0.1",
+          "dest-ip": "10.80.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      }
+    },
+    {
+      "name": "ping6-server",
+      "type": "Ping6Server",
+      "settings": {
+        "identifier": 4661,
+        "sequence-start": 1,
+        "mode": "ipv6-in-ipv4",
+        "local-ipv6": "fd00:1234::2",
+        "peer-ipv6": "fd00:1234::1",
+        "send-replies": true
+      },
+      "next": "tester-server"
+    }
+  ]
+}

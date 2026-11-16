@@ -18,7 +18,8 @@
       "type": "Ping6Client",
       "next": "carrier-addresses",
       "settings": {
-        "send-replies": false
+        "send-replies": false,
+        "mode": "direct"
       }
     },
     {

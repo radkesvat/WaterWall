@@ -1,0 +1,70 @@
+{
+  "name": "ping6-ipv6-in-ipv4-real-adapters-roundtrip",
+  "nodes": [
+    {
+      "name": "raw-in-out",
+      "type": "RawSocket",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "opaque-flow-mode": "peer",
+        "capture-device-name": "ping6-nested-capture",
+        "raw-device-name": "ping6-nested-raw",
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "127.0.0.2"
+        ],
+        "capture-protocols": [
+          41
+        ]
+      },
+      "next": "carrier-addresses"
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "10.252.30.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.252.30.1"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "127.0.0.1"
+          },
+          "dest-ip": {
+            "ipv4": "127.0.0.2"
+          }
+        }
+      },
+      "next": "ping6-server"
+    },
+    {
+      "name": "ping6-server",
+      "type": "Ping6Server",
+      "settings": {
+        "send-replies": true,
+        "identifier": 4661,
+        "sequence-start": 1,
+        "mode": "ipv6-in-ipv4",
+        "local-ipv6": "fd00:1234::2",
+        "peer-ipv6": "fd00:1234::1"
+      },
+      "next": "server-tun"
+    },
+    {
+      "name": "server-tun",
+      "type": "TunDevice",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "device-name": "wwping6nested0",
+        "device-ip": "10.252.30.1/24",
+        "device-mtu": 1451,
+        "route-table": "off"
+      }
+    }
+  ]
+}

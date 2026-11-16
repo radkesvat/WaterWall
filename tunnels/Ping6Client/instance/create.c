@@ -5,6 +5,7 @@
 static bool ping6clientSettingIsSupported(const char *key)
 {
     static const char *const supported[] = {
+        "mode",
         "local-ipv6",
         "peer-ipv6",
         "identifier",
@@ -42,7 +43,8 @@ static bool ping6clientRejectUnknownSettings(const cJSON *settings)
             continue;
         }
 
-        LOGF("Ping6Client: unknown setting '%s'; expected only local-ipv6, peer-ipv6, identifier, sequence-start, and "
+        LOGF("Ping6Client: unknown setting '%s'; expected only mode, local-ipv6, peer-ipv6, identifier, "
+             "sequence-start, and "
              "send-replies",
              item->string != NULL ? item->string : "<unnamed>");
         return false;
@@ -73,19 +75,49 @@ static bool ping6clientLoadInteger(int *dest, const cJSON *settings, const char 
     return true;
 }
 
-static bool ping6clientLoadOptionalIpv6(ip6_addr_t *destination, const cJSON *settings, const char *key)
+static bool ping6clientLoadMode(ping6_wire_config_t *wire, const cJSON *settings)
+{
+    const cJSON *mode = cJSON_GetObjectItemCaseSensitive(settings, "mode");
+    wire->mode        = kPing6WireDirect;
+    if (mode != NULL)
+    {
+        if (! jsonObjectFieldStringsAreExact(settings, "mode") || ! cJSON_IsString(mode) || mode->valuestring == NULL)
+        {
+            LOGF("Ping6Client: mode must be the exact string direct or ipv6-in-ipv4");
+            return false;
+        }
+        if (stringCompare(mode->valuestring, "ipv6-in-ipv4") == 0)
+        {
+            wire->mode = kPing6WireIpv6InIpv4;
+        }
+        else if (stringCompare(mode->valuestring, "direct") != 0)
+        {
+            LOGF("Ping6Client: mode must be direct or ipv6-in-ipv4");
+            return false;
+        }
+    }
+    if (wire->mode == kPing6WireDirect && (cJSON_GetObjectItemCaseSensitive(settings, "local-ipv6") != NULL ||
+                                           cJSON_GetObjectItemCaseSensitive(settings, "peer-ipv6") != NULL))
+    {
+        LOGF("Ping6Client: direct mode forbids local-ipv6 and peer-ipv6 settings");
+        return false;
+    }
+    return true;
+}
+
+static bool ping6clientLoadIpv6(ip6_addr_t *destination, const cJSON *settings, const char *key)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
     if (item == NULL)
     {
-        memoryZero(destination, sizeof(*destination));
-        return true;
+        LOGF("Ping6Client: ipv6-in-ipv4 mode requires %s", key);
+        return false;
     }
     if (! jsonObjectFieldStringsAreExact(settings, key) || ! cJSON_IsString(item) || item->valuestring == NULL ||
-        ! ping6wireParseIpv6Text(item->valuestring, destination))
+        ! ping6wireParseIpv6Text(item->valuestring, destination) || ! ping6wireEndpointIsAdmissible(destination))
     {
-        LOGF("JSON Error: Ping6Client->settings->%s (string field) : expected one IPv6 address without brackets, "
-             "zone, or prefix",
+        LOGF("Ping6Client: invalid %s; expected a bare unicast IPv6 endpoint excluding unspecified, loopback, "
+             "multicast and IPv4-mapped addresses",
              key);
         return false;
     }
@@ -147,9 +179,10 @@ tunnel_t *ping6clientCreate(node_t *node)
         return NULL;
     }
 
-    if (! ping6clientRejectUnknownSettings(settings) ||
-        ! ping6clientLoadOptionalIpv6(&state->wire.local_ipv6, settings, "local-ipv6") ||
-        ! ping6clientLoadOptionalIpv6(&state->wire.peer_ipv6, settings, "peer-ipv6") ||
+    if (! ping6clientRejectUnknownSettings(settings) || ! ping6clientLoadMode(&state->wire, settings) ||
+        (state->wire.mode == kPing6WireIpv6InIpv4 &&
+         (! ping6clientLoadIpv6(&state->wire.local_ipv6, settings, "local-ipv6") ||
+          ! ping6clientLoadIpv6(&state->wire.peer_ipv6, settings, "peer-ipv6"))) ||
         ! ping6clientLoadIdentifier(state, settings))
     {
         ping6clientDestroy(t, wwLifecycleStartupRollback());
@@ -172,6 +205,7 @@ tunnel_t *ping6clientCreate(node_t *node)
         return NULL;
     }
 
+    node->required_padding_left = ping6wireOverhead(&state->wire);
     atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
     return t;

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 159
+Documentation version: 160
 Sync note: Keep aligned with WaterWall-Docs/docs/02-noderefs/PingClient.mdx and its Persian translation.
 -->
 
@@ -115,7 +115,7 @@ pending checksum intent, subject to fragment rejection below.
 ## MTU and reassembly
 
 The user is responsible for configuring a native MTU that leaves room for all
-chain overhead and the actual network path. Ping/Ping6 add nine bytes and drop
+chain overhead and the actual network path. Ordinary Ping and direct-mode Ping6 add nine bytes and drop
 native packets exceeding the 1,500-byte carrier ceiling after encoding. They do
 not discover or negotiate MTU, adjust MSS, segment, or fragment packets. Both
 entry points reject IP fragments; configure packet adapters to reassemble

@@ -1,5 +1,5 @@
 <!--
-Documentation version: 167
+Documentation version: 168
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -15,11 +15,12 @@ its own MTU; other node overrides do not change it. An invalid inherited core
 
 For Ping/Ping6 paths that rewrite addresses, place IpOverrider between RawSocket
 and the decoder and select `"opaque-flow-mode": "peer"` explicitly; `auto`
-recognizes only direct decoder neighbours. Ping/Ping6 reuse the IPv4 header,
-add nine bytes, accept at most 1491 complete native bytes and reject fragments
-at both entry points. Configure `"fragment-policy": "reassemble"` on adapters
+recognizes only direct decoder neighbours. All Ping modes reuse the IPv4 header.
+Ordinary Ping and direct Ping6 add nine bytes and accept at most 1491 complete
+native bytes; `ipv6-in-ipv4` Ping6 adds 49 and accepts at most 1451. Both entry
+points reject fragments. Configure `"fragment-policy": "reassemble"` on adapters
 and budget device/bridge MTUs for the actual path. Capture the peer's network
-address with protocol 1 for Ping or 58 for Ping6. Ordinary Echo traffic may
+address with protocol 1 for Ping, 58 for direct Ping6 or 41 for IPv6-in-IPv4 Ping6. Ordinary Echo traffic may
 satisfy the layout; dedicated capture selection supplies no authentication.
 
 ## What It Does

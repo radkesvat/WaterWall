@@ -60,7 +60,7 @@ bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_
 }
 
 /* Match the shared native transport geometry, including permitted UDP padding. */
-static bool pingwireNativeShape(const uint8_t *body, uint16_t length, uint8_t protocol)
+bool pingwireNativeShape(const uint8_t *body, uint16_t length, uint8_t protocol)
 {
     if (protocol == IPPROTO_TCP)
     {
@@ -257,6 +257,7 @@ ping_wire_inbound_kind_t pingwireParseEcho(const uint8_t *packet, uint32_t lengt
         .total_length        = carrier.ip_total_length,
         .icmp_payload_length = (uint16_t) (carrier.transport_length - kPingWireIcmpHeaderLength),
         .ip_header_length    = carrier.ip_header_length,
+        .echo_offset         = carrier.transport_offset,
         .identifier          = GET_BE16(echo + 4),
         .sequence            = GET_BE16(echo + 6),
         .tos                 = packet[1],

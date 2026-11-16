@@ -29,11 +29,11 @@ static void ping6clientDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dir
              direction,
              reason,
              sbufGetLength(buf),
-             (unsigned int) kPing6WireMaxInnerPacketLength,
-             (unsigned int) kPing6WireEncapsulationOverhead,
+             (unsigned int) (kMaxAllowedPacketLength - ping6wireOverhead(&state->wire)),
+             (unsigned int) ping6wireOverhead(&state->wire),
              (unsigned int) kMaxAllowedPacketLength,
              sbufGetHeadroom(buf),
-             (unsigned int) kPing6WireEncapsulationOverhead);
+             (unsigned int) ping6wireOverhead(&state->wire));
     }
     lineReuseBuffer(l, buf);
 }
@@ -50,12 +50,12 @@ static const char *ping6clientConsumeCarrierChecksum(ping6client_tstate_t *state
     {
         return "fragmented IPv4 datagram requires adapter reassembly before Ping";
     }
-    if (! sbufGetRecalculateChecksum(buf) || carrier.protocol != kPing6WireProtocol)
+    if (! sbufGetRecalculateChecksum(buf) || carrier.protocol != ping6wireCarrierProtocol(&state->wire))
     {
         return NULL;
     }
     /* Repair only the visible carrier, never the normalized native payload. */
-    if (! ping6wireRecalculateCarrierChecksums(buf, &state->wire.peer_ipv6, &state->wire.local_ipv6))
+    if (! ping6wireRecalculateCarrierChecksums(buf, &state->wire))
     {
         return "invalid carrier geometry for visible checksum repair";
     }
@@ -68,7 +68,7 @@ void ping6clientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     ping6client_tstate_t *state = tunnelGetState(t);
     ping6clientValidatePacketLine(t, l);
 
-    const char *input_error = pingwirePrepareEchoRequest(buf);
+    const char *input_error = ping6wirePrepareEchoRequest(buf, &state->wire);
     if (input_error != NULL)
     {
         ping6clientDrop(t, l, buf, "outgoing", input_error);
@@ -83,7 +83,7 @@ void ping6clientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 
     const uint8_t *packet         = sbufGetRawPtr(buf);
-    const uint16_t payload_offset = (uint16_t) ((packet[0] & 15U) * 4U + kPingWireIcmpHeaderLength);
+    const uint16_t payload_offset = (uint16_t) ((packet[0] & 15U) * 4U + ping6wireOverhead(&state->wire) - 1U);
     const uint8_t *payload        = packet + payload_offset;
     const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - payload_offset);
     if (! pingwireOutstandingRecord(

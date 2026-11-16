@@ -1,5 +1,5 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -11,11 +11,12 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
 For Ping/Ping6 paths that rewrite addresses, place IpOverrider between RawSocket
 and the decoder and select `"opaque-flow-mode": "peer"` explicitly; `auto`
-recognizes only direct decoder neighbours. Ping/Ping6 reuse the IPv4 header,
-add nine bytes, accept at most 1491 complete native bytes and reject fragments
-at both entry points. Configure `"fragment-policy": "reassemble"` on adapters
+recognizes only direct decoder neighbours. All Ping modes reuse the IPv4 header.
+Ordinary Ping and direct Ping6 add nine bytes and accept at most 1491 complete
+native bytes; `ipv6-in-ipv4` Ping6 adds 49 and accepts at most 1451. Both entry
+points reject fragments. Configure `"fragment-policy": "reassemble"` on adapters
 and budget device/bridge MTUs for the actual path. Capture the peer's network
-address with protocol 1 for Ping or 58 for Ping6. Ordinary Echo traffic may
+address with protocol 1 for Ping, 58 for direct Ping6 or 41 for IPv6-in-IPv4 Ping6. Ordinary Echo traffic may
 satisfy the layout; dedicated capture selection supplies no authentication.
 
 ## What It Does
@@ -44,7 +45,7 @@ TunDevice -> PingClient -> IpOverrider -> RawSocket
 RawSocket -> IpOverrider -> PingServer -> TunDevice
 ```
 
-Ping6Client/Ping6Server use the same edge orders with outer IPv4 Protocol `58`. Select `capture-protocols: [58]` with the peer's outer source range for Ping6 carriers.
+Ping6Client/Ping6Server use the same edge orders with outer IPv4 Protocol `58` in direct mode or `41` in `ipv6-in-ipv4` mode. Select `capture-protocols: [58]` or `[41]` respectively with the peer's outer source range. New-mode TunDevice MTU is at most 1451 at a 1500-byte path, before any other expansion; reassemble native/outer IPv4 fragments before Ping6. Inner IPv6 Fragment headers are rejected by Ping6.
 
 In first position, RawSocket forwards captured carrier packets upstream into
 PingServer. PingServer restores the inner packet toward TunDevice; only with
