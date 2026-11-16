@@ -521,17 +521,35 @@ static void testStrictAddressText(void)
                 "lenient IPv4 text was accepted or wrote its output");
     }
 
-    const char *const valid_ipv6[] = {"::", "2001:db8::10", "2001:DB8:0:0:0:0:0:10", "::ffff:192.0.2.10"};
+    /* Expected network bytes are independent of the parser used by production. */
+    const struct
+    {
+        const char *text;
+        uint8_t     bytes[16];
+    } valid_ipv6[] = {
+        {"::", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}},
+        {"::1", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}},
+        {"2001:db8::10", {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10}},
+        {"2001:DB8:0:0:0:0:0:10", {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10}},
+        {"1:2:3:4:5:6:7:8", {0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8}},
+        {"1:2:3:4:5:6:7::", {0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 0}},
+        {"::ffff:192.0.2.10", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 192, 0, 2, 10}},
+        {"::192.0.2.1", {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 192, 0, 2, 1}},
+        {"2001:db8::192.0.2.1", {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 192, 0, 2, 1}},
+        {"2001:db8:0:1:2:3:192.0.2.1", {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 2, 0, 3, 192, 0, 2, 1}},
+        {"2001:db8:0:1::192.0.2.1", {0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 1, 0, 0, 0, 0, 192, 0, 2, 1}},
+        {"ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255",
+         {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 255, 255, 255, 255}},
+    };
     for (size_t i = 0; i < ARRAY_SIZE(valid_ipv6); ++i)
     {
-        const ip6_addr_t expected = ipv6Address(valid_ipv6[i]);
-        ip6_addr_t       parsed   = {0};
-        require(ping6wireParseIpv6Text(valid_ipv6[i], &parsed) &&
-                    memoryEqual(parsed.addr, expected.addr, sizeof(parsed.addr)),
+        ip6_addr_t parsed = {0};
+        require(ping6wireParseIpv6Text(valid_ipv6[i].text, &parsed) &&
+                    memoryEqual(parsed.addr, valid_ipv6[i].bytes, sizeof(valid_ipv6[i].bytes)),
                 "valid IPv6 text was rejected or misparsed");
     }
 
-    /* lwIP's own IPv6 parser accepts the first eight of these: trailing text, an oversized group, loose tails. */
+    /* Reject foreign text, malformed compression and non-canonical dotted-quad tails. */
     const char *const invalid_ipv6[] = {"2001:db8::1 ",
                                         "2001:db8::1 2001:db8::2",
                                         "2001:db8::1,2001:db8::2",
@@ -545,12 +563,33 @@ static void testStrictAddressText(void)
                                         "192.0.2.1",
                                         "1:2:3:4:5:6:7",
                                         "1:2:3:4:5:6:7:8:9",
+                                        ":1:2:3:4:5:6:7",
+                                        "1:2:3:4:5:6:7:",
+                                        "::1:2:3:4:5:6:7:8",
+                                        "1:2:3:4:5:6:7:8::",
+                                        "1:2:3:4::5:6:7:8",
                                         "1::2::3",
+                                        ":",
+                                        ":::1",
+                                        "2001:db8:::1",
+                                        "::192.0.2",
+                                        "::192.0.2.1.2",
+                                        "::192.0.2.256",
+                                        "::192.0.2.01",
+                                        "::192.0..1",
+                                        "::192.0.2.1:1",
+                                        "1:2:3:4:5:6:7:192.0.2.1",
+                                        "1:2:3:4:5:192.0.2.1",
+                                        "1:2:3:4:5:6::192.0.2.1",
                                         "2001:db8::g"};
+    ip6_addr_t        unchanged;
+    memorySet(&unchanged, 0x5a, sizeof(unchanged));
     for (size_t i = 0; i < ARRAY_SIZE(invalid_ipv6); ++i)
     {
-        ip6_addr_t parsed = {0};
-        require(! ping6wireParseIpv6Text(invalid_ipv6[i], &parsed), "malformed IPv6 text was accepted");
+        ip6_addr_t parsed;
+        memoryCopy(&parsed, &unchanged, sizeof(parsed));
+        require(! ping6wireParseIpv6Text(invalid_ipv6[i], &parsed) && memoryEqual(&parsed, &unchanged, sizeof(parsed)),
+                "malformed IPv6 text was accepted or wrote its output");
     }
 }
 

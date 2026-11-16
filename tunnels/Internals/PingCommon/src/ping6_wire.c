@@ -68,7 +68,7 @@ bool ping6wireParseIpv6Text(const char *text, ip6_addr_t *address_out)
 {
     assert(text != NULL && address_out != NULL);
 
-    /* lwIP stops at the first foreign character and lets an oversized group spill into its neighbour. */
+    /* Keep bare-address syntax and strict decimal IPv4 tails consistent across platforms. */
     const char *group = text;
     for (const char *c = text; *c != '\0'; ++c)
     {
@@ -90,7 +90,16 @@ bool ping6wireParseIpv6Text(const char *text, ip6_addr_t *address_out)
             return false;
         }
     }
-    return ip6addr_aton(text, address_out) != 0;
+    /* Native parsing validates colon grammar and handles compressed embedded-IPv4 forms. */
+    struct in6_addr parsed;
+    if (inet_pton(AF_INET6, text, &parsed) != 1)
+    {
+        return false;
+    }
+
+    memoryZero(address_out, sizeof(*address_out));
+    memoryCopy(address_out->addr, &parsed, sizeof(address_out->addr));
+    return true;
 }
 
 bool ping6wireEchoRequestPreflight(const sbuf_t *buf)
