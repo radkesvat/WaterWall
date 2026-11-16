@@ -1,5 +1,5 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
@@ -8,6 +8,15 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `RawSocket` connects WaterWall to raw IPv4 packet capture and raw packet injection. When capture ranges are configured, it captures matching IP packets from the host networking stack and forwards them into the chain. Independently, it can inject raw IP packets coming from the chain back into the system.
 
 This node is a layer-3 adapter rather than a connection-oriented tunnel.
+
+For Ping/Ping6 paths that rewrite addresses, place IpOverrider between RawSocket
+and the decoder and select `"opaque-flow-mode": "peer"` explicitly; `auto`
+recognizes only direct decoder neighbours. Ping/Ping6 reuse the IPv4 header,
+add nine bytes, accept at most 1491 complete native bytes and reject fragments
+at both entry points. Configure `"fragment-policy": "reassemble"` on adapters
+and budget device/bridge MTUs for the actual path. Capture the peer's network
+address with protocol 1 for Ping or 58 for Ping6. Ordinary Echo traffic may
+satisfy the layout; dedicated capture selection supplies no authentication.
 
 ## What It Does
 
@@ -31,8 +40,8 @@ Payload reaching `RawSocket` from upstream or downstream is treated as an IP pac
 With PingClient/PingServer packet disguise, use these edge orders:
 
 ```text
-TunDevice -> PingClient -> RawSocket
-RawSocket -> PingServer -> TunDevice
+TunDevice -> PingClient -> IpOverrider -> RawSocket
+RawSocket -> IpOverrider -> PingServer -> TunDevice
 ```
 
 Ping6Client/Ping6Server use the same edge orders with outer IPv4 Protocol `58`. Select `capture-protocols: [58]` with the peer's outer source range for Ping6 carriers.

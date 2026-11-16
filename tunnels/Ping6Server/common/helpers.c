@@ -38,46 +38,28 @@ static void ping6serverDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dir
     lineReuseBuffer(l, buf);
 }
 
-static const char *ping6serverConsumeInnerChecksum(sbuf_t *buf)
-{
-    const bool  requested = packettunnelTakeChecksumRequest(buf);
-    const char *error     = pingwireIpv4PacketError(sbufGetRawPtr(buf), sbufGetLength(buf));
-    if (error != NULL)
-    {
-        return error;
-    }
-    if (requested && ! calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
-    {
-        return "requested IPv4/transport checksum repair failed";
-    }
-    return NULL;
-}
-
 static const char *ping6serverConsumeCarrierChecksum(ping6server_tstate_t *state, sbuf_t *buf)
 {
-    const bool         requested = packettunnelTakeChecksumRequest(buf);
-    ipv4_packet_view_t outer     = {0};
-    const char        *error     = pingwireIpv4PacketErrorWithView(sbufGetRawPtr(buf), sbufGetLength(buf), &outer);
+    ipv4_packet_view_t carrier = {0};
+    const char        *error   = pingwireIpv4PacketErrorWithView(sbufGetRawPtr(buf), sbufGetLength(buf), &carrier);
     if (error != NULL)
     {
         return error;
     }
-    if (! requested)
+    if (carrier.fragmented)
+    {
+        return "fragmented IPv4 datagram requires adapter reassembly before Ping";
+    }
+    if (! sbufGetRecalculateChecksum(buf) || carrier.protocol != kPing6WireProtocol)
     {
         return NULL;
     }
-
-    if (outer.source_address != state->wire.peer_ipv4 || outer.destination_address != state->wire.local_ipv4 ||
-        outer.protocol != kPing6WireProtocol)
-    {
-        sbufSetRecalculateChecksum(buf, true);
-        return NULL;
-    }
+    /* Repair only the visible carrier, never the normalized native payload. */
     if (! ping6wireRecalculateCarrierChecksums(buf, &state->wire.peer_ipv6, &state->wire.local_ipv6))
     {
-        /* Not a repairable carrier shape: settle the outer header so the parser can name the exact reason. */
-        discard calcIpv4HeaderChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf));
+        return "invalid carrier geometry for visible checksum repair";
     }
+    sbufSetRecalculateChecksum(buf, false);
     return NULL;
 }
 
@@ -86,21 +68,10 @@ void ping6serverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     ping6server_tstate_t *state = tunnelGetState(t);
     ping6serverValidatePacketLine(t, l);
 
-    const char *input_error = ping6serverConsumeInnerChecksum(buf);
+    const char *input_error = pingwirePrepareEchoRequest(buf);
     if (input_error != NULL)
     {
         ping6serverDrop(t, l, buf, "outgoing", input_error);
-        return;
-    }
-
-    if (sbufGetLength(buf) > kPing6WireMaxInnerPacketLength)
-    {
-        ping6serverDrop(t, l, buf, "outgoing", "IPv4 packet exceeds maximum inner size");
-        return;
-    }
-    if (sbufGetHeadroom(buf) < kPing6WireEncapsulationOverhead)
-    {
-        ping6serverDrop(t, l, buf, "outgoing", "insufficient left headroom to prepend IPv4/ICMPv6 headers");
         return;
     }
 
@@ -111,16 +82,12 @@ void ping6serverHandleDownstreamPacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    const uint8_t *payload        = sbufGetRawPtr(buf) + kPing6WireEncapsulationOverhead;
-    const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - kPing6WireEncapsulationOverhead);
-    if (! pingwireOutstandingRecord(state->tracker,
-                                    state->digest_key,
-                                    state->wire.identifier,
-                                    sequence,
-                                    state->wire.peer_ipv4,
-                                    state->wire.local_ipv4,
-                                    payload,
-                                    payload_length))
+    const uint8_t *packet         = sbufGetRawPtr(buf);
+    const uint16_t payload_offset = (uint16_t) ((packet[0] & 15U) * 4U + kPingWireIcmpHeaderLength);
+    const uint8_t *payload        = packet + payload_offset;
+    const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - payload_offset);
+    if (! pingwireOutstandingRecord(
+            state->tracker, state->digest_key, state->wire.identifier, sequence, payload, payload_length))
     {
         ping6serverDrop(t, l, buf, "outgoing", "failed to hash/register the outgoing Echo Request");
         return;

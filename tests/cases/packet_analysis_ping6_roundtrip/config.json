@@ -17,12 +17,8 @@
       "name": "ping6-client",
       "type": "Ping6Client",
       "settings": {
-        "local-ipv4": "192.0.2.30",
-        "peer-ipv4": "203.0.113.30",
         "identifier": 4662,
-        "sequence-start": 30,
-        "ttl": 63,
-        "tos": 16
+        "sequence-start": 30
       },
       "next": "receiver"
     },
@@ -30,9 +26,9 @@
       "name": "receiver",
       "type": "PacketCounter",
       "settings": {
-        "source-ipv4-range": "192.0.2.30/32",
+        "source-ipv4-range": "198.51.100.0/31",
         "protocol-number": 58,
-        "expected-packets-per-ip": 6,
+        "expected-packets-per-ip": 3,
         "report-after-ms": 700,
         "output-file": "packet-counter-report.txt"
       }

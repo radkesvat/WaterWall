@@ -20,12 +20,8 @@
       "name": "ping-client",
       "type": "PingClient",
       "settings": {
-        "local-ipv4": "192.0.2.10",
-        "peer-ipv4": "198.51.100.10",
         "identifier": 4660,
-        "sequence-start": 10,
-        "ttl": 63,
-        "tos": 16
+        "sequence-start": 10
       },
       "next": "ping-server"
     },
@@ -47,12 +43,8 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "local-ipv4": "198.51.100.10",
-        "peer-ipv4": "192.0.2.10",
         "identifier": 4661,
-        "sequence-start": 1,
-        "ttl": 63,
-        "tos": 16
+        "sequence-start": 1
       },
       "next": "tester-server"
     }

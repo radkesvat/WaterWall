@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise RawSocket -> Ping6Server -> TunDevice with real Protocol 58 adapters.
+"""Exercise RawSocket -> IpOverrider -> Ping6Server -> TunDevice with real Protocol 58 adapters.
 
 The privileged namespace runner starts the adjacent multiworker configuration.
 The probe independently constructs and verifies outer IPv4/ICMPv6 Echo packets
@@ -26,8 +26,8 @@ INNER_SOURCE = "10.252.30.2"
 INNER_DESTINATION = "10.252.30.1"
 OUTER_SOURCE = "127.0.0.2"
 OUTER_DESTINATION = "127.0.0.1"
-PSEUDO_SOURCE = "::ffff:127.0.0.2"
-PSEUDO_DESTINATION = "::ffff:127.0.0.1"
+PSEUDO_SOURCE = "::"
+PSEUDO_DESTINATION = "::"
 PING6_PROTOCOL = 58
 PING6_ECHO_REQUEST = 128
 PING6_ECHO_REPLY = 129
@@ -109,7 +109,7 @@ def parse_ipv4(packet):
 
     header_len = (packet[0] & 0x0F) * 4
     total_len = struct.unpack_from("!H", packet, 2)[0]
-    if header_len != 20 or total_len != len(packet) or total_len < header_len:
+    if not 20 <= header_len <= 60 or total_len != len(packet) or total_len < header_len:
         return None
     if checksum(packet[:header_len]) != 0:
         return None
@@ -195,20 +195,18 @@ def parse_server_request(packet):
         return None
     if icmp["identifier"] != SERVER_IDENTIFIER:
         return None
-    if outer["tos"] != 0 or outer["ttl"] != SERVER_TTL:
+    if outer["tos"] != REQUEST_TOS or outer["ttl"] != SERVER_TTL:
         raise RuntimeError("server-originated Echo Request has wrong TOS/TTL")
-    if outer["identification"] != 0 or outer["flags_offset"] != IP_DF:
-        raise RuntimeError("server-originated Echo Request does not use the documented DF/IPv4-ID policy")
-
-    inner = parse_ipv4(icmp["payload"])
-    if (
-        inner is None
-        or inner["source"] != INNER_DESTINATION
-        or inner["destination"] != INNER_SOURCE
-        or inner["protocol"] != socket.IPPROTO_ICMP
-    ):
-        raise RuntimeError("server-originated Echo Request does not carry the inner Echo Reply")
-    inner_icmp = parse_icmp(inner["payload"])
+    if outer["flags_offset"] & 0x3FFF:
+        raise RuntimeError("server data carrier is fragmented")
+    # There is one IPv4 header. The exact native ICMP body is followed by its
+    # original protocol number; address restoration is the chain's policy.
+    if not icmp["payload"] or icmp["payload"][-1] != socket.IPPROTO_ICMP:
+        raise RuntimeError("server carrier lacks its final native-protocol trailer")
+    native_body = icmp["payload"][:-1]
+    if len(packet) != 20 + 8 + len(native_body) + 1 or len(packet) > 1500:
+        raise RuntimeError("server carrier has wrong nine-byte expansion")
+    inner_icmp = parse_icmp(native_body)
     if inner_icmp is None or inner_icmp["type"] != 0 or inner_icmp["code"] != 0:
         raise RuntimeError("inner Echo Reply was not preserved")
     return outer, icmp, inner_icmp
@@ -216,18 +214,11 @@ def parse_server_request(packet):
 
 def make_peer_request(outer_sequence, inner_sequence, payload, identification):
     inner_icmp = icmp_echo(8, INNER_IDENTIFIER, inner_sequence, payload)
-    inner_packet = ipv4_packet(
-        INNER_SOURCE,
-        INNER_DESTINATION,
-        socket.IPPROTO_ICMP,
-        inner_icmp,
-        0x3100 + inner_sequence,
-    )
     request_icmp = ping6_echo(
         PING6_ECHO_REQUEST,
         PEER_IDENTIFIER,
         outer_sequence,
-        inner_packet,
+        inner_icmp + bytes([socket.IPPROTO_ICMP]),
         PSEUDO_SOURCE,
         PSEUDO_DESTINATION,
     )
@@ -364,7 +355,48 @@ def main():
         if server_sequences != [1, 2]:
             raise RuntimeError(f"server-originated request sequences were not ascending: {server_sequences}")
 
-        print("RawSocket -> Ping6Server -> TunDevice multi-worker Protocol 58 flow verified")
+        # Native size includes IPv4 (20) and native ICMP (8), then nine
+        # carrier bytes. Loopback has ample path MTU; the codec ceiling is fixed.
+        maximum_payload = bytes((i & 0xFF) for i in range(1491 - 20 - 8))
+        maximum_icmp, maximum_packet = make_peer_request(3, INNER_SEQUENCE + 2, maximum_payload, 0x4103)
+        if len(maximum_packet) != 1500:
+            raise RuntimeError("maximum fixture does not have nine-byte expansion")
+        sender.sendto(maximum_packet, (OUTER_DESTINATION, 0))
+        saw_max_reply = saw_max_data = False
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and not (saw_max_reply and saw_max_data):
+            try:
+                packet, _ = receiver.recvfrom(65535)
+            except socket.timeout:
+                continue
+            if parse_immediate_reply(packet, maximum_icmp) is not None:
+                saw_max_reply = True
+                continue
+            result = parse_server_request(packet)
+            if result is not None:
+                _, carrier_icmp, native_icmp = result
+                if native_icmp["sequence"] != INNER_SEQUENCE + 2 or native_icmp["payload"] != maximum_payload:
+                    raise RuntimeError("maximum native packet was changed")
+                if carrier_icmp["sequence"] != 3 or len(packet) != 1500:
+                    raise RuntimeError("maximum data carrier sequence or size is wrong")
+                send_acknowledgement(sender, carrier_icmp, 0x4203)
+                saw_max_data = True
+        if not (saw_max_reply and saw_max_data):
+            raise RuntimeError("1491-byte native packet did not complete")
+        oversized_icmp, oversized_packet = make_peer_request(4, INNER_SEQUENCE + 3, maximum_payload + b"x", 0x4104)
+        if len(oversized_packet) != 1501:
+            raise RuntimeError("oversized fixture has wrong geometry")
+        sender.sendto(oversized_packet, (OUTER_DESTINATION, 0))
+        deadline = time.monotonic() + 0.5
+        while time.monotonic() < deadline:
+            try:
+                packet, _ = receiver.recvfrom(65535)
+            except socket.timeout:
+                continue
+            if parse_immediate_reply(packet, oversized_icmp) is not None or parse_server_request(packet) is not None:
+                raise RuntimeError("1492-byte native packet escaped the codec size ceiling")
+
+        print("RawSocket -> IpOverrider -> Ping6Server -> TunDevice multi-worker Protocol 58 flow verified")
         return
     finally:
         sender.close()

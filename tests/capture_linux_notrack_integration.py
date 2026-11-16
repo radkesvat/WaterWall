@@ -366,11 +366,10 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
                                  "multi-queue": not single_queue, "dont-capture-protocols": [253]})
             nodes = [
                 {"name": "capture", "type": "RawSocket", "next": "decoder", "settings": settings},
-                # All injected traffic is unrelated to this Ping peer and is
+                # All injected protocols are unrelated to Ping6 protocol 58 and are
                 # passed through unchanged. Auto still selects one peer mode
                 # for the whole device; omission stays prefix at this decoder.
-                {"name": "decoder", "type": "PingServer", "next": "packets", "settings": {
-                    "local-ipv4": "127.0.0.1", "peer-ipv4": "127.0.0.3", "identifier": 4661}},
+                {"name": "decoder", "type": "Ping6Server", "next": "packets", "settings": {}},
                 {"name": "packets", "type": "PacketsToStream", "next": "output"},
                 {"name": "output", "type": "TcpConnector", "settings": {
                     "address": "127.0.0.1", "port": collector.listener.getsockname()[1]}},
@@ -397,7 +396,7 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
                     assert task_count == baseline_tasks, ("capture added a reader thread", baseline_tasks, task_count)
                     requested_mode = opaque_mode or "prefix"
                     effective_mode = "peer" if requested_mode == "auto" else requested_mode
-                    selection_reason = "direct upstream PingServer decoder" if requested_mode == "auto" else "configured mode"
+                    selection_reason = "direct upstream Ping6Server decoder" if requested_mode == "auto" else "configured mode"
                     startup_log = (case / "stdout.log").read_text()
                     assert (f"opaque-flow-mode requested={requested_mode} effective={effective_mode} "
                             f"reason={selection_reason}") in startup_log

@@ -1,492 +1,473 @@
 /*
- * Covers: Ping6 wire; independent ICMPv6 pseudo-header checksum vectors, exact packet geometry,
- * request/reply behavior, parser rejection, checksum repair, and unaligned packet input.
- * CTest: waterwall.ping6_wire_unit
+ * Covers: single IPv4 Echo framing, final protocol trailer, actual IHL, checksum
+ * parity and address normalization, exact capacity, fragment/geometry refusal,
+ * visible repair, arbitrary unmatched replies and bounded request identities.
+ * Setup: ordinary in-memory packets; independent RFC 1071 checksum expectations.
+ * CTest: waterwall.ping6_wire_unit. These sources require Debug and Release execution.
  */
 #include "PingCommon/ping6_wire.h"
-
 #include "test_assert.h"
-
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
-#include "wwapi.h"
-
-enum
-{
-    kTestInnerProtocol = 253,
-    kTestIdentifier    = 0x1234,
-};
 
 static uint32_t ipv4Address(const char *text)
 {
     ip4_addr_t address = {0};
-    require(ip4AddrAddressToNetwork(text, &address) != 0, "test IPv4 parsing failed");
+    require(ip4AddrAddressToNetwork(text, &address) != 0, "IPv4 fixture parse failed");
     return ip4AddrGetU32(&address);
 }
 
-static ip6_addr_t ipv6Address(const char *text)
-{
-    ip6_addr_t address = {0};
-    require(ip6addr_aton(text, &address) != 0, "test IPv6 parsing failed");
-    return address;
-}
-
-static ping6_wire_config_t clientConfig(void)
-{
-    ping6_wire_config_t config = {
-        .local_ipv4 = ipv4Address("192.0.2.10"),
-        .peer_ipv4  = ipv4Address("198.51.100.10"),
-        .local_ipv6 = ipv6Address("2001:db8::10"),
-        .peer_ipv6  = ipv6Address("2001:db8::20"),
-        .identifier = kTestIdentifier,
-        .ttl        = 61,
-        .tos        = 11,
-    };
-    return config;
-}
-
-static ping6_wire_config_t serverConfig(const ping6_wire_config_t *client)
-{
-    ping6_wire_config_t config = {
-        .local_ipv4 = client->peer_ipv4,
-        .peer_ipv4  = client->local_ipv4,
-        .local_ipv6 = client->peer_ipv6,
-        .peer_ipv6  = client->local_ipv6,
-        .identifier = 0x9999,
-        .ttl        = 47,
-        .tos        = 0,
-    };
-    return config;
-}
-
-static uint32_t independentSum(const uint8_t *data, size_t length, uint32_t sum)
+static uint32_t sumBytes(const uint8_t *bytes, size_t length, uint32_t sum)
 {
     while (length >= 2)
     {
-        sum += ((uint32_t) data[0] << 8U) | data[1];
-        data += 2;
+        sum += ((uint32_t) bytes[0] << 8U) | bytes[1];
+        bytes += 2;
         length -= 2;
     }
     if (length != 0)
-    {
-        sum += (uint32_t) data[0] << 8U;
-    }
+        sum += (uint32_t) bytes[0] << 8U;
     return sum;
 }
 
-static uint32_t independentPseudoSum(const uint8_t *message, uint32_t length, const ip6_addr_t *source,
-                                     const ip6_addr_t *destination)
-{
-    uint32_t sum = independentSum((const uint8_t *) source->addr, sizeof(source->addr), 0);
-    sum          = independentSum((const uint8_t *) destination->addr, sizeof(destination->addr), sum);
-    sum += (length >> 16U) & UINT16_MAX;
-    sum += length & UINT16_MAX;
-    sum += kPing6WireProtocol;
-    return independentSum(message, length, sum);
-}
-
-static uint16_t independentFold(uint32_t sum)
+static uint16_t foldChecksum(uint32_t sum)
 {
     while (sum >> 16U)
+        sum = (sum & 65535U) + (sum >> 16U);
+    return (uint16_t) ~sum;
+}
+
+static void checksumAt(uint8_t *bytes, size_t length, uint32_t seed, size_t field)
+{
+    bytes[field] = bytes[field + 1] = 0;
+    PUT_BE16(bytes + field, foldChecksum(sumBytes(bytes, length, seed)));
+}
+
+static ping6_wire_config_t config(void)
+{
+    ping6_wire_config_t result = {.identifier = 0x1234};
+    return result;
+}
+
+static uint32_t carrierSeed(const ping6_wire_config_t *cfg, size_t length)
+{
+    return sumBytes((const uint8_t *) cfg->local_ipv6.addr,
+                    16,
+                    sumBytes((const uint8_t *) cfg->peer_ipv6.addr, 16, (uint32_t) length + 58U));
+}
+
+static void repairCarrier(sbuf_t *buf, const ping6_wire_config_t *cfg)
+{
+    uint8_t     *bytes  = sbufGetMutablePtr(buf);
+    const size_t header = (bytes[0] & 15U) * 4U;
+    checksumAt(bytes + header, sbufGetLength(buf) - header, carrierSeed(cfg, sbufGetLength(buf) - header), 2);
+    checksumAt(bytes, header, 0, 10);
+}
+
+static void requireCarrier(const sbuf_t *buf, const ping6_wire_config_t *cfg)
+{
+    const uint8_t *bytes  = sbufGetRawPtr(buf);
+    const size_t   header = (bytes[0] & 15U) * 4U;
+    require(GET_BE16(bytes + 2) == sbufGetLength(buf), "carrier declared length mismatch");
+    require(bytes[9] == 58 && foldChecksum(sumBytes(bytes, header, 0)) == 0,
+            "carrier protocol or IPv4 checksum invalid");
+    require(foldChecksum(sumBytes(
+                bytes + header, sbufGetLength(buf) - header, carrierSeed(cfg, sbufGetLength(buf) - header))) == 0,
+            "Echo checksum invalid");
+}
+
+static uint32_t transportSeed(const uint8_t *packet, uint8_t protocol, uint16_t length)
+{
+    return sumBytes(packet + 12, 8, (uint32_t) protocol + length);
+}
+
+static sbuf_t *nativePacket(uint8_t protocol, uint16_t header, uint16_t body)
+{
+    sbuf_t *buf = sbufCreateWithPadding(header + body + 25U, 0);
+    /* Exercise exactly nine bytes of headroom, unaligned storage and no tailroom.
+     * The allocator may round capacity; restrict the test's accessible geometry. */
+    buf->data = buf->head + 9;
+    memorySet(buf->head + 9U + header + body, 0xa5, 16);
+    buf->capacity = (size_t) 9 + header + body;
+    sbufSetLength(buf, header + body);
+    uint8_t *p = sbufGetMutablePtr(buf);
+    memoryZero(p, header + body);
+    p[0] = (uint8_t) (0x40U | header / 4U);
+    p[1] = 0x2e;
+    PUT_BE16(p + 2, header + body);
+    PUT_BE16(p + 4, 0x8877);
+    PUT_BE16(p + 6, IP_DF);
+    p[8]                      = 55;
+    p[9]                      = protocol;
+    const uint8_t addresses[] = {10, 10, 0, 1, 10, 10, 0, 2};
+    memoryCopy(p + 12, addresses, 8);
+    for (uint16_t i = 20; i < header; ++i)
+        p[i] = 1; /* IPv4 NOP options */
+    for (uint16_t i = 0; i < body; ++i)
+        p[header + i] = (uint8_t) (i * 13U + 9U);
+    if (protocol == IP_PROTO_TCP && body >= 20)
     {
-        sum = (sum & UINT16_MAX) + (sum >> 16U);
+        p[header + 12] = 0x50;
+        checksumAt(p + header, body, transportSeed(p, protocol, body), 16);
     }
-    return (uint16_t) sum;
-}
-
-static uint16_t independentChecksum(const uint8_t *message, uint32_t length, const ip6_addr_t *source,
-                                    const ip6_addr_t *destination)
-{
-    return (uint16_t) ~independentFold(independentPseudoSum(message, length, source, destination));
-}
-
-static void requireValidCarrier(const sbuf_t *buf, const ping6_wire_config_t *config)
-{
-    const uint8_t       *packet = sbufGetRawPtr(buf);
-    const struct ip_hdr *ip     = (const struct ip_hdr *) packet;
-    const uint16_t       hlen   = IPH_HL_BYTES(ip);
-    const uint16_t       total  = lwip_ntohs(IPH_LEN(ip));
-
-    require(total == sbufGetLength(buf), "outer total length does not equal buffer length");
-    require(IPH_PROTO(ip) == kPing6WireProtocol, "outer Protocol is not 58");
-    require(inet_chksum(packet, hlen) == 0, "outer IPv4 checksum is invalid");
-    require(independentFold(independentPseudoSum(
-                packet + hlen, total - hlen, &config->local_ipv6, &config->peer_ipv6)) == UINT16_MAX,
-            "ICMPv6 pseudo-header checksum is invalid");
-}
-
-static void repairCarrierIndependently(sbuf_t *buf, const ping6_wire_config_t *config)
-{
-    uint8_t               *packet = sbufGetMutablePtr(buf);
-    struct ip_hdr         *ip     = (struct ip_hdr *) packet;
-    const uint16_t         length = (uint16_t) sbufGetLength(buf);
-    const uint16_t         hlen   = IPH_HL_BYTES(ip);
-    struct icmp6_echo_hdr *icmp   = (struct icmp6_echo_hdr *) (packet + hlen);
-    icmp->chksum                  = 0;
-    icmp->chksum =
-        lwip_htons(independentChecksum((const uint8_t *) icmp, length - hlen, &config->local_ipv6, &config->peer_ipv6));
-    require(calcIpv4HeaderChecksum(packet, length), "independent outer checksum repair failed");
-}
-
-static sbuf_t *makeInnerPacket(uint16_t length, uint16_t offset)
-{
-    require(length >= IP_HLEN, "test inner packet is too short");
-    sbuf_t *buf = sbufCreateWithPadding(length, kPing6WireEncapsulationOverhead);
-    sbufSetLength(buf, length);
-    memoryZero(sbufGetMutablePtr(buf), length);
-
-    struct ip_hdr *ip = (struct ip_hdr *) sbufGetMutablePtr(buf);
-    IPH_VHL_SET(ip, 4, IP_HLEN / 4U);
-    IPH_TOS_SET(ip, 7);
-    IPH_LEN_SET(ip, lwip_htons(length));
-    IPH_ID_SET(ip, lwip_htons(0x8877));
-    IPH_OFFSET_SET(ip, offset);
-    IPH_TTL_SET(ip, 55);
-    IPH_PROTO_SET(ip, kTestInnerProtocol);
-    ip->src.addr  = ipv4Address("10.10.0.1");
-    ip->dest.addr = ipv4Address("10.10.0.2");
-    for (uint16_t i = IP_HLEN; i < length; ++i)
+    if (protocol == IP_PROTO_UDP && body >= 8)
     {
-        sbufGetMutablePtr(buf)[i] = (uint8_t) (i * 13U + 9U);
+        PUT_BE16(p + header + 4, body);
+        checksumAt(p + header, body, transportSeed(p, protocol, body), 6);
+        if (GET_BE16(p + header + 6) == 0)
+            PUT_BE16(p + header + 6, 65535);
     }
-    require(calcFullPacketChecksum(sbufGetMutablePtr(buf), length), "test inner checksum failed");
+    if (protocol == IP_PROTO_ICMP && body >= 4)
+        checksumAt(p + header, body, 0, 2);
+    checksumAt(p, header, 0, 10);
     return buf;
 }
 
-static struct icmp6_echo_hdr *icmp6Header(sbuf_t *buf)
+static void requireCanary(const sbuf_t *buf)
 {
-    return (struct icmp6_echo_hdr *) (sbufGetMutablePtr(buf) + kPing6WireIpv4HeaderLength);
+    for (size_t i = 0; i < 16; ++i)
+        require(buf->head[buf->capacity + i] == 0xa5, "codec wrote beyond the declared allocation boundary");
 }
 
-static void testRequestReplyAndIndependentChecksums(void)
+static void testExactWireVector(void)
 {
-    const ping6_wire_config_t client      = clientConfig();
-    const ping6_wire_config_t server      = serverConfig(&client);
-    const uint16_t            lengths[]   = {96, 95, 72};
-    const uint16_t            sequences[] = {1, UINT16_MAX, 0};
+    ping6_wire_config_t cfg    = config();
+    sbuf_t             *buf    = nativePacket(49, 20, 2);
+    sbufGetMutablePtr(buf)[20] = 0x11;
+    sbufGetMutablePtr(buf)[21] = 0x22;
+    const uint8_t expected[]   = {0x45, 0x2e, 0x00, 0x1f, 0x88, 0x77, 0x40, 0x00, 0x37, 0x3a, 0xa6,
+                                  0xe9, 10,   10,   0,    1,    10,   10,   0,    2,    0x80, 0,
+                                  0x7f, 0x96, 0x12, 0x34, 0xab, 0xcd, 0x11, 0x22, 49};
+    require(ping6wireBuildEchoRequest(buf, &cfg, 0xabcd), "known-vector encode refused");
+    require(sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
+            "exact carrier bytes differ: framing, trailer or checksum parity");
+    requireCarrier(buf, &cfg);
+    sbufDestroy(buf);
+}
 
-    for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
+static void testArithmeticZeroChecksum(void)
+{
+    ping6_wire_config_t cfg = config();
+    sbuf_t             *buf = nativePacket(49, 24, 2);
+    /* 0x8000 (type), 0x1234 (ID), 0 (sequence), 0x3c86 (body), 0x3100 (trailer)
+     * and 0x0045 (11-byte message plus protocol 58, with :: pseudo-addresses)
+     * sum to 0xffff: the transmitted Echo checksum must be zero, not UDP's all-ones. */
+    PUT_BE16(sbufGetMutablePtr(buf) + 24, 0x3c86);
+    require(ping6wireBuildEchoRequest(buf, &cfg, 0), "zero-checksum vector encode refused");
+    uint8_t *echo = sbufGetMutablePtr(buf) + 24;
+    require(GET_BE16(echo + 2) == 0, "encoded arithmetic-zero Echo checksum was replaced");
+    requireCarrier(buf, &cfg);
+
+    PUT_BE16(echo + 2, 0x1234);
+    require(ping6wireRecalculateCarrierChecksums(buf, &cfg.local_ipv6, &cfg.peer_ipv6),
+            "zero-checksum carrier repair failed");
+    require(GET_BE16(echo + 2) == 0, "repaired arithmetic-zero Echo checksum was replaced");
+    requireCarrier(buf, &cfg);
+    ping_wire_envelope_t view = {0};
+    require(ping6wireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest,
+            "zero-checksum request was rejected");
+    requireCanary(buf);
+    sbufDestroy(buf);
+}
+
+static void testProtocolOptionsAndParityMatrix(void)
+{
+    ping6_wire_config_t cfg       = config();
+    const uint16_t      headers[] = {20, 24, 60};
+    for (unsigned protocol = 0; protocol <= 255; ++protocol)
+        for (size_t h = 0; h < ARRAY_SIZE(headers); ++h)
+            for (unsigned odd = 0; odd < 2; ++odd)
+            {
+                const uint16_t body = (uint16_t) ((protocol == 6    ? 20
+                                                   : protocol == 17 ? 8
+                                                   : protocol == 1  ? sizeof(struct icmp_hdr)
+                                                                    : 0) +
+                                                  odd);
+                sbuf_t        *buf  = nativePacket((uint8_t) protocol, headers[h], body);
+                uint8_t        original[100];
+                const size_t   native_length = sbufGetLength(buf);
+                memoryCopy(original, sbufGetRawPtr(buf), native_length);
+                require(sbufGetHeadroom(buf) == 9 && sbufGetTailroom(buf) == 0,
+                        "exact buffer fixture geometry changed");
+                require(ping6wireBuildEchoRequest(buf, &cfg, (uint16_t) protocol), "matrix encode refused");
+                require(sbufGetHeadroom(buf) == 0 && sbufGetTailroom(buf) == 0, "encode used unadvertised space");
+                require(sbufGetLength(buf) == native_length + 9 && sbufGetRawPtr(buf)[native_length + 8] == protocol,
+                        "matrix trailer or overhead mismatch");
+                requireCarrier(buf, &cfg);
+                requireCanary(buf);
+                ping_wire_envelope_t view = {0};
+                require(ping6wireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) ==
+                            kPingWireInboundEchoRequest,
+                        "matrix request did not parse");
+                require(view.native_protocol == protocol && view.native_body_length == body &&
+                            view.ip_header_length == headers[h],
+                        "request geometry includes framing in native span");
+                sbuf_t *reply = sbufDuplicate(buf);
+                require(ping6wireBuildEchoReply(reply, &cfg, &view, 0x4321), "optional reply clone refused");
+                const uint8_t *r = sbufGetRawPtr(reply);
+                require(r[8] == 64 && r[1] == original[1] && GET_BE16(r + 6) == 0 && GET_BE16(r + 4) == 0x4321,
+                        "generated reply header policy mismatch");
+                require(memoryEqual(r + 12, original + 16, 4) && memoryEqual(r + 16, original + 12, 4),
+                        "reply addresses not reversed");
+                require(memoryEqual(r + headers[h] + 4, sbufGetRawPtr(buf) + headers[h] + 4, body + 5),
+                        "reply changed identifier/sequence or exact body+trailer");
+                requireCarrier(reply, &cfg);
+                sbufDestroy(reply);
+                require(ping6wireStripEchoRequest(buf, &view), "matrix strip refused");
+                require(sbufGetLength(buf) == native_length && sbufGetHeadroom(buf) == 9 &&
+                            memoryEqual(sbufGetRawPtr(buf), original, native_length),
+                        "roundtrip changed native header/options/body");
+                requireCanary(buf);
+                sbufDestroy(buf);
+            }
+}
+
+static void testShortNativeIcmpRejected(void)
+{
+    ping6_wire_config_t cfg = config();
+    for (uint16_t body = 0; body < sizeof(struct icmp_hdr); ++body)
     {
-        const uint16_t inner_length = lengths[i];
-        sbuf_t        *request      = makeInnerPacket(inner_length, 0);
-        uint8_t        original[96];
-        memoryCopy(original, sbufGetRawPtr(request), inner_length);
-
-        require(ping6wireEchoRequestPreflight(request), "preflight rejected valid Ping6 input");
-        require(ping6wireBuildEchoRequest(request, &client, sequences[i]), "Ping6 request build failed");
-        require(sbufGetLength(request) == (size_t) inner_length + kPing6WireEncapsulationOverhead,
-                "Ping6 request length is wrong");
-        requireValidCarrier(request, &client);
-
-        const struct ip_hdr   *outer = (const struct ip_hdr *) sbufGetRawPtr(request);
-        struct icmp6_echo_hdr *icmp  = icmp6Header(request);
-        require(icmp->type == kPing6WireEchoRequest && icmp->code == 0, "request type/code is wrong");
-        require(lwip_ntohs(icmp->id) == client.identifier && lwip_ntohs(icmp->seqno) == sequences[i],
-                "request identifier/sequence is wrong");
-        require(IPH_TOS(outer) == client.tos && IPH_TTL(outer) == client.ttl, "request TOS/TTL is wrong");
-        require(IPH_ID(outer) == 0 && lwip_ntohs(IPH_OFFSET(outer)) == IP_DF, "request DF/ID policy is wrong");
-        require(memoryEqual(sbufGetRawPtr(request) + kPing6WireEncapsulationOverhead, original, inner_length),
-                "request altered the inner IPv4 packet");
-
-        ping6_wire_envelope_t request_view = {0};
-        require(ping6wireParseInbound(sbufGetRawPtr(request), sbufGetLength(request), &server, &request_view) ==
-                    kPingWireInboundEchoRequest,
-                "receiver rejected a valid Ping6 request");
-
-        sbuf_t *reply = sbufDuplicate(request);
-        require(ping6wireBuildEchoReply(reply, &server, &request_view, 0x4321), "Ping6 reply build failed");
-        requireValidCarrier(reply, &server);
-        const struct ip_hdr   *reply_outer = (const struct ip_hdr *) sbufGetRawPtr(reply);
-        struct icmp6_echo_hdr *reply_icmp  = icmp6Header(reply);
-        require(reply_icmp->type == kPing6WireEchoReply && reply_icmp->code == 0, "reply type/code is wrong");
-        require(reply_icmp->id == icmp->id && reply_icmp->seqno == icmp->seqno,
-                "reply did not mirror identifier/sequence");
-        require(IPH_TOS(reply_outer) == client.tos && IPH_TTL(reply_outer) == server.ttl,
-                "reply TOS/TTL policy is wrong");
-        require(lwip_ntohs(IPH_OFFSET(reply_outer)) == 0 && lwip_ntohs(IPH_ID(reply_outer)) == 0x4321,
-                "reply fragmentation/ID policy is wrong");
-        require(memoryEqual(sbufGetRawPtr(reply) + kPing6WireEncapsulationOverhead, original, inner_length),
-                "reply did not preserve the inner packet");
-
-        ping6_wire_envelope_t reply_view = {0};
-        require(ping6wireParseInbound(sbufGetRawPtr(reply), sbufGetLength(reply), &client, &reply_view) ==
-                    kPingWireInboundEchoReply,
-                "client rejected a valid Ping6 reply");
-        require(ping6wireStripEchoRequest(request, &request_view), "validated request did not strip");
-        require(sbufGetLength(request) == inner_length && memoryEqual(sbufGetRawPtr(request), original, inner_length),
-                "stripping did not restore the exact inner packet");
-
-        uint8_t unaligned[kMaxAllowedPacketLength + 1];
-        memoryCopy(unaligned + 1, sbufGetRawPtr(reply), sbufGetLength(reply));
-        require(ping6wireParseInbound(unaligned + 1, sbufGetLength(reply), &client, &reply_view) ==
-                    kPingWireInboundEchoReply,
-                "unaligned valid carrier was rejected");
-
-        sbufDestroy(reply);
-        sbufDestroy(request);
+        sbuf_t      *buf    = nativePacket(IP_PROTO_ICMP, 20, body);
+        uint8_t     *packet = sbufGetMutablePtr(buf);
+        uint8_t      original[20 + sizeof(struct icmp_hdr)];
+        const size_t length = sbufGetLength(buf);
+        memoryCopy(original, packet, length);
+        require(! ping6wireBuildEchoRequest(buf, &cfg, 0) && sbufGetRawPtr(buf) == packet &&
+                    sbufGetLength(buf) == length && memoryEqual(packet, original, length),
+                "undersized native ICMP body was accepted or mutated");
+        requireCanary(buf);
+        sbufDestroy(buf);
     }
 }
 
-static void testBoundsAndMalformedMatrix(void)
+static void testRefusalsAndVisibleRepair(void)
 {
-    const ping6_wire_config_t client = clientConfig();
-    const ping6_wire_config_t server = serverConfig(&client);
-    ping6_wire_envelope_t     view   = {0};
-
-    sbuf_t *maximum = makeInnerPacket(kPing6WireMaxInnerPacketLength, lwip_htons(IP_MF));
-    require(ping6wireBuildEchoRequest(maximum, &client, 3), "maximum inner fragment was rejected");
-    require(sbufGetLength(maximum) == kMaxAllowedPacketLength, "maximum carrier length is wrong");
+    ping6_wire_config_t cfg     = config();
+    sbuf_t             *maximum = nativePacket(49, 20, 1471);
+    require(ping6wireBuildEchoRequest(maximum, &cfg, 1) && sbufGetLength(maximum) == 1500,
+            "1491-byte native limit refused");
     sbufDestroy(maximum);
-
-    sbuf_t *oversize = makeInnerPacket(kPing6WireMaxInnerPacketLength + 1U, 0);
-    require(! ping6wireEchoRequestPreflight(oversize) && ! ping6wireBuildEchoRequest(oversize, &client, 3),
-            "oversized inner packet was accepted");
-    sbufDestroy(oversize);
-
-    sbuf_t *short_padding = sbufCreateWithPadding(72, 0);
-    sbufSetLength(short_padding, 72);
-    memoryZero(sbufGetMutablePtr(short_padding), 72);
-    struct ip_hdr *short_ip = (struct ip_hdr *) sbufGetMutablePtr(short_padding);
-    IPH_VHL_SET(short_ip, 4, IP_HLEN / 4U);
-    IPH_LEN_SET(short_ip, lwip_htons(72));
-    IPH_TTL_SET(short_ip, 64);
-    IPH_PROTO_SET(short_ip, kTestInnerProtocol);
-    require(calcFullPacketChecksum(sbufGetMutablePtr(short_padding), 72), "short-padding checksum failed");
-    require(! ping6wireEchoRequestPreflight(short_padding) && ! ping6wireBuildEchoRequest(short_padding, &client, 4),
-            "insufficient padding was accepted");
-    sbufDestroy(short_padding);
-
-    sbuf_t *ipv6 = sbufCreateWithPadding(40, kPing6WireEncapsulationOverhead);
-    sbufSetLength(ipv6, 40);
-    memoryZero(sbufGetMutablePtr(ipv6), 40);
-    sbufGetMutablePtr(ipv6)[0] = 0x60;
-    require(! ping6wireEchoRequestPreflight(ipv6), "IPv6 inner input passed preflight");
-    sbufDestroy(ipv6);
-
-    uint8_t truncated[IP_HLEN - 1U] = {0x45};
-    require(ping6wireParseInbound(truncated, sizeof(truncated), &server, &view) == kPingWireInboundMalformed,
-            "truncated outer header was accepted");
-    require(ping6wireParseInbound(truncated, sizeof(truncated), NULL, &view) == kPingWireInboundMalformed,
-            "null parser config was accepted");
-
-    sbuf_t *request = makeInnerPacket(80, 0);
-    require(ping6wireBuildEchoRequest(request, &client, 9), "malformed-matrix request build failed");
-
-    sbuf_t *trailing = sbufCreateWithPadding(sbufGetLength(request) + 1U, kPing6WireEncapsulationOverhead);
-    sbufSetLength(trailing, sbufGetLength(request) + 1U);
-    memoryCopy(sbufGetMutablePtr(trailing), sbufGetRawPtr(request), sbufGetLength(request));
-    require(ping6wireParseInbound(sbufGetRawPtr(trailing), sbufGetLength(trailing), &server, &view) ==
-                kPingWireInboundMalformed,
-            "carrier with trailing bytes was accepted");
-    sbufDestroy(trailing);
-
-    sbuf_t *bad_outer = sbufDuplicate(request);
-    sbufGetMutablePtr(bad_outer)[8] ^= 1U;
-    require(ping6wireParseInbound(sbufGetRawPtr(bad_outer), sbufGetLength(bad_outer), &server, &view) ==
-                kPingWireInboundMalformed,
-            "bad outer checksum was accepted");
-    sbufDestroy(bad_outer);
-
-    sbuf_t *bad_icmp = sbufDuplicate(request);
-    sbufGetMutablePtr(bad_icmp)[kPing6WireEncapsulationOverhead] ^= 1U;
-    require(ping6wireParseInbound(sbufGetRawPtr(bad_icmp), sbufGetLength(bad_icmp), &server, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "bad ICMPv6 checksum was accepted");
-    sbufDestroy(bad_icmp);
-
-    const uint8_t wrong_types[] = {kPing6WireEchoReply, 130};
-    for (size_t i = 0; i < ARRAY_SIZE(wrong_types); ++i)
+    const uint16_t fragments[] = {IP_MF, 1, (uint16_t) (IP_MF | 2)};
+    for (unsigned repair = 0; repair < 2; ++repair)
+        for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
+            for (unsigned proto = 0; proto < 3; ++proto)
+            {
+                const uint8_t protocols[] = {6, 17, 49};
+                sbuf_t       *buf         = nativePacket(protocols[proto], 20, 1); /* too short for transport parsing */
+                uint8_t      *p           = sbufGetMutablePtr(buf);
+                PUT_BE16(p + 6, fragments[f]);
+                sbufSetRecalculateChecksum(buf, repair != 0);
+                uint8_t original[21];
+                memoryCopy(original, p, sizeof(original));
+                require(! ping6wireBuildEchoRequest(buf, &cfg, 2) && sbufGetRawPtr(buf) == p &&
+                            sbufGetLength(buf) == 21 && memoryEqual(p, original, sizeof(original)) &&
+                            sbufGetRecalculateChecksum(buf) == (repair != 0),
+                        "fragment refusal mutated native geometry/bytes/intent");
+                sbufDestroy(buf);
+            }
+    for (unsigned failure = 0; failure < 7; ++failure)
     {
-        sbuf_t *wrong            = sbufDuplicate(request);
-        icmp6Header(wrong)->type = wrong_types[i];
-        repairCarrierIndependently(wrong, &client);
-        const ping_wire_inbound_kind_t expected =
-            wrong_types[i] == kPing6WireEchoReply ? kPingWireInboundEchoReply : kPingWireInboundInvalidCarrier;
-        require(ping6wireParseInbound(sbufGetRawPtr(wrong), sbufGetLength(wrong), &server, &view) == expected,
-                "wrong ICMPv6 type classification changed");
-        sbufDestroy(wrong);
-    }
-
-    sbuf_t *wrong_code            = sbufDuplicate(request);
-    icmp6Header(wrong_code)->code = 1;
-    repairCarrierIndependently(wrong_code, &client);
-    require(ping6wireParseInbound(sbufGetRawPtr(wrong_code), sbufGetLength(wrong_code), &server, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "nonzero ICMPv6 code was accepted");
-    sbufDestroy(wrong_code);
-
-    sbuf_t *bad_inner                                             = sbufDuplicate(request);
-    sbufGetMutablePtr(bad_inner)[kPing6WireEncapsulationOverhead] = 0x60;
-    repairCarrierIndependently(bad_inner, &client);
-    require(ping6wireParseInbound(sbufGetRawPtr(bad_inner), sbufGetLength(bad_inner), &server, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "non-IPv4 inner payload was accepted");
-    sbufDestroy(bad_inner);
-
-    sbuf_t        *fragment    = sbufDuplicate(request);
-    struct ip_hdr *fragment_ip = (struct ip_hdr *) sbufGetMutablePtr(fragment);
-    IPH_OFFSET_SET(fragment_ip, lwip_htons(IP_MF));
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(fragment), sbufGetLength(fragment)),
-            "fragment outer checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(fragment), sbufGetLength(fragment), &server, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "fragmented outer carrier was accepted");
-    sbufDestroy(fragment);
-
-    sbuf_t        *unrelated    = sbufDuplicate(request);
-    struct ip_hdr *unrelated_ip = (struct ip_hdr *) sbufGetMutablePtr(unrelated);
-    unrelated_ip->src.addr      = ipv4Address("203.0.113.99");
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(unrelated), sbufGetLength(unrelated)),
-            "unrelated outer checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(unrelated), sbufGetLength(unrelated), &server, &view) ==
-                kPingWireInboundUnrelated,
-            "unrelated source was not passed through");
-    IPH_PROTO_SET(unrelated_ip, IP_PROTO_ICMP);
-    unrelated_ip->src.addr = client.local_ipv4;
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(unrelated), sbufGetLength(unrelated)),
-            "unrelated Protocol checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(unrelated), sbufGetLength(unrelated), &server, &view) ==
-                kPingWireInboundUnrelated,
-            "unrelated Protocol was not passed through");
-    sbufDestroy(unrelated);
-
-    const uint16_t options_length = 4;
-    const uint16_t packet_length  = (uint16_t) sbufGetLength(request) + options_length;
-    sbuf_t        *options        = sbufCreateWithPadding(packet_length, kPing6WireEncapsulationOverhead);
-    sbufSetLength(options, packet_length);
-    uint8_t *bytes = sbufGetMutablePtr(options);
-    memoryCopy(bytes, sbufGetRawPtr(request), IP_HLEN);
-    memoryCopy(bytes + IP_HLEN, (const uint8_t[]) {1, 1, 0, 0}, options_length);
-    memoryCopy(bytes + IP_HLEN + options_length, sbufGetRawPtr(request) + IP_HLEN, sbufGetLength(request) - IP_HLEN);
-    struct ip_hdr *options_ip = (struct ip_hdr *) bytes;
-    IPH_VHL_SET(options_ip, 4, (IP_HLEN + options_length) / 4U);
-    IPH_LEN_SET(options_ip, lwip_htons(packet_length));
-    repairCarrierIndependently(options, &client);
-    require(ping6wireParseInbound(bytes, packet_length, &server, &view) == kPingWireInboundInvalidCarrier,
-            "outer IPv4 options were accepted");
-    sbufDestroy(options);
-
-    sbuf_t *short_icmp = sbufCreateWithPadding(IP_HLEN + 4U, kPing6WireEncapsulationOverhead);
-    sbufSetLength(short_icmp, IP_HLEN + 4U);
-    memoryZero(sbufGetMutablePtr(short_icmp), IP_HLEN + 4U);
-    struct ip_hdr *short_outer = (struct ip_hdr *) sbufGetMutablePtr(short_icmp);
-    IPH_VHL_SET(short_outer, 4, IP_HLEN / 4U);
-    IPH_LEN_SET(short_outer, lwip_htons(IP_HLEN + 4U));
-    IPH_TTL_SET(short_outer, 64);
-    IPH_PROTO_SET(short_outer, kPing6WireProtocol);
-    short_outer->src.addr  = client.local_ipv4;
-    short_outer->dest.addr = client.peer_ipv4;
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(short_icmp), sbufGetLength(short_icmp)),
-            "short ICMPv6 outer checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(short_icmp), sbufGetLength(short_icmp), &server, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "truncated ICMPv6 message was accepted");
-    sbufDestroy(short_icmp);
-    sbufDestroy(request);
-}
-
-static void testMappedAddressesAndChecksumRepair(void)
-{
-    ip6_addr_t mapped = {0};
-    ping6wireIpv4MappedAddress(ipv4Address("192.0.2.10"), &mapped);
-    const ip6_addr_t expected = ipv6Address("::ffff:192.0.2.10");
-    require(memoryEqual(mapped.addr, expected.addr, sizeof(mapped.addr)), "mapped IPv6 address bytes are wrong");
-
-    ping6_wire_config_t       client  = clientConfig();
-    const ping6_wire_config_t server  = serverConfig(&client);
-    sbuf_t                   *request = makeInnerPacket(81, 0);
-    require(ping6wireBuildEchoRequest(request, &client, 12), "checksum-repair request build failed");
-    struct ip_hdr *outer = (struct ip_hdr *) sbufGetMutablePtr(request);
-    IPH_CHKSUM_SET(outer, 0);
-    icmp6Header(request)->chksum = 0;
-    require(ping6wireRecalculateCarrierChecksums(request, &server.peer_ipv6, &server.local_ipv6),
-            "inbound-direction checksum repair failed");
-    requireValidCarrier(request, &client);
-
-    ping6_wire_envelope_t view = {0};
-    require(ping6wireParseInbound(sbufGetRawPtr(request), sbufGetLength(request), &server, &view) ==
-                kPingWireInboundEchoRequest,
-            "repaired request did not parse");
-    /* The pseudo-header sum commutes, so the checksum alone cannot tell a swapped local/peer pair apart. */
-    ping6_wire_config_t swapped = server;
-    swapped.local_ipv6          = server.peer_ipv6;
-    swapped.peer_ipv6           = server.local_ipv6;
-    require(ping6wireParseInbound(sbufGetRawPtr(request), sbufGetLength(request), &swapped, &view) ==
-                kPingWireInboundEchoRequest,
-            "swapped pseudo-address pair changed the commutative checksum");
-    ping6_wire_config_t wrong_peer = server;
-    wrong_peer.peer_ipv6           = ipv6Address("2001:db8::ffff");
-    require(ping6wireParseInbound(sbufGetRawPtr(request), sbufGetLength(request), &wrong_peer, &view) ==
-                kPingWireInboundInvalidCarrier,
-            "wrong pseudo-address was accepted");
-
-    bool found_zero = false;
-    for (uint32_t candidate = 0; candidate <= UINT16_MAX; ++candidate)
-    {
-        uint8_t *inner = sbufGetMutablePtr(request) + kPing6WireEncapsulationOverhead;
-        inner[sbufGetLength(request) - kPing6WireEncapsulationOverhead - 2U] = (uint8_t) (candidate >> 8U);
-        inner[sbufGetLength(request) - kPing6WireEncapsulationOverhead - 1U] = (uint8_t) candidate;
-        struct icmp6_echo_hdr *icmp                                          = icmp6Header(request);
-        icmp->chksum                                                         = 0;
-        if (independentChecksum((const uint8_t *) icmp,
-                                (uint32_t) sbufGetLength(request) - kPing6WireIpv4HeaderLength,
-                                &client.local_ipv6,
-                                &client.peer_ipv6) == 0)
+        sbuf_t  *buf = nativePacket(49, 20, failure == 0 ? 1472 : 16);
+        uint8_t *p   = sbufGetMutablePtr(buf);
+        if (failure == 1)
         {
-            require(ping6wireRecalculateCarrierChecksums(request, &client.local_ipv6, &client.peer_ipv6),
-                    "zero-checksum repair failed");
-            require(icmp->chksum == 0, "ICMPv6 zero checksum was replaced with UDP-style all-ones");
-            requireValidCarrier(request, &client);
-            found_zero = true;
-            break;
+            buf->data -= 1;
+            memmove(buf->data, p, sbufGetLength(buf));
+            p = buf->data;
         }
+        if (failure == 2)
+            PUT_BE16(p + 2, 35);
+        if (failure == 3)
+            p[0] = 0x4f;
+        if (failure == 4)
+            p[9] = 6; /* short TCP */
+        if (failure == 5)
+        {
+            p[9] = 17;
+            PUT_BE16(p + 24, 17);
+        }
+        if (failure == 6)
+        {
+            p[9] = 1;
+            PUT_BE16(p + 2, 22);
+            sbufSetLength(buf, 22);
+        }
+        uint8_t      before[1600];
+        const size_t n = sbufGetLength(buf);
+        memoryCopy(before, buf->head, buf->capacity + 16U);
+        sbufSetRecalculateChecksum(buf, true);
+        require(! ping6wireBuildEchoRequest(buf, &cfg, 3) && sbufGetRawPtr(buf) == p && sbufGetLength(buf) == n &&
+                    memoryEqual(before, buf->head, buf->capacity + 16U) && sbufGetRecalculateChecksum(buf),
+                "expected refusal changed input");
+        sbufDestroy(buf);
     }
-    require(found_zero, "could not construct an ICMPv6 zero-checksum vector");
-    sbufDestroy(request);
+    sbuf_t *buf = nativePacket(49, 60, 3);
+    require(ping6wireBuildEchoRequest(buf, &cfg, 4), "repair fixture encode failed");
+    uint8_t             *p    = sbufGetMutablePtr(buf);
+    ping_wire_envelope_t view = {0};
+    p[sbufGetLength(buf) - 1] ^= 1;
+    require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
+            "corrupt trailer passed checksum");
+    require(ping6wireRecalculateCarrierChecksums(buf, &cfg.local_ipv6, &cfg.peer_ipv6), "carrier repair failed");
+    require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest,
+            "repaired carrier rejected");
+    for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
+    {
+        PUT_BE16(p + 6, fragments[f]);
+        uint8_t before[80];
+        memoryCopy(before, p, sbufGetLength(buf));
+        require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
+                "fragment carrier admitted");
+        require(! (ping6wireRecalculateCarrierChecksums(buf, &cfg.local_ipv6, &cfg.peer_ipv6)) &&
+                    memoryEqual(before, p, sbufGetLength(buf)),
+                "fragment carrier partially repaired");
+    }
+    PUT_BE16(p + 6, IP_DF);
+    repairCarrier(buf, &cfg);
+    p[9] = 132;
+    checksumAt(p, 60, 0, 10);
+    require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundUnrelated,
+            "unrelated protocol rejected");
+    sbufDestroy(buf);
+    /* A present zero trailer with empty opaque body is valid; no trailer is not. */
+    for (unsigned length = 0; length < 3; ++length)
+        for (unsigned reply = 0; reply < 2; ++reply)
+        {
+            buf  = nativePacket(49, 20, 8 + length);
+            p    = sbufGetMutablePtr(buf);
+            p[9] = 58;
+            memoryZero(p + 20, 8 + length);
+            p[20] = reply ? 129 : 128;
+            if (reply && length)
+                p[28 + length - 1U] = 6; /* invalid native TCP framing is legal in an unmatched reply */
+            repairCarrier(buf, &cfg);
+            const ping_wire_inbound_kind_t expected = reply         ? kPingWireInboundEchoReply
+                                                      : length == 0 ? kPingWireInboundInvalidCarrier
+                                                                    : kPingWireInboundEchoRequest;
+            require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == expected,
+                    "empty reply or missing/zero trailer misclassified");
+            sbufDestroy(buf);
+        }
 }
 
-static void testUnrelatedOversizeAndEqualAddressRepair(void)
+static void testCarrierGeometryAndUdpPadding(void)
 {
-    ping6_wire_config_t       client = clientConfig();
-    const ping6_wire_config_t server = serverConfig(&client);
-    ping6_wire_envelope_t     view   = {0};
+    ping6_wire_config_t  cfg              = config();
+    ping_wire_envelope_t view             = {0};
+    uint8_t              short_header[19] = {0x45};
+    require(ping6wireParseInbound(short_header, sizeof(short_header), &cfg, &view) == kPingWireInboundMalformed,
+            "short IPv4 header admitted");
+    require(ping6wireParseInbound(short_header, sizeof(short_header), NULL, &view) == kPingWireInboundMalformed,
+            "null parser config admitted");
+    sbuf_t *buf = nativePacket(49, 20, 3);
+    require(ping6wireBuildEchoRequest(buf, &cfg, 10), "geometry fixture encode failed");
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    PUT_BE16(packet + 2, (uint16_t) (sbufGetLength(buf) - 1U));
+    require(ping6wireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundMalformed,
+            "trailing bytes beyond declared IPv4 length admitted");
+    PUT_BE16(packet + 2, (uint16_t) (sbufGetLength(buf) + 1U));
+    require(ping6wireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundMalformed,
+            "truncated declared packet admitted");
+    sbufDestroy(buf);
+    buf       = nativePacket(49, 20, 1481); /* valid candidate geometry, final carrier 1501 */
+    packet    = sbufGetMutablePtr(buf);
+    packet[9] = 58;
+    memoryZero(packet + 20, 1481);
+    packet[20]   = 128;
+    packet[1500] = 49;
+    repairCarrier(buf, &cfg);
+    require(ping6wireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
+            "1501-byte candidate admitted");
+    sbufDestroy(buf);
+    buf    = nativePacket(17, 60, 13);
+    packet = sbufGetMutablePtr(buf);
+    PUT_BE16(packet + 64, 8); /* five bytes of permitted IP padding */
+    checksumAt(packet + 60, 8, transportSeed(packet, 17, 8), 6);
+    if (GET_BE16(packet + 66) == 0)
+        PUT_BE16(packet + 66, 65535);
+    uint8_t expected[73];
+    memoryCopy(expected, packet, sizeof(expected));
+    require(ping6wireBuildEchoRequest(buf, &cfg, 11) &&
+                ping6wireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) ==
+                    kPingWireInboundEchoRequest &&
+                ping6wireStripEchoRequest(buf, &view) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
+            "UDP padding semantics or checksum length changed");
+    sbufDestroy(buf);
+}
 
-    sbuf_t        *unrelated = makeInnerPacket(kMaxAllowedPacketLength + 1U, 0);
-    struct ip_hdr *ip        = (struct ip_hdr *) sbufGetMutablePtr(unrelated);
-    ip->src.addr             = ipv4Address("203.0.113.99");
-    ip->dest.addr            = server.local_ipv4;
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(unrelated), sbufGetLength(unrelated)),
-            "oversized unrelated IPv4 checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(unrelated), sbufGetLength(unrelated), &server, &view) ==
-                kPingWireInboundUnrelated,
-            "valid unrelated IPv4 over 1500 bytes was not preserved");
-    sbufDestroy(unrelated);
-
-    sbuf_t *addressed = makeInnerPacket(kMaxAllowedPacketLength + 1U, 0);
-    ip                = (struct ip_hdr *) sbufGetMutablePtr(addressed);
-    ip->src.addr      = client.local_ipv4;
-    ip->dest.addr     = client.peer_ipv4;
-    IPH_PROTO_SET(ip, kPing6WireProtocol);
-    require(calcIpv4HeaderChecksum(sbufGetMutablePtr(addressed), sbufGetLength(addressed)),
-            "oversized addressed IPv4 checksum failed");
-    require(ping6wireParseInbound(sbufGetRawPtr(addressed), sbufGetLength(addressed), &server, &view) ==
+static void testExplicitPseudoAddresses(void)
+{
+    ping6_wire_config_t cfg = config();
+    require(ping6wireParseIpv6Text("2001:db8::1", &cfg.local_ipv6) &&
+                ping6wireParseIpv6Text("2001:db8::192.0.2.1", &cfg.peer_ipv6),
+            "explicit checksum addresses rejected");
+    sbuf_t *buf = nativePacket(49, 24, 5);
+    require(ping6wireBuildEchoRequest(buf, &cfg, 12), "explicit-context encode failed");
+    requireCarrier(buf, &cfg);
+    ping6_wire_config_t  peer = {.local_ipv6 = cfg.peer_ipv6, .peer_ipv6 = cfg.local_ipv6};
+    ping_wire_envelope_t view = {0};
+    require(ping6wireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &peer, &view) == kPingWireInboundEchoRequest,
+            "mirrored explicit checksum inputs rejected");
+    ping6_wire_config_t zero = config();
+    require(ping6wireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &zero, &view) ==
                 kPingWireInboundInvalidCarrier,
-            "oversized addressed carrier did not get a carrier-specific rejection");
-    sbufDestroy(addressed);
+            "wrong checksum context accepted");
+    sbufDestroy(buf);
+}
 
-    client.peer_ipv4                       = client.local_ipv4;
-    const ping6_wire_config_t equal_server = serverConfig(&client);
-    sbuf_t                   *request      = makeInnerPacket(81, 0);
-    require(ping6wireBuildEchoRequest(request, &client, 12), "equal-address request build failed");
-    struct ip_hdr *outer = (struct ip_hdr *) sbufGetMutablePtr(request);
-    IPH_CHKSUM_SET(outer, 0);
-    icmp6Header(request)->chksum = 0;
-    require(ping6wireRecalculateCarrierChecksums(request, &equal_server.peer_ipv6, &equal_server.local_ipv6),
-            "equal-IPv4 inbound checksum repair failed");
-    requireValidCarrier(request, &client);
-    require(ping6wireParseInbound(sbufGetRawPtr(request), sbufGetLength(request), &equal_server, &view) ==
-                kPingWireInboundEchoRequest,
-            "equal-IPv4 request with distinct pseudo-addresses was rejected");
-    sbufDestroy(request);
+static void testNativeChecksumResiduals(void)
+{
+    ping6_wire_config_t cfg = config();
+    for (unsigned proto = 0; proto < 2; ++proto)
+        for (unsigned mode = 0; mode < 4; ++mode)
+        {
+            const uint8_t  protocol = proto ? 17 : 6;
+            const uint16_t body     = proto ? 13 : 25;
+            sbuf_t        *buf      = nativePacket(protocol, 24, body);
+            uint8_t       *p        = sbufGetMutablePtr(buf);
+            const size_t   field    = 24 + (proto ? 6 : 16);
+            if (mode == 1)
+                p[24 + body - 1] ^= 0x80; /* invalid hidden residual */
+            if (mode == 2 && proto)
+                PUT_BE16(p + field, 0); /* disabled UDP */
+            if (mode == 3)
+            {
+                p[24 + body - 1] ^= 0x80;
+                sbufSetRecalculateChecksum(buf, true);
+            }
+            const uint16_t residual = foldChecksum(sumBytes(p + 24, body, transportSeed(p, protocol, body)));
+            require(ping6wireBuildEchoRequest(buf, &cfg, (uint16_t) mode), "checksum fixture encode failed");
+            p = sbufGetMutablePtr(buf);
+            /* Independent address edit during carriage; real IpOverrider is covered by flow units. */
+            const uint8_t changed[] = {192, 0, 2, 10, 198, 51, 100, 10};
+            memoryCopy(p + 12, changed, 8);
+            repairCarrier(buf, &cfg);
+            ping_wire_envelope_t view = {0};
+            require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest &&
+                        ping6wireStripEchoRequest(buf, &view),
+                    "rewritten carrier did not decode");
+            p = sbufGetMutablePtr(buf);
+            if (mode == 2 && proto)
+                require(GET_BE16(p + field) == 0, "disabled UDP checksum became enabled");
+            else
+                require(foldChecksum(sumBytes(p + 24, body, transportSeed(p, protocol, body))) ==
+                            (mode == 3 ? 0 : residual),
+                        "normalization lost native checksum residual or native repair intent");
+            sbufDestroy(buf);
+        }
+    sbuf_t *buf = nativePacket(6, 20, 25);
+    require(ping6wireBuildEchoRequest(buf, &cfg, 9), "hidden corruption fixture encode failed");
+    uint8_t *p = sbufGetMutablePtr(buf);
+    p[28 + 24] ^= 0x80;
+    require(ping6wireRecalculateCarrierChecksums(buf, &cfg.local_ipv6, &cfg.peer_ipv6),
+            "visible repair of corrupt payload failed");
+    ping_wire_envelope_t view = {0};
+    require(ping6wireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest &&
+                ping6wireStripEchoRequest(buf, &view),
+            "visible repaired request failed to decode");
+    p = sbufGetMutablePtr(buf);
+    require(foldChecksum(sumBytes(p + 20, 25, transportSeed(p, 6, 25))) != 0,
+            "carrier repair silently repaired hidden TCP");
+    sbufDestroy(buf);
 }
 
 static void testStrictAddressText(void)
@@ -595,18 +576,19 @@ static void testStrictAddressText(void)
 
 int main(void)
 {
-    testCaseSet("ping6_wire_test");
+    testCaseSet("ping6_wire");
     initWLibc();
     checkSumInit();
     require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
-
-    testRequestReplyAndIndependentChecksums();
-    testBoundsAndMalformedMatrix();
-    testMappedAddressesAndChecksumRepair();
-    testUnrelatedOversizeAndEqualAddressRepair();
+    testExactWireVector();
+    testArithmeticZeroChecksum();
+    testProtocolOptionsAndParityMatrix();
+    testShortNativeIcmpRejected();
+    testRefusalsAndVisibleRepair();
+    testNativeChecksumResiduals();
+    testCarrierGeometryAndUdpPadding();
+    testExplicitPseudoAddresses();
     testStrictAddressText();
-
     wCryptoGlobalCleanup();
-    puts("ping6_wire_test: all cases passed");
     return 0;
 }

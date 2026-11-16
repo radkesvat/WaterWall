@@ -6,29 +6,50 @@
       "type": "TunDevice",
       "next": "ping6-client",
       "settings": {
-        "fragment-policy": "preserve-fragments",
+        "fragment-policy": "reassemble",
         "device-name": "wwping6c0",
         "device-ip": "10.58.0.1/30",
-        "device-mtu": 1472,
+        "device-mtu": 1491,
         "route-table": "off"
       }
     },
     {
       "name": "ping6-client",
       "type": "Ping6Client",
-      "next": "raw",
+      "next": "carrier-addresses",
       "settings": {
-        "local-ipv4": "192.0.2.10",
-        "peer-ipv4": "198.51.100.10",
         "send-replies": false
       }
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "192.0.2.10"
+          },
+          "dest-ip": {
+            "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.58.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.58.0.1"
+          }
+        }
+      },
+      "next": "raw"
     },
     {
       "name": "raw",
       "type": "RawSocket",
       "settings": {
-        "fragment-policy": "preserve-fragments",
-        "opaque-flow-mode": "auto",
+        "fragment-policy": "reassemble",
+        "opaque-flow-mode": "peer",
         "capture-filter-mode": "source-ip",
         "capture-ips": [
           "198.51.100.10"

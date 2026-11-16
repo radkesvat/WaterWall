@@ -5,14 +5,10 @@
 static bool ping6clientSettingIsSupported(const char *key)
 {
     static const char *const supported[] = {
-        "local-ipv4",
-        "peer-ipv4",
         "local-ipv6",
         "peer-ipv6",
         "identifier",
         "sequence-start",
-        "ttl",
-        "tos",
         "send-replies",
     };
 
@@ -46,8 +42,8 @@ static bool ping6clientRejectUnknownSettings(const cJSON *settings)
             continue;
         }
 
-        LOGF("Ping6Client: unknown setting '%s'; expected only local-ipv4, peer-ipv4, local-ipv6, peer-ipv6, "
-             "identifier, sequence-start, ttl, tos, and send-replies",
+        LOGF("Ping6Client: unknown setting '%s'; expected only local-ipv6, peer-ipv6, identifier, sequence-start, and "
+             "send-replies",
              item->string != NULL ? item->string : "<unnamed>");
         return false;
     }
@@ -77,43 +73,12 @@ static bool ping6clientLoadInteger(int *dest, const cJSON *settings, const char 
     return true;
 }
 
-static bool ping6clientLoadRequiredIpv4(uint32_t *destination, const cJSON *settings, const char *key)
-{
-    if (! jsonObjectFieldStringsAreExact(settings, key))
-    {
-        LOGF("JSON Error: Ping6Client->settings->%s (string field) : invalid embedded-NUL or encoding", key);
-        return false;
-    }
-    const char         *address = NULL;
-    json_value_status_t status  = jsonGetObjectNonEmptyString(settings, key, &address);
-    if (status == kJsonValueMissing)
-    {
-        LOGF("JSON Error: Ping6Client->settings->%s (required string field) : expected a single IPv4 address", key);
-        return false;
-    }
-    if (status == kJsonValueInvalid)
-    {
-        LOGF("JSON Error: Ping6Client->settings->%s (string field) : expected a single IPv4 address", key);
-        return false;
-    }
-
-    if (! ping6wireParseIpv4Text(address, destination))
-    {
-        LOGF("JSON Error: Ping6Client->settings->%s (string field) : expected a single IPv4 address as four decimal "
-             "fields without leading zeros",
-             key);
-        return false;
-    }
-    return true;
-}
-
-static bool ping6clientLoadOptionalIpv6(ip6_addr_t *destination, const cJSON *settings, const char *key,
-                                        uint32_t mapped_ipv4)
+static bool ping6clientLoadOptionalIpv6(ip6_addr_t *destination, const cJSON *settings, const char *key)
 {
     const cJSON *item = cJSON_GetObjectItemCaseSensitive(settings, key);
     if (item == NULL)
     {
-        ping6wireIpv4MappedAddress(mapped_ipv4, destination);
+        memoryZero(destination, sizeof(*destination));
         return true;
     }
     if (! jsonObjectFieldStringsAreExact(settings, key) || ! cJSON_IsString(item) || item->valuestring == NULL ||
@@ -183,10 +148,8 @@ tunnel_t *ping6clientCreate(node_t *node)
     }
 
     if (! ping6clientRejectUnknownSettings(settings) ||
-        ! ping6clientLoadRequiredIpv4(&state->wire.local_ipv4, settings, "local-ipv4") ||
-        ! ping6clientLoadRequiredIpv4(&state->wire.peer_ipv4, settings, "peer-ipv4") ||
-        ! ping6clientLoadOptionalIpv6(&state->wire.local_ipv6, settings, "local-ipv6", state->wire.local_ipv4) ||
-        ! ping6clientLoadOptionalIpv6(&state->wire.peer_ipv6, settings, "peer-ipv6", state->wire.peer_ipv4) ||
+        ! ping6clientLoadOptionalIpv6(&state->wire.local_ipv6, settings, "local-ipv6") ||
+        ! ping6clientLoadOptionalIpv6(&state->wire.peer_ipv6, settings, "peer-ipv6") ||
         ! ping6clientLoadIdentifier(state, settings))
     {
         ping6clientDestroy(t, wwLifecycleStartupRollback());
@@ -202,19 +165,13 @@ tunnel_t *ping6clientCreate(node_t *node)
     }
 
     int sequence_start;
-    int ttl;
-    int tos;
     if (! ping6clientLoadInteger(
-            &sequence_start, settings, "sequence-start", kPing6ClientDefaultSequenceStart, 0, UINT16_MAX) ||
-        ! ping6clientLoadInteger(&ttl, settings, "ttl", kPing6ClientDefaultTtl, 0, UINT8_MAX) ||
-        ! ping6clientLoadInteger(&tos, settings, "tos", kPing6ClientDefaultTos, 0, UINT8_MAX))
+            &sequence_start, settings, "sequence-start", kPing6ClientDefaultSequenceStart, 0, UINT16_MAX))
     {
         ping6clientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    state->wire.ttl = (uint8_t) ttl;
-    state->wire.tos = (uint8_t) tos;
     atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
     return t;

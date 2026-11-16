@@ -4,12 +4,12 @@ add_waterwall_integration_test(waterwall.ping6_new_ip_icmpv6_roundtrip ping6_new
 add_waterwall_expected_failure_integration_test(
   waterwall.ping_legacy_settings_rejected
   ping_legacy_settings_rejected
-  "PingClient: configuration uses removed Ping wire v1 setting 'strategy'"
+  "PingClient: unknown setting 'strategy'"
 )
 add_waterwall_expected_failure_integration_test(
   waterwall.ping_server_legacy_settings_rejected
   ping_server_legacy_settings_rejected
-  "PingServer: configuration uses removed Ping wire v1 setting 'strategy'"
+  "PingServer: unknown setting 'strategy'"
 )
 add_waterwall_expected_failure_integration_test(
   waterwall.node_layer_tundevice_tcpconnector_conflict

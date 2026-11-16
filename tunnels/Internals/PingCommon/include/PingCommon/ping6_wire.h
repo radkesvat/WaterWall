@@ -12,28 +12,22 @@ enum
     kPing6WireEchoReply             = ICMP6_TYPE_EREP,
     kPing6WireIpv4HeaderLength      = kPingWireIpv4HeaderLength,
     kPing6WireIcmpHeaderLength      = sizeof(struct icmp6_echo_hdr),
-    kPing6WireEncapsulationOverhead = kPing6WireIpv4HeaderLength + kPing6WireIcmpHeaderLength,
+    kPing6WireEncapsulationOverhead = kPing6WireIcmpHeaderLength + 1,
     kPing6WireMaxInnerPacketLength  = kMaxAllowedPacketLength - kPing6WireEncapsulationOverhead,
 };
 
 _Static_assert(kPing6WireIcmpHeaderLength == 8, "Ping6 requires an 8-byte ICMPv6 Echo header");
-_Static_assert(kPing6WireEncapsulationOverhead == 28, "Ping6 padding contract changed unexpectedly");
-_Static_assert(kPing6WireMaxInnerPacketLength == 1472, "Ping6 maximum inner length changed unexpectedly");
+_Static_assert(kPing6WireEncapsulationOverhead == 9, "Ping6 padding contract changed unexpectedly");
+_Static_assert(kPing6WireMaxInnerPacketLength == 1491, "Ping6 maximum inner length changed unexpectedly");
 
 typedef struct ping6_wire_config_s
 {
-    uint32_t   local_ipv4;
-    uint32_t   peer_ipv4;
     ip6_addr_t local_ipv6;
     ip6_addr_t peer_ipv6;
     uint16_t   identifier;
-    uint8_t    ttl;
-    uint8_t    tos;
 } ping6_wire_config_t;
 
 typedef ping_wire_envelope_t ping6_wire_envelope_t;
-
-WW_EXPORT void ping6wireIpv4MappedAddress(uint32_t ipv4, ip6_addr_t *address_out);
 
 /* Parse exactly one bare address; lwIP's parsers alone accept trailing text and malformed fields. */
 WW_EXPORT bool ping6wireParseIpv4Text(const char *text, uint32_t *ipv4_out);

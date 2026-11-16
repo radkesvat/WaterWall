@@ -19,8 +19,6 @@ typedef struct ping6client_tstate_s
 enum
 {
     kPing6ClientEncapsulationOverhead = kPing6WireEncapsulationOverhead,
-    kPing6ClientDefaultTtl            = 64,
-    kPing6ClientDefaultTos            = 0,
     kPing6ClientDefaultSequenceStart  = 1,
 };
 

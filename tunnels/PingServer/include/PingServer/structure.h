@@ -19,8 +19,6 @@ typedef struct pingserver_tstate_s
 enum
 {
     kPingServerEncapsulationOverhead = kPingWireEncapsulationOverhead,
-    kPingServerDefaultTtl            = 64,
-    kPingServerDefaultTos            = 0,
     kPingServerDefaultSequenceStart  = 1,
 };
 

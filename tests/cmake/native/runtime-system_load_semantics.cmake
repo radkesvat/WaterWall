@@ -200,6 +200,10 @@
           "-Wl,--wrap=sbufDestroy"
       )
       target_link_libraries(ping_flow_test PRIVATE PingClient PingServer PingCommon ww)
+      if(TARGET IpOverrider)
+        target_link_libraries(ping_flow_test PRIVATE IpOverrider)
+        target_compile_definitions(ping_flow_test PRIVATE PING_IPOVERRIDER_FIXTURE=1)
+      endif()
       add_dependencies(waterwall_unit_tests ping_flow_test)
       add_waterwall_unit_test(
         waterwall.ping_flow_unit
@@ -229,6 +233,10 @@
           "-Wl,--wrap=sbufDestroy"
       )
       target_link_libraries(ping6_flow_test PRIVATE Ping6Client Ping6Server PingCommon ww)
+      if(TARGET IpOverrider)
+        target_link_libraries(ping6_flow_test PRIVATE IpOverrider)
+        target_compile_definitions(ping6_flow_test PRIVATE PING_IPOVERRIDER_FIXTURE=1)
+      endif()
       add_dependencies(waterwall_unit_tests ping6_flow_test)
       add_waterwall_unit_test(
         waterwall.ping6_flow_unit
