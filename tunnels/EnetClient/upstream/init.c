@@ -18,8 +18,6 @@ void enetclientTunnelUpStreamInit(tunnel_t *t, line_t *application)
     {
         lineRequestCloseLinger(carrier, kLineCloseLingerPeerWriteShutdown);
     }
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
 

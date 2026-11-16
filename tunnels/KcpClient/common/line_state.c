@@ -150,8 +150,6 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
     transport->fallback_mode          = application->fallback_mode;
     if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
         lineRequestCloseLinger(transport, kLineCloseLingerPeerWriteShutdown);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(transport), IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(transport), IP_PROTO_UDP);
 
