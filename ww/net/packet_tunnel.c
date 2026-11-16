@@ -314,12 +314,19 @@ device_opaque_flow_mode_t packettunnelResolveOpaqueFlowMode(tunnel_t *t, device_
     const bool                       upstream  = anchor->direction == kPacketLifecycleAnchorPublishUpstream;
     const tunnel_t                  *neighbour = upstream ? t->next : t->prev;
     assert(neighbour != NULL && anchor->publication_tunnel == neighbour);
-    const char *decoder_type = upstream ? "PingServer" : "PingClient";
-    if (neighbour->node != NULL && neighbour->node->type != NULL &&
-        stringCompare(neighbour->node->type, decoder_type) == 0)
+    const char *decoder_type       = upstream ? "PingServer" : "PingClient";
+    const char *ping6_decoder_type = upstream ? "Ping6Server" : "Ping6Client";
+    if (neighbour->node != NULL && neighbour->node->type != NULL)
     {
-        *reason = upstream ? "direct upstream PingServer decoder" : "direct downstream PingClient decoder";
-        return kDeviceOpaqueFlowPeer;
+        const bool direct_ping  = stringCompare(neighbour->node->type, decoder_type) == 0;
+        const bool direct_ping6 = stringCompare(neighbour->node->type, ping6_decoder_type) == 0;
+        if (direct_ping || direct_ping6)
+        {
+            *reason = direct_ping6
+                          ? (upstream ? "direct upstream Ping6Server decoder" : "direct downstream Ping6Client decoder")
+                          : (upstream ? "direct upstream PingServer decoder" : "direct downstream PingClient decoder");
+            return kDeviceOpaqueFlowPeer;
+        }
     }
     *reason = "no direct Ping decoder in receive direction";
     return kDeviceOpaqueFlowPrefix;

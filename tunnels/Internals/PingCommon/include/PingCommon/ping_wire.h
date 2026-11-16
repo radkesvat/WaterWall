@@ -136,6 +136,9 @@ WW_EXPORT bool pingwireIsExactIpv4Packet(const uint8_t *packet, uint32_t length)
 /* Validate exact IPv4 framing; return a static failure reason or NULL on success. */
 WW_EXPORT const char *pingwireIpv4PacketError(const uint8_t *packet, uint32_t length);
 
+/* The same validation, also filling the view of an accepted packet. */
+WW_EXPORT const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view);
+
 /* Resolve an explicit identifier or accept one injected random candidate. */
 WW_EXPORT bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_candidate,
                                         uint16_t *identifier_out);
@@ -166,12 +169,19 @@ WW_EXPORT bool pingwireOutstandingRecord(ping_wire_tracker_t *tracker,
                                          uint16_t sequence, uint32_t reply_source_ipv4, uint32_t reply_destination_ipv4,
                                          const uint8_t *payload, uint16_t payload_length);
 
-/* Consume only an exact, correlated Echo Reply. */
+/* Consume only an exact, correlated Echo Reply of the caller's wire type. */
+WW_EXPORT bool pingwireOutstandingConsumeForType(ping_wire_tracker_t        *tracker,
+                                                 const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                                 const ping_wire_envelope_t *reply, uint8_t expected_type);
 WW_EXPORT bool pingwireOutstandingConsume(ping_wire_tracker_t        *tracker,
                                           const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
                                           const ping_wire_envelope_t *reply);
 
-/* Record a peer request once; duplicate requests remain eligible for a reply. */
+/* Record a peer request of the caller's wire type; duplicates remain eligible for a reply. */
+WW_EXPORT ping_wire_replay_result_t pingwireReplayMarkForType(ping_wire_tracker_t *tracker,
+                                                              const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                                              const ping_wire_envelope_t *request,
+                                                              uint8_t                     expected_type);
 WW_EXPORT ping_wire_replay_result_t pingwireReplayMark(ping_wire_tracker_t *tracker,
                                                        const uint8_t        digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
                                                        const ping_wire_envelope_t *request);

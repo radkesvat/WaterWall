@@ -44,6 +44,7 @@ foreach(fixture_target IN ITEMS
   packetstostream_bridge_affinity_test
   packetstostream_orderly_shutdown_test
   ping_flow_test
+  ping6_flow_test
   rawsocket_ipv4_boundary_test
   reverseserver_large_wait_test
   reverseserver_splice_test

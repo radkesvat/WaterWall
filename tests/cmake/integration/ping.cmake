@@ -1,5 +1,6 @@
 # Explicit integration registrations; preserve namespace and family variants.
 add_waterwall_integration_test(waterwall.ping_new_ip_icmp_roundtrip ping_new_ip_icmp_roundtrip)
+add_waterwall_integration_test(waterwall.ping6_new_ip_icmpv6_roundtrip ping6_new_ip_icmpv6_roundtrip)
 add_waterwall_expected_failure_integration_test(
   waterwall.ping_legacy_settings_rejected
   ping_legacy_settings_rejected
@@ -52,6 +53,8 @@ add_waterwall_expected_failure_integration_test(
 )
 add_waterwall_privileged_probe_integration_test(waterwall.ping_direct_real_adapters_roundtrip ping_direct_real_adapters_roundtrip 15)
 add_waterwall_test_labels(waterwall.ping_direct_real_adapters_roundtrip "ping")
+add_waterwall_privileged_probe_integration_test(waterwall.ping6_direct_real_adapters_roundtrip ping6_direct_real_adapters_roundtrip 15)
+add_waterwall_test_labels(waterwall.ping6_direct_real_adapters_roundtrip "ping;ping6")
 add_waterwall_integration_test(
   waterwall.ipmanipulator_tcp_custom_protocol_roundtrip
   ipmanipulator_tcp_custom_protocol_roundtrip

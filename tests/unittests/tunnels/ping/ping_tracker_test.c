@@ -47,7 +47,6 @@ void wSyncInitTestResourceDestroyed(void)
     discard atomicAdd(&g_sync_resources_destroyed, 1U);
 }
 
-
 static void resetSyncSeam(uint32_t fail_call)
 {
     atomicStoreRelaxed(&g_sync_init_calls, 0);
@@ -191,6 +190,35 @@ static void testBoundedReplacementAndSequenceReuse(void)
     memorySecureZero(digest_key, sizeof(digest_key));
 }
 
+static void testPing6TypeParameters(void)
+{
+    resetSyncSeam(0);
+    uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE];
+    fillDigestKey(digest_key);
+    ping_wire_tracker_t *tracker = pingwireTrackerCreate();
+    require(tracker != NULL, "Ping6 type tracker construction failed");
+
+    uint8_t payload[4] = {9, 8, 7, 6};
+    require(pingwireOutstandingRecord(
+                tracker, digest_key, 7, 11, UINT32_C(0x0200000a), UINT32_C(0x0100000a), payload, sizeof(payload)),
+            "Ping6 outstanding record failed");
+    ping_wire_envelope_t reply = makeEnvelope(129, 7, 11, payload, sizeof(payload));
+    require(! pingwireOutstandingConsume(tracker, digest_key, &reply), "ICMPv4 wrapper consumed a Ping6 reply type");
+    require(pingwireOutstandingConsumeForType(tracker, digest_key, &reply, 129),
+            "type-parameterized tracker rejected a valid Ping6 reply");
+
+    ping_wire_envelope_t request = makeEnvelope(128, 9, 12, payload, sizeof(payload));
+    require(pingwireReplayMark(tracker, digest_key, &request) == kPingWireReplayError,
+            "ICMPv4 wrapper accepted a Ping6 request type");
+    require(pingwireReplayMarkForType(tracker, digest_key, &request, 128) == kPingWireReplayNew,
+            "type-parameterized tracker rejected a new Ping6 request");
+    require(pingwireReplayMarkForType(tracker, digest_key, &request, 128) == kPingWireReplayDuplicate,
+            "type-parameterized tracker missed a duplicate Ping6 request");
+
+    pingwireTrackerDestroy(tracker);
+    memorySecureZero(digest_key, sizeof(digest_key));
+}
+
 typedef struct stress_state_s
 {
     ping_wire_tracker_t *tracker;
@@ -327,6 +355,7 @@ int main(void)
 
     testConstructionFailureCleanup();
     testBoundedReplacementAndSequenceReuse();
+    testPing6TypeParameters();
     testCrossThreadRecordConsumeStress();
 
     wCryptoGlobalCleanup();

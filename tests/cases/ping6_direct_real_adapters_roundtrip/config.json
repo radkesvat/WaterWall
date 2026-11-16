@@ -1,0 +1,44 @@
+{
+  "name": "ping6-direct-real-adapters-roundtrip",
+  "nodes": [
+    {
+      "name": "raw-in-out",
+      "type": "RawSocket",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "opaque-flow-mode": "auto",
+        "capture-device-name": "ping6-direct-capture",
+        "raw-device-name": "ping6-direct-raw",
+        "capture-filter-mode": "source-ip",
+        "capture-ips": ["127.0.0.2"],
+        "capture-protocols": [58]
+      },
+      "next": "ping6-server"
+    },
+    {
+      "name": "ping6-server",
+      "type": "Ping6Server",
+      "settings": {
+        "local-ipv4": "127.0.0.1",
+        "peer-ipv4": "127.0.0.2",
+        "send-replies": true,
+        "identifier": 4661,
+        "sequence-start": 1,
+        "ttl": 64,
+        "tos": 0
+      },
+      "next": "server-tun"
+    },
+    {
+      "name": "server-tun",
+      "type": "TunDevice",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "device-name": "wwping6direct0",
+        "device-ip": "10.252.30.1/24",
+        "device-mtu": 1400,
+        "route-table": "off"
+      }
+    }
+  ]
+}

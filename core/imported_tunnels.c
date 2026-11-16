@@ -116,6 +116,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "PingServer/interface.h"
 #endif
 
+#ifdef INCLUDE_PING6_CLIENT
+#include "Ping6Client/interface.h"
+#endif
+
+#ifdef INCLUDE_PING6_SERVER
+#include "Ping6Server/interface.h"
+#endif
+
 #ifdef INCLUDE_KEEPALIVE_CLIENT
 #include "KeepAliveClient/interface.h"
 #endif
@@ -511,6 +519,14 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_PING_SERVER
     USING(PingServer);
+#endif
+
+#ifdef INCLUDE_PING6_CLIENT
+    USING(Ping6Client);
+#endif
+
+#ifdef INCLUDE_PING6_SERVER
+    USING(Ping6Server);
 #endif
 
 #ifdef INCLUDE_KEEPALIVE_CLIENT

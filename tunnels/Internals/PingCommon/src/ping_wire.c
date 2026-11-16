@@ -16,7 +16,7 @@ static bool pingwireIcmpChecksumIsValid(const uint8_t *packet, uint16_t length)
     return inet_chksum(packet, length) == 0;
 }
 
-static const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view)
+const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view)
 {
     if (packet == NULL || length < IP_HLEN)
     {
@@ -389,10 +389,11 @@ bool pingwireOutstandingRecord(ping_wire_tracker_t *tracker, const uint8_t diges
     return true;
 }
 
-bool pingwireOutstandingConsume(ping_wire_tracker_t *tracker, const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
-                                const ping_wire_envelope_t *reply)
+bool pingwireOutstandingConsumeForType(ping_wire_tracker_t        *tracker,
+                                       const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                       const ping_wire_envelope_t *reply, uint8_t expected_type)
 {
-    if (tracker == NULL || ! tracker->outstanding_mutex_initialized || reply == NULL || reply->type != ICMP_ER ||
+    if (tracker == NULL || ! tracker->outstanding_mutex_initialized || reply == NULL || reply->type != expected_type ||
         reply->code != 0 || reply->icmp_payload_length == 0)
     {
         return false;
@@ -431,11 +432,17 @@ bool pingwireOutstandingConsume(ping_wire_tracker_t *tracker, const uint8_t dige
     return false;
 }
 
-ping_wire_replay_result_t pingwireReplayMark(ping_wire_tracker_t        *tracker,
-                                             const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
-                                             const ping_wire_envelope_t *request)
+bool pingwireOutstandingConsume(ping_wire_tracker_t *tracker, const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                const ping_wire_envelope_t *reply)
 {
-    if (tracker == NULL || ! tracker->replay_mutex_initialized || request == NULL || request->type != ICMP_ECHO ||
+    return pingwireOutstandingConsumeForType(tracker, digest_key, reply, ICMP_ER);
+}
+
+ping_wire_replay_result_t pingwireReplayMarkForType(ping_wire_tracker_t *tracker,
+                                                    const uint8_t        digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                                    const ping_wire_envelope_t *request, uint8_t expected_type)
+{
+    if (tracker == NULL || ! tracker->replay_mutex_initialized || request == NULL || request->type != expected_type ||
         request->code != 0 || request->icmp_payload_length == 0)
     {
         return kPingWireReplayError;
@@ -476,6 +483,13 @@ ping_wire_replay_result_t pingwireReplayMark(ping_wire_tracker_t        *tracker
     mutexUnlock(&tracker->replay_mutex);
     memorySecureZero(digest, sizeof(digest));
     return kPingWireReplayNew;
+}
+
+ping_wire_replay_result_t pingwireReplayMark(ping_wire_tracker_t        *tracker,
+                                             const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                             const ping_wire_envelope_t *request)
+{
+    return pingwireReplayMarkForType(tracker, digest_key, request, ICMP_ECHO);
 }
 
 static uint32_t pingwireXorShift32(uint32_t value)

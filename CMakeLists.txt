@@ -225,6 +225,8 @@ option(INCLUDE_FAKE_TCP_HEADER_CLIENT   "link FakeTcpHeaderClient statically to 
 option(INCLUDE_FAKE_TCP_HEADER_SERVER   "link FakeTcpHeaderServer statically to the core"                           TRUE)
 option(INCLUDE_PING_CLIENT              "link PingClient staticly to the core"                                      TRUE)
 option(INCLUDE_PING_SERVER              "link PingServer staticly to the core"                                      TRUE)
+option(INCLUDE_PING6_CLIENT             "link Ping6Client statically to the core"                                   TRUE)
+option(INCLUDE_PING6_SERVER             "link Ping6Server statically to the core"                                   TRUE)
 option(INCLUDE_KEEPALIVE_CLIENT         "link KeepAliveClient staticly to the core"                                 TRUE)
 option(INCLUDE_KEEPALIVE_SERVER         "link KeepAliveServer staticly to the core"                                 TRUE)
 option(INCLUDE_CONNECTION_FISHER_CLIENT "link ConnectionFisherClient staticly to the core"                          TRUE)
@@ -811,9 +813,8 @@ if(INCLUDE_FAKE_TCP_HEADER_SERVER)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} FakeTcpHeaderServer)
 endif()
 
-# Ping wire v2 codec is shared by either endpoint.  Keep it independent of
-# whether a build includes one node or both for plugin/minimal builds.
-if(INCLUDE_PING_CLIENT OR INCLUDE_PING_SERVER)
+# Shared Ping and Ping6 codecs stay independent of endpoint selection for minimal builds.
+if(INCLUDE_PING_CLIENT OR INCLUDE_PING_SERVER OR INCLUDE_PING6_CLIENT OR INCLUDE_PING6_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/PingCommon)
 endif()
 
@@ -831,6 +832,22 @@ if(INCLUDE_PING_SERVER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PingServer)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PingServer)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} PingServer)
+endif()
+
+#ping6 client
+if(INCLUDE_PING6_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PING6_CLIENT=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Ping6Client)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Ping6Client)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} Ping6Client)
+endif()
+
+#ping6 server
+if(INCLUDE_PING6_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_PING6_SERVER=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Ping6Server)
+  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Ping6Server)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} Ping6Server)
 endif()
 
 #keepalive client

@@ -154,6 +154,11 @@
   endif()
 
   if(TARGET PingCommon)
+    waterwall_add_native_executable(ping6_wire_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/ping/ping6_wire_test.c)
+    target_link_libraries(ping6_wire_test PRIVATE PingCommon ww)
+    add_dependencies(waterwall_unit_tests ping6_wire_test)
+    add_waterwall_unit_test(waterwall.ping6_wire_unit ping6_wire_test "unit;ping;ping6;wire")
+
     waterwall_add_native_executable(ping_wire_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/ping/ping_wire_test.c)
     target_link_libraries(ping_wire_test PRIVATE PingCommon ww)
     add_dependencies(waterwall_unit_tests ping_wire_test)
@@ -200,6 +205,35 @@
         waterwall.ping_flow_unit
         ping_flow_test
         "unit;ping;flow;packet;direction;affinity;lifetime"
+      )
+    endif()
+
+    if(TARGET Ping6Client AND TARGET Ping6Server)
+      waterwall_add_native_executable(ping6_flow_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/ping/ping6_flow_test.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_budget.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_queue.c
+        ${CMAKE_SOURCE_DIR}/ww/bufio/buffer_stream.c)
+      target_link_options(
+        ping6_flow_test
+        PRIVATE
+          "-Wl,--wrap=sbufDuplicateByPool"
+          "-Wl,--wrap=abortProgramNow"
+          "-Wl,--wrap=requestProgramShutdown"
+          "-Wl,--wrap=bufferpoolGetLargeBuffer"
+          "-Wl,--wrap=bufferpoolTryGetBestFit"
+          "-Wl,--wrap=bufferpoolGetBestFit"
+          "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+          "-Wl,--wrap=bufferpoolGetMediumBuffer"
+          "-Wl,--wrap=bufferpoolGetSmallBuffer"
+          "-Wl,--wrap=bufferpoolReuseBuffer"
+          "-Wl,--wrap=sbufDestroy"
+      )
+      target_link_libraries(ping6_flow_test PRIVATE Ping6Client Ping6Server PingCommon ww)
+      add_dependencies(waterwall_unit_tests ping6_flow_test)
+      add_waterwall_unit_test(
+        waterwall.ping6_flow_unit
+        ping6_flow_test
+        "unit;ping;ping6;flow;packet;direction;affinity;lifetime"
       )
     endif()
   endif()

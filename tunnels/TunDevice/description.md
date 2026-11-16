@@ -1,5 +1,5 @@
 <!--
-Documentation version: 165
+Documentation version: 166
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TunDevice.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TunDevice.mdx, and all files must keep the same documentation version.
 -->
 
@@ -568,7 +568,7 @@ mean every allocation grows by exactly ten bytes.
 
 Accepts only the exact strings `prefix`, `peer`, `spread` and `auto`. Empty or
 unknown strings, `null` and other JSON types fail construction on every platform,
-including write-only RawSocket. Omission always selects `prefix`, even beside Ping.
+including write-only RawSocket. Omission always selects `prefix`, even beside Ping or Ping6.
 The setting is independent of `multi-queue`, `gso` and `fragment-policy`; a single
 receive queue still dispatches over the configured processing workers.
 
@@ -580,7 +580,7 @@ UDP (17):
 | `prefix` | Symmetric hash of addresses, protocol and the first four IP-payload bytes as two big-endian 16-bit endpoint fields. |
 | `peer` | Hash addresses and protocol only; ignore every payload byte. |
 | `spread` | Spread packets using the backend's existing mechanism. |
-| `auto` | Resolve once at startup using the exact direct Ping decoding neighbour below; otherwise use `prefix`. |
+| `auto` | Resolve once at startup using the exact direct Ping or Ping6 decoding neighbour below; otherwise use `prefix`. |
 
 The prefix begins after the actual IPv4 header, including options, and must fit
 inside the declared total length. Fewer than four payload bytes use the same
@@ -599,8 +599,8 @@ it actually consumes after decoding or rewriting.
 
 Only requested `auto` inspects finalized topology before device construction or
 capture activation. Upstream receive publication toward `next` selects `peer`
-only for the immediate physical node of exact type `PingServer`; downstream
-publication toward `prev` selects `peer` only for exact type `PingClient`.
+only for the immediate physical node of exact type `PingServer` or `Ping6Server`; downstream
+publication toward `prev` selects `peer` only for exact type `PingClient` or `Ping6Client`.
 Encoding directions, intervening nodes, wrappers and all other layouts select
 `prefix`. Instance names do not participate. Explicit modes always take precedence;
 an opposite RawSocket never implies `spread`. With both devices using `auto`:
@@ -615,7 +615,7 @@ RawSocket -> PingServer -> TunDevice
 
 The resolved mode is fixed per device generation, including single-queue fallback
 and restart; readers do not inspect traffic or reevaluate topology per packet.
-Ping passes unrelated packets through, so automatic `peer` groups unrelated
+Ping and Ping6 pass unrelated packets through, so automatic `peer` groups unrelated
 opaque traffic as well; mixed traffic may require an explicit setting. Startup
 logs requested mode, effective mode, selection reason and effective queue count.
 

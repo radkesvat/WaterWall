@@ -1,0 +1,60 @@
+{
+  "name": "ping6-new-ip-icmpv6-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 9,
+        "packet-ipv4": {
+          "source-ip": "10.80.0.1",
+          "dest-ip": "10.80.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      },
+      "next": "ping6-client"
+    },
+    {
+      "name": "ping6-client",
+      "type": "Ping6Client",
+      "settings": {
+        "local-ipv4": "192.0.2.10",
+        "peer-ipv4": "198.51.100.10",
+        "identifier": 4660,
+        "sequence-start": 10,
+        "ttl": 63,
+        "tos": 16
+      },
+      "next": "ping6-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "packet-mode": true,
+        "chunk-count": 9,
+        "packet-ipv4": {
+          "source-ip": "10.80.0.1",
+          "dest-ip": "10.80.0.2",
+          "protocol": 253,
+          "ttl": 64
+        }
+      }
+    },
+    {
+      "name": "ping6-server",
+      "type": "Ping6Server",
+      "settings": {
+        "local-ipv4": "198.51.100.10",
+        "peer-ipv4": "192.0.2.10",
+        "identifier": 4661,
+        "sequence-start": 1,
+        "ttl": 63,
+        "tos": 16
+      },
+      "next": "tester-server"
+    }
+  ]
+}

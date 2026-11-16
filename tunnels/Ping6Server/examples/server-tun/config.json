@@ -1,0 +1,42 @@
+{
+  "name": "ping6-tun-server",
+  "nodes": [
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "next": "ping6-server",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "opaque-flow-mode": "auto",
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "192.0.2.10"
+        ],
+        "capture-protocols": [
+          58
+        ]
+      }
+    },
+    {
+      "name": "ping6-server",
+      "type": "Ping6Server",
+      "next": "user-tun",
+      "settings": {
+        "local-ipv4": "198.51.100.10",
+        "peer-ipv4": "192.0.2.10",
+        "send-replies": false
+      }
+    },
+    {
+      "name": "user-tun",
+      "type": "TunDevice",
+      "settings": {
+        "fragment-policy": "preserve-fragments",
+        "device-name": "wwping6s0",
+        "device-ip": "10.58.0.2/30",
+        "device-mtu": 1472,
+        "route-table": "off"
+      }
+    }
+  ]
+}
