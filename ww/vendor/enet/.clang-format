@@ -1,0 +1,3 @@
+# Preserve vendored source layout, including documented local patches.
+DisableFormat: true
+SortIncludes: Never

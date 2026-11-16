@@ -1,0 +1,24 @@
+{
+  "name": "enet-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "enet-client"
+    },
+    {
+      "name": "enet-client",
+      "type": "EnetClient",
+      "next": "enet-server"
+    },
+    {
+      "name": "enet-server",
+      "type": "EnetServer",
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}
