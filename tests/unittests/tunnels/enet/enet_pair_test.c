@@ -616,7 +616,7 @@ static void caseAdmissionDeadline(void)
     enetRequire(fixture.carrier_finishes == 0, "the server gave up before no-recv-timeout-ms");
     enetRequire(pumpUntil(100, carrierFinished), "a carrier without a native connection was not finished");
     enetRequire(fixture.service_inits == 0, "a service line was created without a native connection");
-    /* The client's connect request ends by ENet's own timeout, between T and 2T. */
+    /* The client's connect request uses ENet's maximum timeout plus event-loop service delay. */
     enetRequire(pumpUntil(2500, appFinished), "the client's failed connect did not finish the application");
     enetRequire(! lineIsAlive(fixture.transport) && fixture.transport_finishes == 1,
                 "the client's carrier was not finished and destroyed");

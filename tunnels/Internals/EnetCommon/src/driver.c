@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <string.h>
 
+_Static_assert((uint32_t) kEnetDriverPeerTimeoutMax == (uint32_t) ENET_PEER_MAXIMUM_TIMEOUT,
+               "ENet timeout limit must match the driver");
+
 /* Bytes accepted before the native handshake finished. The payload follows this header in the same allocation. */
 typedef struct enet_driver_pending_s
 {
@@ -257,6 +260,8 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
     assert(enet_driver_allocate != NULL);
     assert(config->host_mtu >= kEnetDriverHostMtuMin && config->host_mtu <= kEnetDriverHostMtuMax);
     assert(config->receive_buffer_limit / 2U >= (uint32_t) kEnetDriverMaxMessage);
+    assert(config->no_recv_timeout_ms > 0 && config->no_recv_timeout_ms <= kEnetDriverPeerTimeoutMax);
+    assert(config->ping_interval_ms > 0 && config->ping_interval_ms < config->no_recv_timeout_ms);
 
     enet_driver_t *driver = enet_malloc(sizeof(*driver));
     memset(driver, 0, sizeof(*driver));

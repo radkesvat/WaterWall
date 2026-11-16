@@ -521,7 +521,7 @@ static void testConnectDeadlines(void)
     enetRequire(pair.end[1].terminal_calls == 1 && pair.end[1].result == kEnetSessionConnectTimeout,
                 "a server without a native connection did not time out");
     enetRequire(pair.end[1].emitted == 0, "a server that never heard a peer sent a datagram");
-    /* The client's connect request is a reliable command: ENet gives up between T and 2T. */
+    /* The client's connect request uses the same maximum deadline, checked on service passes. */
     enetRequire(pairAdvanceUntil(&pair, 2500, clientTerminal), "the client's connect attempt never ended");
     enetRequire(pair.end[0].result == kEnetSessionPeerClosed, "a failed connect is not reported as a peer close");
     pairClose(&pair);

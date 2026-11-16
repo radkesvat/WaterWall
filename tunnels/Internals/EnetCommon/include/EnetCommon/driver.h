@@ -49,6 +49,7 @@ enum
     kEnetDriverHostMtuMax       = 4096,  /* ENET_PROTOCOL_MAXIMUM_MTU; also the largest datagram */
     kEnetDriverMaxMessage       = 65536, /* largest native message the driver sends */
     kEnetDriverActiveTickMs     = 10,    /* service interval while protocol work is pending */
+    kEnetDriverPeerTimeoutMax   = 43200000, /* ENET_PEER_MAXIMUM_TIMEOUT: 12 hours */
     kEnetDriverSendBufferMin    = 4096,
     kEnetDriverSendBufferMax    = 0x08000000,
     kEnetDriverReceiveBufferMin = 131072,
@@ -62,8 +63,8 @@ typedef struct enet_driver_config_s
 {
     enet_driver_role_t role;
     uint32_t           host_mtu;             /* kEnetDriverHostMtuMin..kEnetDriverHostMtuMax */
-    uint32_t           ping_interval_ms;     /* silence before ENet sends a ping; above 0 */
-    uint32_t           no_recv_timeout_ms;   /* T: an unacknowledged command ends the session between T and 2T */
+    uint32_t           ping_interval_ms;     /* 1..kEnetDriverPeerTimeoutMax; smaller than no_recv_timeout_ms */
+    uint32_t           no_recv_timeout_ms;   /* maximum unanswered duration; 1..kEnetDriverPeerTimeoutMax */
     uint32_t           send_buffer_limit;    /* kEnetDriverSendBufferMin..kEnetDriverSendBufferMax */
     uint32_t           receive_buffer_limit; /* kEnetDriverReceiveBufferMin..kEnetDriverReceiveBufferMax */
     uint32_t           incoming_bandwidth;   /* bytes per second, 0 = unlimited */

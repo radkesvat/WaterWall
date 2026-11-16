@@ -357,8 +357,8 @@ static void testIdlePingKeepsSessionAndSilenceEndsIt(void)
 
     world.cut             = true;
     const uint64_t cut_at = world.now;
-    require(simAdvanceUntil(&world, 200 + 2 * 1000 + 500, bothClosed),
-            "a silent link did not end the session within ping interval + 2T");
+    require(simAdvanceUntil(&world, 200 + 1000 + 500, bothClosed),
+            "a silent link did not end the session within ping interval + T + service allowance");
     require(world.now - cut_at >= 900, "the session ended before the configured timeout");
     require(world.end[0].close_reason == kEnetDriverCloseRemote, "client must report a remote close");
     require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");

@@ -32,6 +32,20 @@ the application; it is not a limit on all ENet or process memory. WaterWall's
 existing temporary threshold increase for a missing reliable command remains in
 the driver. See `radkesvat_changes.txt` for the local change record.
 
+`peer.c`, `protocol.c` and `include/enet/enet.h` bound peer timeout and ping
+settings to 12 hours, preserving zero-as-default and the retry multiplier.
+Initial and doubled retry durations saturate safely at that limit; retry counts
+cannot wrap or produce an oversized shift. Maximum timeouts are checked on
+protocol service passes independently of retry expiration. A bit in the existing
+peer flags distinguishes an active timeout origin from a valid timestamp of
+zero. Queue reset clears it; acknowledgements and successful reliable-command
+removal, including the CONNECT handshake, invalidate it so the origin is rebuilt
+from remaining sent commands and queued retransmissions. Structure layouts,
+global time macros and socket-wait behavior are unchanged. Regular servicing is
+still required; the 12-hour cap leaves half the time-comparison window for delay.
+WaterWall rejects timeout/ping settings above this cap and services active
+protocol work every 10 ms, subject to event-loop delay.
+
 `tests/enet_vendor_source_policy_test.py` holds the SHA-256 of every vendored file,
 including these local patches, and fails when one differs or when another C source
 or header appears here. No download occurs during builds. The local
@@ -62,9 +76,9 @@ WaterWall relies on these upstream details. Re-check them when the pin moves:
 - A received reliable packet carries `ENET_PACKET_FLAG_RELIABLE` in its flags.
 
 To refresh: copy the listed files from the new upstream commit and update the pin
-above. Check whether upstream already provides reassembly initialization and
-receive-queue allocation accounting; retain each local patch still needed, then
-update this record and
-`radkesvat_changes.txt`. Replace the digests in
+above. Check whether upstream already provides reassembly initialization,
+receive-queue allocation accounting and bounded peer timing; retain each local
+patch still needed, then update this record and `radkesvat_changes.txt`.
+Replace the digests in
 `tests/enet_vendor_source_policy_test.py` with the final vendored contents and run
 the `waterwall.enet_*` tests.

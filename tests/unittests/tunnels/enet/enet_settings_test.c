@@ -92,7 +92,7 @@ static void testRanges(void)
 {
     static const char *invalid[] = {
         "{\"no-recv-timeout-ms\":0}",
-        "{\"no-recv-timeout-ms\":2147483648}",
+        "{\"no-recv-timeout-ms\":43200001}",
         "{\"ping-interval-ms\":0}",
         "{\"ping-interval-ms\":30000}",  /* equal to the default timeout */
         "{\"no-recv-timeout-ms\":5000}", /* below the default ping interval */
@@ -128,13 +128,13 @@ static void testRanges(void)
                 "the lowest valid values were not stored");
 
     enet_settings_t high;
-    enetRequire(parse("{\"no-recv-timeout-ms\":2147483647,\"ping-interval-ms\":2147483646,"
+    enetRequire(parse("{\"no-recv-timeout-ms\":43200000,\"ping-interval-ms\":43199999,"
                       "\"send-buffer-limit\":134217728,\"receive-buffer-limit\":268435456,"
                       "\"carrier-queue-limit\":65535,\"close-drain-timeout-ms\":2147483647,"
                       "\"incoming-bandwidth\":4294967295,\"outgoing-bandwidth\":4294967295}",
                       &high),
                 "the highest valid values were refused");
-    enetRequire(high.no_recv_timeout_ms == 2147483647U && high.ping_interval_ms == 2147483646U &&
+    enetRequire(high.no_recv_timeout_ms == 43200000U && high.ping_interval_ms == 43199999U &&
                     high.send_buffer_limit == 134217728U && high.receive_buffer_limit == 268435456U &&
                     high.carrier_queue_limit == 65535U && high.close_drain_timeout_ms == 2147483647U &&
                     high.incoming_bandwidth == 4294967295U && high.outgoing_bandwidth == 4294967295U,

@@ -58,7 +58,7 @@ outside the range rejects startup with a message that names the setting.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `send-mtu` | core `misc.mtu` | IPv4 packet budget for outgoing datagrams, from `604` to `65535`. See [Sending MTU](#sending-mtu). |
-| `no-recv-timeout-ms` | `30000` | Liveness timeout `T`, from `1` to `2147483647`. A connection whose packets stay unacknowledged ends between `T` and about `2T`. |
+| `no-recv-timeout-ms` | `30000` | Maximum unanswered-command duration `T`, from `1` to `43200000` (12 hours). Expiration is checked on protocol service passes, independently of retry timing. |
 | `ping-interval-ms` | `10000` | Silence after which ENet sends a ping, from `1`. It must be smaller than `no-recv-timeout-ms`. |
 | `send-buffer-limit` | `524288` | Accepted but unacknowledged bytes above which the previous node is paused, from `4096` to `134217728`. |
 | `receive-buffer-limit` | `1048576` | Admission threshold for queued ENet receive allocations, including payload and bookkeeping, from `131072` to `268435456`. The largest accepted packet payload is half of it. |
@@ -116,9 +116,12 @@ up native compatibility.
   eight ENet connections carried 76 to 83 Mbit/s on the same path.
 - **A dead peer is found through missing acknowledgements.** An idle connection
   sends a ping after `ping-interval-ms`. A peer that stops answering is detected
-  between `T` and about `2T` after the first unanswered packet, where `T` is
-  `no-recv-timeout-ms`. With the defaults, a frozen peer was detected 33 to 35
-  seconds after that packet.
+  on the first protocol service pass at or after `T` from the first unanswered
+  command, where `T` is `no-recv-timeout-ms`. Active protocol work is serviced
+  every 10 ms, subject to event-loop scheduling delay. On an idle connection,
+  allow the ping interval before that unanswered-command timer starts.
+  Timeout and ping settings above 12 hours are rejected; the separate
+  `close-drain-timeout-ms` setting retains its documented range.
 - **A connection is bound to its carrier.** If the client's UDP source address
   changes, the server sees a new carrier, and the old connection times out.
 - **No encryption and no authentication.** ENet sends every byte in clear text
