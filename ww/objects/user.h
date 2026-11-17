@@ -251,6 +251,8 @@ typedef struct user_runtime_stat_s
     /* AuthenticationClient's oldest valid handle generation for continuous
      * membership. Runtime migration preserves it; fresh identities set it anew. */
     uint64_t               identity_generation_floor;
+    /* Continuous ownership of the same WireGuard key and range. */
+    uint64_t               wireguard_generation_floor;
     uint64_t               active_cons_out;
     user_ip_usage_t       *ip_usages;
     size_t                 ip_usage_count;

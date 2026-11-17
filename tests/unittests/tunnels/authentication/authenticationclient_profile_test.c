@@ -295,7 +295,8 @@ static void testOwnedSecretCleanup(void)
     }
 }
 
-static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char *password, const char *name)
+static void replaceCredentialTable(profile_fixture_t *fixture, uint64_t id, const char *password, const char *name,
+                                   const char *range, bool enabled)
 {
     users_t replacement;
     require(usersCreate(&replacement), "replacement table construction failed");
@@ -305,6 +306,8 @@ static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char
         user_t user;
         require(userCreate(&user, password), "replacement user construction failed");
         userSetId(&user, id);
+        require(userSetWireGuardAllowedIps(&user, range != NULL ? range : ""), "replacement range failed");
+        user.enabled = enabled;
         require(usersAddUser(&replacement, &user), "replacement user insertion failed");
         userDestroy(&user);
         fresh = usersLookupByIdentifier(&replacement, id);
@@ -314,7 +317,10 @@ static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char
     mutexLock(&ts->control_mutex);
     rwlockWriteLock(&ts->users_lock);
     if (fresh != NULL)
+    {
         fresh->runtime.identity_generation_floor = ts->users_generation + 1;
+        fresh->runtime.wireguard_generation_floor = ts->users_generation + 1;
+    }
     require(usersMigrateRuntimeStateByIdentifier(&replacement, &fixture->users), "replacement migration failed");
     usersPublishCandidate(&fixture->users, &replacement);
     ++ts->users_generation;
@@ -322,6 +328,11 @@ static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char
     mutexUnlock(&ts->control_mutex);
     usersDestroy(&replacement);
     fixture->user = fresh;
+}
+
+static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char *password, const char *name)
+{
+    replaceCredentialTable(fixture, id, password, name, NULL, true);
 }
 
 static void testUuidSourceAndRevalidation(void)
@@ -463,6 +474,99 @@ static void testUuidConcurrentRefresh(void)
     fixtureDestroy(&fixture);
 }
 
+static void testWireGuardAuthorization(void)
+{
+    profile_fixture_t fixture;
+    fixtureCreate(&fixture, kLookupWireGuard);
+    authenticationclient_wireguard_authorization_t authorization = {0};
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &authorization) ==
+                kAuthenticationClientUserLookupUserNotFound,
+            "WireGuard authorization without a range was published");
+    user_update_t update = {.mask = kUserUpdateWireGuardAllowedIps, .wireguard_allowed_ips = "10.50.0.4/30"};
+    require(usersUpdateUser(&fixture.users, fixture.user, &update), "WireGuard range setup failed");
+    fixture.user->runtime.wireguard_generation_floor = 3;
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &authorization) ==
+                    kAuthenticationClientUserLookupOk &&
+                authorization.handle.user_id == 42 && authorization.generation == 7 && authorization.continuity == 3 &&
+                strcmp(authorization.profile.name, "alice") == 0 &&
+                strcmp(authorization.profile.password, fixture.password) == 0,
+            "WireGuard authorization lost its protected identity/profile/generation view");
+    ip_addr_t expected;
+    require(ipaddr_aton("10.50.0.4", &expected) && ipAddrCmp(&authorization.network, &expected),
+            "WireGuard range copy was not canonical");
+    authenticationclient_tstate_t *state                  = tunnelGetState(fixture.tunnel);
+    state->authenticated                                  = false;
+    authenticationclient_wireguard_authorization_t cached = {0};
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &cached) ==
+                kAuthenticationClientUserLookupOk,
+            "WireGuard lost usable cached authorization during control outage");
+    authenticationclientWireGuardAuthorizationClear(&cached);
+    state->auth_rejected = true;
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &cached) ==
+                kAuthenticationClientUserLookupUsersUnavailable,
+            "explicit rejection admitted fresh WireGuard credentials");
+    require(authenticationclientWireGuardAuthorizationMatches(fixture.tunnel,
+                                                              fixture.publickey,
+                                                              &authorization.handle,
+                                                              authorization.continuity,
+                                                              &authorization.network,
+                                                              &authorization.mask),
+            "explicit rejection revoked cached WireGuard continuation");
+    for (unsigned refusal = 0; refusal < 3; ++refusal)
+    {
+        fixture.user->enabled               = refusal != 0;
+        fixture.user->timeinfo.expire_at_ms = refusal == 1 ? 1 : 0;
+        fixture.user->limit.traffic.u       = refusal == 2 ? 1 : 0;
+        fixture.user->stats.traffic.u       = 1;
+        require(! authenticationclientWireGuardAuthorizationMatches(fixture.tunnel,
+                                                                    fixture.publickey,
+                                                                    &authorization.handle,
+                                                                    authorization.continuity,
+                                                                    &authorization.network,
+                                                                    &authorization.mask),
+                "cached WireGuard continuation bypassed disabled/expiry/quota enforcement");
+    }
+    fixture.user->enabled               = true;
+    fixture.user->timeinfo.expire_at_ms = fixture.user->limit.traffic.u = fixture.user->stats.traffic.u = 0;
+    state->auth_rejected                                                                                = false;
+    require(usersSetUserEnabled(&fixture.users, fixture.user, false), "disable failed");
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &cached) ==
+                    kAuthenticationClientUserLookupUserDisabled &&
+                ! userHandleIsValid(&cached.handle) && cached.profile.password == NULL,
+            "disabled WireGuard account published credentials");
+    require(usersSetUserEnabled(&fixture.users, fixture.user, true), "enable failed");
+    replaceCredentialTable(&fixture, 42, fixture.password, "alice", "10.50.0.4/30", true);
+    require(authenticationclientWireGuardAuthorizationMatches(fixture.tunnel,
+                                                              fixture.publickey,
+                                                              &authorization.handle,
+                                                              authorization.continuity,
+                                                              &authorization.network,
+                                                              &authorization.mask),
+            "unchanged refresh broke WireGuard continuity");
+    const char *passwords[] = {
+        "changed-secret", fixture.password, fixture.password, fixture.password, fixture.password, fixture.password};
+    const char *ranges[] = {
+        "10.50.0.4/30", "10.50.0.4/30", "10.51.0.4/30", "10.50.0.4/30", "10.50.0.4/30", "10.50.0.4/30"};
+    for (unsigned i = 0; i < 6; ++i)
+    {
+        replaceCredentialTable(&fixture, 42, passwords[i], "alice", ranges[i], i != 4);
+        require(! authenticationclientWireGuardAuthorizationMatches(fixture.tunnel,
+                                                                    fixture.publickey,
+                                                                    &authorization.handle,
+                                                                    authorization.continuity,
+                                                                    &authorization.network,
+                                                                    &authorization.mask),
+                "changed or restored key/range/eligibility resurrected old WireGuard continuity");
+    }
+    require(authenticationclientCopyWireGuardAuthorization(fixture.tunnel, fixture.publickey, &cached) ==
+                    kAuthenticationClientUserLookupOk &&
+                cached.continuity > authorization.continuity,
+            "fresh WireGuard incarnation was unavailable");
+    authenticationclientWireGuardAuthorizationClear(&cached);
+    authenticationclientWireGuardAuthorizationClear(&authorization);
+    fixtureDestroy(&fixture);
+}
+
 int main(void)
 {
     testCaseSet("authenticationclient_profile_test");
@@ -481,6 +585,7 @@ int main(void)
     testUuidSourceAndRevalidation();
     testUuidConcurrentRefresh();
     testOwnedSecretCleanup();
+    testWireGuardAuthorization();
     userTestRuntimeCleanup();
     networkloggerDestroy();
     puts("AuthenticationClient owned credential profiles passed");

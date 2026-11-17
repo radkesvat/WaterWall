@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 196
+EXPECTED_TOTAL_ABORTS = 198
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,9 @@ _REQUEST_SHUTDOWN_RE = _call_re("requestProgramShutdown")
 # expected count is the authority on how many aborts that function must keep.
 
 MANIFEST = [
+    ("tunnels/AuthenticationClient/common/table.c", "installStaging", 2,
+     ("AuthenticationClient: installed account generation exhausted", "AuthenticationClient: invalid runtime migration state"),
+     "installed authorization generation and runtime migration invariants"),
     ("ww/net/adapter.c", "disabledPayloadRoutine", 1,
      ("Illegal call to payload routine on Adapter",),
      "shared adapter edge guard: impossible payload callback"),

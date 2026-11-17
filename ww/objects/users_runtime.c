@@ -61,7 +61,16 @@ void usersMoveRuntimeStateWithLocks(user_t *dest, user_t *src)
     rwlockWriteLock(&second->lock);
     rwlockWriteLock(&first->stats_lock);
     rwlockWriteLock(&second->stats_lock);
+    const uint64_t wireguard_floor = dest->runtime.wireguard_generation_floor;
+    const bool     wireguard_continuous =
+        dest->enabled && src->enabled && dest->wireguard_publickey_valid && src->wireguard_publickey_valid &&
+        memoryEqual(dest->wireguard_publickey, src->wireguard_publickey, USER_WIREGUARD_PUBLICKEY_SIZE) &&
+        dest->wireguard_allowed_ips_valid == src->wireguard_allowed_ips_valid &&
+        ipAddrCmp(&dest->wireguard_allowed_ip, &src->wireguard_allowed_ip) &&
+        ipAddrCmp(&dest->wireguard_allowed_mask, &src->wireguard_allowed_mask);
     userRuntimeStateMove(&dest->runtime, &src->runtime);
+    if (! wireguard_continuous)
+        dest->runtime.wireguard_generation_floor = wireguard_floor;
     userBandwidthReconcileLocked(dest, getHRTimeUs() / 1000U);
     dest->client_time = src->client_time;
     memoryZero(&src->client_time, sizeof(src->client_time));
