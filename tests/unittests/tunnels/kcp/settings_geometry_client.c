@@ -65,6 +65,34 @@ void kcpClientSettingsGeometryCases(void)
         settingsRequire(state->close_drain_timeout_ms == expected[i], "close interval/default changed");
         settingsDestroy(&node, tunnel);
     }
+    static const char *invalid_ack_batch[] = {
+        "{\"kcp-ack-batch\":-1}",
+        "{\"kcp-ack-batch\":8193}",
+        "{\"kcp-recv-window\":64,\"kcp-ack-batch\":65}",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_ack_batch); ++i)
+    {
+        node_t    node;
+        tunnel_t *tunnel = settingsCreate(&node, invalid_ack_batch[i]);
+        settingsRequire(tunnel == NULL, "kcp-ack-batch outside 0..kcp-recv-window accepted");
+        settingsDestroy(&node, tunnel);
+    }
+    static const char *valid_ack_batch[] = {
+        "{}",
+        "{\"kcp-ack-batch\":0}",
+        "{\"kcp-ack-batch\":32}",
+        "{\"kcp-recv-window\":64,\"kcp-ack-batch\":64}",
+    };
+    static const int expected_ack_batch[] = {1, 0, 32, 64};
+    for (size_t i = 0; i < ARRAY_SIZE(valid_ack_batch); ++i)
+    {
+        node_t    node;
+        tunnel_t *tunnel = settingsCreate(&node, valid_ack_batch[i]);
+        settingsRequire(tunnel != NULL, "valid kcp-ack-batch rejected");
+        settingsRequire(((kcpclient_tstate_t *) tunnelGetState(tunnel))->kcp_ack_batch == expected_ack_batch[i],
+                        "kcp-ack-batch value/default changed");
+        settingsDestroy(&node, tunnel);
+    }
     static const char *invalid_send_mtu[] = {
         "{\"send-mtu\":null}",
         "{\"send-mtu\":true}",

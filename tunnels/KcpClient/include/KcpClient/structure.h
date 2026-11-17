@@ -23,6 +23,7 @@ typedef struct kcpclient_tstate_s
     bool                kcp_no_congestion_control;
     int                 kcp_interval_ms;
     int                 kcp_resend;
+    int                 kcp_ack_batch;
     int                 kcp_send_window;
     int                 kcp_recv_window;
     int                 kcp_initial_cwnd;
@@ -86,6 +87,7 @@ enum kcpclient_kcpsettings_e
     kKcpClientKcpNodelayDefault             = 1,
     kKcpClientKcpIntervalDefault            = 10,
     kKcpClientKcpResendDefault              = 2,
+    kKcpClientKcpAckBatchDefault            = 1,
     kKcpClientKcpNoCongestionControlDefault = 1,
     kKcpClientKcpSendWindowDefault          = 8192,
     kKcpClientKcpRecvWindowDefault          = 8192,

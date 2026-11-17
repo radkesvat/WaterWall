@@ -493,7 +493,15 @@ static void processWire(tou_session_t *s, sbuf_t *buffer, uint64_t now)
         s->last_recv = now;
         s->ping_sent = false;
         s->dirty     = true;
-        s->flush     = true;
+        /* kcp-ack-batch: 1 flushes after every valid input, N > 1 once N ACKs are pending, and 0
+         * leaves ACKs to the interval update. ACK-only retention has no interval update, so every
+         * input flushes there. */
+        const int ack_batch = s->config.kcp_ack_batch;
+        if (ack_batch == 1 || (s->closing && s->send_settled) ||
+            (ack_batch > 1 && s->kcp->ackcount >= (IUINT32) ack_batch))
+        {
+            s->flush = true;
+        }
     }
 }
 

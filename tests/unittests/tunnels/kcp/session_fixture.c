@@ -705,8 +705,9 @@ static void pump(unsigned ms)
     for (unsigned elapsed = 0; elapsed < ms; elapsed += 10)
         advance(min(10U, ms - elapsed));
 }
-static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
-                          unsigned client_mtu, unsigned server_mtu)
+/* extra_settings holds further JSON members for both nodes, each with a leading comma, or "". */
+static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                              unsigned client_mtu, unsigned server_mtu, const char *extra_settings)
 {
     memoryZero(fixture, sizeof(*fixture));
     active               = fixture;
@@ -724,10 +725,11 @@ static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, u
             settings,
             sizeof(settings),
             "{\"send-mtu\":%u,\"fec\":%s,\"fec-data-shards\":2,\"fec-parity-shards\":1,\"close-drain-timeout-ms\":%u,"
-            "\"ping-interval-ms\":100,\"no-recv-timeout-ms\":2000,\"kcp-send-buffer-limit\":2}",
+            "\"ping-interval-ms\":100,\"no-recv-timeout-ms\":2000,\"kcp-send-buffer-limit\":2%s}",
             i == 1 ? client_mtu : server_mtu,
             fec ? "true" : "false",
-            i == 1 ? client_close : server_close);
+            i == 1 ? client_close : server_close,
+            extra_settings);
         fixture->nodes[i].node_settings_json = cJSON_Parse(settings);
     }
     fixture->source  = tunnelCreate(&fixture->nodes[0], 0, 0);
@@ -766,6 +768,11 @@ static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, u
         tunnels[i]->onIndex(tunnels[i], (uint16_t) i, &offset);
     }
     tunnelchainFinalize(fixture->chain);
+}
+static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                          unsigned client_mtu, unsigned server_mtu)
+{
+    setupWithSettings(fixture, fec, client_close, server_close, client_mtu, server_mtu, "");
 }
 static void setup(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close, unsigned mtu)
 {

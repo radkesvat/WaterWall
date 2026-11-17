@@ -14,6 +14,7 @@ static bool kcpserverParseSettings(kcpserver_tstate_t *ts, node_t *node)
         .kcp_no_congestion_control = kKcpServerKcpNoCongestionControlDefault != 0,
         .kcp_interval_ms           = kKcpServerKcpIntervalDefault,
         .kcp_resend                = kKcpServerKcpResendDefault,
+        .kcp_ack_batch             = kKcpServerKcpAckBatchDefault,
         .kcp_send_window           = kKcpServerKcpSendWindowDefault,
         .kcp_recv_window           = kKcpServerKcpRecvWindowDefault,
         .kcp_initial_cwnd          = kKcpServerKcpInitialCwndDefault,
@@ -52,6 +53,7 @@ static bool kcpserverParseSettings(kcpserver_tstate_t *ts, node_t *node)
     getIntFromJsonObjectOrDefault(&parity_shards, settings, "fec-parity-shards", parity_shards);
     getIntFromJsonObjectOrDefault(&ts->kcp_interval_ms, settings, "kcp-interval-ms", ts->kcp_interval_ms);
     getIntFromJsonObjectOrDefault(&ts->kcp_resend, settings, "kcp-resend", ts->kcp_resend);
+    getIntFromJsonObjectOrDefault(&ts->kcp_ack_batch, settings, "kcp-ack-batch", ts->kcp_ack_batch);
     getIntFromJsonObjectOrDefault(&ts->kcp_send_window, settings, "kcp-send-window", ts->kcp_send_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_recv_window, settings, "kcp-recv-window", ts->kcp_recv_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_rx_minrto_ms, settings, "kcp-rx-minrto-ms", ts->kcp_rx_minrto_ms);
@@ -80,6 +82,12 @@ static bool kcpserverParseSettings(kcpserver_tstate_t *ts, node_t *node)
     if (ts->kcp_send_window < 1 || ts->kcp_recv_window < 1)
     {
         LOGF("JSON Error: KcpServer->settings KCP windows must be positive");
+        return false;
+    }
+
+    if (ts->kcp_ack_batch < 0 || ts->kcp_ack_batch > ts->kcp_recv_window)
+    {
+        LOGF("JSON Error: KcpServer->settings->kcp-ack-batch (int field) : expected 0..kcp-recv-window");
         return false;
     }
 

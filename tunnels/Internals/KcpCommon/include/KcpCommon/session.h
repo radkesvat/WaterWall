@@ -80,6 +80,7 @@ typedef struct tou_config_s
     bool           kcp_no_congestion_control;
     int            kcp_interval_ms;
     int            kcp_resend;
+    int            kcp_ack_batch;
     int            kcp_send_window;
     int            kcp_recv_window;
     int            kcp_initial_cwnd;
