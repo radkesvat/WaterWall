@@ -11,6 +11,7 @@ static void ptcEmitPacketCleanup(void *arg1, void *arg2, void *arg3, worker_mess
     discard reason;
     discard arg1;
     discard arg3;
+    memoryFree(arg3);
     sbufDestroy(arg2);
 }
 
@@ -57,11 +58,19 @@ bool ptcEmitPacketBuffer(tunnel_t *t, line_t *packet_line, sbuf_t *buf)
 
 static void ptcEmitPacketOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
 {
-    discard arg3;
+    const uint64_t *epoch = arg3;
 
     tunnel_t     *t     = arg1;
     sbuf_t       *buf   = arg2;
     ptc_tstate_t *state = tunnelGetState(t);
+
+    const uint64_t captured = epoch != NULL ? *epoch : 0;
+    memoryFree(arg3);
+    if (UNLIKELY(! ptcPacketEpochValid(t, buf, true, captured)))
+    {
+        bufferpoolReuseBuffer(worker->buffer_pool, buf);
+        return;
+    }
 
     /* Worker messages settle before tunnel destruction. No cancellation path
      * depends on this tunnel, its packet line, or an owner-local pool. */
@@ -373,6 +382,13 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
     }
     sbufSetLength(buf, length);
 
+    const uint64_t captured_epoch = ptcPacketSourceEpoch(t, buf, true);
+    if (state->source_epoch != NULL && UNLIKELY(captured_epoch == 0))
+    {
+        lineReuseBuffer(packet_line, buf);
+        quiescenceGateLeave(&state->output_gate);
+        return ERR_IF;
+    }
     if (packettunnelCanEnqueueDownstreamInline(t, packet_line))
     {
         ptcEmitPacketBufferAdmitted(t, packet_line, buf);
@@ -382,8 +398,14 @@ err_t ptcNetifOutput(struct netif *netif, struct pbuf *p, const ip4_addr_t *ipad
 
     /* Arbitrary neighbours can reenter TCP input scratch. Queue the same sbuf;
      * synchronous refusal and foreign cancellation destroy it exactly once. */
+    uint64_t *epoch = NULL;
+    if (state->source_epoch != NULL)
+    {
+        epoch  = memoryAllocate(sizeof(*epoch));
+        *epoch = captured_epoch;
+    }
     const worker_message_submit_result_e queued = sendWorkerMessageForceQueueWithCleanup(
-        packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, buf, NULL);
+        packet_wid, (WorkerMessageCallback) ptcEmitPacketOnWorker, ptcEmitPacketCleanup, t, buf, epoch);
     quiescenceGateLeave(&state->output_gate);
     return queued == kWorkerMessageSubmitAccepted ? ERR_OK : ERR_MEM;
 }

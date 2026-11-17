@@ -6,6 +6,7 @@ add_library(PacketsToConnection STATIC
                     instance/start.c
                     instance/pre_stop.c
                     instance/stop.c
+                    common/source_scope.c
                     common/helpers.c
                     common/line_lifecycle.c
                     common/write.c

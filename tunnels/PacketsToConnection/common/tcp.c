@@ -242,6 +242,11 @@ err_t lwipThreadPtcTcpAccptCallback(void *arg, struct tcp_pcb *newpcb, err_t err
 
     addresscontextSetIpPortProtocol(
         lineGetSourceAddressContext(l), &newpcb->remote_ip, newpcb->remote_port, IP_PROTO_TCP);
+    ptc_tstate_t *scope_state = tunnelGetState(t);
+    ls->source_epoch =
+        scope_state->source_epoch != NULL
+            ? scope_state->source_epoch(scope_state->source_epoch_context, &lineGetSourceAddressContext(l)->ip_address)
+            : 0;
     if (! ptcFakeDnsApplyMappedDestination(
             t, lineGetDestinationAddressContext(l), &newpcb->local_ip, newpcb->local_port, IP_PROTO_TCP))
     {

@@ -503,3 +503,22 @@ void ptcDrainBudgetRelease(ptc_tstate_t *ts, uint32_t bytes)
     ts->drain_bytes -= bytes;
     mutexUnlock(&ts->drain_lock);
 }
+
+void ptcTcpDrainRetireSourceRange(interface_route_context_t *route, const ip_addr_t *network, const ip_addr_t *mask)
+{
+    assert(route->engine == wwLwipEngineCurrent());
+    ptc_tcp_drain_t *drain = route->drains;
+    while (drain != NULL)
+    {
+        ptc_tcp_drain_t *next = drain->next;
+        if (drain->pcb != NULL && IP_IS_V4(&drain->pcb->remote_ip) &&
+            ip4AddrNetcmp(ip_2_ip4(&drain->pcb->remote_ip), ip_2_ip4(network), ip_2_ip4(mask)))
+        {
+            struct tcp_pcb *pcb = ptcDrainDetachPcbLocked(drain);
+            if (pcb != NULL)
+                tcp_abort(pcb);
+            ptcDrainFreeLocked(drain);
+        }
+        drain = next;
+    }
+}

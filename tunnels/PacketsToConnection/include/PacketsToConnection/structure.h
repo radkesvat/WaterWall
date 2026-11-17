@@ -1,5 +1,6 @@
 #pragma once
 
+#include "interface.h"
 #include "packet_affinity.h"
 #include "wwapi.h"
 
@@ -193,6 +194,8 @@ typedef struct ptc_fake_dns_result_s
 
 typedef struct ptc_tstate_s
 {
+    void                       *source_epoch_context;
+    ptc_source_epoch_fn         source_epoch;
     uint16_t                    mtu; // Immutable configured packet budget.
     packet_affinity_t          *input_affinity;
     interface_route_context_t **routes_v4;
@@ -251,6 +254,7 @@ typedef struct ptc_lstate_s
     uint16_t           udp_peer_port;
     line_t            *owned_prev;
     line_t            *owned_next;
+    uint64_t           source_epoch;
     uint8_t            kind;
     bool               write_paused;
     bool               read_paused;
@@ -473,3 +477,9 @@ void                         ptcTcpDrainDestroyRoute(interface_route_context_t *
 /* Shared node allowance; never hold this mutex across stack work or allocation. */
 bool ptcDrainBudgetReserve(ptc_tstate_t *ts, uint32_t bytes);
 void ptcDrainBudgetRelease(ptc_tstate_t *ts, uint32_t bytes);
+
+uint64_t ptcPacketSourceEpoch(tunnel_t *t, const sbuf_t *buf, bool reverse);
+bool     ptcPacketEpochValid(tunnel_t *t, const sbuf_t *buf, bool reverse, uint64_t epoch);
+void     ptcTaggedPacketInput(tunnel_t *t, line_t *line, sbuf_t *buf, uint64_t epoch);
+
+void ptcTcpDrainRetireSourceRange(interface_route_context_t *route, const ip_addr_t *network, const ip_addr_t *mask);
