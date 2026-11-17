@@ -9,4 +9,7 @@ void udpstatelesssocketTunnelOnStart(tunnel_t *t)
     assert(state->socket.io != NULL);
     assert(state->io_wid == 0);
     assert(currentThreadOwnsWorker(state->io_wid));
+
+    LOGW("UdpStatelessSocket: deprecated and will be removed soon. Existing configurations still work. "
+         "For new configurations, use UdpListener for inbound UDP or UdpConnector for outbound UDP.");
 }
