@@ -58,9 +58,9 @@ implementations, and `tests/` native/integration coverage. `CMakePresets.json` a
 `WaterWall-Docs/docs/05-devguides/`; node settings in
 `WaterWall-Docs/docs/02-noderefs/`.
 
-Before substantive work, read every routing-table source matching the scope;
-the guide's `must` and `never` statements join this policy. Read newly applicable
-sources before continuing when scope expands.
+Before substantive work and when scope expands, read matching sources and applicable
+[`reference/`](WaterWall-Docs/docs/05-devguides/reference/) contracts.
+The guide's `must`/`never` rules join this policy.
 
 | Trigger | Required sources |
 | --- | --- |
