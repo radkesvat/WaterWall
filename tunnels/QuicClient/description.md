@@ -1,17 +1,25 @@
 # QuicClient
 
+## Overview
+
 `QuicClient` encrypts upstream application bytes into a raw QUIC stream and
 decrypts downstream carrier datagrams back into application bytes. Google
 QUICHE performs the real QUIC v1/TLS 1.3 handshake, packet cryptography, loss
 recovery and congestion control. The node opens no socket and resolves no
 transport destination; configure the following carrier separately.
 
+## Typical placement
+
 ```text
 TcpListener -> QuicClient -> UdpConnector
 SpeedTestClient -> VlessClient -> QuicClient -> UdpConnector
 ```
 
-## Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Define `carrier-out` as a datagram carrier to the QuicServer peer. Replace the SNI and CA path with the peer identity and trust bundle. Both peers must agree on ALPN and carrier mode. The value `h3` is only an ALPN label here: this is raw QUIC, not HTTP/3.
 
 ```json
 {
@@ -28,12 +36,11 @@ SpeedTestClient -> VlessClient -> QuicClient -> UdpConnector
 }
 ```
 
-`name`, `type`, `next` and an object `settings` are required. `type` must be
-exactly `QuicClient`. Full UDP and framed TCP client/server configurations and
-local certificate instructions are in
-[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-## Client settings
+## Configuration
+
+### Client settings
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
@@ -45,7 +52,7 @@ DNS names outside ASCII must be supplied as A-label/punycode. Unreadable or
 malformed trust bundles fail startup. Certificate, hostname, ALPN and QUIC
 version mismatch fail the connection without fallback.
 
-## Shared settings
+### Shared settings
 
 | Setting | Default | Accepted values and behavior |
 | --- | --- | --- |
@@ -73,7 +80,33 @@ Each configured entry reserves descriptor storage: require
 READY/PEER_FIN/CLOSED controls. These backing charges count toward allocation
 budgets even while the rings are empty; closing releases them.
 
-## Carrier and application semantics
+## Usage and troubleshooting
+
+### Example
+
+```json
+{
+  "name": "quic-client",
+  "type": "QuicClient",
+  "next": "carrier-out",
+  "settings": {
+    "sni": "quic.example.test",
+    "verify": true,
+    "ca-file": "server.crt",
+    "protocol": "h3",
+    "carrier-mode": "datagram"
+  }
+}
+```
+
+`name`, `type`, `next` and an object `settings` are required. `type` must be
+exactly `QuicClient`. Full UDP and framed TCP client/server configurations and
+local certificate instructions are in
+[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+
+## Advanced behavior
+
+### Carrier and application semantics
 
 The application interface is a reliable byte stream. Application Payload buffer
 boundaries are not preserved. Each association has one QUIC connection and one
@@ -102,7 +135,9 @@ with no HTTP/3 requests, responses, QPACK or HTTP control streams. Ordinary
 HTTP/3 peers cannot use it. This setting makes no Chrome/Cloudflare
 impersonation or classifier claim and does not change `HttpClient`/`HttpServer`.
 
-## Flow, storage and close
+## Implementation details
+
+### Flow, storage and close
 
 Every supported transport `Est` is relayed promptly, including repeats;
 authenticated handshake and stream readiness are independent internal barriers.
@@ -148,7 +183,7 @@ Carrier-side Finish and process shutdown abort outstanding delivery and settle
 owned lines immediately. FIN closes the application association rather than
 providing application half-close; a reset or other protocol failure also closes it.
 
-## Node Metadata
+### Node Metadata
 
 Both nodes are Layer 4 transforms with separate application and carrier lines: they allow previous and next
 nodes, advertise `kNodeFlagBlocksSplice`, and require zero additional left

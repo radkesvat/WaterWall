@@ -1,28 +1,17 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Disturber.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Disturber.mdx, and all files must keep the same documentation version.
 -->
 
 # Disturber Node
 
+## Overview
+
 `Disturber` is a test tunnel used to simulate unreliable network behavior inside a WaterWall chain. It is designed to help validate other tunnels by injecting drops, corruption, duplication, reordering, delays, hangs, and abrupt closes.
 
 In practice, this tunnel is inserted into a test chain around the tunnel or transport behavior you want to stress.
 
-## What It Does
-
-- Forwards normal line events and payload through the chain.
-- Randomly closes connections at startup or mid-stream.
-- Randomly drops payload.
-- Randomly duplicates payload.
-- Randomly corrupts payload bytes.
-- Randomly reorders payload by holding one payload and releasing it later.
-- Randomly delays payload within a configurable delay range.
-- Can place a connection into a dead-hang state where payload stops flowing.
-
-This makes `Disturber` useful for resilience testing, crash detection, reconnection testing, and edge-case validation of higher-level tunnels.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -40,7 +29,11 @@ or:
 
 It can be placed almost anywhere in a chain where you want to simulate hostile or unstable network conditions.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -64,9 +57,11 @@ It can be placed almost anywhere in a chain where you want to simulate hostile o
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -74,11 +69,11 @@ It can be placed almost anywhere in a chain where you want to simulate hostile o
 - `type` `(string)`
   Must be exactly `"Disturber"`.
 
-### `settings`
+#### `settings`
 
 All disturbance controls are optional. If omitted, they default to `0` and the tunnel behaves like a pass-through node.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 All chance fields are integer percentages interpreted as a probability for that event when the relevant callback runs.
 Every event type has an independent non-cryptographic pseudorandom gate for
@@ -127,9 +122,33 @@ disturbance's sequence and outcomes may naturally occur in runs.
 
   If it is lower than `delay_min_ms`, it is clamped up to `delay_min_ms`.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Connection lifecycle simulation
+### Notes And Caveats
+
+- All disturbance settings default to `0`, so the tunnel can be enabled gradually.
+- This node is intended for testing and validation, not for production traffic.
+- Combining multiple high probability values can create very chaotic behavior quickly.
+- If you enable payload delay, configure a meaningful `delay_min_ms` and `delay_max_ms` range so the simulated network behavior matches the scenario you want to test.
+
+## Implementation details
+
+### What It Does
+
+- Forwards normal line events and payload through the chain.
+- Randomly closes connections at startup or mid-stream.
+- Randomly drops payload.
+- Randomly duplicates payload.
+- Randomly corrupts payload bytes.
+- Randomly reorders payload by holding one payload and releasing it later.
+- Randomly delays payload within a configurable delay range.
+- Can place a connection into a dead-hang state where payload stops flowing.
+
+This makes `Disturber` useful for resilience testing, crash detection, reconnection testing, and edge-case validation of higher-level tunnels.
+
+### Detailed Behavior
+
+#### Connection lifecycle simulation
 
 When a new upstream connection is initialized:
 
@@ -141,7 +160,7 @@ During normal payload forwarding, it may also close the connection mid-stream ba
 
 This lets you test both startup failure handling and unexpected disconnect handling.
 
-### Payload mutation behavior
+#### Payload mutation behavior
 
 For each enabled-direction payload, `Disturber` evaluates a sequence of possible disturbances.
 
@@ -156,7 +175,7 @@ The available behaviors are:
 
 Corruption is applied by modifying random payload bytes. The current implementation corrupts up to roughly 10% of the payload, with at least one byte changed when payload is non-empty.
 
-### Reordering model
+#### Reordering model
 
 `Disturber` keeps at most one held payload per line per enabled direction for out-of-order delivery.
 
@@ -168,7 +187,7 @@ When out-of-order mode triggers:
 
 This creates a simple but effective packet reordering effect.
 
-### Delay model
+#### Delay model
 
 When delayed delivery triggers:
 
@@ -184,7 +203,7 @@ scheduler-owned buffers and references until execution or cancellation; `Finish`
 does not remove them immediately. A task that runs after publication closes
 recycles its buffer without forwarding it.
 
-### Dead-hang model
+#### Dead-hang model
 
 If dead-hang triggers on a line:
 
@@ -194,20 +213,13 @@ If dead-hang triggers on a line:
 
 This simulates a connection that appears alive at the structural level but stops making forward progress.
 
-### Directional behavior
+#### Directional behavior
 
 By default, `Disturber` preserves its original behavior and injects disturbances only on the upstream data path.
 Set `disturb-downstream=true` to apply the same payload disturbance model to downstream payloads. Set
 `disturb-upstream=false` when only the downstream direction should be disturbed.
 
-## Notes And Caveats
-
-- All disturbance settings default to `0`, so the tunnel can be enabled gradually.
-- This node is intended for testing and validation, not for production traffic.
-- Combining multiple high probability values can create very chaotic behavior quickly.
-- If you enable payload delay, configure a meaningful `delay_min_ms` and `delay_max_ms` range so the simulated network behavior matches the scenario you want to test.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

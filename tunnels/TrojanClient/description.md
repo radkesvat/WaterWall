@@ -1,9 +1,11 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TrojanClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TrojanClient.mdx, and all files must keep the same documentation version.
 -->
 
 # TrojanClient Node
+
+## Overview
 
 `TrojanClient` is a client-side Trojan protocol middle tunnel for Waterwall.
 
@@ -11,7 +13,7 @@ It sends the Trojan password line and request header expected by `TrojanServer`,
 payload. It supports TCP `CONNECT` and UDP `UDP ASSOCIATE`. For UDP, the node keeps the application line as a UDP line
 and creates an internal TCP carrier line for Trojan UDP packets.
 
-## Typical Placement
+## Typical placement
 
 TCP Trojan client chain:
 
@@ -33,7 +35,17 @@ Important:
 - The final target destination is encoded inside the Trojan request or Trojan UDP packet.
 - `TrojanClient` can use fixed JSON target values or the incoming `line->dest_ctx`.
 
-## TCP Example
+
+The protocol node supplies no transport encryption. Configure the TLS nodes
+shown above and the matching peer credentials before exposing the service.
+
+## Minimal practical example
+
+This is a **node fragment**, not a complete config file. Add the entry listener
+and the neighboring nodes shown above, and replace the sample credentials and
+server addresses.
+
+### TCP Example
 
 ```json
 {
@@ -63,71 +75,10 @@ The next nodes should carry that stream to the Trojan server, for example:
 TrojanClient -> TlsClient -> TcpConnector
 ```
 
-## Destination-Context Example
 
-```json
-{
-  "name": "trojan-client",
-  "type": "TrojanClient",
-  "next": "tls-client",
-  "settings": {
-    "sha224": "7e240de74fb1ed08fa08d38063f6a6a91462a815c15d3f6abf1d7e0b",
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "dest_context->protocol"
-  }
-}
-```
+## Configuration
 
-Use `sha224` when the configuration should contain the already-computed 56-character SHA224 hex digest instead of the
-raw password.
-
-## UDP Example
-
-```json
-{
-  "name": "trojan-client-udp",
-  "type": "TrojanClient",
-  "next": "tls-client",
-  "settings": {
-    "password": "secret-password",
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "udp"
-  }
-}
-```
-
-## Domain Resolution Example
-
-```json
-{
-  "name": "trojan-client",
-  "type": "TrojanClient",
-  "next": "tls-client",
-  "settings": {
-    "password": "secret-password",
-    "address": "example.com",
-    "port": 443,
-    "protocol": "tcp",
-    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
-  }
-}
-```
-
-With this setting, `TrojanClient` resolves `example.com` before sending the Trojan request. If an IPv4 answer is
-available, the request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it falls
-back to IPv6.
-
-In UDP mode:
-
-- the application line remains UDP-facing toward the previous node
-- `TrojanClient` creates one internal TCP carrier line for that UDP application line
-- the carrier sends a Trojan `UDP ASSOCIATE` request with `0.0.0.0:0`
-- each upstream UDP payload is wrapped as `ATYP ADDR PORT LEN CRLF PAYLOAD`
-- each downstream Trojan UDP packet is parsed, validated, stripped, and forwarded back as raw UDP payload
-
-## Required JSON Fields
+### Required JSON Fields
 
 - `settings.password` or `settings.sha224`
   Authentication material for the Trojan password line.
@@ -143,7 +94,7 @@ In UDP mode:
 - `settings.port`
   The final target port to encode in the Trojan request. It may be a number or `"dest_context->port"`.
 
-## Optional JSON Fields
+### Optional JSON Fields
 
 - `settings.first-payload-timeout-ms`
   Integer milliseconds from 0 through 4,294,967,295; default 400. Zero disables deliberate waiting.
@@ -171,7 +122,7 @@ In UDP mode:
 - `settings.dns-behaviour`
   Controls local target lookup, address selection and DNS transport. See DNS behaviour below.
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up its IP address. `TrojanClient` can send
 the final target's hostname in the Trojan request, or resolve it locally and
@@ -227,7 +178,84 @@ The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## First payload and transport establishment
+## Usage and troubleshooting
+
+### Destination-Context Example
+
+```json
+{
+  "name": "trojan-client",
+  "type": "TrojanClient",
+  "next": "tls-client",
+  "settings": {
+    "sha224": "7e240de74fb1ed08fa08d38063f6a6a91462a815c15d3f6abf1d7e0b",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "dest_context->protocol"
+  }
+}
+```
+
+Use `sha224` when the configuration should contain the already-computed 56-character SHA224 hex digest instead of the
+raw password.
+
+### UDP Example
+
+```json
+{
+  "name": "trojan-client-udp",
+  "type": "TrojanClient",
+  "next": "tls-client",
+  "settings": {
+    "password": "secret-password",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "udp"
+  }
+}
+```
+
+### Domain Resolution Example
+
+```json
+{
+  "name": "trojan-client",
+  "type": "TrojanClient",
+  "next": "tls-client",
+  "settings": {
+    "password": "secret-password",
+    "address": "example.com",
+    "port": 443,
+    "protocol": "tcp",
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
+  }
+}
+```
+
+With this setting, `TrojanClient` resolves `example.com` before sending the Trojan request. If an IPv4 answer is
+available, the request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it falls
+back to IPv6.
+
+In UDP mode:
+
+- the application line remains UDP-facing toward the previous node
+- `TrojanClient` creates one internal TCP carrier line for that UDP application line
+- the carrier sends a Trojan `UDP ASSOCIATE` request with `0.0.0.0:0`
+- each upstream UDP payload is wrapped as `ATYP ADDR PORT LEN CRLF PAYLOAD`
+- each downstream Trojan UDP packet is parsed, validated, stripped, and forwarded back as raw UDP payload
+
+### Notes And Caveats
+
+- `TlsClient` is required for ordinary Trojan compatibility and probe resistance, but it is not inserted automatically.
+- `TrojanClient` does not implement server fallback behavior; fallback is a server-side feature.
+- outbound UDP payloads larger than 65,535 bytes cannot fit the length field and are dropped without killing the
+  whole local association. Incoming frames accept the full two-byte body-length range.
+- `required_padding_left` is 331 bytes, covering the initial UDP association request plus its first datagram header.
+  Later datagrams prepend only their frame header, at most 263 bytes.
+
+## Implementation details
+
+### First payload and transport establishment
 
 `Init` prepares the destination and starts the next node without emitting a request.
 The first eligible application payload may arrive before transport `Est`, during its
@@ -270,7 +298,7 @@ only incomplete framing/order state remains. Finish, malformed input or receiver
 stops delivery and closes the affected association. Only this node's owned carrier is
 destroyed here; the application owner drains it during shutdown.
 
-## Splice and retention
+### Splice and retention
 
 The first request plus payload is ordinary; the request itself is at most 320 bytes.
 Later opaque TCP preserves its original ordinary or splice representation. UDP sends
@@ -309,16 +337,7 @@ final chain, including internal helpers. `DomainResolver` supports splice. `TlsC
 still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;
 splice capability does not guarantee zero-copy or a measured speed increase.
 
-## Notes And Caveats
-
-- `TlsClient` is required for ordinary Trojan compatibility and probe resistance, but it is not inserted automatically.
-- `TrojanClient` does not implement server fallback behavior; fallback is a server-side feature.
-- outbound UDP payloads larger than 65,535 bytes cannot fit the length field and are dropped without killing the
-  whole local association. Incoming frames accept the full two-byte body-length range.
-- `required_padding_left` is 331 bytes, covering the initial UDP association request plus its first datagram header.
-  Later datagrams prepend only their frame header, at most 263 bytes.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TesterClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TesterClient.mdx, and all files must keep the same documentation version.
 -->
 
 # TesterClient Node
+
+## Overview
 
 `TesterClient` is a synthetic chain-head test tunnel. It creates one test flow per worker, sends a deterministic
 request sequence into the chain, verifies the deterministic response sequence that comes back, and aborts the process on
@@ -11,92 +13,7 @@ any mismatch or timeout.
 
 It is meant for validating tunnel composition and payload integrity, not for production traffic.
 
-## What It Does
-
-- acts as a chain head and creates the test lines itself
-- waits `100 ms` after startup before creating one worker-local test line per chain worker
-- initializes per-line state in `Init`, then drives the request side only after downstream `Est`
-- sends `11` fixed-size request chunks upstream by default
-- verifies `11` fixed-size response chunks coming back downstream by default
-- fails fast on any size, order, byte-pattern, or timeout mismatch
-- in normal stream mode, logs success after the full response is verified and exits the program once all workers complete
-- in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
-- optionally wraps packet-mode payloads in a synthetic IPv4 packet with configured source, destination, protocol, and TTL
-- optionally builds deterministic TCP, UDP, or ICMP headers inside the synthetic IPv4 packet
-- can optionally seed `line->routing_context.dest_ctx` before sending `Init` into the tested chain
-
-## Request And Response Pattern
-
-The tunnel uses deterministic payload sizes and deterministic byte patterns derived from:
-
-- chunk index
-- byte offset inside the chunk
-- per-flow test id
-- direction (`request` versus `response`)
-
-The first request byte carries that per-flow id so a real transport hop can remap the connection onto a different
-worker without breaking verification.
-
-Current stream-mode chunk sizes are:
-
-- `1`
-- `2`
-- `4`
-- `32`
-- `512`
-- `1024`
-- `4096`
-- `32768`
-- `32769`
-- `1048576`
-- `2097152`
-
-Current packet-mode chunk sizes are:
-
-- `1`
-- `2`
-- `4`
-- `32`
-- `64`
-- `128`
-- `256`
-- `512`
-- `1024`
-- `1499`
-- `1500`
-
-Current `packet-ipv4` chunk sizes are:
-
-- `21`
-- `22`
-- `24`
-- `52`
-- `84`
-- `148`
-- `276`
-- `532`
-- `1044`
-- `1499`
-- `1500`
-
-When `packet-ipv4.transport` is `tcp`, `udp`, or `icmp`, the packet chunks include IPv4 plus transport headers and use
-these sizes:
-
-- `41`
-- `42`
-- `44`
-- `52`
-- `84`
-- `148`
-- `276`
-- `532`
-- `1044`
-- `1499`
-- `1500`
-
-`chunk-count` can limit the active sequence to a prefix of these tables. When omitted, all `11` chunks are used.
-
-## Typical Placement
+## Typical placement
 
 Stream mode is usually placed at the start of a synthetic end-to-end test chain, for example:
 
@@ -112,7 +29,11 @@ the test; `packet-start-immediately` is not a Bridge workaround.
 
 `TesterClient` must be the chain head.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 Stream mode:
 
@@ -124,41 +45,11 @@ Stream mode:
 }
 ```
 
-Packet mode:
+## Configuration
 
-```json
-{
-  "name": "tester-client",
-  "type": "TesterClient",
-  "settings": {
-    "packet-mode": true
-  },
-  "next": "packet-node"
-}
-```
+### Required JSON Fields
 
-Packet mode with synthetic IPv4 packets:
-
-```json
-{
-  "name": "tester-client",
-  "type": "TesterClient",
-  "settings": {
-    "packet-mode": true,
-    "packet-ipv4": {
-      "source-ip": "198.51.100.10",
-      "dest-ip": "203.0.113.20",
-      "protocol": 253,
-      "ttl": 64
-    }
-  },
-  "next": "packet-node"
-}
-```
-
-## Required JSON Fields
-
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -169,7 +60,7 @@ Packet mode with synthetic IPv4 packets:
 - `next` `(string)`
   The next node that should receive the synthetic test line or packet line.
 
-## Optional `settings`
+### Optional `settings`
 
 - `packet-mode` `(boolean)`
   When `false` or omitted, `TesterClient` creates a normal stream `line_t` on each worker and expects normal
@@ -278,9 +169,145 @@ Packet mode with synthetic IPv4 packets:
     `transport` to be `tcp` or `udp`, since only those carry the ports the hash reads.
     Default: `false`
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Startup and line creation
+### Alternative examples
+
+Packet mode:
+
+```json
+{
+  "name": "tester-client",
+  "type": "TesterClient",
+  "settings": {
+    "packet-mode": true
+  },
+  "next": "packet-node"
+}
+```
+
+Packet mode with synthetic IPv4 packets:
+
+```json
+{
+  "name": "tester-client",
+  "type": "TesterClient",
+  "settings": {
+    "packet-mode": true,
+    "packet-ipv4": {
+      "source-ip": "198.51.100.10",
+      "dest-ip": "203.0.113.20",
+      "protocol": 253,
+      "ttl": 64
+    }
+  },
+  "next": "packet-node"
+}
+```
+
+### Notes And Caveats
+
+- `TesterClient` is a synthetic validation tunnel, not a transport adapter.
+- the watchdog currently aborts the process if a worker line does not complete within `30000 ms`
+- `TesterClient` keeps one completion slot per worker and currently supports at most `254` chain workers
+- in `packet-ipv4` mode the documented chunk sizes include packet headers, so the verified synthetic payload body is
+  `chunk-size - IPv4 header length` in raw mode, or `chunk-size - IPv4 header length - transport header length` when
+  `transport` is enabled
+- in packet mode, `max-payload-size` reduces the effective chunk size before packet generation; it does not split one
+  logical packet into multiple packets
+- `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
+  intentionally disabled because this node is a chain head
+
+## Implementation details
+
+### What It Does
+
+- acts as a chain head and creates the test lines itself
+- waits `100 ms` after startup before creating one worker-local test line per chain worker
+- initializes per-line state in `Init`, then drives the request side only after downstream `Est`
+- sends `11` fixed-size request chunks upstream by default
+- verifies `11` fixed-size response chunks coming back downstream by default
+- fails fast on any size, order, byte-pattern, or timeout mismatch
+- in normal stream mode, logs success after the full response is verified and exits the program once all workers complete
+- in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
+- optionally wraps packet-mode payloads in a synthetic IPv4 packet with configured source, destination, protocol, and TTL
+- optionally builds deterministic TCP, UDP, or ICMP headers inside the synthetic IPv4 packet
+- can optionally seed `line->routing_context.dest_ctx` before sending `Init` into the tested chain
+
+### Request And Response Pattern
+
+The tunnel uses deterministic payload sizes and deterministic byte patterns derived from:
+
+- chunk index
+- byte offset inside the chunk
+- per-flow test id
+- direction (`request` versus `response`)
+
+The first request byte carries that per-flow id so a real transport hop can remap the connection onto a different
+worker without breaking verification.
+
+Current stream-mode chunk sizes are:
+
+- `1`
+- `2`
+- `4`
+- `32`
+- `512`
+- `1024`
+- `4096`
+- `32768`
+- `32769`
+- `1048576`
+- `2097152`
+
+Current packet-mode chunk sizes are:
+
+- `1`
+- `2`
+- `4`
+- `32`
+- `64`
+- `128`
+- `256`
+- `512`
+- `1024`
+- `1499`
+- `1500`
+
+Current `packet-ipv4` chunk sizes are:
+
+- `21`
+- `22`
+- `24`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
+- `1499`
+- `1500`
+
+When `packet-ipv4.transport` is `tcp`, `udp`, or `icmp`, the packet chunks include IPv4 plus transport headers and use
+these sizes:
+
+- `41`
+- `42`
+- `44`
+- `52`
+- `84`
+- `148`
+- `276`
+- `532`
+- `1044`
+- `1499`
+- `1500`
+
+`chunk-count` can limit the active sequence to a prefix of these tables. When omitted, all `11` chunks are used.
+
+### Detailed Behavior
+
+#### Startup and line creation
 
 On tunnel start, `TesterClient` schedules one startup task per chain worker. Each worker task:
 
@@ -291,7 +318,7 @@ On tunnel start, `TesterClient` schedules one startup task per chain worker. Eac
   waiting for downstream `Est`
 - arms a `30000 ms` watchdog for that worker line
 
-### Establishment and request send
+#### Establishment and request send
 
 `TesterClient` waits for downstream `Est` before it starts sending requests.
 
@@ -302,7 +329,7 @@ After `Est`:
 - request chunks are sent in order on the upstream path
 - downstream `Pause` and `Resume` toggle request sending for backpressure
 
-### Response verification
+#### Response verification
 
 Downstream payload is treated as the response side of the integrity test.
 
@@ -322,7 +349,7 @@ In packet mode:
 - extra packets, early packets, or wrong-size packets are treated as failure
 - successful completion marks the worker packet line test as done without closing the packet line
 
-### Finish behavior
+#### Finish behavior
 
 In stream mode, normal success does not depend on a FIN exchange. `TesterClient` succeeds as soon as it has verified the
 full response sequence for every worker and then terminates the program with exit code `0`.
@@ -331,20 +358,7 @@ If downstream `Finish` does arrive before full response verification, it is trea
 downstream `Finish` is also considered a bug because worker packet lines are runtime-persistent helper lines, not
 closable connection lines.
 
-## Notes And Caveats
-
-- `TesterClient` is a synthetic validation tunnel, not a transport adapter.
-- the watchdog currently aborts the process if a worker line does not complete within `30000 ms`
-- `TesterClient` keeps one completion slot per worker and currently supports at most `254` chain workers
-- in `packet-ipv4` mode the documented chunk sizes include packet headers, so the verified synthetic payload body is
-  `chunk-size - IPv4 header length` in raw mode, or `chunk-size - IPv4 header length - transport header length` when
-  `transport` is enabled
-- in packet mode, `max-payload-size` reduces the effective chunk size before packet generation; it does not split one
-  logical packet into multiple packets
-- `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
-  intentionally disabled because this node is a chain head
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UserController.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UserController.mdx, and all files must keep the same documentation version.
 -->
 
 # UserController Node
+
+## Overview
 
 `UserController` is a middle node for stream or datagram normal lines that enforces per-user limits for traffic-serving chains.
 
@@ -11,7 +13,7 @@ It does not open sockets or perform protocol parsing. It sits behind a node that
 `Socks5Server`) and in front of the outbound side of the chain (such as `TcpConnector`). For every authenticated line
 it admits or rejects new connections, accounts traffic, and closes connections that are no longer allowed.
 
-## Typical Placement
+## Typical placement
 
 `Socks5Server` creates and inserts an internal `UserController` automatically in authenticated mode, so a SOCKS5 chain
 should normally be configured without a visible `UserController` node:
@@ -48,7 +50,11 @@ see [Direction Awareness](#direction-awareness-upload-vs-download).
 
 `UserController` does not open sockets; it requires both a `prev` and a `next` node.
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+This is a manual instance for a custom authenticating node, not a complete authentication chain. Define `auth-client` and ensure the authenticating node supplies/promotes the identity as described below. Use the existing managed-proxy placement when the protocol node inserts the controller itself.
 
 ```json
 {
@@ -63,12 +69,13 @@ see [Direction Awareness](#direction-awareness-upload-vs-download).
 }
 ```
 
-`auth-client` must be a configured `AuthenticationClient` node in the same config file. `UserController` only finds and
-uses that node instance; it does not create an authentication client.
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -76,7 +83,7 @@ uses that node instance; it does not create an authentication client.
 - `type` `(string)`
   Must be exactly `"UserController"`.
 
-### `settings`
+#### `settings`
 
 - `auth-client-node-name` `(string, required)`
   Name of an existing `AuthenticationClient` node in the same config file. It must point to an `AuthenticationClient`,
@@ -96,7 +103,27 @@ uses that node instance; it does not create an authentication client.
 `UserController` does not enforce live `devices` occupancy. Stored/exported device limits and diagnostic device
 gauges remain available; they do not provide a live device reservation limit.
 
-## Enforced Limits
+## Usage and troubleshooting
+
+### Configuration Example
+
+```json
+{
+  "name": "user-controller",
+  "type": "UserController",
+  "settings": {
+    "auth-client-node-name": "auth-client",
+    "payload-mode": "stream",
+    "sweep-interval-ms": 1000,
+    "verbose": false
+  }
+}
+```
+
+`auth-client` must be a configured `AuthenticationClient` node in the same config file. `UserController` only finds and
+uses that node instance; it does not create an authentication client.
+
+### Enforced Limits
 
 `UserController` reads each user's `limit` block from the local `AuthenticationClient` users table. A limit of `0`
 (or a missing field) means unlimited. The following limits are enforced:
@@ -135,7 +162,16 @@ Cached quotas and reservations are local; multiple disconnected clients may over
 expiry starts with the first positive measured arrival, even while duration is initially zero; enabling duration
 later uses that retained age. Explicit duration and absolute-date edits recompute their components independently.
 
-## Bandwidth And Payload Framing
+### Notes And Caveats
+
+- This node requires `AuthenticationClient`; node creation fails if `auth-client-node-name` is missing or wrong.
+- This node does not require left padding and does not prepend in-place.
+- This node is not a packet tunnel and does not use packet-line semantics.
+- Bandwidth enforcement is provided by UserController itself; no SpeedLimit node is inserted.
+
+## Advanced behavior
+
+### Bandwidth And Payload Framing
 
 `limit.bandwidth.u` / `up` and `.d` / `down` are actual logical bytes per second. Zero means unlimited;
 the full unsigned 64-bit range is supported. One user's upload and download allowances are independent and shared
@@ -200,7 +236,7 @@ SOCKS/Trojan/VLESS resolve initialized TCP versus decoded UDP remote-line roles;
 datagram mode on its normal transport side in either orientation. Packet lines never enter UserController. This binding
 does not add WireGuard database-user authentication; its existing unmanaged transport behavior remains.
 
-## Direction Awareness (Upload vs Download)
+### Direction Awareness (Upload vs Download)
 
 `UserController` records, per line, which side the line was initiated from, and uses it to map traffic to the user's
 upload and download counters correctly. "Upload" means traffic leaving the user toward the far side; "download" means
@@ -216,7 +252,9 @@ user-facing adapter is the chain tail, as in `TunDevice -> WireGuardDevice -> Us
 there the user's packets arrive on the `next` side, so downstream payload is the user's upload. Quota enforcement is
 otherwise identical in both directions.
 
-## Where Limit State Lives
+## Implementation details
+
+### Where Limit State Lives
 
 Live enforcement state (connection/IP reservations, directional rate buckets and fair-turn tickets) is stored on the `user_t`
 object inside `AuthenticationClient`, in a dedicated process-local `runtime` field that is never serialized or synced to
@@ -232,7 +270,7 @@ connection/IP counters and shaping state are moved to the refreshed user object.
 fractional charge remainders move with those reservations. New expiry policy is projected separately from canonical
 wall/accounting clock metadata; unchanged pulls never extend an existing countdown.
 
-## Lifecycle Behavior
+### Lifecycle Behavior
 
 - On `Init` from either side, the node initializes its line state, records the origin direction, resolves and saves the
   payload mode, and reads the current user handle. An unresolved mode rejects even an anonymous line. For an authenticated
@@ -253,7 +291,7 @@ wall/accounting clock metadata; unchanged pulls never extend an existing countdo
 - On `Finish` from either side, it releases the user's reserved connection and IP slot, destroys its own line state, and
   propagates the finish to the opposite side, following Waterwall's directional-finish rule.
 
-## Programmatic Promotion API
+### Programmatic Promotion API
 
 For nodes that authenticate a user only after the line is already open (see [Typical Placement](#typical-placement)),
 `UserController` exposes a promotion function in its public `interface.h`:
@@ -301,14 +339,7 @@ if (admission != kUserAdmissionOk)
 // admitted: continue bringing the peer up.
 ```
 
-## Notes And Caveats
-
-- This node requires `AuthenticationClient`; node creation fails if `auth-client-node-name` is missing or wrong.
-- This node does not require left padding and does not prepend in-place.
-- This node is not a packet tunnel and does not use packet-line semantics.
-- Bandwidth enforcement is provided by UserController itself; no SpeedLimit node is inserted.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -322,7 +353,7 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-## Splice support
+### Splice support
 
 Unmanaged and unlimited immediate payloads pass through opaquely in both directions. Shaped queues preserve whole datagrams and split streams through `sbufMoveRangeTo()`, including private pipes with ordinary fallback. Prepared output remains budgeted until handoff or discard. Traffic accounting uses logical payload bytes, including resident prefixes, with the existing reversed upload/download mapping for lines started from next. Rejection recycles the still-owned buffer and discards its private-pipe bytes before closing through the existing lifecycle.
 

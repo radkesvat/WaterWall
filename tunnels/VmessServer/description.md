@@ -1,16 +1,64 @@
 <!--
-Documentation version: 3
+Documentation version: 4
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessServer.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessServer.mdx synchronized.
 -->
 
 # VmessServer Node
+
+## Overview
 
 `VmessServer` accepts VMess AEAD requests, authenticates a UUID-backed account,
 decodes TCP, fixed-destination UDP or packetaddr UDP traffic, and forwards it to `next`.
 It implements the server protocol independently of its transport. Put `TlsServer`
 or `HttpServer` before it when TLS or WebSocket transport is wanted.
 
-## Authentication
+## Typical placement
+
+### Placement and examples
+
+```text
+TcpListener -> VmessServer -> TcpUdpConnector
+TcpListener -> TlsServer -> VmessServer -> TcpUdpConnector
+TcpListener -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
+TcpListener -> TlsServer -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
+```
+
+A local-user node:
+
+
+VMess body protection is a separate choice from TLS. `none` and `zero` leave
+application bodies unencrypted and unauthenticated. The default
+`encrypted-counter-policy: "wrap"` eventually repeats AEAD nonces under the same
+session key; it is not rekeying. `strict` closes before nonce reuse. Read the
+security and counter settings before choosing a policy.
+
+## Minimal practical example
+
+This is a **node fragment**. Complete the surrounding chain and replace the
+sample UUID with the matching peer credential.
+
+```json
+{
+  "name": "vmess",
+  "type": "VmessServer",
+  "settings": {
+    "users": [
+      {"username": "alice", "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5"}
+    ],
+    "connect": true,
+    "udp": true
+  },
+  "next": "outbound"
+}
+```
+
+
+`outbound` names a connector following `dest_context->address` and
+`dest_context->port`; choose `TcpUdpConnector` when both protocols are enabled.
+
+## Configuration
+
+### Authentication
 
 Choose one authentication mode:
 
@@ -52,7 +100,102 @@ pending work and credential caches have finite budgets. Cached keys do not
 authorize a removed or replaced account. These limits bound work and storage;
 they do not impose an application throughput rate.
 
-## Protocol support
+### Settings
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `uuid` / `id` / `user-id` | None | One local UUID or short ID; select one alias. |
+| `uuids` | None | Array of local UUID/short-ID strings or user objects. |
+| `users` / `clients` | None | Array of local UUID/short-ID strings or user objects; use either spelling. |
+| `auth-client-node-name` | None | AuthenticationClient dependency; excludes all local-user settings. |
+| `connect` | `true` | Permit TCP requests. |
+| `udp` | `true` | Permit framed UDP requests. At least one request command must be enabled. |
+| `handshake-timeout-ms` | `10000` | Absolute request-handshake deadline; incoming bytes do not extend it. |
+| `auth-max-pending` | `4096` | Maximum pending authentication jobs for this node. |
+| `auth-pending-max-bytes` | `67108864` | Shared pending-authentication logical input-byte budget. |
+| `auth-cache-max-bytes` | `67108864` | Credential/authentication-cache storage budget in bytes. |
+| `replay-max-entries` | `262144` | Maximum live entries in each of the node's AuthID and session replay tables. |
+| `fallback-node-name` | None | Optional branch for eligible unauthenticated traffic. |
+| `fallback-intentional-delay-ms` | `7` | Delay before fallback replay; `0` disables the intentional delay. |
+| `fallback-intentional-delay-jitter-ms` | `1` | Additional fallback delay jitter; ignored when delay is zero. |
+| `encrypted-counter-policy` | `wrap` | `wrap` or `strict`, independently applied per encrypted direction. |
+| `allowed-security` | All four modes | Nonempty unique array of `aes-128-gcm`, `chacha20-poly1305`, `none`, `zero`. UDP-only with only zero fails construction. |
+| `send-termination` | `true` | Send optional outgoing framed EOF toward an open wire side. |
+| `packetaddr` | `true` | Accept authenticated packetaddr UDP; `udp: false` rejects every UDP form. |
+| `packetaddr-max-destinations` | `64` | Integer `1..1024`; maximum live backends per packetaddr carrier. |
+| `verbose` | `false` | Reason-coded diagnostics limited to one message per node per second, without credentials or destination labels. |
+
+Authentication limits and the handshake timeout are integers in `1..2147483647`;
+replay table geometry must also fit the host. Invalid
+configuration rejects startup. New options reject wrong types, duplicate keys,
+unknown values, embedded NUL, malformed UTF-8 and fractional/out-of-range limits.
+Capacity exhaustion rejects the affected new
+request; it never evicts an unexpired replay mark to make room.
+
+Before authentication completes, one connection retains at most 65,536 logical
+input bytes in 256 buffers. Input and response queues each have limits of
+2 MiB logical bytes, 8 MiB retained-buffer allocation charge and 1,024 entries;
+active popped buffers remain charged. These fixed limits complement the shared
+authentication budgets. They are not an RSS or total-process memory limit.
+
+## Usage and troubleshooting
+
+### Managed-user example
+
+A managed-user node:
+
+```json
+{
+  "name": "vmess",
+  "type": "VmessServer",
+  "settings": {"auth-client-node-name": "auth-client"},
+  "next": "outbound"
+}
+```
+
+The outbound connector normally uses `"address": "dest_context->address"` and
+`"port": "dest_context->port"`. Use `TcpConnector` for TCP-only configurations,
+`UdpConnector` for UDP-only configurations, or `TcpUdpConnector` for both.
+
+### Read-only stats
+
+The registered `stats` operation accepts only an empty JSON object, with at most
+64 input bytes including JSON whitespace. It requires the ordinary APIServer
+permission for this node and operation; the historical tunnel callback alone does
+not expose it. The operation returns fixed-schema JSON, or a bounded error such as
+`busy` when the auth/replay snapshot lock cannot be acquired immediately. Deadlines,
+response-body limits and actual pooled output allocation are checked. Reserve
+at least 4,608 working bytes plus the result buffer allocation charge.
+
+The response includes effective `encrypted_counter_policy`, `allowed_security`,
+`send_termination`, `packetaddr`, `packetaddr_max_destinations`, `connect`, `udp`,
+`verbose` and `managed`; `approximate` is true. All counters are decimal strings
+preserving full uint64 precision. `applications` counts authenticated logical
+associations, `carriers` counts live borrowed input lines (including pending/fallback),
+and `backends` counts live owned UDP destination lines. `tx_records`/`rx_records`,
+`tx_application_bytes`/`rx_application_bytes`, `tx_wire_bytes`/`rx_wire_bytes`,
+`wrap_events` and `strict_exhaustion` are cumulative. Application bytes are decoded
+upload bytes offered to the protected chain and admitted reply payload bytes,
+excluding packetaddr envelopes; wire bytes count submitted framed replies and
+received input, including handshakes. Native empty/oversized drops do not add reply
+application bytes. Records count successful framed/body-codec operations; raw zero
+is an unframed byte stream. Snapshots are approximate across counters and workers.
+
+`pending_auth`, `pending_auth_bytes`, `auth_cache_bytes`, `authid_marks` and
+`session_marks` report current retained occupancy (expired marks may await normal
+reclamation). The fixed `reasons` object reports normal close, authentication
+mismatch/unavailable table/expired AuthID, replay-or-capacity refusal, malformed
+header, body/length failure, denied command/security, timeout, retained admission,
+UDP oversize, malformed packetaddr, destination capacity and strict exhaustion.
+The body/length categories include parser/geometry failures, not only tag failures.
+Terminal reasons are counted once per carrier; datagram drops are counted per drop.
+No UUID, password, user identifier or destination labels appear in diagnostics/stats.
+Stats reads use atomic publication and bounded try-lock snapshots, never foreign
+worker line or destination-map traversal. It has no mutation/reset operation.
+
+## Advanced behavior
+
+### Protocol support
 
 | Client body security | TCP | UDP |
 | --- | --- | --- |
@@ -116,86 +259,7 @@ external VMess multiplexing interoperability. AES-CTR is also excluded. TLS, Web
 VmessServer does not inspect or configure those transports. It disables splice
 for its chain because parsing and cryptography require ordinary memory buffers.
 
-## Placement and examples
-
-```text
-TcpListener -> VmessServer -> TcpUdpConnector
-TcpListener -> TlsServer -> VmessServer -> TcpUdpConnector
-TcpListener -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
-TcpListener -> TlsServer -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
-```
-
-A local-user node:
-
-```json
-{
-  "name": "vmess",
-  "type": "VmessServer",
-  "settings": {
-    "users": [
-      {"username": "alice", "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5"}
-    ],
-    "connect": true,
-    "udp": true
-  },
-  "next": "outbound"
-}
-```
-
-A managed-user node:
-
-```json
-{
-  "name": "vmess",
-  "type": "VmessServer",
-  "settings": {"auth-client-node-name": "auth-client"},
-  "next": "outbound"
-}
-```
-
-The outbound connector normally uses `"address": "dest_context->address"` and
-`"port": "dest_context->port"`. Use `TcpConnector` for TCP-only configurations,
-`UdpConnector` for UDP-only configurations, or `TcpUdpConnector` for both.
-
-## Settings
-
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `uuid` / `id` / `user-id` | None | One local UUID or short ID; select one alias. |
-| `uuids` | None | Array of local UUID/short-ID strings or user objects. |
-| `users` / `clients` | None | Array of local UUID/short-ID strings or user objects; use either spelling. |
-| `auth-client-node-name` | None | AuthenticationClient dependency; excludes all local-user settings. |
-| `connect` | `true` | Permit TCP requests. |
-| `udp` | `true` | Permit framed UDP requests. At least one request command must be enabled. |
-| `handshake-timeout-ms` | `10000` | Absolute request-handshake deadline; incoming bytes do not extend it. |
-| `auth-max-pending` | `4096` | Maximum pending authentication jobs for this node. |
-| `auth-pending-max-bytes` | `67108864` | Shared pending-authentication logical input-byte budget. |
-| `auth-cache-max-bytes` | `67108864` | Credential/authentication-cache storage budget in bytes. |
-| `replay-max-entries` | `262144` | Maximum live entries in each of the node's AuthID and session replay tables. |
-| `fallback-node-name` | None | Optional branch for eligible unauthenticated traffic. |
-| `fallback-intentional-delay-ms` | `7` | Delay before fallback replay; `0` disables the intentional delay. |
-| `fallback-intentional-delay-jitter-ms` | `1` | Additional fallback delay jitter; ignored when delay is zero. |
-| `encrypted-counter-policy` | `wrap` | `wrap` or `strict`, independently applied per encrypted direction. |
-| `allowed-security` | All four modes | Nonempty unique array of `aes-128-gcm`, `chacha20-poly1305`, `none`, `zero`. UDP-only with only zero fails construction. |
-| `send-termination` | `true` | Send optional outgoing framed EOF toward an open wire side. |
-| `packetaddr` | `true` | Accept authenticated packetaddr UDP; `udp: false` rejects every UDP form. |
-| `packetaddr-max-destinations` | `64` | Integer `1..1024`; maximum live backends per packetaddr carrier. |
-| `verbose` | `false` | Reason-coded diagnostics limited to one message per node per second, without credentials or destination labels. |
-
-Authentication limits and the handshake timeout are integers in `1..2147483647`;
-replay table geometry must also fit the host. Invalid
-configuration rejects startup. New options reject wrong types, duplicate keys,
-unknown values, embedded NUL, malformed UTF-8 and fractional/out-of-range limits.
-Capacity exhaustion rejects the affected new
-request; it never evicts an unexpired replay mark to make room.
-
-Before authentication completes, one connection retains at most 65,536 logical
-input bytes in 256 buffers. Input and response queues each have limits of
-2 MiB logical bytes, 8 MiB retained-buffer allocation charge and 1,024 entries;
-active popped buffers remain charged. These fixed limits complement the shared
-authentication budgets. They are not an RSS or total-process memory limit.
-
-## Fallback and replay protection
+### Fallback and replay protection
 
 Add `fallback-node-name` to select an existing stream branch for unknown
 credentials or unavailable authentication. The original inspected prefix and
@@ -214,43 +278,7 @@ clock adjustment cannot make an already-expired request acceptable again.
 Session identity includes the UUID, request body key and IV; its replay interval
 is three minutes. Separate VmessServer instances have separate replay domains.
 
-## Read-only stats
-
-The registered `stats` operation accepts only an empty JSON object, with at most
-64 input bytes including JSON whitespace. It requires the ordinary APIServer
-permission for this node and operation; the historical tunnel callback alone does
-not expose it. The operation returns fixed-schema JSON, or a bounded error such as
-`busy` when the auth/replay snapshot lock cannot be acquired immediately. Deadlines,
-response-body limits and actual pooled output allocation are checked. Reserve
-at least 4,608 working bytes plus the result buffer allocation charge.
-
-The response includes effective `encrypted_counter_policy`, `allowed_security`,
-`send_termination`, `packetaddr`, `packetaddr_max_destinations`, `connect`, `udp`,
-`verbose` and `managed`; `approximate` is true. All counters are decimal strings
-preserving full uint64 precision. `applications` counts authenticated logical
-associations, `carriers` counts live borrowed input lines (including pending/fallback),
-and `backends` counts live owned UDP destination lines. `tx_records`/`rx_records`,
-`tx_application_bytes`/`rx_application_bytes`, `tx_wire_bytes`/`rx_wire_bytes`,
-`wrap_events` and `strict_exhaustion` are cumulative. Application bytes are decoded
-upload bytes offered to the protected chain and admitted reply payload bytes,
-excluding packetaddr envelopes; wire bytes count submitted framed replies and
-received input, including handshakes. Native empty/oversized drops do not add reply
-application bytes. Records count successful framed/body-codec operations; raw zero
-is an unframed byte stream. Snapshots are approximate across counters and workers.
-
-`pending_auth`, `pending_auth_bytes`, `auth_cache_bytes`, `authid_marks` and
-`session_marks` report current retained occupancy (expired marks may await normal
-reclamation). The fixed `reasons` object reports normal close, authentication
-mismatch/unavailable table/expired AuthID, replay-or-capacity refusal, malformed
-header, body/length failure, denied command/security, timeout, retained admission,
-UDP oversize, malformed packetaddr, destination capacity and strict exhaustion.
-The body/length categories include parser/geometry failures, not only tag failures.
-Terminal reasons are counted once per carrier; datagram drops are counted per drop.
-No UUID, password, user identifier or destination labels appear in diagnostics/stats.
-Stats reads use atomic publication and bounded try-lock snapshots, never foreign
-worker line or destination-map traversal. It has no mutation/reset operation.
-
-## Validation
+### Validation
 
 The namespace suite uses pinned V2Ray 5.53.0, Xray 25.6.8 and sing-box 1.12.0 peers
 in both endpoint directions, with explicit unsupported cells. Long stop-and-wait
@@ -259,7 +287,9 @@ Native Debug/Release tests drive two real wraps, independent boundary checkpoint
 packetaddr ownership/bounds, strict policy, parser mutations, stats and replay.
 See `tests/cases/vmess_interop/README.md` and the Developer Guide Part 6 for commands.
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed metadata from `tunnels/VmessServer/instance/node.c`:
 

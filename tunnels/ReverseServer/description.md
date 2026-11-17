@@ -1,33 +1,30 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ReverseServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ReverseServer.mdx, and all files must keep the same documentation version.
 -->
 
 # ReverseServer Node
 
+## Overview
+
 `ReverseServer` is the server-side peer for `ReverseClient`. It receives pre-opened reverse connections from one side, receives real traffic from the other side, and pairs those two halves together so data can flow through the reverse tunnel.
 
 In practice, this node is used on the reachable side of a reverse tunnel setup.
 
-## What It Does
-
-- Accepts pre-opened reverse connections coming from `ReverseClient`.
-- Detects the internal reverse handshake on those connections.
-- Keeps waiting reverse-side connections until a local peer is available.
-- Keeps local peers until a reverse-side connection is available.
-- Pairs one waiting reverse-side half with one waiting local half.
-- Forwards payload, finish, pause, and resume between the paired halves.
-- Can move a waiting reverse-side line to another worker when pairing requires it.
-
-This node is neither a pure chain head nor a pure chain end. It sits between two sides of a chain and matches them dynamically.
-
-## Typical Placement
+## Typical placement
 
 The reverse-link transport/listener feeds `ReverseServer`, whose next node must be the `Bridge` connecting it to the local/user traffic branch: `ReverseServer -> Bridge`. No node may intervene between them. The companion client-side rule is `Bridge -> ReverseClient`, also with no intervening nodes.
 
 These are chain-design requirements that users must follow; the code does not automatically enforce either adjacency rule. One side carries `ReverseClient` reverse links, while the paired Bridge branch carries the real peer traffic to attach to those links.
 
-## Configuration Example
+
+## Minimal practical example
+
+The JSON below is a **node fragment**, not a complete config file.
+Configure the paired Bridges and matching remote reverse node as shown above;
+replace `shared-secret` and the named transport/service nodes for your deployment.
+
+### Configuration Example
 
 ```json
 {
@@ -41,9 +38,12 @@ These are chain-design requirements that users must follow; the code does not au
 }
 ```
 
-## Required JSON Fields
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -54,12 +54,12 @@ These are chain-design requirements that users must follow; the code does not au
 - `next` `(string)`
   The directly adjacent `Bridge` leading to the local/user traffic branch. No intervening node is allowed.
 
-### `settings`
+#### `settings`
 
 The implementation works with an empty `settings` object. Optional fields tune
 the reverse-link handshake signature.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `activation-min-size` `(integer)`: minimum total activation size, default `64`.
 - `activation-max-size` `(integer)`: maximum total activation size, default `1024`.
@@ -81,9 +81,32 @@ Configure this range only on ReverseServer.
   `ReverseServer`, `ReverseClient`, and any `SniffRouter` reverse route in front
   of them must use the same `reverse-secret-length` and `reverse-secret`.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Two-sided matching model
+### Notes And Caveats
+
+- `reverse-secret-length` and `reverse-secret` must match the peer
+  `ReverseClient` and any `SniffRouter` reverse detector in front of it.
+- It is tightly coupled to `ReverseClient` through the shared handshake format.
+- Unpaired halves can be buffered temporarily, but large buffered payloads are dropped once they exceed the per-half limit.
+
+## Implementation details
+
+### What It Does
+
+- Accepts pre-opened reverse connections coming from `ReverseClient`.
+- Detects the internal reverse handshake on those connections.
+- Keeps waiting reverse-side connections until a local peer is available.
+- Keeps local peers until a reverse-side connection is available.
+- Pairs one waiting reverse-side half with one waiting local half.
+- Forwards payload, finish, pause, and resume between the paired halves.
+- Can move a waiting reverse-side line to another worker when pairing requires it.
+
+This node is neither a pure chain head nor a pure chain end. It sits between two sides of a chain and matches them dynamically.
+
+### Detailed Behavior
+
+#### Two-sided matching model
 
 `ReverseServer` works by pairing two different kinds of half-connections:
 
@@ -94,7 +117,7 @@ The reverse-side half is recognized by an internal handshake. By default this is
 `640` bytes of value `0xFF`; with `reverse-secret`, those default bytes are XORed
 with the secret bytes repeatedly.
 
-### Reverse-side handshake processing
+#### Reverse-side handshake processing
 
 When payload arrives from the reverse side before pairing:
 
@@ -105,7 +128,7 @@ When payload arrives from the reverse side before pairing:
 - the reverse-side half is placed into a waiting list
 - any payload after the handshake is kept as buffered data until pairing happens
 
-### Local-side waiting behavior
+#### Local-side waiting behavior
 
 A local/user half enters the waiting list during Init and attempts pairing without
 waiting for application data. Early payload is retained under the existing waiting
@@ -116,7 +139,7 @@ is also held while unpaired. Pairing sends activation and drains eligible older
 bytes before releasing these holds. Consumer Pause keeps its source held; clearing
 a waiting hold never overrides it. Holds and consumer pressure survive migration.
 
-### Variable-size activation
+#### Variable-size activation
 
 A pair sends exactly one activation prefix before any user application bytes:
 
@@ -144,7 +167,7 @@ Random lengths avoid one fixed activation size. The plaintext length field and
 traffic timing remain visible without an enclosing encrypted transport; this is
 not a guarantee against traffic fingerprinting.
 
-### Pairing behavior
+#### Pairing behavior
 
 After pairing:
 
@@ -157,7 +180,7 @@ Buffered application bytes preserve FIFO order during activation and initial rep
 Retained application output waits for Resume when its consumer is paused; ready
 payloads continue to use direct forwarding.
 
-### Cross-worker pairing
+#### Cross-worker pairing
 
 A newly initialized user notifies the worker of an already waiting reverse peer, so either arrival order can pair without new payload. Notifications carry no foreign line pointer.
 
@@ -165,7 +188,7 @@ A newly initialized user notifies the worker of an already waiting reverse peer,
 
 This is an implementation detail, but it matters because it allows reverse links and local peers to be matched even when they are not created on the same worker thread.
 
-### Buffering limits
+#### Buffering limits
 
 Each half has one application FIFO with inclusive limits of **2 MiB logical bytes
 and 1,024 buffers**, independent of the RAM profile. Waiting data and retained
@@ -175,7 +198,7 @@ comparison state and the separate activation prefix are protocol metadata.
 A refused admission closes the waiting half, or both halves if already paired.
 Ready direct payloads do not acquire a backlog or inherit its size limit.
 
-### Establishment semantics
+#### Establishment semantics
 
 `ReverseServer` does not use normal `est` callbacks in the same way as simple listener/connector tunnels.
 
@@ -184,14 +207,7 @@ Instead:
 - when a reverse-side line is initialized, it immediately reports downstream establishment to the previous side
 - actual useful forwarding starts only after the reverse handshake is validated and a peer is paired
 
-## Notes And Caveats
-
-- `reverse-secret-length` and `reverse-secret` must match the peer
-  `ReverseClient` and any `SniffRouter` reverse detector in front of it.
-- It is tightly coupled to `ReverseClient` through the shared handshake format.
-- Unpaired halves can be buffered temporarily, but large buffered payloads are dropped once they exceed the per-half limit.
-
-## Splice Support
+### Splice Support
 
 ReverseServer materializes each complete splice payload into ordinary memory in
 both directions while the half is unpaired. This covers handshake validation,
@@ -206,7 +222,7 @@ opaque payload buffers across workers. Existing waiting limits, callback mapping
 and direct `ReverseServer -> Bridge` placement still apply. Splice activation
 requires an eligible finalized chain and `misc.splice`.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

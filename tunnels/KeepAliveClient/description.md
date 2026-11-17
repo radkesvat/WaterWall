@@ -1,9 +1,11 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveClient.mdx, and all files must keep the same documentation version.
 -->
 
 # KeepAliveClient Node
+
+## Overview
 
 `KeepAliveClient` is a small framing tunnel that wraps upstream payloads with a `5`-byte keepalive header and
 periodically sends ping control frames on every live borrowed line it tracks.
@@ -16,32 +18,46 @@ This tunnel must reach KeepAliveServer for it to work.
 It is designed to compose like other Waterwall middle tunnels. It does not invent a new line lifecycle and it does not
 hold protocol state alive after a clean finish.
 
-## Frame Format
+## Typical placement
 
-Each transmitted frame starts with:
+Direct in-process test:
 
-- `4` bytes: big-endian frame body length
-- `1` byte: frame kind
+```text
+TesterClient -> KeepAliveClient -> KeepAliveServer -> TesterServer
+```
 
-Frame body length includes the `1`-byte frame kind plus any payload bytes. Each
-frame carries at most `1 MiB` of payload. Body lengths outside `1..1,048,577`
-close the line. Both peers use the same five-byte prefix.
+Two-server TCP layout:
 
-Frame kinds are:
+```text
+client side: TcpListener -> KeepAliveClient -> TcpConnector
+server side: TcpListener -> KeepAliveServer -> TcpConnector
+```
 
-- `1`: normal payload
-- `2`: ping
-- `3`: pong
+Any tunnels between the client and server must preserve the keepalive frame
+bytes exactly.
 
-## Directional Behavior
+## Minimal practical example
 
-- upstream payload is encoded into framed output and sent with `tunnelNextUpStreamPayload()`
-- downstream payload is treated as a byte stream of framed input
-- normal downstream frames are decoded and forwarded with `tunnelPrevDownStreamPayload()`
-- downstream `ping` frames are answered with upstream `pong` frames
-- downstream empty `pong` frames acknowledge an outstanding ping in sensitive mode; otherwise they are ignored
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
-## Keepalive Timer
+### Configuration Example
+
+```json
+{
+  "name": "keepalive-client",
+  "type": "KeepAliveClient",
+  "settings": {
+    "ping-interval": 30000,
+    "sensitive-mode": false,
+    "tolerance-ms": 90000
+  },
+  "next": "next-node-name"
+}
+```
+
+## Configuration
+
+### Keepalive Timer
 
 `KeepAliveClient` creates a worker-local idle table when the first connection on
 that worker reaches transport `Est`. Each established line has a recurring ping
@@ -61,7 +77,7 @@ Default interval:
 
 - `30000 ms`
 
-## Optional Reply Watchdog
+### Optional Reply Watchdog
 
 `sensitive-mode` defaults to `false`. When enabled, only one ping is outstanding
 per line. An empty pong on that same line acknowledges it; application frames,
@@ -86,7 +102,69 @@ The tolerance includes paused time, queueing and transfer time. Pongs share the 
 ordered stream as normal frames and may wait behind a 1 MiB body, so choose a
 tolerance that allows for the path's throughput and latency.
 
-## Finish Behavior
+### Required Fields
+
+Top-level fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | User-chosen node name. Must be unique inside the config file. |
+| `type` | string | Must be exactly `"KeepAliveClient"`. |
+| `settings` | object | Optional. If omitted, default intervals are used and the reply watchdog is disabled. |
+| `next` | string | Required in normal use. The next node receives framed upstream data. |
+
+`KeepAliveClient` must have a previous node and must reach a matching
+`KeepAliveServer` in the logical path.
+
+### Settings
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `ping-interval` | integer | `30000` | Periodic ping interval in milliseconds. Must be at least `1`; startup fails if the value is lower. |
+| `sensitive-mode` | boolean | `false` | Enables one outstanding ping per line and closes on a missing or late pong. |
+| `tolerance-ms` | integer | `90000` | Reply deadline in milliseconds, including local Pause. Must be in `1..2147483647`. Used when sensitive mode is enabled. |
+
+Avoid very small intervals unless you intentionally want high keepalive traffic.
+In both modes, the first ping is due one `ping-interval` after downstream transport
+`Est`. The worker timer sends it on the first eligible check at or after that
+deadline, including during advisory Pause. Application traffic can flow during
+the initial wait. In sensitive mode, the reply deadline starts immediately before
+the ping is handed to the next node, including time it may spend queued there.
+
+With sensitive mode disabled, the ping item sends one empty ping when due,
+then schedules its next interval. An active encoding callback keeps the probe due
+for a later check. There is no catch-up burst.
+
+## Advanced behavior
+
+### Frame Format
+
+Each transmitted frame starts with:
+
+- `4` bytes: big-endian frame body length
+- `1` byte: frame kind
+
+Frame body length includes the `1`-byte frame kind plus any payload bytes. Each
+frame carries at most `1 MiB` of payload. Body lengths outside `1..1,048,577`
+close the line. Both peers use the same five-byte prefix.
+
+Frame kinds are:
+
+- `1`: normal payload
+- `2`: ping
+- `3`: pong
+
+## Implementation details
+
+### Directional Behavior
+
+- upstream payload is encoded into framed output and sent with `tunnelNextUpStreamPayload()`
+- downstream payload is treated as a byte stream of framed input
+- normal downstream frames are decoded and forwarded with `tunnelPrevDownStreamPayload()`
+- downstream `ping` frames are answered with upstream `pong` frames
+- downstream empty `pong` frames acknowledge an outstanding ping in sensitive mode; otherwise they are ignored
+
+### Finish Behavior
 
 On either directional `Finish`, `KeepAliveClient`:
 
@@ -96,36 +174,7 @@ On either directional `Finish`, `KeepAliveClient`:
 
 This matches Waterwall’s normal directional finish pattern and avoids touching line state after destruction.
 
-## Configuration Example
-
-```json
-{
-  "name": "keepalive-client",
-  "type": "KeepAliveClient",
-  "settings": {
-    "ping-interval": 30000,
-    "sensitive-mode": false,
-    "tolerance-ms": 90000
-  },
-  "next": "next-node-name"
-}
-```
-
-## Node Metadata
-
-Source-backed metadata:
-
-| Property | Value |
-| --- | --- |
-| node flags | `kNodeFlagSupportsSplice` |
-| `can_have_prev` | `true` |
-| `can_have_next` | `true` |
-| `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `5` bytes |
-
-## Splice Support
+### Splice Support
 
 `KeepAliveClient` advertises `kNodeFlagSupportsSplice`. Framing continues for the
 whole connection. Upstream encoding writes only the five-byte header into real
@@ -157,3 +206,17 @@ Zero or oversized frame body lengths, admission failure and retained-storage ove
 close the borrowed line through its owner. Finish releases incomplete frames,
 active encoder suffixes and queued reentrant input; this node never destroys
 `line_t` itself.
+
+### Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagSupportsSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `5` bytes |

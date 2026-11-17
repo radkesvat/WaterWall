@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketSplitStream.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketSplitStream.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketSplitStream Node
+
+## Overview
 
 `PacketSplitStream` takes one worker packet line from the left side and splits it into two persistent stream-facing lines:
 
@@ -12,7 +14,32 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 Unlike `HalfDuplexClient`, this tunnel is packet-line anchored and does not do pairing or handshake restoration. It just keeps two worker-local split lines alive behind each packet line.
 
-## Required Settings
+## Typical placement
+
+The visible chain points into `PacketSplitStream`, while the split branches are
+named in `settings`:
+
+```text
+packet-side-node -> PacketSplitStream
+                    settings.up   -> upload-branch-head
+                    settings.down -> download-branch-head
+```
+
+`PacketSplitStream` intentionally does not use a top-level `next` field.
+
+This is a branch-layout diagram, not a complete packet transport. Each branch
+entry must accept the existing packet line; naming an ordinary `TcpConnector`
+as `up` or `down` does not perform packet-to-stream conversion. For a conventional
+two-host tunnel, start with the
+[PacketsToStream / StreamToPackets deployment](../../WaterWall-Docs/docs/02-noderefs/PacketsToStream.mdx#packet-over-tls).
+Use this split helper only when the branch layout itself is required.
+
+The following JSON is only the split node fragment; it does not define either
+branch or a remote peer.
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
 ```json
 {
@@ -25,6 +52,10 @@ Unlike `HalfDuplexClient`, this tunnel is packet-line anchored and does not do p
 }
 ```
 
+## Configuration
+
+### Required Settings
+
 - `settings.up`: node name used as the upstream entry tunnel for sent packets
 - `settings.down`: node name chained as the normal downstream branch for received packets
 
@@ -32,7 +63,9 @@ Top-level `next` is intentionally unused for this tunnel in configuration.
 
 During chain construction, `PacketSplitStream` binds its configured `down` branch as its chained `next` tunnel (`tunnelBind(t, state->down_tunnel)`), allowing it to receive return packets flowing downstream from the `down` node. Consequently, `can_have_next` is `true` and `layer_group_next_node` is `kNodeLayer3`.
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed metadata:
 

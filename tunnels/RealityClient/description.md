@@ -1,19 +1,55 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RealityClient.mdx, and all files must keep the same documentation version.
 -->
 
 # RealityClient
 
+## Overview
+
 `RealityClient` implements Reality v2. It performs a real client TLS handshake through an internal `TlsClient`, derives fresh directional session keys from that handshake, and then takes over the raw connection. TLS 1.3 uses an authenticated request/ack/confirm handoff before application records begin; TLS 1.2 retains the existing immediate profile-aware takeover.
 
-Typical placement:
+## Typical placement
 
 - `TcpListener -> RealityClient -> TcpConnector`
 
 The configured `next` node is the transport to the Reality server. The client still needs TLS settings such as `sni` because the first phase is a real TLS handshake with the visitor domain through the server.
 
-## Settings
+
+Both peers must share `password`, `algorithm`, `salt`, and `kdf-iterations`,
+including their defaults, and use compatible handoff behavior. The visitor site
+must match the client SNI and certificate verification. Camouflage assumes a
+non-terminating on-path observer without the password or TLS traffic secrets
+and without control of the cover destination. It does not survive TLS termination
+or promise every browser timing or application behavior; read the
+[full security limits](#security-model-and-limitations) before deployment.
+
+## Minimal practical example
+
+The JSON below is a **node fragment**, not a complete config file.
+Replace the sample secret and transport/visitor node names, then complete
+the surrounding listener, peer, and application branches described above.
+
+### Example
+
+```json
+{
+  "name": "reality-client",
+  "type": "RealityClient",
+  "settings": {
+    "sni": "www.example.com",
+    "verify": true,
+    "password": "replace-with-a-strong-secret",
+    "algorithm": "chacha20-poly1305"
+  },
+  "next": "server-tcp"
+}
+```
+
+
+## Configuration
+
+### Settings
 
 - `sni` (string, required): passed to the internal `TlsClient`
 - `verify` (boolean, optional): passed to the internal `TlsClient`, default `true`
@@ -28,7 +64,23 @@ The configured `next` node is the transport to the Reality server. The client st
 
 Defaults apply only when an optional key is absent. A present optional key with the wrong JSON type is a startup error. When both `algorithm` and `method` are present, `algorithm` wins, including when it is malformed; the alias does not rescue an invalid primary value.
 
-## Behavior
+## Advanced behavior
+
+### Security Model And Limitations
+
+The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
+
+Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
+
+Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
+
+### Compatibility
+
+This authenticated TLS 1.3 handoff is wire-incompatible with earlier unpublished Reality v2 builds, including builds that switched at `SSL_is_init_finished()`. Upgrade `RealityClient` and `RealityServer` together. TLS 1.2 record layouts and counters are unchanged. There is no old-layout or v1 fallback after authentication fails, and supplying the obsolete `max-frame-size` setting is a startup error. Changing the shared password invalidates future sessions; no server-side replay database is required.
+
+## Implementation details
+
+### Behavior
 
 Transport `Est` is recorded and forwarded immediately, once, independently of TLS or Reality readiness. The internal
 TlsClient registers a separate completion callback; only that callback captures the validated handshake binding and
@@ -66,35 +118,7 @@ The three TLS 1.3 handoff controls also use outer application data and encrypted
 
 Visible prefixes are authenticated camouflage and are never used as Reality AEAD nonces. Reality nonces still come from the directional secret IV and independent Reality replay sequence. The node advertises the worst-case `21` bytes of left padding (`5 + 16`).
 
-## Security Model And Limitations
-
-The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
-
-Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
-
-Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
-
-## Compatibility
-
-This authenticated TLS 1.3 handoff is wire-incompatible with earlier unpublished Reality v2 builds, including builds that switched at `SSL_is_init_finished()`. Upgrade `RealityClient` and `RealityServer` together. TLS 1.2 record layouts and counters are unchanged. There is no old-layout or v1 fallback after authentication fails, and supplying the obsolete `max-frame-size` setting is a startup error. Changing the shared password invalidates future sessions; no server-side replay database is required.
-
-## Example
-
-```json
-{
-  "name": "reality-client",
-  "type": "RealityClient",
-  "settings": {
-    "sni": "www.example.com",
-    "verify": true,
-    "password": "replace-with-a-strong-secret",
-    "algorithm": "chacha20-poly1305"
-  },
-  "next": "server-tcp"
-}
-```
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

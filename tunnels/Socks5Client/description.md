@@ -1,9 +1,11 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Client.mdx, and all files must keep the same documentation version.
 -->
 
 # Socks5Client Node
+
+## Overview
 
 `Socks5Client` is a stream middle-tunnel that speaks the client side of the SOCKS5 protocol.
 
@@ -11,7 +13,7 @@ It reads its target settings from JSON, sends the SOCKS5 greeting and optional u
 submits a SOCKS5 command for the configured target destination. It supports TCP `CONNECT` and UDP `ASSOCIATE`.
 Upstream application payload is held until the proxy accepts the request.
 
-## Typical Placement
+## Typical placement
 
 TCP proxy chain:
 
@@ -30,59 +32,36 @@ Important:
 - UDP mode creates a TCP control line for `UDP ASSOCIATE` and a UDP relay line for SOCKS UDP datagrams, so the next
   adapter should be `TcpUdpConnector` when UDP is used
 
-## Configuration Example
+
+## Minimal practical example
+
+This is a **node fragment** for TCP CONNECT. `proxy-transport` must connect to
+your SOCKS5 proxy endpoint; the target below is the requested remote service.
+
+### Fixed target example
 
 ```json
 {
   "name": "socks-client",
   "type": "Socks5Client",
-  "next": "proxy-connector",
-  "settings": {
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "tcp",
-    "user": "alice",
-    "pass": "secret",
-    "dns-behaviour": {"resolve": false},
-    "verbose": false
-  }
-}
-```
-
-Accepted address keys:
-
-- `address`
-- `target-address`
-- `target`
-
-Configured domain names must be 1 to 255 bytes long. Longer names are rejected during node creation.
-
-Accepted credential keys:
-
-- `user` or `username`
-- `pass` or `password`
-
-## Domain Resolution Example
-
-```json
-{
-  "name": "socks-client",
-  "type": "Socks5Client",
-  "next": "proxy-connector",
   "settings": {
     "address": "example.com",
     "port": 443,
     "protocol": "tcp",
     "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
-  }
+  },
+  "next": "proxy-transport"
 }
 ```
 
-With this setting, `Socks5Client` resolves `example.com` before sending the SOCKS5 command. If an IPv4 answer is
-available, the SOCKS5 request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it
-falls back to IPv6.
+With local domain resolution enabled, the internal `DomainResolver` resolves `example.com` before the SOCKS request is
+sent. If an IPv4 answer is available, the SOCKS request carries the IPv4 address. Otherwise it falls back according to
+the selected strategy.
 
-## Required JSON Fields
+
+## Configuration
+
+### Required JSON Fields
 
 - `settings.address`
   The target host or IP that should appear in the SOCKS5 request.
@@ -92,7 +71,7 @@ falls back to IPv6.
   The target port that should appear in the SOCKS5 request.
   It may be a number or `"dest_context->port"`.
 
-## Optional JSON Fields
+### Optional JSON Fields
 
 - `settings.protocol`
   Selects the SOCKS command and the protocol placed in `line->routing_context.dest_ctx`.
@@ -122,7 +101,7 @@ falls back to IPv6.
 - `settings.dns-behaviour`
   Controls local target lookup, address selection and DNS transport. See DNS behaviour below.
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up its IP address. `Socks5Client` can send
 the final target's hostname in the SOCKS5 request, or resolve it locally and
@@ -178,7 +157,72 @@ The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Behavior
+## Usage and troubleshooting
+
+### Configuration Example
+
+```json
+{
+  "name": "socks-client",
+  "type": "Socks5Client",
+  "next": "proxy-connector",
+  "settings": {
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "tcp",
+    "user": "alice",
+    "pass": "secret",
+    "dns-behaviour": {"resolve": false},
+    "verbose": false
+  }
+}
+```
+
+Accepted address keys:
+
+- `address`
+- `target-address`
+- `target`
+
+Configured domain names must be 1 to 255 bytes long. Longer names are rejected during node creation.
+
+Accepted credential keys:
+
+- `user` or `username`
+- `pass` or `password`
+
+### Domain Resolution Example
+
+```json
+{
+  "name": "socks-client",
+  "type": "Socks5Client",
+  "next": "proxy-connector",
+  "settings": {
+    "address": "example.com",
+    "port": 443,
+    "protocol": "tcp",
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
+  }
+}
+```
+
+With this setting, `Socks5Client` resolves `example.com` before sending the SOCKS5 command. If an IPv4 answer is
+available, the SOCKS5 request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it
+falls back to IPv6.
+
+### Notes And Caveats
+
+- SOCKS5 UDP fragmentation is not reassembled; datagrams with `FRAG != 0` are ignored conservatively.
+- UDP mode expects the proxy listener topology to make the UDP associate reply address reachable from the client.
+- A server may return a dedicated dynamic UDP port, so firewall and NAT policy must permit the returned relay endpoint,
+  not only the TCP control port.
+- `required_padding_left` is set for the worst-case SOCKS5 UDP header so UDP mode can prepend datagram headers without
+  breaking Waterwall buffer-padding assumptions.
+
+## Advanced behavior
+
+### Behavior
 
 Application lines enter `Socks5Client` through upstream `Init`. Downstream `Init` is disabled for every line role,
 including UDP application, control, and relay lines; receiving it logs a fatal diagnostic and terminates the process
@@ -214,16 +258,9 @@ The negotiated relay authority survives `Router`/sniffer clearing of observed
 application-protocol metadata. The outbound UDP adapter consumes it exactly once,
 then clears the internal marker so it cannot affect later unrelated routing.
 
-## Notes And Caveats
+## Implementation details
 
-- SOCKS5 UDP fragmentation is not reassembled; datagrams with `FRAG != 0` are ignored conservatively.
-- UDP mode expects the proxy listener topology to make the UDP associate reply address reachable from the client.
-- A server may return a dedicated dynamic UDP port, so firewall and NAT policy must permit the returned relay endpoint,
-  not only the TCP control port.
-- `required_padding_left` is set for the worst-case SOCKS5 UDP header so UDP mode can prepend datagram headers without
-  breaking Waterwall buffer-padding assumptions.
-
-## Splice Support
+### Splice Support
 
 Socks5Client supports splice-backed TCP payloads. During method, authentication
 and command negotiation, complete proxy-reply deliveries are materialized with
@@ -242,7 +279,7 @@ The internal DomainResolver remains splice-capable. Actual activation requires
 an eligible finalized chain and `misc.splice`; a TLS or other blocking node still
 disables splice for the entire payload chain.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

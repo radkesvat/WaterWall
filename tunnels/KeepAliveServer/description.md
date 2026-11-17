@@ -1,16 +1,73 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KeepAliveServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KeepAliveServer.mdx, and all files must keep the same documentation version.
 -->
 
 # KeepAliveServer Node
+
+## Overview
 
 `KeepAliveServer` is the peer tunnel for `KeepAliveClient`. It removes the same `5`-byte keepalive framing from
 upstream traffic, forwards normal payload, and answers ping frames with pong frames.
 
 The purpose of this tunnel is to periodically send/recv ping-pong messages that keep the connection appearing active, preventing timeout-based middleboxes (such as NAT devices and others) from closing it.
 
-## Frame Format
+## Typical placement
+
+Direct in-process test:
+
+```text
+TesterClient -> KeepAliveClient -> KeepAliveServer -> TesterServer
+```
+
+Two-server TCP layout:
+
+```text
+client side: TcpListener -> KeepAliveClient -> TcpConnector
+server side: TcpListener -> KeepAliveServer -> TcpConnector
+```
+
+Any tunnels between the client and server must preserve the keepalive frame
+bytes exactly.
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
+
+```json
+{
+  "name": "keepalive-server",
+  "type": "KeepAliveServer",
+  "next": "next-node-name"
+}
+```
+
+## Configuration
+
+### Required Fields
+
+Top-level fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | User-chosen node name. Must be unique inside the config file. |
+| `type` | string | Must be exactly `"KeepAliveServer"`. |
+| `settings` | object | Optional. The current implementation has no server-specific settings. |
+| `next` | string | Required in normal use. The next node receives decoded upstream payloads. |
+
+`KeepAliveServer` must have a previous node and must be reached by a matching
+`KeepAliveClient`.
+
+### Settings
+
+`KeepAliveServer` currently has no meaningful settings. Keepalive timing is
+configured on `KeepAliveClient` with `settings.ping-interval`.
+
+## Advanced behavior
+
+### Frame Format
 
 Each frame starts with:
 
@@ -23,7 +80,9 @@ Frame kinds are:
 - `2`: ping
 - `3`: pong
 
-## Directional Behavior
+## Implementation details
+
+### Directional Behavior
 
 - upstream payload is treated as a framed byte stream
 - normal upstream frames are decoded and forwarded with `tunnelNextUpStreamPayload()`
@@ -31,7 +90,7 @@ Frame kinds are:
 - upstream `pong` frames are ignored
 - downstream payload is encoded into framed output and sent with `tunnelPrevDownStreamPayload()`
 
-## Finish Behavior
+### Finish Behavior
 
 On either directional `Finish`, `KeepAliveServer`:
 
@@ -40,31 +99,7 @@ On either directional `Finish`, `KeepAliveServer`:
 
 This keeps the close path aligned with Waterwall’s normal middle-tunnel directional finish rules.
 
-## Configuration Example
-
-```json
-{
-  "name": "keepalive-server",
-  "type": "KeepAliveServer",
-  "next": "next-node-name"
-}
-```
-
-## Node Metadata
-
-Source-backed metadata:
-
-| Property | Value |
-| --- | --- |
-| node flags | `kNodeFlagSupportsSplice` |
-| `can_have_prev` | `true` |
-| `can_have_next` | `true` |
-| `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `5` bytes |
-
-## Splice Support
+### Splice Support
 
 `KeepAliveServer` advertises `kNodeFlagSupportsSplice`. Its upstream decoder uses
 a five-byte `splice_stream_t` header cache; its downstream encoder prepends the
@@ -97,3 +132,17 @@ Zero or oversized frame body lengths, admission failure and retained-storage ove
 close the borrowed line through its owner. Finish releases incomplete frames,
 active encoder suffixes and queued reentrant input; this node never destroys
 `line_t` itself.
+
+### Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagSupportsSplice` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `5` bytes |

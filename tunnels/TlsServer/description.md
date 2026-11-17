@@ -1,9 +1,11 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TlsServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TlsServer.mdx, and all files must keep the same documentation version.
 -->
 
 # TlsServer Node
+
+## Overview
 
 `TlsServer` is a server-side TLS wrapper built on OpenSSL.
 
@@ -11,7 +13,7 @@ It accepts encrypted TLS bytes from the previous node, performs a real TLS serve
 
 This tunnel is meant to behave like a basic nginx `stream` TLS server, not like nginx `http`. It does not know anything about HTTP, HTTP/2, or any application protocol placed after it in the chain.
 
-## What It Does
+### What It Does
 
 - Creates one TLS server session per Waterwall line.
 - Performs a real OpenSSL server handshake.
@@ -22,7 +24,7 @@ This tunnel is meant to behave like a basic nginx `stream` TLS server, not like 
 - Optionally sends non-TLS first bytes to a fallback node instead of returning TLS failure behavior.
 - Supports nginx-like stock defaults for protocol versions, ciphers, tickets, timeout, and soft-off session cache behavior.
 
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -40,7 +42,11 @@ That arrangement lets:
 - `TlsServer` terminate TLS
 - `HttpServer` receive plain HTTP bytes
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Replace the PEM paths with the server certificate chain and private key, and define `http-server` for the decrypted HTTP/1.1 stream. A listener must feed TLS bytes into this node. The client must trust the certificate and use its name.
 
 ```json
 {
@@ -49,24 +55,21 @@ That arrangement lets:
   "settings": {
     "cert-file": "/etc/waterwall/fullchain.pem",
     "key-file": "/etc/waterwall/privkey.pem",
-    "min-version": "TLSv1.2",
-    "max-version": "TLSv1.3",
-    "ciphers": "HIGH:!aNULL:!MD5",
-    "select-alpns": ["http/1.1"],
-    "session-cache": "none",
-    "session-tickets": true,
-    "fallback-node-name": "nginx-tls-fallback",
-    "fallback-intentional-delay-ms": 7,
-    "fallback-intentional-delay-jitter-ms": 1,
-    "verbose": false
+    "select-alpns": [
+      "http/1.1"
+    ]
   },
   "next": "http-server"
 }
 ```
 
-## Required JSON Fields
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -77,7 +80,7 @@ That arrangement lets:
 - `next` `(string)`
   The next node that should receive decrypted cleartext.
 
-### `settings`
+#### `settings`
 
 - `cert-file` `(string)`
   Path to the server certificate PEM file.
@@ -87,7 +90,7 @@ That arrangement lets:
 
 Both fields are required. If either one is missing or invalid, tunnel creation fails.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `sni` `(string)`
   Optional case-insensitive exact SNI match. With fallback configured, mismatched or absent SNI routes to fallback before TLS output. Otherwise it rejects the handshake. It does not change certificates dynamically.
@@ -237,7 +240,7 @@ Both fields are required. If either one is missing or invalid, tunnel creation f
 - `tls13-record-shaping` `(object)`
   Enables the experimental sender-side TLS 1.3 record shaping described below. Absent by default.
 
-## Experimental TLS 1.3 Record Shaping
+### Experimental TLS 1.3 Record Shaping
 
 `tls13-record-shaping` optionally pads and delays the first locally sent TLS 1.3 application records. It is disabled
 when absent. It never changes received ciphertext, handshake records, alerts, empty application records, fallback bytes,
@@ -294,35 +297,65 @@ Record shaping can make early sizes and timings less deterministic, but it canno
 make a burst smaller, or hide every direction and timing feature. Combine it with `MuxClient`/`MuxServer` when
 multiplexing fits the deployment.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Handshake and data flow
+### Configuration Example
 
-`TlsServer` accepts line initialization only through upstream `Init`. Downstream
-`Init` is a fatal callback misuse in every state, including fallback close drain;
-it logs the violation and terminates the process. Downstream response payloads
-remain supported on lines initialized upstream.
+```json
+{
+  "name": "tls-server",
+  "type": "TlsServer",
+  "settings": {
+    "cert-file": "/etc/waterwall/fullchain.pem",
+    "key-file": "/etc/waterwall/privkey.pem",
+    "min-version": "TLSv1.2",
+    "max-version": "TLSv1.3",
+    "ciphers": "HIGH:!aNULL:!MD5",
+    "select-alpns": ["http/1.1"],
+    "session-cache": "none",
+    "session-tickets": true,
+    "fallback-node-name": "nginx-tls-fallback",
+    "fallback-intentional-delay-ms": 7,
+    "fallback-intentional-delay-jitter-ms": 1,
+    "verbose": false
+  },
+  "next": "http-server"
+}
+```
 
-On upstream `Init`, `TlsServer` creates per-line OpenSSL state. Without fallback it forwards upstream `Init` to the next
-node immediately. With fallback configured, it waits until the first bytes show whether the line belongs to the protected
-TLS branch or the fallback branch.
+### Notes And Caveats
 
-After that:
+- `TlsServer` is a generic TLS tunnel, not an HTTP tunnel.
+- It does not inspect or coordinate with `HttpServer`, `HttpClient`, or any other application-layer tunnel.
+- `sni` selects the protected branch versus fallback when fallback is configured, and otherwise rejects mismatches. It does not select different certificates.
+- If neither ALPN setting is configured, `TlsServer` defaults to HTTP/1.1-only
+  `select-alpns: ["http/1.1"]`.
+- To intentionally keep the old always-`alpn=<none>` behavior, configure `select-alpns: []`.
+- ALPN is selection-only in `TlsServer`; it is not an access gate. No-overlap ALPN offers continue without negotiated
+  ALPN.
+- `alpns` is a deprecated alias. `select-alpns` is the preferred ALPN selection setting. Neither setting tells later
+  tunnels what application protocol was chosen.
+- `session-cache` defaults to nginx-like `none`, not builtin caching.
+- fallback is selected only before ServerHello. After TLS is committed, later TLS errors stay on the TLS path and do not
+  switch to fallback.
 
-- encrypted bytes coming from the previous node are fed into the TLS server handshake and record layer
-- decrypted application bytes are forwarded upstream to the next node
-- cleartext payload coming back from the next node is encrypted and sent downstream to the previous node
+### Nginx Matching Warning
 
-This means the next node always sees plain application data, not TLS records.
+This tunnel tries to look like a basic nginx `stream` TLS server with stock settings.
 
-### `Est` behavior
+If you change settings away from the defaults, the handshake may still be valid TLS but it may no longer look like stock nginx to active probes or middle-boxes.
 
-In Waterwall terms, downstream `Est` still represents the underlying transport becoming established.
-`TlsServer` forwards that `Est` immediately; it does not wait for the TLS handshake.
+Common examples:
 
-TLS readiness happens later, when the handshake completes.
+- changing `ciphers`
+- changing `min-version` or `max-version`
+- enabling `prefer-server-ciphers`
+- changing `session-cache` away from `none`
+- disabling `session-tickets`
+- changing ALPN selection
+- adding an `sni` filter
 
-If the next node sends payload before the handshake is finished, `TlsServer` queues that cleartext and flushes it only after the TLS session is ready.
+So if your goal is wire-level similarity to default nginx, keep the defaults unless you have a specific reason to change them.
 
 ### Fallback behavior
 
@@ -453,7 +486,39 @@ In this architecture:
 - **Fallback health and observability**: If the real nginx fallback service is unreachable, returns unexpected error pages, or exhibits distinct certificate/ALPN/cipher/session properties, the deployment can be identified.
 - **Timing and timeouts**: `SniffRouter` buffering and connector relay introduce small timing characteristics. Align `TcpListener` idle timeouts with the cover nginx server. WaterWall does not claim complete timing indistinguishability or byte-level TLS fingerprint equivalence.
 
-### Finish behavior
+## Implementation details
+
+### Detailed Behavior
+
+#### Handshake and data flow
+
+`TlsServer` accepts line initialization only through upstream `Init`. Downstream
+`Init` is a fatal callback misuse in every state, including fallback close drain;
+it logs the violation and terminates the process. Downstream response payloads
+remain supported on lines initialized upstream.
+
+On upstream `Init`, `TlsServer` creates per-line OpenSSL state. Without fallback it forwards upstream `Init` to the next
+node immediately. With fallback configured, it waits until the first bytes show whether the line belongs to the protected
+TLS branch or the fallback branch.
+
+After that:
+
+- encrypted bytes coming from the previous node are fed into the TLS server handshake and record layer
+- decrypted application bytes are forwarded upstream to the next node
+- cleartext payload coming back from the next node is encrypted and sent downstream to the previous node
+
+This means the next node always sees plain application data, not TLS records.
+
+#### `Est` behavior
+
+In Waterwall terms, downstream `Est` still represents the underlying transport becoming established.
+`TlsServer` forwards that `Est` immediately; it does not wait for the TLS handshake.
+
+TLS readiness happens later, when the handshake completes.
+
+If the next node sends payload before the handshake is finished, `TlsServer` queues that cleartext and flushes it only after the TLS session is ready.
+
+#### Finish behavior
 
 For clean downstream closes, `TlsServer` sends a TLS `close_notify` alert when the handshake completed. Already
 accepted ciphertext drains before the alert, preserving any configured record delay even during advisory Pause.
@@ -469,41 +534,7 @@ callbacks toward the finished wire side. Raw fallback continues to relay the sel
 
 Fatal TLS failures still close the line in both directions.
 
-## Notes And Caveats
-
-- `TlsServer` is a generic TLS tunnel, not an HTTP tunnel.
-- It does not inspect or coordinate with `HttpServer`, `HttpClient`, or any other application-layer tunnel.
-- `sni` selects the protected branch versus fallback when fallback is configured, and otherwise rejects mismatches. It does not select different certificates.
-- If neither ALPN setting is configured, `TlsServer` defaults to HTTP/1.1-only
-  `select-alpns: ["http/1.1"]`.
-- To intentionally keep the old always-`alpn=<none>` behavior, configure `select-alpns: []`.
-- ALPN is selection-only in `TlsServer`; it is not an access gate. No-overlap ALPN offers continue without negotiated
-  ALPN.
-- `alpns` is a deprecated alias. `select-alpns` is the preferred ALPN selection setting. Neither setting tells later
-  tunnels what application protocol was chosen.
-- `session-cache` defaults to nginx-like `none`, not builtin caching.
-- fallback is selected only before ServerHello. After TLS is committed, later TLS errors stay on the TLS path and do not
-  switch to fallback.
-
-## Nginx Matching Warning
-
-This tunnel tries to look like a basic nginx `stream` TLS server with stock settings.
-
-If you change settings away from the defaults, the handshake may still be valid TLS but it may no longer look like stock nginx to active probes or middle-boxes.
-
-Common examples:
-
-- changing `ciphers`
-- changing `min-version` or `max-version`
-- enabling `prefer-server-ciphers`
-- changing `session-cache` away from `none`
-- disabling `session-tickets`
-- changing ALPN selection
-- adding an `sni` filter
-
-So if your goal is wire-level similarity to default nginx, keep the defaults unless you have a specific reason to change them.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

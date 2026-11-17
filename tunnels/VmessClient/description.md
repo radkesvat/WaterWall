@@ -1,9 +1,11 @@
 <!--
-Documentation version: 6
+Documentation version: 7
 Sync note: Keep this file, WaterWall-Docs/docs/02-noderefs/VmessClient.mdx and WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VmessClient.mdx synchronized.
 -->
 
 # VmessClient Node
+
+## Overview
 
 `VmessClient` sends modern VMess AEAD requests using one configured UUID or short string ID. It carries
 TCP streams or fixed-destination UDP datagrams over a byte-stream transport. The
@@ -13,7 +15,9 @@ The node's address and port select the **final proxied target**. The following
 `TcpConnector` selects the **VMess server endpoint**. TLS and WebSocket belong to
 their existing transport nodes; VmessClient does not discover or configure them.
 
-## Placement and examples
+## Typical placement
+
+### Placement and examples
 
 ```text
 TcpListener    -> VmessClient -> TcpConnector
@@ -25,6 +29,18 @@ TcpListener    -> VmessClient -> HttpClient (WebSocket) -> TlsClient -> TcpConne
 
 For HTTP/1.1 WebSocket over TLS, configure matching HTTP/1.1 ALPN in TlsClient.
 Certificate validation and SNI remain TlsClient settings.
+
+
+VMess body protection is a separate choice from TLS. `none` and `zero` leave
+application bodies unencrypted and unauthenticated. The default
+`encrypted-counter-policy: "wrap"` eventually repeats AEAD nonces under the same
+session key; it is not rekeying. `strict` closes before nonce reuse. Read the
+security and counter settings before choosing a policy.
+
+## Minimal practical example
+
+This is a **node fragment**. Complete the surrounding chain and replace the
+sample UUID with the matching peer credential.
 
 ```json
 {
@@ -47,24 +63,13 @@ Certificate validation and SNI remain TlsClient settings.
 Here `example.com:443` is the destination requested from the VMess server, even
 when the following connector dials a different host and port.
 
-To preserve an incoming proxy/router destination:
 
-```json
-{
-  "name": "vmess-client",
-  "type": "VmessClient",
-  "next": "tcp-to-vmess-server",
-  "settings": {
-    "id": "5783a3e7-e373-51cd-8642-c83782b807c5",
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "dest_context->protocol",
-    "security": "chacha20-poly1305"
-  }
-}
-```
+`tls-client` names your configured TLS transport; its next connector dials the
+VMess server. The node target `example.com:443` is the service requested from it.
 
-## Settings
+## Configuration
+
+### Settings
 
 | Setting | Default | Accepted values |
 | --- | --- | --- |
@@ -107,7 +112,7 @@ outbound credential as an authenticated local-peer identity, or duplicate accoun
 on its UDP carrier. Admission, quotas, account rotation and user shaping remain on
 the server/application side.
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up its IP address. `VmessClient` can send
 the final target's hostname in the VMess request, or resolve it locally and
@@ -168,7 +173,67 @@ Packetaddr still requires an IP target after preparation/resolution. A shared DN
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Security and framing
+## Usage and troubleshooting
+
+### Destination-context example
+
+To preserve an incoming proxy/router destination:
+
+```json
+{
+  "name": "vmess-client",
+  "type": "VmessClient",
+  "next": "tcp-to-vmess-server",
+  "settings": {
+    "id": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "dest_context->protocol",
+    "security": "chacha20-poly1305"
+  }
+}
+```
+
+### Read-only stats
+
+The registered node API operation `stats` accepts an empty JSON object `{}` of at
+most 64 bytes including whitespace. It has no reset or mutation operation. Access
+requires the ordinary APIServer node/operation permission; see the shared
+[node-operation contracts](../../WaterWall-Docs/docs/05-devguides/api/node-operations.mdx) in the node reference.
+
+The fixed JSON response includes effective security/options/protocol, counter,
+termination and packet encoding settings, approximate active application/carrier
+counts, successful TX/RX body records, application bytes, wire bytes, wrap counts,
+fixed close/drop reasons and suppressed verbose messages. Every uint64 counter is
+a decimal JSON string, preserving full precision. Application bytes exclude
+packetaddr envelopes and count successfully encoded TX data and delivered RX data;
+wire bytes count submitted TX/received RX bytes including handshake and framing.
+Framed EOF contributes a record but no application bytes. Snapshots load atomic
+counters independently and are approximate while traffic continues; they never
+traverse live lines. The client owns no destination backend, auth cache or replay
+table. Invalid/nonempty bodies, expired deadlines and insufficient result/working
+budgets return an API error. Working memory includes 4,608 bytes of fixed render/
+metadata scratch plus the actual result-pool allocation charge.
+
+### Build and limitations
+
+`INCLUDE_VMESS_CLIENT` enables the node in standard builds. VmessClient and VmessServer
+share the internal VmessCommon codec and its direct OpenSSL provider requirement
+(3.3 or newer for streaming SHAKE), independently of the generic crypto backend.
+Client-only builds need neither VmessServer nor AuthenticationClient/UserController.
+
+The complete expanded chain uses ordinary buffers; new output retains full onward
+pool padding.
+
+Unsupported features include legacy headers, AlterID, AES-CFB, AES-CTR, Mux.Cool, XUDP,
+reverse commands, automatic account/security switching, reconnect/replay and new
+transport implementations.
+
+WaterWall Mux framing is custom and does not provide external VMess Mux.Cool interoperability.
+
+## Advanced behavior
+
+### Security and framing
 
 All modes use authenticated AEAD request and response headers. `none` and `zero`
 leave application bodies unencrypted and unauthenticated. TLS remains separately
@@ -197,7 +262,9 @@ For the internal bits CHUNK=1, MASK=4, PADDING=8 and AUTH_LENGTH=16, the support
 combinations are `1,5,13,17,21,29` for encrypted modes, `1,5` for TCP NONE,
 `1,5,13` for UDP NONE, and `0` for zero. These are not a JSON bitmask setting.
 
-## Request timing and response handling
+## Implementation details
+
+### Request timing and response handling
 
 Init prepares the destination and starts the transport without emitting a VMess
 request. The first eligible payload sends immediately, including before Est,
@@ -223,7 +290,7 @@ applying SwitchAccount, endpoint or credential changes. Coalesced body bytes rem
 in order. Bad tags, malformed lengths and incorrect authenticated markers close
 the affected connection.
 
-## UDP, bounds and lifecycle
+### UDP, bounds and lifecycle
 
 The application UDP line is borrowed. VmessClient creates and owns one same-worker
 TCP carrier per association and preserves one fixed final target. Each accepted
@@ -291,44 +358,7 @@ and their dependent carriers before chain/pool teardown; quiescence prevents new
 timer output or associations. The node remains active for the whole connection,
 including `none`/`zero`.
 
-## Read-only stats
-
-The registered node API operation `stats` accepts an empty JSON object `{}` of at
-most 64 bytes including whitespace. It has no reset or mutation operation. Access
-requires the ordinary APIServer node/operation permission; see the shared
-[node-operation contracts](../../WaterWall-Docs/docs/05-devguides/api/node-operations.mdx) in the node reference.
-
-The fixed JSON response includes effective security/options/protocol, counter,
-termination and packet encoding settings, approximate active application/carrier
-counts, successful TX/RX body records, application bytes, wire bytes, wrap counts,
-fixed close/drop reasons and suppressed verbose messages. Every uint64 counter is
-a decimal JSON string, preserving full precision. Application bytes exclude
-packetaddr envelopes and count successfully encoded TX data and delivered RX data;
-wire bytes count submitted TX/received RX bytes including handshake and framing.
-Framed EOF contributes a record but no application bytes. Snapshots load atomic
-counters independently and are approximate while traffic continues; they never
-traverse live lines. The client owns no destination backend, auth cache or replay
-table. Invalid/nonempty bodies, expired deadlines and insufficient result/working
-budgets return an API error. Working memory includes 4,608 bytes of fixed render/
-metadata scratch plus the actual result-pool allocation charge.
-
-## Build and limitations
-
-`INCLUDE_VMESS_CLIENT` enables the node in standard builds. VmessClient and VmessServer
-share the internal VmessCommon codec and its direct OpenSSL provider requirement
-(3.3 or newer for streaming SHAKE), independently of the generic crypto backend.
-Client-only builds need neither VmessServer nor AuthenticationClient/UserController.
-
-The complete expanded chain uses ordinary buffers; new output retains full onward
-pool padding.
-
-Unsupported features include legacy headers, AlterID, AES-CFB, AES-CTR, Mux.Cool, XUDP,
-reverse commands, automatic account/security switching, reconnect/replay and new
-transport implementations.
-
-WaterWall Mux framing is custom and does not provide external VMess Mux.Cool interoperability.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata from `instance/node.c`:
 

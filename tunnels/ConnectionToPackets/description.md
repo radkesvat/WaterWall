@@ -1,9 +1,11 @@
 <!--
-Documentation version: 162
+Documentation version: 163
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionToPackets.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionToPackets.mdx, and all files must keep the same documentation version.
 -->
 
 # ConnectionToPackets Node
+
+## Overview
 
 `ConnectionToPackets` is the active-open inverse of `PacketsToConnection`. It takes an ordinary WaterWall connection
 line, opens the matching TCP or UDP flow inside an in-process lwIP stack, and emits the resulting raw IPv4 packets on
@@ -24,7 +26,7 @@ return IPv4 packets
 its own MTU; other node overrides do not change it. An invalid inherited core
 `misc.mtu` requires a supported explicit node override.
 
-## What It Is
+### What It Is
 
 This is a userspace transport bridge, not a transparent replacement for an OS TUN interface. It needs no kernel TUN
 device, no raw socket, and no root privileges.
@@ -33,7 +35,42 @@ Local applications must enter WaterWall through a connection adapter such as `Tc
 `TcpUdpListener`, or `Socks5Server`. Capturing arbitrary traffic from unrelated kernel sockets is outside this node's
 scope and still requires an OS routing or VPN mechanism.
 
-## Topologies
+### Scope
+
+Supported:
+
+- IPv4 TCP
+- IPv4 UDP, including datagrams larger than one MTU
+- IP destinations, and domain destinations through the internal `DomainResolver`
+- multiple WaterWall event workers
+
+Rejected or dropped:
+
+- IPv6, permanently: see below
+- ICMP and every other non-TCP/UDP protocol
+- UDP payloads above `65507` bytes, which have no valid IPv4 encoding
+- return packets that match no registered flow
+
+ICMP error delivery and preserving the application's original source port are follow-up work.
+
+#### IPv4 Only, By Design
+
+This node emits IPv4 and nothing else. That is a product decision rather than a missing feature: it exists to bridge a
+connection into a packet topology whose far side is an IPv4 stack, and an IPv6 packet on that side would have nowhere
+to go.
+
+The contract is enforced at both ends:
+
+- With local resolution enabled, the effective `dns-behaviour.strategy` must be `only-ipv4`, so an AAAA-only domain fails DNS with a name in the message instead of
+  resolving to an address this node then has to reject
+- a literal IPv6 `target-address` is a configuration error
+- a destination that is nonetheless IPv6 closes that one line with an explicit error
+
+Enabled lwIP IPv6 support is unchanged. Nodes on one worker share its engine; this bridge still accepts only IPv4.
+
+## Typical placement
+
+### Topologies
 
 For a fixed destination, configure `target-address` and `port` on `ConnectionToPackets`:
 
@@ -75,89 +112,29 @@ The configured virtual source address must be routable back through the packet t
 normally selects the peer with a destination route such as `0.0.0.0/0`, and the remote peer must allow the configured
 virtual source address, usually as a `/32`.
 
-## Scope
+## Minimal practical example
 
-Supported:
+Node fragment; define the referenced neighbors and peers in the same deployment.
 
-- IPv4 TCP
-- IPv4 UDP, including datagrams larger than one MTU
-- IP destinations, and domain destinations through the internal `DomainResolver`
-- multiple WaterWall event workers
+Place this after a node such as Socks5Server that supplies an IPv4 destination and port. Define `packet-side` as the packet topology, and make `10.90.0.1` routable back through it. The node supports IPv4 TCP/UDP only; choose an MTU compatible with that topology.
 
-Rejected or dropped:
+```json
+{
+  "name": "connection-to-packets",
+  "type": "ConnectionToPackets",
+  "settings": {
+    "source-ipv4": "10.90.0.1",
+    "mtu": 1420
+  },
+  "next": "packet-side"
+}
+```
 
-- IPv6, permanently: see below
-- ICMP and every other non-TCP/UDP protocol
-- UDP payloads above `65507` bytes, which have no valid IPv4 encoding
-- return packets that match no registered flow
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-ICMP error delivery and preserving the application's original source port are follow-up work.
+## Configuration
 
-### IPv4 Only, By Design
-
-This node emits IPv4 and nothing else. That is a product decision rather than a missing feature: it exists to bridge a
-connection into a packet topology whose far side is an IPv4 stack, and an IPv6 packet on that side would have nowhere
-to go.
-
-The contract is enforced at both ends:
-
-- With local resolution enabled, the effective `dns-behaviour.strategy` must be `only-ipv4`, so an AAAA-only domain fails DNS with a name in the message instead of
-  resolving to an address this node then has to reject
-- a literal IPv6 `target-address` is a configuration error
-- a destination that is nonetheless IPv6 closes that one line with an explicit error
-
-Enabled lwIP IPv6 support is unchanged. Nodes on one worker share its engine; this bridge still accepts only IPv4.
-
-## Checksum Finalization Boundary
-
-On return-side packet ingress, `ConnectionToPackets` is the final consumer of the packet buffer's checksum
-recalculation request. It takes and clears that request before any validation or drop path, normalizes the packet into
-mutable aligned message storage, and then repairs the supported checksums before queueing bytes for lwIP. A malformed, IPv6,
-stopping, or refused packet therefore cannot leak its request into the next unrelated packet on the worker line.
-
-For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
-
-The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
-offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
-at device ingress or before this node when fragmented datagrams must be delivered.
-The first unsupported-fragment drop logs a warning; subsequent drops increment the
-instance counter, whose total is logged at destruction. Rejection releases the
-input resources, preserves the packet line and leaves other connections running.
-Malformed packet structure follows the existing validation/drop path.
-
-## Fragmentation
-
-A UDP datagram larger than the configured MTU is emitted as IPv4 fragments rather than dropped. The whole datagram is
-handed to lwIP, which splits it in `ip4_frag()`, so the identification, offsets and `MF` flag are the stack's rather
-than this node's.
-
-Incoming return packets must already be reassembled before this node's downstream
-packet callback. The node does not accept fragments into its local stack.
-Outgoing UDP fragmentation remains supported; a directly connected packet-to-stack
-consumer must receive complete packets, so a path carrying such output needs
-reassembly before that consumer. A device's `fragment-policy` only controls its
-own reads and does not reassemble packets emitted elsewhere in the chain.
-
-Every output packet of one flow, including fragments, is sent to the same packet
-worker. TCP send MSS is derived from the configured MTU. Output fragmentation and
-input reassembly are separate responsibilities.
-
-Packet handoff copies in both directions share a per-instance limit of **16 MiB**
-(including message metadata and explicit alignment padding) and **4096 allocations**.
-Admission reserves both and the process-wide `lwip-memory-budget` before
-allocation or copying. Output refusal returns lwIP
-`ERR_MEM`; TCP retains its stack retry behavior and UDP follows its send-error/drop
-policy. Return input that exceeds the budget is dropped, allowing TCP retransmission;
-this never discards already accepted application stream bytes. Dispatch remains
-queued even on the same worker. Cancellation, stale flow, shutdown and delivery
-release each charge once; injected custom pbufs keep their charge until actual free,
-using budget storage that can outlive the tunnel. Egress copies into one padded
-buffer sized to the packet with the engine owner's chain padding and charges its
-complete allocation. The queued message transfers that same buffer; after the neighbor takes ownership, that
-receiver enforces its own retention budget. The first refusal in each direction logs
-a warning, and destruction logs accumulated return/output refusal counters.
-
-## Settings
+### Settings
 
 | Setting | Required | Default | Meaning |
 | --- | --- | --- | --- |
@@ -189,7 +166,7 @@ Example:
 }
 ```
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up the IPv4 address needed to open the TCP or
 UDP flow. This node first selects its target from `target-address`, `port`, or the
@@ -246,7 +223,191 @@ When enabled, the effective strategy must be `only-ipv4`; `core-settings` is acc
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Destination And Protocol Selection
+## Usage and troubleshooting
+
+### Capacity
+
+All `ConnectionToPackets` and `PacketsToConnection` instances share one growable
+lwIP allocator and its startup limits across the process. Configure these fields
+under `misc` in `core.json`, not in the node's `settings`:
+
+| Core setting | Standard default | Resource |
+| --- | ---: | --- |
+| `lwip-memory-budget` | `536870912` (512 MiB) | Pool storage and charged retained packet storage |
+| `lwip-max-tcp-flows` | `65536` | TCP connection-state objects, including handshake and closing states |
+| `lwip-max-udp-flows` | `65536` | UDP connection-state objects |
+| `lwip-max-tcp-listeners` | `1024` | TCP listener objects |
+| `lwip-max-tcp-segments` | `1048576` | TCP send, retransmit and receive segment objects |
+| `lwip-max-rx-wrappers` | `262144` | PTC wrappers retaining input packets |
+
+Object limits accept whole numbers in `1..4294967295`. The byte budget accepts
+whole numbers from `1048576` to the smaller of the target's `SIZE_MAX` and
+`9223372036854775807`. Invalid values fail startup; changes require a restart.
+Custom builds can change TCP, UDP and listener defaults; explicit core settings
+win. More workers do not multiply these process-wide limits, and `ram-profile`
+does not change them.
+
+Storage grows on demand within both the byte ceiling and the relevant object
+limit. The budget charges pool slabs, their headers and alignment, free objects
+retained in worker caches, CTP packet-handoff storage in both directions, and
+PTC input buffers for as long as their custom pbuf retains them. Cached pool
+storage remains charged until reclaimed. It does not preallocate every allowed
+flow or reserve the entire byte budget at startup.
+
+The allocator reserves `R = min(1048576, floor(B / 16))` bytes within the
+configured byte budget `B` for recovery traffic. Ordinary allocations and caches
+are limited to `B - R`. Eligible validated zero-payload TCP ACK/RST ingress and
+TCP ACK/RST/keepalive output use a separate recovery path so acknowledgements can
+release queued send data even when ordinary capacity is full. This is headroom
+inside the same cap, not extra or preallocated memory; recovery traffic can still
+be refused if that headroom is exhausted.
+
+RX wrappers have their own entry reserve within `lwip-max-rx-wrappers = L`:
+`min(256, max(1, floor(L / 16)))` entries when `L > 1`, and none when `L = 1`.
+The default `262144` therefore permits `261888` ordinary wrappers and `256`
+recovery wrappers. API pool counts and limits include both classes. CTP's fixed
+16 MiB/4096-allocation handoff ceiling similarly contains a 1 MiB/256-allocation
+recovery partition, leaving 15 MiB/3840 for ordinary handoffs. Packet input and
+handoff first try ordinary admission, then eligible recovery packets may fall
+back to their reserved capacity. SYN, FIN and application payload remain ordinary.
+
+The budget is not a process RSS limit. Application pending/ACK queues, receive
+staging after pbuf ownership ends, line/node state, engine/port control tables,
+unrelated buffers and native kernel resources have their own memory costs.
+CTP's per-instance 16 MiB/4096-allocation handoff limit and both bridges'
+per-flow queue, out-of-order and closer limits still apply independently.
+`tcp-stack-receive-budget` controls advertised receive windows per worker and
+does not enlarge any allocator limit. TCP send/receive windows are protocol
+ceilings, not per-connection memory reservations.
+
+Capacity refusal can reject a new flow, drop a packet or defer a TCP write until
+resources return, according to the affected path. Actual heap allocation failure
+remains fatal. Size for simultaneous flows and traffic, including handshakes and
+closing connections; a user can have many flows. A
+`TunDevice -> PacketsToConnection` chain uses this same userspace allocator.
+
+Each worker still has 255 netif indices shared by its loopback and attached nodes.
+Exhaustion refuses an attachment. Packet ingress still requires complete IPv4
+datagrams; larger pool limits do not enable fragment input or change reassembly
+policy.
+
+#### Source-port capacity
+
+CTP reserves the complete wire tuple before opening TCP or UDP: protocol,
+source address and port, destination address and port. The same source port may
+serve different destinations or different configured source addresses. Identical
+tuples remain exclusive across workers and netifs until their PCB is freed,
+including TCP `TIME_WAIT`; changing workers cannot bypass this protection.
+
+For one fixed source IPv4, destination IPv4 and destination port, automatic
+allocation has 16,383 TCP ports (`49152..65534`) or 16,384 UDP ports
+(`49152..65535`), reduced by existing reservations. Unconnected or wildcard
+reservations conservatively exclude their numeric port from scoped allocation.
+Each CTP instance still uses one configured `source-ipv4`; this does not add an
+automatic source-address pool. More diverse destinations can share port numbers,
+but increasing PCB or memory limits cannot remove a fixed tuple's port ceiling.
+
+### Capacity API (`stack-stats`)
+
+Both bridge nodes register the read-only `stack-stats` operation. Grant an
+APIServer client the exact configuration, node and operation permission. Use the
+existing API client and [normal API framing](../../WaterWall-Docs/docs/05-devguides/api/protocol.mdx) to send a request such as:
+
+```json
+{
+  "id": "capacity-1",
+  "auth": {"client": "monitor", "token": "<configured token>"},
+  "selector": {"config": "edge", "node": "connection-to-packets"},
+  "operation": "stack-stats",
+  "content_type": "application/json",
+  "body_encoding": "utf8",
+  "body": "{}"
+}
+```
+
+Replace the selector and credentials with the configured values. The request
+body is an empty JSON object, at most 64 bytes including optional JSON whitespace;
+fields, trailing data and embedded NUL are rejected. The response is JSON encoded
+as UTF-8 inside the ordinary API result body. It describes the whole process,
+not just the selected node or calling worker.
+
+| Result field | Meaning |
+| --- | --- |
+| `scope`, `dynamic` | `"process"` and whether pools grow on demand |
+| `memory_budget`, `reserved_bytes`, `peak_reserved_bytes` | Configured ceiling, currently charged storage and its high-water mark |
+| `recovery_headroom`, `recovery_bytes`, `external_recovery_bytes`, `recovery_refusals` | Recovery allowance inside the cap, its currently charged storage, its external-storage subset and recovery byte-capacity refusals |
+| `external_bytes`, `external_refusals` | Charged CTP handoff/PTC pbuf-retained storage and refused external reservations |
+| `byte_refusals`, `reclaimed_bytes` | Shared byte-budget refusals and storage reclaimed under pressure |
+| `limits` | Effective TCP/UDP flow, listener, segment and RX-wrapper limits |
+| `pools` | Per-pool name, object size, limit, allocated/held objects, peak held, reserved bytes and count/byte refusals |
+| `ports.tcp`, `ports.udp` | Active/peak reservations, refusals and scoped/unscoped reservations |
+
+Byte totals and cumulative counters are decimal strings to preserve full width;
+object counts and limits are JSON integers. `reserved_bytes` includes recovery
+storage, and `external_bytes` includes `external_recovery_bytes`; do not add those
+subsets again. `held_includes_worker_caches` is true:
+`held` and `peak_held` include free objects reserved in worker caches and must not
+be interpreted as live-connection counts. Capacity and port sections are bounded
+snapshots taken under their respective locks, not an atomic traffic-wide census.
+
+The handler produces at most 32 KiB of result JSON and checks the gateway's
+response limit, working-memory allowance and deadline. A malformed body returns
+`expected_empty_object` when an error response fits those bounds; a refused result
+can have an empty body. Use per-pool count refusals, shared byte refusals and port
+refusals to identify which resource needs attention before changing a limit.
+
+## Advanced behavior
+
+### Checksum Finalization Boundary
+
+On return-side packet ingress, `ConnectionToPackets` is the final consumer of the packet buffer's checksum
+recalculation request. It takes and clears that request before any validation or drop path, normalizes the packet into
+mutable aligned message storage, and then repairs the supported checksums before queueing bytes for lwIP. A malformed, IPv6,
+stopping, or refused packet therefore cannot leak its request into the next unrelated packet on the worker line.
+
+For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
+
+The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
+offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
+at device ingress or before this node when fragmented datagrams must be delivered.
+The first unsupported-fragment drop logs a warning; subsequent drops increment the
+instance counter, whose total is logged at destruction. Rejection releases the
+input resources, preserves the packet line and leaves other connections running.
+Malformed packet structure follows the existing validation/drop path.
+
+### Fragmentation
+
+A UDP datagram larger than the configured MTU is emitted as IPv4 fragments rather than dropped. The whole datagram is
+handed to lwIP, which splits it in `ip4_frag()`, so the identification, offsets and `MF` flag are the stack's rather
+than this node's.
+
+Incoming return packets must already be reassembled before this node's downstream
+packet callback. The node does not accept fragments into its local stack.
+Outgoing UDP fragmentation remains supported; a directly connected packet-to-stack
+consumer must receive complete packets, so a path carrying such output needs
+reassembly before that consumer. A device's `fragment-policy` only controls its
+own reads and does not reassemble packets emitted elsewhere in the chain.
+
+Every output packet of one flow, including fragments, is sent to the same packet
+worker. TCP send MSS is derived from the configured MTU. Output fragmentation and
+input reassembly are separate responsibilities.
+
+Packet handoff copies in both directions share a per-instance limit of **16 MiB**
+(including message metadata and explicit alignment padding) and **4096 allocations**.
+Admission reserves both and the process-wide `lwip-memory-budget` before
+allocation or copying. Output refusal returns lwIP
+`ERR_MEM`; TCP retains its stack retry behavior and UDP follows its send-error/drop
+policy. Return input that exceeds the budget is dropped, allowing TCP retransmission;
+this never discards already accepted application stream bytes. Dispatch remains
+queued even on the same worker. Cancellation, stale flow, shutdown and delivery
+release each charge once; injected custom pbufs keep their charge until actual free,
+using budget storage that can outlive the tunnel. Egress copies into one padded
+buffer sized to the packet with the engine owner's chain padding and charges its
+complete allocation. The queued message transfers that same buffer; after the neighbor takes ownership, that
+receiver enforces its own retention budget. The first refusal in each direction logs
+a warning, and destruction logs accumulated return/output refusal counters.
+
+### Destination And Protocol Selection
 
 Protocol selection is deliberately identical to `TcpUdpConnector`, so both nodes accept exactly the same lines:
 
@@ -283,7 +444,15 @@ when the packet path runs to another host.
 There is no fake DNS here. Preserving the original domain for policy decisions on the remote `PacketsToConnection` side
 would need a separate metadata protocol and is not part of this node.
 
-## Flow Control
+### Composition Notes
+
+- The previous node must be layer 4 and the next node must be layer 3.
+- A `next` node is required: it is where the packets go.
+- Placing this node in a chain makes that chain a packet chain, so per-worker packet lines are allocated for it.
+
+## Implementation details
+
+### Flow Control
 
 TCP applies real backpressure in both directions:
 
@@ -307,7 +476,7 @@ by either retained-entry accounting or queue allocation pressure.
 UDP backpressure is intentionally lossy: while the previous node is paused, received datagrams are dropped rather than
 queued without bound.
 
-## Lifecycle Notes
+### Lifecycle Notes
 
 - The connection line is **borrowed**. This node initializes and destroys only its own line state and never calls
   `lineDestroy()`; the listener or adapter that created the line destroys it.
@@ -386,144 +555,7 @@ queued without bound.
   depend on the refused queue or on Stop rediscovering the flow.
 - Borrowed lines are finished and destroyed later by their real owners.
 
-## Capacity
-
-All `ConnectionToPackets` and `PacketsToConnection` instances share one growable
-lwIP allocator and its startup limits across the process. Configure these fields
-under `misc` in `core.json`, not in the node's `settings`:
-
-| Core setting | Standard default | Resource |
-| --- | ---: | --- |
-| `lwip-memory-budget` | `536870912` (512 MiB) | Pool storage and charged retained packet storage |
-| `lwip-max-tcp-flows` | `65536` | TCP connection-state objects, including handshake and closing states |
-| `lwip-max-udp-flows` | `65536` | UDP connection-state objects |
-| `lwip-max-tcp-listeners` | `1024` | TCP listener objects |
-| `lwip-max-tcp-segments` | `1048576` | TCP send, retransmit and receive segment objects |
-| `lwip-max-rx-wrappers` | `262144` | PTC wrappers retaining input packets |
-
-Object limits accept whole numbers in `1..4294967295`. The byte budget accepts
-whole numbers from `1048576` to the smaller of the target's `SIZE_MAX` and
-`9223372036854775807`. Invalid values fail startup; changes require a restart.
-Custom builds can change TCP, UDP and listener defaults; explicit core settings
-win. More workers do not multiply these process-wide limits, and `ram-profile`
-does not change them.
-
-Storage grows on demand within both the byte ceiling and the relevant object
-limit. The budget charges pool slabs, their headers and alignment, free objects
-retained in worker caches, CTP packet-handoff storage in both directions, and
-PTC input buffers for as long as their custom pbuf retains them. Cached pool
-storage remains charged until reclaimed. It does not preallocate every allowed
-flow or reserve the entire byte budget at startup.
-
-The allocator reserves `R = min(1048576, floor(B / 16))` bytes within the
-configured byte budget `B` for recovery traffic. Ordinary allocations and caches
-are limited to `B - R`. Eligible validated zero-payload TCP ACK/RST ingress and
-TCP ACK/RST/keepalive output use a separate recovery path so acknowledgements can
-release queued send data even when ordinary capacity is full. This is headroom
-inside the same cap, not extra or preallocated memory; recovery traffic can still
-be refused if that headroom is exhausted.
-
-RX wrappers have their own entry reserve within `lwip-max-rx-wrappers = L`:
-`min(256, max(1, floor(L / 16)))` entries when `L > 1`, and none when `L = 1`.
-The default `262144` therefore permits `261888` ordinary wrappers and `256`
-recovery wrappers. API pool counts and limits include both classes. CTP's fixed
-16 MiB/4096-allocation handoff ceiling similarly contains a 1 MiB/256-allocation
-recovery partition, leaving 15 MiB/3840 for ordinary handoffs. Packet input and
-handoff first try ordinary admission, then eligible recovery packets may fall
-back to their reserved capacity. SYN, FIN and application payload remain ordinary.
-
-The budget is not a process RSS limit. Application pending/ACK queues, receive
-staging after pbuf ownership ends, line/node state, engine/port control tables,
-unrelated buffers and native kernel resources have their own memory costs.
-CTP's per-instance 16 MiB/4096-allocation handoff limit and both bridges'
-per-flow queue, out-of-order and closer limits still apply independently.
-`tcp-stack-receive-budget` controls advertised receive windows per worker and
-does not enlarge any allocator limit. TCP send/receive windows are protocol
-ceilings, not per-connection memory reservations.
-
-Capacity refusal can reject a new flow, drop a packet or defer a TCP write until
-resources return, according to the affected path. Actual heap allocation failure
-remains fatal. Size for simultaneous flows and traffic, including handshakes and
-closing connections; a user can have many flows. A
-`TunDevice -> PacketsToConnection` chain uses this same userspace allocator.
-
-Each worker still has 255 netif indices shared by its loopback and attached nodes.
-Exhaustion refuses an attachment. Packet ingress still requires complete IPv4
-datagrams; larger pool limits do not enable fragment input or change reassembly
-policy.
-
-### Source-port capacity
-
-CTP reserves the complete wire tuple before opening TCP or UDP: protocol,
-source address and port, destination address and port. The same source port may
-serve different destinations or different configured source addresses. Identical
-tuples remain exclusive across workers and netifs until their PCB is freed,
-including TCP `TIME_WAIT`; changing workers cannot bypass this protection.
-
-For one fixed source IPv4, destination IPv4 and destination port, automatic
-allocation has 16,383 TCP ports (`49152..65534`) or 16,384 UDP ports
-(`49152..65535`), reduced by existing reservations. Unconnected or wildcard
-reservations conservatively exclude their numeric port from scoped allocation.
-Each CTP instance still uses one configured `source-ipv4`; this does not add an
-automatic source-address pool. More diverse destinations can share port numbers,
-but increasing PCB or memory limits cannot remove a fixed tuple's port ceiling.
-
-## Capacity API (`stack-stats`)
-
-Both bridge nodes register the read-only `stack-stats` operation. Grant an
-APIServer client the exact configuration, node and operation permission. Use the
-existing API client and [normal API framing](../../WaterWall-Docs/docs/05-devguides/api/protocol.mdx) to send a request such as:
-
-```json
-{
-  "id": "capacity-1",
-  "auth": {"client": "monitor", "token": "<configured token>"},
-  "selector": {"config": "edge", "node": "connection-to-packets"},
-  "operation": "stack-stats",
-  "content_type": "application/json",
-  "body_encoding": "utf8",
-  "body": "{}"
-}
-```
-
-Replace the selector and credentials with the configured values. The request
-body is an empty JSON object, at most 64 bytes including optional JSON whitespace;
-fields, trailing data and embedded NUL are rejected. The response is JSON encoded
-as UTF-8 inside the ordinary API result body. It describes the whole process,
-not just the selected node or calling worker.
-
-| Result field | Meaning |
-| --- | --- |
-| `scope`, `dynamic` | `"process"` and whether pools grow on demand |
-| `memory_budget`, `reserved_bytes`, `peak_reserved_bytes` | Configured ceiling, currently charged storage and its high-water mark |
-| `recovery_headroom`, `recovery_bytes`, `external_recovery_bytes`, `recovery_refusals` | Recovery allowance inside the cap, its currently charged storage, its external-storage subset and recovery byte-capacity refusals |
-| `external_bytes`, `external_refusals` | Charged CTP handoff/PTC pbuf-retained storage and refused external reservations |
-| `byte_refusals`, `reclaimed_bytes` | Shared byte-budget refusals and storage reclaimed under pressure |
-| `limits` | Effective TCP/UDP flow, listener, segment and RX-wrapper limits |
-| `pools` | Per-pool name, object size, limit, allocated/held objects, peak held, reserved bytes and count/byte refusals |
-| `ports.tcp`, `ports.udp` | Active/peak reservations, refusals and scoped/unscoped reservations |
-
-Byte totals and cumulative counters are decimal strings to preserve full width;
-object counts and limits are JSON integers. `reserved_bytes` includes recovery
-storage, and `external_bytes` includes `external_recovery_bytes`; do not add those
-subsets again. `held_includes_worker_caches` is true:
-`held` and `peak_held` include free objects reserved in worker caches and must not
-be interpreted as live-connection counts. Capacity and port sections are bounded
-snapshots taken under their respective locks, not an atomic traffic-wide census.
-
-The handler produces at most 32 KiB of result JSON and checks the gateway's
-response limit, working-memory allowance and deadline. A malformed body returns
-`expected_empty_object` when an error response fits those bounds; a refused result
-can have an empty body. Use per-pool count refusals, shared byte refusals and port
-refusals to identify which resource needs attention before changing a limit.
-
-## Composition Notes
-
-- The previous node must be layer 4 and the next node must be layer 3.
-- A `next` node is required: it is where the packets go.
-- Placing this node in a chain makes that chain a packet chain, so per-worker packet lines are allocated for it.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -537,7 +569,7 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
 
-## Engine resources and lifecycle
+### Engine resources and lifecycle
 
 The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
 all bridge instances on that worker. There is no separate stack thread or protocol

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToStream.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToStream.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketsToStream Node
+
+## Overview
 
 `PacketsToStream` adapts a packet-oriented side of the chain to a stream-oriented side.
 
@@ -13,19 +15,7 @@ boundaries are recovered from each packet's **IPv4 total-length field**, so no l
 
 Non-IPv4 payloads (including IPv6) are dropped in both directions.
 
-## What It Does
-
-- Accepts packet payload from the previous side.
-- Creates and maintains one stream-facing line per worker toward the next node.
-- For each outgoing packet, validates it is a self-consistent IPv4 packet and forwards it raw (IPv6 is dropped).
-- Buffers return stream data and extracts complete IPv4 packets using the IPv4 total-length field.
-- Sends each reconstructed packet back to the previous side on the worker that owns that packet's inner flow.
-- Accepts return traffic for any inner flow on any of its stream lines.
-- Recreates the stream-facing line if that line is closed.
-
-This tunnel is a packet-to-stream adapter based on IPv4 header parsing, not explicit length framing.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -40,7 +30,11 @@ A common layout is:
 
 This works because `PacketsToStream` and `StreamToPackets` use the same IPv4-header-based, headerless format.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -55,9 +49,11 @@ This works because `PacketsToStream` and `StreamToPackets` use the same IPv4-hea
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -68,11 +64,11 @@ This works because `PacketsToStream` and `StreamToPackets` use the same IPv4-hea
 - `next` `(string)`
   The next node that should receive the forwarded data payload.
 
-### `settings`
+#### `settings`
 
 There are no required tunnel-specific settings in the current implementation.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `sensitive-mode` `(boolean)`
   Enables sensitive-mode heartbeat handling for the worker-local stream line.
@@ -86,7 +82,19 @@ There are no required tunnel-specific settings in the current implementation.
 - `packet-validation-level` `(string, default: "none")`
   Optional packet validation mode. See the Packet Validation section for usage and caveats.
 
-## Packet Validation
+## Usage and troubleshooting
+
+### Notes And Caveats
+
+- This node is IPv4-length based (no framing header), not `2-byte length + payload` based.
+- It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
+- Pair it with `StreamToPackets` on the other side to restore packet boundaries.
+- It owns one stream output line per packet worker on the send side and decodes return packets on that stream line's worker.
+- Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.
+
+## Advanced behavior
+
+### Packet Validation
 
 `packet-validation-level` controls validation of packets decoded from incoming downstream framed data. Upstream packets
 that `PacketsToStream` receives from the packet side use only the basic framing checks before sending.
@@ -122,10 +130,23 @@ actual packet length on the wire and any requested checksum recalculation has ha
 For fragmented IPv4 packets in `"hard"` mode, the IPv4 header checksum is verified. TCP/UDP/ICMP checksums are skipped
 for fragments because transport checksums can only be fully verified after reassembly.
 
+## Implementation details
 
-## Detailed Behavior
+### What It Does
 
-### Worker-local data line
+- Accepts packet payload from the previous side.
+- Creates and maintains one stream-facing line per worker toward the next node.
+- For each outgoing packet, validates it is a self-consistent IPv4 packet and forwards it raw (IPv6 is dropped).
+- Buffers return stream data and extracts complete IPv4 packets using the IPv4 total-length field.
+- Sends each reconstructed packet back to the previous side on the worker that owns that packet's inner flow.
+- Accepts return traffic for any inner flow on any of its stream lines.
+- Recreates the stream-facing line if that line is closed.
+
+This tunnel is a packet-to-stream adapter based on IPv4 header parsing, not explicit length framing.
+
+### Detailed Behavior
+
+#### Worker-local data line
 
 `PacketsToStream` maintains a stream-facing line for each worker as needed.
 
@@ -137,7 +158,7 @@ When traffic is initialized on that worker:
 
 That data line is then reused for packet payload arriving on the same worker.
 
-### Data flow direction
+#### Data flow direction
 
 - Packet side to data side: previous node -> `PacketsToStream` -> stream-facing line -> next node
 - Data side back to packet side: next node -> `PacketsToStream` -> reconstructed packet -> previous node
@@ -146,7 +167,7 @@ From the packet side, this tunnel behaves like a packet-preserving adapter.
 
 From the next side, it behaves like a normal line carrying framed bytes.
 
-### Wire format
+#### Wire format
 
 There is no framing header. Each packet is written to the stream as a raw IPv4 packet:
 
@@ -154,7 +175,7 @@ There is no framing header. Each packet is written to the stream as a raw IPv4 p
 
 Maximum packet size accepted by this node is limited by `kMaxAllowedPacketLength`.
 
-### Checksum recalc behavior
+#### Checksum recalc behavior
 
 The packet callback takes and clears the buffer request with
 `packettunnelTakeChecksumRequest(buf)` before any
@@ -167,7 +188,7 @@ at least 20 bytes fitting within the declared total length, and a total length
 matching the buffer within `kMaxAllowedPacketLength`. IPv6 and malformed
 framing are dropped independently of `packet-validation-level`.
 
-### Packet decoding on return path
+#### Packet decoding on return path
 
 Return traffic from the next side is buffered in a read stream.
 
@@ -183,7 +204,7 @@ return any inner flow on any stream line. The decoder forwards locally; a later
 stateful consumer selects its own flow worker. The parser, heartbeat state and
 output-line recreation also stay owned by the stream line's worker.
 
-### Garbage Resilience
+#### Garbage Resilience
 
 The decoder never trusts the stream. The worst a hostile or corrupted stream can do is make the decoder read
 mis-sized "packets" and forward garbage until the byte stream happens to realign on a real IPv4 header; from that
@@ -194,7 +215,7 @@ point correct packets are read again. No input pattern can crash the node, read 
 - a head that looks like a valid IPv4 header is trusted for its declared size only
 - forward progress of at least one byte is guaranteed on every step
 
-### Pause and resume behavior
+#### Pause and resume behavior
 
 This node owns the stream-facing line and maps it to a separate worker packet line. It keeps endpoint flow control
 and cannot permanently bypass itself: IPv4 parsing, line-identity mapping and line recreation remain necessary.
@@ -219,7 +240,7 @@ paused. Any packet or heartbeat that triggered creation is settled before this R
 Sensitive-mode heartbeat Ping still sends while paused; Pause does not suspend the Pong deadline or reopen ordinary
 packet forwarding.
 
-### Finish and line recreation
+#### Finish and line recreation
 
 If the stream-facing line toward the next node finishes:
 
@@ -230,7 +251,7 @@ If the stream-facing line toward the next node finishes:
 
 This keeps the packet-facing role stable while allowing automatic recreation of the stream-side line.
 
-### Sensitive mode heartbeat
+#### Sensitive mode heartbeat
 
 When `sensitive-mode` is enabled:
 
@@ -243,7 +264,7 @@ When `sensitive-mode` is enabled:
 
 This heartbeat lives entirely on the stream side and does not close the shared worker packet line.
 
-### Buffering limits
+#### Buffering limits
 
 Complete packets in the current delivery are extracted before incomplete-input
 retention is checked, including deliveries larger than 128 KiB. The parser leaves
@@ -256,15 +277,7 @@ FIFO limited to 128 KiB of logical bytes, 2 MiB of accounted storage and 1,024
 entries, including the active nested delivery. Empty input retains nothing.
 Exceeding nested admission closes the stream carrier and schedules its recreation.
 
-## Notes And Caveats
-
-- This node is IPv4-length based (no framing header), not `2-byte length + payload` based.
-- It is IPv4-only; IPv6 and non-IPv4 payloads are dropped in both directions.
-- Pair it with `StreamToPackets` on the other side to restore packet boundaries.
-- It owns one stream output line per packet worker on the send side and decodes return packets on that stream line's worker.
-- Upstream `est`, `pause`, `resume`, and `finish`, plus downstream `init`, are not part of the intended normal callback path for this tunnel.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,26 +1,17 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KcpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KcpClient.mdx, and all files must keep the same documentation version.
 -->
 
 # KcpClient Node
 
+## Overview
+
 `KcpClient` carries a TCP-like byte stream over a UDP path by running KCP internally. It accepts stream data from the previous node, feeds it into KCP, and sends the resulting packets through the next node.
 
 In practice, this node is used together with `KcpServer` on the remote side.
 
-## What It Does
-
-- Accepts stream payload from the previous node.
-- Encodes that stream into KCP segments.
-- Adds a 1-byte internal frame flag to KCP payloads.
-- Sends the resulting datagrams through the next node.
-- Receives datagrams back from the next node, feeds them into KCP, and reconstructs the stream.
-- Uses periodic ping frames and an idle timeout to detect dead peers.
-
-This node expects the next side of the chain to preserve packet boundaries. In practice that means a UDP-capable transport path.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -32,7 +23,11 @@ A common layout is:
 
 This pair is useful when you want stream semantics on top of a datagram path.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -50,9 +45,11 @@ This pair is useful when you want stream semantics on top of a datagram path.
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -63,11 +60,11 @@ This pair is useful when you want stream semantics on top of a datagram path.
 - `next` `(string)`
   The next node that should carry the UDP-style packet traffic.
 
-### `settings`
+#### `settings`
 
 There are no required tunnel-specific settings.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `send-mtu` `(integer)`
   IPv4-based outgoing packet budget in bytes: `118..65535` without FEC, or `126..65535` with FEC. Receiving uses independent protocol limits.
@@ -133,9 +130,31 @@ There are no required tunnel-specific settings.
   Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### KCP transport model
+### Notes And Caveats
+
+- `KcpClient` is intended to be paired with `KcpServer`.
+- FEC must be enabled on both peers with matching shard settings.
+- The next node should preserve datagram boundaries.
+- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Implementation details
+
+### What It Does
+
+- Accepts stream payload from the previous node.
+- Encodes that stream into KCP segments.
+- Adds a 1-byte internal frame flag to KCP payloads.
+- Sends the resulting datagrams through the next node.
+- Receives datagrams back from the next node, feeds them into KCP, and reconstructs the stream.
+- Uses periodic ping frames and an idle timeout to detect dead peers.
+
+This node expects the next side of the chain to preserve packet boundaries. In practice that means a UDP-capable transport path.
+
+### Detailed Behavior
+
+#### KCP transport model
 
 During application Init, the client borrows that application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. The application's source and destination protocols are preserved. Both source and destination protocols on the new transport line are set to UDP. Actual transport Est is relayed promptly to the attached application, independently of handshake readiness.
 
@@ -147,7 +166,7 @@ Stream payload arriving from the previous node is split into chunks small enough
 
 The remote `KcpServer` performs the reverse operation and exposes the reconstructed stream again.
 
-### Internal frame flags
+#### Internal frame flags
 
 Inside the KCP payload, this tunnel uses a 1-byte flag:
 
@@ -164,7 +183,7 @@ flag and closes the affected connection, as does an unknown flag or a completed
 KCP message larger than the local receive buffer. Incomplete KCP messages wait
 for their remaining fragments.
 
-### Default KCP settings
+#### Default KCP settings
 
 The implementation exposes KCP tuning in JSON. The higher-throughput defaults are:
 
@@ -180,7 +199,7 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `ping-interval-ms = 10000`
 - `no-recv-timeout-ms = 30000`
 
-### Sending MTU
+#### Sending MTU
 
 Optional integer `send-mtu` inherits core `misc.mtu` at construction (the core fallback
 is 1500). The supported range is **118..65535 without FEC**, or **126..65535 with
@@ -218,7 +237,7 @@ more bytes than the fixed IPv4 allowance, so a 1500 budget can permit a 1520-byt
 IPv6 packet. IPv4 options, IPv6 extension headers and later wrappers need extra
 operator headroom. No family-dependent adjustment occurs.
 
-### Optional FEC layer
+#### Optional FEC layer
 
 When `fec` is enabled, the tunnel wraps each outbound KCP datagram in a Reed-Solomon FEC packet and emits parity packets after each configured data-shard block.
 
@@ -231,7 +250,7 @@ On receive, it:
 
 When `fec` is disabled, the session envelope directly contains one KCP datagram.
 
-### Data flow direction
+#### Data flow direction
 
 - Stream to UDP/KCP side: previous node -> `KcpClient` -> next node
 - UDP/KCP side back to stream: next node -> `KcpClient` -> previous node
@@ -240,7 +259,7 @@ On the send side, `KcpClient` breaks the stream into KCP-friendly chunks and for
 
 On the receive side, it feeds incoming packet payloads into KCP, drains completed KCP data, strips the 1-byte flag, and forwards reconstructed stream payload downstream to the previous node.
 
-### Close and timeout behavior
+#### Close and timeout behavior
 
 Application Finish immediately detaches and clears the borrowed application state. Its owner may destroy that line as soon as Finish returns. The owned transport and stable session continue draining previously accepted KCP output for the negotiated interval `D = min(client setting, server setting)`.
 
@@ -252,7 +271,7 @@ A peer-only responder remains until first CLOSE receipt plus D. A locally acknow
 
 `no-recv-timeout-ms` independently detects silence during ordinary operation; fixed close deadlines govern closing. Transport Finish, fatal protocol failure and process shutdown abort immediately. Worker quiescence detaches timer roots, and worker Stop drains all owned transports without waiting for graceful close. KCP acknowledgment confirms peer transport receipt, not remote application consumption or persistence. This protocol does not provide TCP half-close.
 
-### Backpressure behavior
+#### Backpressure behavior
 
 The client combines its local KCP backlog pressure with carrier pressure before
 notifying the previous application stream. The application remains paused while
@@ -275,14 +294,7 @@ continue while the application is paused. KCP windows, timers and the receive
 timeout remain in force. Every payload still needs KCP/FEC processing, so the
 node cannot bypass itself.
 
-## Notes And Caveats
-
-- `KcpClient` is intended to be paired with `KcpServer`.
-- FEC must be enabled on both peers with matching shard settings.
-- The next node should preserve datagram boundaries.
-- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

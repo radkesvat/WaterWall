@@ -1,9 +1,13 @@
 # ConnectionStripeServer
 
+## Overview
+
 `ConnectionStripeServer` joins the transport connections opened by
 `ConnectionStripeClient` into one ordered, full-duplex application stream. For an
 eight-member group, it accepts eight transports and creates exactly one line
 through its `next` path. Every member may carry both upload and download.
+
+## Typical placement
 
 ```text
 TcpListener -> TlsServer -> ConnectionStripeServer -> TcpConnector
@@ -25,35 +29,9 @@ Groups are local to this node instance. Separate server processes or replicas
 do not share the session table; an external load balancer must keep every member
 of a group on the same instance. This node has no `pair` setting.
 
-## Sharing a striped group with Mux
+## Minimal practical example
 
-For a fixed service, pair these chains:
-
-```text
-Server 1: TcpListener -> MuxClient -> ConnectionStripeClient -> TcpConnector
-Server 2: TcpListener -> ConnectionStripeServer -> MuxServer -> TcpConnector(service)
-```
-
-The Stripe server reconstructs one Mux parent stream per group. MuxServer then
-opens one service connection per decoded child; a group can therefore serve many
-application connections. `max-connections` limits carriers per group, not Mux
-children or service connections. Mux has separate child and buffering limits.
-With TLS, put TlsClient after StripeClient and TlsServer before StripeServer.
-
-This composition can improve upload/download throughput when the inter-server
-limit applies independently to each TCP connection and aggregate capacity is
-available. It cannot increase a shared link, per-IP or service limit. Children
-share ordering delays within their group; losing any carrier ends the group and
-its children. A normal child close does not close its siblings.
-
-Mux opens a service connection after the child's first application payload.
-Use the Stripe-only variant for services that send greetings first. The
-[client reference](../ConnectionStripeClient/description.md#per-connection-bandwidth-limits-and-mux)
-explains connection counts and the
-[complete TLS example](../../WaterWall-Docs/docs/03-examples/tunnels/connection-stripe-tls.mdx) includes
-both configurations.
-
-## Configuration
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
 ```json
 {
@@ -65,6 +43,8 @@ both configurations.
   }
 }
 ```
+
+## Configuration
 
 ### Top-level fields
 
@@ -98,7 +78,37 @@ CLOSE and is not extended by later progress.
 The client selects each group's count with `connections`; the server validates
 that it does not exceed `max-connections`. Local receive windows may differ.
 
-## Understanding the limits
+## Usage and troubleshooting
+
+### Sharing a striped group with Mux
+
+For a fixed service, pair these chains:
+
+```text
+Server 1: TcpListener -> MuxClient -> ConnectionStripeClient -> TcpConnector
+Server 2: TcpListener -> ConnectionStripeServer -> MuxServer -> TcpConnector(service)
+```
+
+The Stripe server reconstructs one Mux parent stream per group. MuxServer then
+opens one service connection per decoded child; a group can therefore serve many
+application connections. `max-connections` limits carriers per group, not Mux
+children or service connections. Mux has separate child and buffering limits.
+With TLS, put TlsClient after StripeClient and TlsServer before StripeServer.
+
+This composition can improve upload/download throughput when the inter-server
+limit applies independently to each TCP connection and aggregate capacity is
+available. It cannot increase a shared link, per-IP or service limit. Children
+share ordering delays within their group; losing any carrier ends the group and
+its children. A normal child close does not close its siblings.
+
+Mux opens a service connection after the child's first application payload.
+Use the Stripe-only variant for services that send greetings first. The
+[client reference](../ConnectionStripeClient/description.md#per-connection-bandwidth-limits-and-mux)
+explains connection counts and the
+[complete TLS example](../../WaterWall-Docs/docs/03-examples/tunnels/connection-stripe-tls.mdx) includes
+both configurations.
+
+### Understanding the limits
 
 `max-connections: 32` accepts a client's group of eight; it does not wait for 32
 members or create 32 destination connections. Every complete group creates one
@@ -122,7 +132,19 @@ the pending count. `max-sessions` counts groups, including incomplete groups and
 groups still draining. Both admission limits apply per worker; a worker can
 reach its limit while another still has capacity.
 
-## Grouping and workers
+### Troubleshooting
+
+| Symptom | Checks |
+| --- | --- |
+| Incoming connections appear, but no destination connection is created | The server waits for all distinct members. Check that every member reaches this instance, the client's count fits `max-connections`, and the preceding transport decodes the expected stream. |
+| A connection or incomplete group disappears after setup | Check its setup deadline and admission limits. A partial JOIN consumes a pending-connection slot; a complete JOIN waiting for its siblings consumes a session slot. |
+| Only upload or download stalls | Check the receiving application's pressure and the receiving Stripe node's window for that direction. A missing earlier record can also hold up later records from healthy members. |
+| Increasing the worker count does not accelerate one stream | Each group is reconstructed on one worker. Additional workers can process other groups; they do not split one group's reassembly. |
+
+## Implementation details
+
+
+### Grouping and workers
 
 Every member introduces a random 128-bit session ID, its unique index, the
 expected member count and the client's receive window. The server rejects
@@ -146,7 +168,7 @@ each service connection still waits for the child's initial payload. The client
 and server nodes remain in the callback path throughout the session to map
 distinct lines, framing, pressure and closure.
 
-## Ordered transfer and bounded storage
+### Ordered transfer and bounded storage
 
 Upload and download have independent byte offsets and record indices. DATA
 records carry at most `16384` bytes. The receiver releases only contiguous data
@@ -163,7 +185,7 @@ A slow connection can still hold up delivery when it carries the next missing
 bytes. Application pressure delays delivery and new receive credit while control
 traffic remains available to settle the protocol.
 
-## Close and limitations
+### Close and limitations
 
 Finish closes the application line as a whole; there is no separate TCP
 half-close API. CLOSE identifies the final byte and record counts. Its
@@ -181,16 +203,7 @@ help fill available capacity, but cannot increase a shared link's capacity. With
 a direct TcpConnector the destination side is one connection per group; with
 MuxServer it is one connection per child.
 
-## Troubleshooting
-
-| Symptom | Checks |
-| --- | --- |
-| Incoming connections appear, but no destination connection is created | The server waits for all distinct members. Check that every member reaches this instance, the client's count fits `max-connections`, and the preceding transport decodes the expected stream. |
-| A connection or incomplete group disappears after setup | Check its setup deadline and admission limits. A partial JOIN consumes a pending-connection slot; a complete JOIN waiting for its siblings consumes a session slot. |
-| Only upload or download stalls | Check the receiving application's pressure and the receiving Stripe node's window for that direction. A missing earlier record can also hold up later records from healthy members. |
-| Increasing the worker count does not accelerate one stream | Each group is reconstructed on one worker. Additional workers can process other groups; they do not split one group's reassembly. |
-
-## Node Metadata
+### Node Metadata
 
 Source-backed values from `instance/node.c` and the shared framing constants:
 

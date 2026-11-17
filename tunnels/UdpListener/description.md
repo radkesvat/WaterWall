@@ -1,56 +1,66 @@
 <!--
-Documentation version: 157
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpListener.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpListener Node
 
+## Overview
+
 `UdpListener` is a UDP server node. It listens for inbound UDP traffic, groups packets by remote peer, creates a line for each peer, and passes packets upstream to the next node in the chain.
 
 In practice, this node is used at the beginning of a chain.
 
-## What It Does
+## Typical placement
 
-- Binds and listens on one UDP port, several explicit UDP ports, or a UDP port range.
-- Accepts inbound UDP packets through the socket manager.
-- Applies optional filtering such as whitelist/blacklist checks and balance groups.
-- Creates one line per remote peer address and port.
-- Sends inbound datagrams to the next node as upstream payload.
-- Sends downstream payload back to the remembered peer address.
+```text
+client -> UdpListener -> ... -> UdpConnector -> remote UDP service
+```
 
-This node is a chain head. Its upstream entry callbacks are disabled because packets arrive from external peers, not from a previous tunnel.
 
-## Configuration Example
+## Minimal practical example
+
+### UDP DNS relay
+
+#### Relay UDP DNS requests to a chosen resolver
 
 ```json
 {
-  "name": "udp-listener",
-  "type": "UdpListener",
-  "settings": {
-    "address": "0.0.0.0",
-    "port": [5353, 853, 123],
-    "large-send-buffer": true,
-    "large-recv-buffer": true,
-    "interface": "eth0",
-    "fwmark": 10,
-    "balance-group": "udp-public",
-    "balance-interval": 30000,
-    "multiport-backend": "socket",
-    "whitelist": [
-      "192.168.1.0/24",
-      "2001:db8::/64"
-    ],
-    "blacklist": [
-      "192.168.1.50/32"
-    ]
-  },
-  "next": "next-node-name"
+  "name": "local-udp-dns-relay",
+  "nodes": [
+    {
+      "name": "dns-in",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1053
+      },
+      "next": "dns-out"
+    },
+    {
+      "name": "dns-out",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "192.0.2.53",
+        "port": 53
+      }
+    }
+  ]
 }
 ```
+This complete node config forwards UDP sent to `127.0.0.1:1053` to one DNS
+resolver. Replace `192.0.2.53:53` with your reachable resolver and list the file
+in `core.json.configs`. Replies return to the originating local peer; WaterWall
+does not parse or cache the DNS messages. This chain carries UDP only. Use the
+[TcpUdpListener DNS example](../../WaterWall-Docs/docs/02-noderefs/TcpUdpListener.mdx#basic-example) if the same
+frontend must support DNS over both UDP and TCP.
 
-## Required JSON Fields
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -61,7 +71,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because pac
 - `next` `(string)`
   The next node that should receive UDP lines and payloads.
 
-### `settings`
+#### `settings`
 
 - `address` `(string)`
   Bind address for the UDP socket.
@@ -79,7 +89,7 @@ One of `port` or `port-range` is required.
   A contiguous listening port range, for example `[20000, 20100]`.
   Use this only when every port between the two endpoints should be accepted.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `interface` `(string)`
   Restricts the listener to a local network interface.
@@ -135,9 +145,62 @@ One of `port` or `port-range` is required.
   List of blocked client IPs or CIDR ranges.
   Supports IPv4 and IPv6.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Per-peer line model
+### Configuration Example
+
+```json
+{
+  "name": "udp-listener",
+  "type": "UdpListener",
+  "settings": {
+    "address": "0.0.0.0",
+    "port": [5353, 853, 123],
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
+    "interface": "eth0",
+    "fwmark": 10,
+    "balance-group": "udp-public",
+    "balance-interval": 30000,
+    "multiport-backend": "socket",
+    "whitelist": [
+      "192.168.1.0/24",
+      "2001:db8::/64"
+    ],
+    "blacklist": [
+      "192.168.1.50/32"
+    ]
+  },
+  "next": "next-node-name"
+}
+```
+
+### Notes And Caveats
+
+- `port` is parsed as a number or an array of explicit port numbers, and `port-range` is parsed as a two-item range array.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- Paused peer lines drop inbound datagrams instead of buffering them.
+- Dynamic endpoints are internal capability plumbing for protocol tunnels; they are not additional public listening
+  ports configured by `port` or `port-range`.
+- For built-in SOCKS5 UDP service, configure `TcpUdpListener -> ... -> Socks5Server`, not a standalone `UdpListener` or
+  `TcpListener` entry.
+
+## Implementation details
+
+### What It Does
+
+- Binds and listens on one UDP port, several explicit UDP ports, or a UDP port range.
+- Accepts inbound UDP packets through the socket manager.
+- Applies optional filtering such as whitelist/blacklist checks and balance groups.
+- Creates one line per remote peer address and port.
+- Sends inbound datagrams to the next node as upstream payload.
+- Sends downstream payload back to the remembered peer address.
+
+This node is a chain head. Its upstream entry callbacks are disabled because packets arrive from external peers, not from a previous tunnel.
+
+### Detailed Behavior
+
+#### Per-peer line model
 
 UDP is connectionless, but `UdpListener` creates a pseudo-connection model for the chain.
 
@@ -149,7 +212,7 @@ For each unique remote peer address and port seen on a listening socket:
 
 This gives later nodes a stable line abstraction even though the transport is UDP.
 
-### Accept path
+#### Accept path
 
 When a packet arrives and passes socket-manager filtering:
 
@@ -160,16 +223,16 @@ When a packet arrives and passes socket-manager filtering:
 
 The line source context is filled from the peer socket address and marked as UDP.
 
-### Data flow direction
+#### Data flow direction
 
 - Peer to chain: received UDP datagram -> upstream payload to the next node
 - Chain to peer: downstream payload -> UDP send to the remembered peer address
 
-### Establishment semantics
+#### Establishment semantics
 
 A new peer line is created on the first packet. The line becomes established only when a downstream `est` callback reaches `UdpListener` from the next node.
 
-### Pause behavior
+#### Pause behavior
 
 `UdpListener` does not queue inbound datagrams while paused.
 
@@ -180,7 +243,7 @@ If the line is paused:
 
 This is important for users expecting TCP-like backpressure. In this tunnel, pause means drop, not buffer.
 
-### Idle timeout behavior
+#### Idle timeout behavior
 
 Each peer line is tracked in an idle table.
 
@@ -191,7 +254,7 @@ Current timeouts:
 
 If the peer line expires, the line is finished upstream and destroyed.
 
-### Dynamic endpoint provider
+#### Dynamic endpoint provider
 
 `UdpListener` also exposes a typed, in-process dynamic-endpoint provider to compatible protocol tunnels later in the
 same chain. `Socks5Server` is one consumer of this capability. For a normal SOCKS5 service, use `TcpUdpListener`: its
@@ -221,7 +284,7 @@ On quiesce, new endpoint opens and activations are refused. On each worker, the 
 before drain, removes the endpoint from its worker-local registry, and uses one idempotent close path to finish and
 destroy any provider-owned dynamic line. This inventory is separate from the ordinary socket-manager peer table.
 
-### Whitelist, blacklist, and balance behavior
+#### Whitelist, blacklist, and balance behavior
 
 Filtering and balancing are handled through the shared socket manager:
 
@@ -235,17 +298,7 @@ When both ACL lists are configured, a peer must match the whitelist, if any, and
 For `port` arrays, each element is treated as one explicit port. For example, `[5353, 853, 123]` listens only on those
 three ports, not on the whole range between `123` and `5353`.
 
-## Notes And Caveats
-
-- `port` is parsed as a number or an array of explicit port numbers, and `port-range` is parsed as a two-item range array.
-- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- Paused peer lines drop inbound datagrams instead of buffering them.
-- Dynamic endpoints are internal capability plumbing for protocol tunnels; they are not additional public listening
-  ports configured by `port` or `port-range`.
-- For built-in SOCKS5 UDP service, configure `TcpUdpListener -> ... -> Socks5Server`, not a standalone `UdpListener` or
-  `TcpListener` entry.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -259,7 +312,7 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayerAnything` |
 | `required_padding_left` | `0` bytes |
 
-## UDP splice sending
+### UDP splice sending
 
 UDP receives remain ordinary buffers. On an eligible Linux chain, UDP sends accept ordinary data or a real prefix plus a private-pipe body as one datagram to its explicit destination, including empty datagrams. Supported layouts use pipe-to-socket splice. Highly fragmented pipes, or failure to establish a safe fragment bound before sending, use a complete ordinary fallback before socket assembly. Oversized datagrams are rejected without splitting.
 

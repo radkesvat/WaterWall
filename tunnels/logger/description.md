@@ -1,23 +1,17 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/LoggerTunnel.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/LoggerTunnel.mdx, and all files must keep the same documentation version.
 -->
 
 # LoggerTunnel Node
 
+## Overview
+
 `LoggerTunnel` is a transparent Waterwall tunnel that observes payload callbacks without modifying data or changing line lifecycle.
 
 It is a middle tunnel: it observes traffic that already has a real line owner and forwards every callback to the next or previous tunnel.
 
-## What It Does
-
-- forwards upstream lifecycle with `tunnelNext*` when a next tunnel exists
-- forwards downstream lifecycle with `tunnelPrev*` when a previous tunnel exists
-- logs only during payload callbacks
-- never changes payload bytes, line state, padding, or ownership
-- supports network-log output, raw file output, and IPv4 TCP-payload extraction to files
-
-## Typical Placement
+## Typical placement
 
 Place `LoggerTunnel` between a real chain head and chain end:
 
@@ -27,9 +21,13 @@ Place `LoggerTunnel` between a real chain head and chain end:
 
 It is not a line source, terminal sink, or useful standalone node, so strict topology validation rejects it at a chain boundary.
 
-## Configuration Example
+## Minimal practical example
 
-### Log mode
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
+
+#### Log mode
 
 ```json
 {
@@ -42,6 +40,64 @@ It is not a line source, terminal sink, or useful standalone node, so strict top
   "next": "next-node"
 }
 ```
+
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
+
+- `name` `(string)`
+  A user-chosen node name. This value is also used as the filename prefix for file output.
+
+- `type` `(string)`
+  Must be exactly `"LoggerTunnel"`.
+
+#### `settings`
+
+`settings` must be a non-empty object and must include:
+
+- `mode` `(string)`
+  One of:
+  - `log`
+  - `file`
+  - `tcp-payload-file`
+
+### Optional `settings` Fields
+
+#### `level`
+
+Used only when `mode` is `log`.
+
+Accepted values:
+
+- `debug`
+- `info`
+- `warning`
+- `error`
+- `fatal`
+
+Default:
+
+- `debug`
+
+#### `output-mode`
+
+Used when `mode` is `file` or `tcp-payload-file`.
+
+Accepted values:
+
+- `per-payload`
+- `split-direction`
+- `single-file`
+
+Default:
+
+- `split-direction`
+
+## Usage and troubleshooting
+
+### Alternative examples
 
 ### Raw file mode
 
@@ -71,61 +127,28 @@ It is not a line source, terminal sink, or useful standalone node, so strict top
 }
 ```
 
-## Required JSON Fields
+### Notes And Caveats
 
-### Top-level fields
+- `required_padding_left = 0` because `LoggerTunnel` never prepends bytes.
+- File output uses the current working directory.
+- File output uses raw bytes even though the filenames end in `.txt`.
+- `tcp-payload-file` is intentionally IPv4-only in this implementation.
+- Logging failures do not change forwarding behavior; payload is still passed through unchanged.
+- Layer group is `kNodeLayerAnything` with `SameAsPrev` and `SameAsNext`. It is middle-only (`kNodeFlagNone`) and preserves the network layer across its two neighbors.
 
-- `name` `(string)`
-  A user-chosen node name. This value is also used as the filename prefix for file output.
+## Implementation details
 
-- `type` `(string)`
-  Must be exactly `"LoggerTunnel"`.
+### What It Does
 
-### `settings`
+- forwards upstream lifecycle with `tunnelNext*` when a next tunnel exists
+- forwards downstream lifecycle with `tunnelPrev*` when a previous tunnel exists
+- logs only during payload callbacks
+- never changes payload bytes, line state, padding, or ownership
+- supports network-log output, raw file output, and IPv4 TCP-payload extraction to files
 
-`settings` must be a non-empty object and must include:
+### Detailed Behavior
 
-- `mode` `(string)`
-  One of:
-  - `log`
-  - `file`
-  - `tcp-payload-file`
-
-## Optional `settings` Fields
-
-### `level`
-
-Used only when `mode` is `log`.
-
-Accepted values:
-
-- `debug`
-- `info`
-- `warning`
-- `error`
-- `fatal`
-
-Default:
-
-- `debug`
-
-### `output-mode`
-
-Used when `mode` is `file` or `tcp-payload-file`.
-
-Accepted values:
-
-- `per-payload`
-- `split-direction`
-- `single-file`
-
-Default:
-
-- `split-direction`
-
-## Detailed Behavior
-
-### Lifecycle behavior
+#### Lifecycle behavior
 
 All non-payload callbacks are pure pass-through operations:
 
@@ -134,7 +157,7 @@ All non-payload callbacks are pure pass-through operations:
 
 `LoggerTunnel` does not create lines, destroy lines, hold extra line references, or add per-line state.
 
-### Payload behavior
+#### Payload behavior
 
 Payload logging happens before forwarding in both directions:
 
@@ -143,7 +166,7 @@ Payload logging happens before forwarding in both directions:
 
 No payload bytes are rewritten or consumed by the tunnel.
 
-### `log` mode
+#### `log` mode
 
 In `log` mode:
 
@@ -151,7 +174,7 @@ In `log` mode:
 - the record includes tunnel name, direction, payload length, and a hex rendering of the payload bytes
 - the configured `level` controls the logger severity
 
-### `file` mode
+#### `file` mode
 
 In `file` mode:
 
@@ -159,27 +182,27 @@ In `file` mode:
 - no separators or framing bytes are added
 - writes are serialized through tunnel state so multi-worker output stays consistent
 
-#### `per-payload`
+##### `per-payload`
 
 Each payload is written to its own file in the current working directory:
 
 - upstream: `<tunnel-name>-up-1.txt`, `<tunnel-name>-up-2.txt`, ...
 - downstream: `<tunnel-name>-down-1.txt`, `<tunnel-name>-down-2.txt`, ...
 
-#### `split-direction`
+##### `split-direction`
 
 All payloads are appended by direction:
 
 - upstream: `<tunnel-name>-up.txt`
 - downstream: `<tunnel-name>-down.txt`
 
-#### `single-file`
+##### `single-file`
 
 All payloads from both directions are appended to:
 
 - `<tunnel-name>-all.txt`
 
-### `tcp-payload-file` mode
+#### `tcp-payload-file` mode
 
 In `tcp-payload-file` mode the tunnel inspects each payload buffer and writes only IPv4 TCP transport payload bytes:
 
@@ -192,16 +215,7 @@ In `tcp-payload-file` mode the tunnel inspects each payload buffer and writes on
 
 The selected `output-mode` controls filenames exactly like `file` mode.
 
-## Notes And Caveats
-
-- `required_padding_left = 0` because `LoggerTunnel` never prepends bytes.
-- File output uses the current working directory.
-- File output uses raw bytes even though the filenames end in `.txt`.
-- `tcp-payload-file` is intentionally IPv4-only in this implementation.
-- Logging failures do not change forwarding behavior; payload is still passed through unchanged.
-- Layer group is `kNodeLayerAnything` with `SameAsPrev` and `SameAsNext`. It is middle-only (`kNodeFlagNone`) and preserves the network layer across its two neighbors.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

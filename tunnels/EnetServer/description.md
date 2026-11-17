@@ -1,9 +1,17 @@
 # EnetServer
 
+## Overview
+
 `EnetServer` accepts native ENet connections that arrive over a UDP path and
 gives each one its own stream toward the next node. It is the remote side of
 `EnetClient`. The wire format is unmodified ENet 1.3.18: reliable, ordered
 packets on one channel.
+
+ENet provides neither encryption nor authentication. Use security nodes on the
+stream side, before `EnetClient` and after `EnetServer`, when those properties
+are needed.
+
+## Typical placement
 
 ```text
 Client: TcpListener -> EnetClient -> UdpConnector
@@ -16,7 +24,7 @@ the previous node and sends a reliable byte stream to the next node. Payload
 boundaries are not preserved: the next node receives the same bytes in the same
 order.
 
-## Transport placement
+### Transport placement
 
 - Before `EnetServer`: a path that keeps datagram boundaries and gives every
   remote peer its own line. In practice that is `UdpListener`, directly or
@@ -31,7 +39,9 @@ order.
   library defaults (no checksum, no compression) and exchanges reliable packets
   on channel 0.
 
-## Configuration
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
 ```json
 {
@@ -43,6 +53,8 @@ order.
   }
 }
 ```
+
+## Configuration
 
 ### Top-level fields
 
@@ -79,7 +91,9 @@ reliable window and its packet throttle; they are not an exact rate limit. A
 nonzero value below `1048576` lowers the window: 4,096 bytes for each 65,536
 bytes per second, and never less than 4,096 bytes.
 
-## Sending MTU
+## Usage and troubleshooting
+
+### Sending MTU
 
 `send-mtu` is an IPv4 packet budget, with the same meaning as in `KcpServer`.
 ENet's datagram limit is:
@@ -102,7 +116,7 @@ This is not path-MTU discovery. An IPv6 header needs 20 more bytes than the
 fixed IPv4 allowance, and tunnels before this node add their own bytes. Lower
 `send-mtu` to leave room for them.
 
-## Throughput and other native limits
+### Throughput and other native limits
 
 These limits come from the ENet protocol. They cannot be removed without giving
 up native compatibility.
@@ -134,7 +148,7 @@ up native compatibility.
   `no-recv-timeout-ms`. Use security nodes on the stream side, before
   `EnetClient` and after `EnetServer`, when those properties are needed.
 
-## Flow control and memory
+### Flow control and memory
 
 - The next node is paused while more than `send-buffer-limit` bytes are accepted
   but not yet acknowledged by the peer, and resumed at or below half of that. A
@@ -158,7 +172,7 @@ up native compatibility.
 - Datagrams above `carrier-queue-limit` in one ENet call are dropped and ENet
   sends them again after its timeout. The connection stays open.
 
-## Close and timeouts
+### Close and timeouts
 
 - When the next node finishes the stream, `EnetServer` accepts no more bytes,
   lets ENet deliver every byte it already accepted, and then disconnects
@@ -179,7 +193,7 @@ up native compatibility.
   is finished. No stream line is created for it.
 - At shutdown every connection ends without waiting for a drain.
 
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | Checks |
 | --- | --- |
@@ -189,7 +203,9 @@ up native compatibility.
 | Log line `the send limit refused a payload` | The next node kept sending after Pause. Check the nodes after `EnetServer`, or raise `send-buffer-limit`. |
 | Log line `close delivery unconfirmed at the fixed deadline` | The peer did not acknowledge the last bytes within `close-drain-timeout-ms`. Check loss on the path, or raise the timeout for slow paths. |
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed values from `instance/node.c`:
 

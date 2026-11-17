@@ -1,88 +1,48 @@
 <!--
-Documentation version: 155
+Documentation version: 156
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpConnector.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpConnector.mdx, and all files must keep the same documentation version.
 -->
 
 # TcpConnector Node
 
+## Overview
+
 `TcpConnector` is an outbound TCP client node. It builds a destination address from its own configuration or from the line routing context, opens a TCP connection, and forwards traffic between the previous node and the remote server.
 
 In practice, this node is used at the end of a chain.
 
-## What It Does
+## Typical placement
 
-- Chooses a destination address and port.
-- Resolves unresolved hostnames when local DNS is enabled.
-- Opens an outbound TCP socket.
-- Forwards upstream payloads from the previous node to the remote socket.
-- Forwards remote socket payloads back downstream to the previous node.
-- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
+```text
+TcpListener -> ... -> TcpConnector -> remote TCP service
+```
 
-This node behaves like a chain end. Its downstream entry callbacks are disabled because the outbound connection is initiated from upstream `init`.
 
-## Configuration Example
+## Minimal practical example
+
+This is a **node fragment**, not a complete config. Put it in a config's `nodes`
+array and connect the neighboring nodes shown above.
+
+### Fixed Remote Destination
 
 ```json
 {
-  "name": "outbound-tcp",
+  "name": "out",
   "type": "TcpConnector",
   "settings": {
     "address": "example.com",
     "port": 443,
-    "nodelay": true,
-    "fastopen": false,
-    "large-send-buffer": true,
-    "large-recv-buffer": 4194304,
-    "fwmark": 10,
-    "interface": "eth0",
-    "source-ip": "192.0.2.10",
     "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
   }
 }
 ```
 
-### Weighted Multi-Destination Example
 
-```json
-{
-  "name": "outbound-tcp",
-  "type": "TcpConnector",
-  "settings": {
-    "addresses": [
-      {
-        "address": "192.0.2.10",
-        "port": 443,
-        "weight": 5,
-        "nodelay": true,
-        "fastopen": false,
-        "large-send-buffer": true,
-        "large-recv-buffer": 4194304,
-        "fwmark": 10,
-        "interface": "eth0",
-        "source-ip": "192.0.2.10",
-        "dns-behaviour": {"strategy": "prefer-ipv4"}
-      },
-      {
-        "address": "198.51.100.20",
-        "port": "dest_context->port",
-        "weight": 1,
-        "interface": "eth1",
-        "source-ip": "198.51.100.10"
-      }
-    ],
-    "nodelay": true,
-    "fastopen": false,
-    "large-send-buffer": true,
-    "large-recv-buffer": true,
-    "fwmark": -1,
-    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
-  }
-}
-```
+## Configuration
 
-## Required JSON Fields
+### Required JSON Fields
 
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -90,7 +50,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 - `type` `(string)`
   Must be exactly `"TcpConnector"`.
 
-### `settings`
+#### `settings`
 
 - Either `address` + `port`, or `addresses`
 
@@ -153,7 +113,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 
   If any of these fields is omitted in an address object, the top-level value from `settings` is used as that object's default. For `interface` and `source-ip`, a per-address JSON `null` disables an inherited top-level value.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `nodelay` `(boolean)`
   Enables `TCP_NODELAY` on the outbound socket.
@@ -197,7 +157,7 @@ This node behaves like a chain end. Its downstream entry callbacks are disabled 
 When `addresses` is used, socket options can be set at the top level as defaults and overridden independently by each address object. A destination's `dns-behaviour` accepts only `strategy`; lookup enablement and DNS transport remain node settings.
 For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient` or `MuxServer`, independently of core `misc.tcp-tune`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up its IP address. `TcpConnector` first chooses
 the destination from its address and port settings, including any weighted
@@ -256,9 +216,90 @@ A weighted `destinations[]` entry may use `"dns-behaviour": {"strategy": "only-i
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Chain behavior
+### Configuration Example
+
+```json
+{
+  "name": "outbound-tcp",
+  "type": "TcpConnector",
+  "settings": {
+    "address": "example.com",
+    "port": 443,
+    "nodelay": true,
+    "fastopen": false,
+    "large-send-buffer": true,
+    "large-recv-buffer": 4194304,
+    "fwmark": 10,
+    "interface": "eth0",
+    "source-ip": "192.0.2.10",
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
+  }
+}
+```
+
+#### Weighted Multi-Destination Example
+
+```json
+{
+  "name": "outbound-tcp",
+  "type": "TcpConnector",
+  "settings": {
+    "addresses": [
+      {
+        "address": "192.0.2.10",
+        "port": 443,
+        "weight": 5,
+        "nodelay": true,
+        "fastopen": false,
+        "large-send-buffer": true,
+        "large-recv-buffer": 4194304,
+        "fwmark": 10,
+        "interface": "eth0",
+        "source-ip": "192.0.2.10",
+        "dns-behaviour": {"strategy": "prefer-ipv4"}
+      },
+      {
+        "address": "198.51.100.20",
+        "port": "dest_context->port",
+        "weight": 1,
+        "interface": "eth1",
+        "source-ip": "198.51.100.10"
+      }
+    ],
+    "nodelay": true,
+    "fastopen": false,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
+    "fwmark": -1,
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
+  }
+}
+```
+
+### Notes And Caveats
+
+- This node is meant to be used as an outbound chain end.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- DNS resolution in this path is asynchronous and handled by an internal `DomainResolver`; `TcpConnector` uses the shared `dns-behaviour` policy.
+
+## Implementation details
+
+### What It Does
+
+- Chooses a destination address and port.
+- Resolves unresolved hostnames when local DNS is enabled.
+- Opens an outbound TCP socket.
+- Forwards upstream payloads from the previous node to the remote socket.
+- Forwards remote socket payloads back downstream to the previous node.
+- Applies optional socket options such as `TCP_NODELAY`, `TCP_FASTOPEN`, `SO_MARK`, device binding, and source-IP binding when supported by the platform.
+
+This node behaves like a chain end. Its downstream entry callbacks are disabled because the outbound connection is initiated from upstream `init`.
+
+### Detailed Behavior
+
+#### Chain behavior
 
 `TcpConnector` receives line creation from upstream. During upstream `init`, it chooses the destination and stores the selected connector options, then passes the line through its internal `DomainResolver`. The connector core starts the outbound TCP connection only after the selected destination is already an IP address.
 
@@ -272,7 +313,7 @@ The normal flow is:
 - after connect succeeds, the previous node receives downstream `est`
 - data starts flowing in both directions
 
-### Address selection
+#### Address selection
 
 `address` can come from three places:
 
@@ -288,11 +329,11 @@ The chosen object's socket options and `dns-behaviour.strategy` are used for tha
 
 This makes `TcpConnector` useful in chains where earlier nodes decode or rewrite routing information. For example, a protocol-aware node can fill `dest_context`, and `TcpConnector` can connect to that decoded target.
 
-### Domain resolution
+#### Domain resolution
 
 If local DNS is enabled and the selected destination is an unresolved hostname, `TcpConnector` maps its `dns-behaviour.strategy` setting onto the line destination context and its internal `DomainResolver` resolves it asynchronously before socket creation. Payloads that arrive while DNS is pending are held by the resolver; payloads that arrive while the TCP connect is pending are kept in the normal pre-connect write queue. If resolution fails, the line is finished and no outbound connection is created.
 
-### Subnet randomization on constant IP addresses
+#### Subnet randomization on constant IP addresses
 
 If `address` is a constant IP string with a CIDR suffix, the connector randomizes the host part before connecting.
 
@@ -310,7 +351,7 @@ The suffix must contain only decimal digits. Empty, malformed, and out-of-range 
 - More specific prefixes randomize only the remaining host bits.
 - `/32` for IPv4 and `/128` for IPv6 keep the address fixed.
 
-### Socket creation and options
+#### Socket creation and options
 
 After the destination is ready, `TcpConnector` creates a TCP socket and may apply these options:
 
@@ -325,14 +366,14 @@ After the destination is ready, `TcpConnector` creates a TCP socket and may appl
 
 For weighted `addresses`, these options are taken from the selected address object after applying top-level defaults.
 
-### Data flow direction
+#### Data flow direction
 
 - Previous node to remote server: upstream payload -> socket write
 - Remote server to previous node: socket read -> downstream payload
 
 Once the outbound socket connects, the node calls downstream `est` toward the previous node.
 
-### Flow control and buffering
+#### Flow control and buffering
 
 While the connection is still being established, or while the socket is temporarily backpressured, `TcpConnector` queues outgoing payloads.
 
@@ -353,14 +394,14 @@ connection through its line owner.
 
 This prevents unlimited buffering when the remote side is slow or the connection is not ready yet.
 
-### Connection establishment timeout
+#### Connection establishment timeout
 
 Each outbound TCP connection attempt has a `60-second` deadline, matching NGINX's default `proxy_connect_timeout`.
 It starts after address resolution, when the TCP connection attempt begins, and is canceled once the socket connects.
 Immediate connection errors still close the line earlier. This is separate from the listener's initial idle deadline
 and the connector's idle cleanup limit; `TcpConnector` does not have a separate first-payload idle phase.
 
-### Idle timeout behavior
+#### Idle timeout behavior
 
 Each outbound connection is tracked in an idle table with a timeout of about `600 seconds`. Read and write activity refreshes that timeout. If the connection expires, the socket is closed and downstream `finish` is sent to the previous node.
 
@@ -368,19 +409,13 @@ This ten-minute cleanup limit matches `TcpListener`'s default active idle timeou
 causes downstream `finish` without waiting for the idle deadline. The limit is not an NGINX maximum; fallback targets
 allowing longer inactivity require both adapter idle limits to accommodate it.
 
-## Notes And Caveats
-
-- This node is meant to be used as an outbound chain end.
-- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- DNS resolution in this path is asynchronous and handled by an internal `DomainResolver`; `TcpConnector` uses the shared `dns-behaviour` policy.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainEnd` |
+| node flags | `kNodeFlagChainEnd \| kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |

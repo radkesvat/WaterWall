@@ -1,16 +1,24 @@
 # QuicServer
 
+## Overview
+
 `QuicServer` decrypts upstream carrier datagrams into a raw application byte
 stream and encrypts downstream application bytes into QUIC datagrams. Google
 QUICHE performs QUIC v1/TLS 1.3. Existing adapters accept peers and own their
 normal WaterWall lines; this node creates no listener or socket.
+
+## Typical placement
 
 ```text
 UdpListener -> QuicServer -> TcpConnector
 UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
 ```
 
-## Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Feed this node from a datagram carrier, replace the certificate/key paths, and define `application-out` for the decoded application stream. The client must trust this certificate and use its name. Both peers must agree on ALPN and carrier mode; `h3` does not make this an HTTP/3 server.
 
 ```json
 {
@@ -26,12 +34,11 @@ UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
 }
 ```
 
-`name`, `type`, `next` and an object `settings` are required. `type` must be
-exactly `QuicServer`. Full UDP and framed TCP client/server configurations and
-local certificate instructions are in
-[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-## Server settings
+## Configuration
+
+### Server settings
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
@@ -45,7 +52,7 @@ outside this node's interface. QUICHE parses the first valid Initial and
 preserves QUIC anti-amplification before peer address validation; an existing
 WaterWall line does not by itself validate that address.
 
-## Shared settings
+### Shared settings
 
 | Setting | Default | Accepted values and behavior |
 | --- | --- | --- |
@@ -73,7 +80,32 @@ Each configured entry reserves descriptor storage: require
 READY/PEER_FIN/CLOSED controls. These backing charges count toward allocation
 budgets even while the rings are empty; closing releases them.
 
-## Carrier and application semantics
+## Usage and troubleshooting
+
+### Example
+
+```json
+{
+  "name": "quic-server",
+  "type": "QuicServer",
+  "next": "application-out",
+  "settings": {
+    "cert-file": "server.crt",
+    "key-file": "server.key",
+    "protocol": "h3",
+    "carrier-mode": "datagram"
+  }
+}
+```
+
+`name`, `type`, `next` and an object `settings` are required. `type` must be
+exactly `QuicServer`. Full UDP and framed TCP client/server configurations and
+local certificate instructions are in
+[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+
+## Advanced behavior
+
+### Carrier and application semantics
 
 The application interface is a reliable byte stream. Application Payload buffer
 boundaries are not preserved. Each association has one QUIC connection and one
@@ -102,7 +134,9 @@ with no HTTP/3 requests, responses, QPACK or HTTP control streams. Ordinary
 HTTP/3 peers cannot use it. This setting makes no Chrome/Cloudflare
 impersonation or classifier claim and does not change `HttpClient`/`HttpServer`.
 
-## Flow, storage and close
+## Implementation details
+
+### Flow, storage and close
 
 Every supported transport `Est` is relayed promptly, including repeats;
 authenticated handshake and stream readiness are independent internal barriers.
@@ -148,7 +182,7 @@ Carrier-side Finish and process shutdown abort outstanding delivery and settle
 owned lines immediately. FIN closes the application association rather than
 providing application half-close; a reset or other protocol failure also closes it.
 
-## Node Metadata
+### Node Metadata
 
 Both nodes are Layer 4 transforms with separate application and carrier lines: they allow previous and next
 nodes, advertise `kNodeFlagBlocksSplice`, and require zero additional left

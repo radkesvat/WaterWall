@@ -1,20 +1,16 @@
 <!--
-Documentation version: 165
+Documentation version: 166
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/DomainResolver.mdx, and all files must keep the same documentation version.
 -->
 
 # DomainResolver
 
+## Overview
+
 `DomainResolver` resolves an application's destination hostname before passing the
 connection to the next node. Choose `native`, `direct`, or `chain` to control how
 that resolver sends DNS queries.
 
-Place it after a node that supplies the destination, such as `Socks5Server`, and
-before the node that needs the resolved address:
-
-```text
-TcpListener -> Socks5Server -> DomainResolver -> application next
-```
 
 For a request to `example.com:443`, the application line waits for DNS, receives
 the selected IP address, and continues to `next` on port 443. In `direct` and
@@ -24,7 +20,38 @@ not replace the application's destination or carry its payload.
 An IP address or an already-resolved destination continues immediately. The node
 preserves application payload bytes and resolves only `dest_ctx`, not `src_ctx`.
 
-## Choose a DNS Mode
+## Typical placement
+
+Place it after a node that supplies the destination, such as `Socks5Server`, and
+before the node that needs the resolved address:
+
+```text
+TcpListener -> Socks5Server -> DomainResolver -> application next
+```
+
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Place this after Socks5Server or another destination-producing node, and define `application-out` to use the resolved destination context. This fragment chooses native DNS; the complete example and direct/chain alternatives below explain their different transport paths.
+
+```json
+{
+  "name": "resolve",
+  "type": "DomainResolver",
+  "settings": {
+    "mode": "native",
+    "strategy": "prefer-ipv4"
+  },
+  "next": "application-out"
+}
+```
+
+See [Configuration](#configuration) for defaults and conditional requirements.
+
+## Configuration
+
+### Choose a DNS Mode
 
 | Mode | How DNS is sent | Use it when |
 | --- | --- | --- |
@@ -36,7 +63,7 @@ preserves application payload bytes and resolves only `dest_ctx`, not `src_ctx`.
 `chain` protects DNS when its selected branch provides protection; the mode name
 alone does not encrypt traffic.
 
-## Shared Settings
+### Shared Settings
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -64,7 +91,7 @@ Use a string for `strategy`:
 
 Only the canonical lowercase strategy strings above are accepted; numeric strategies are rejected. This also applies when `resolve` is omitted. The optional `resolve` field defaults to `true`. Address selection is independent of DNS transport. The two `only-` strategies constrain lookups to the selected family in every mode; preference and returned-order strategies query both families.
 
-## Native Mode
+### Native Mode
 
 Use `native` when the current core DNS configuration already provides the path
 you need. Lookups share the existing resolver channel on their owner worker.
@@ -81,7 +108,7 @@ Set `mode` to `native`, or omit it. Configure DNS options in `core.json`, not in
 this node's `servers` or `dns-next` fields. Both fields are rejected in native
 mode to avoid silently ignoring them.
 
-### Native example
+#### Native example
 
 This complete node configuration exposes a local SOCKS5 TCP proxy. The explicit
 resolver resolves the requested hostname, then `application-out` connects to its
@@ -143,7 +170,7 @@ your existing `core.json`. Replace the documentation address with your resolver:
 
 Consumers expose the same policy under `settings.dns-behaviour`; the standalone node keeps these DNS fields flat, alongside `verbose`. An explicit DomainResolver remains useful to choose lookup position before routing. Do not nest `dns-behaviour` on DomainResolver.
 
-## Direct Mode
+### Direct Mode
 
 Use `direct` to send DNS through WaterWall's connector machinery while keeping
 the configuration small. The resolver creates a private `TcpUdpConnector`
@@ -160,7 +187,7 @@ Both UDP queries and TCP fallback use this private branch. The application
 continues on its original `next` only after resolution succeeds. Direct mode
 uses ordinary DNS transport and does not add a VPN or encryption.
 
-### Direct example
+#### Direct example
 
 This complete node configuration uses the same local SOCKS5 TCP entry, but DNS
 is sent through the resolver's private connector. Replace `203.0.113.53` with a
@@ -217,7 +244,7 @@ The private connector must be available in the build. If it is unavailable,
 direct mode fails construction with a diagnostic; native mode remains usable.
 The `servers` grammar and inherited core options are described below.
 
-## Chain Mode
+### Chain Mode
 
 Use `chain` to send DNS through your configured tunnel nodes. Set `mode` to
 `chain` and provide numeric DNS-server endpoints in `servers`. By default, the
@@ -235,7 +262,7 @@ Both UDP DNS and TCP fallback use the same selected entry. The downstream path
 must support both. A Router can distinguish these DNS lines with `resolver-dns`;
 a Router is not required when all lines should enter the same proxy path.
 
-### Chain example: shared Router and VLESS over TLS
+#### Chain example: shared Router and VLESS over TLS
 
 This complete client configuration accepts SOCKS5 TCP and UDP, sends all
 resolver-generated DNS through the VPN, sends application destinations in Iran
@@ -379,7 +406,7 @@ as the chosen application flows. The logical destination is the DNS server or
 application target; `vpn-out` independently connects to the numeric outer VPN
 server. TLS encrypts that outer connection; plain VLESS does not.
 
-### Bootstrap and failures
+#### Bootstrap and failures
 
 The outer VPN endpoint must be usable before protected DNS can work. A numeric
 `vpn-out.address` avoids needing DNS to establish the DNS path. A hostname for
@@ -390,7 +417,7 @@ A rejected route, timeout or failed VPN connection does not make this resolver
 retry through native DNS or the Router's direct application branch. It may retry
 another explicitly configured DNS server through the same selected chain.
 
-### Optional separate DNS branch
+#### Optional separate DNS branch
 
 Set `dns-next` only when DNS should start at a different entry from the original
 application. This resolver fragment uses a separate `dns-vless` branch while
@@ -426,7 +453,42 @@ entries. Private predecessor helpers are included when resolving the callable
 entry. This is not arbitrary many-to-one sharing of an existing VPN chain, and
 structural checks cannot detect every runtime bootstrap dependency.
 
-## Embedded policies and disabled resolution
+### DNS Servers and Options for Direct and Chain
+
+`servers` must contain 1–32 numeric endpoints. Supported forms are:
+
+| Endpoint | Meaning |
+| --- | --- |
+| `192.0.2.53` | IPv4 address with the core DNS ports. |
+| `192.0.2.53:5353` | IPv4 address using port 5353 for both UDP and TCP. |
+| `2001:db8::53` | IPv6 address with the core DNS ports. |
+| `[2001:db8::53]:5353` | IPv6 address using port 5353 for both UDP and TCP. |
+
+Without a suffix, `dns.udp-port` and `dns.tcp-port` from core apply; each defaults
+to 53. Hostnames, interface scopes, malformed addresses and zero or invalid
+ports are rejected.
+
+These modes inherit core c-ares retry, timeout, cache, flags, search-domain,
+lookup/hosts-file, EDNS, port, rotation and failover settings. Their explicit
+server list replaces core server discovery. Configured core
+`socket-send-buffer-size`, `socket-receive-buffer-size`, `sortlist` and
+`resolvconf-path` are rejected because this backend does not support those
+requirements.
+
+Each direct/chain provider, whether standalone or embedded, keeps a reusable
+channel and cache per worker across queries. With the default core flags
+`["edns", "stayopen"]`, c-ares also retains idle UDP and TCP DNS connections so
+later queries can reuse their DNS lines and transport connections. Errors,
+downstream closure, server or connection rotation, and shutdown can still close
+those connections; a later query opens another when needed. Setting core
+`"dns": {"flags": ["edns"]}` disables idle connection reuse without changing the
+provider's channel lifetime.
+
+A failed query may retry another configured server, but never switches to native
+DNS or another mode. Closing one application request does not cancel other
+requests sharing the channel.
+
+### Embedded policies and disabled resolution
 
 On consuming nodes, the object must contain a boolean `resolve`. For example:
 
@@ -464,7 +526,7 @@ failed lookup never switches to native DNS or an application fallback path.
 Direct/chain channels and caches are private to one provider and worker; the
 combined connector's children borrow one authoritative provider and branch.
 
-### Router-owned protected DNS
+#### Router-owned protected DNS
 
 This complete configuration resolves before GeoIP classification using Router's
 own entry. Replace the documentation addresses, UUID, SNI and GeoIP database path
@@ -566,7 +628,7 @@ unmarked application later matches `geoip:ir` for direct egress, or the default
 VPN route. Root sniffing is unnecessary. Resolving only in the later VlessClient
 would be too late for this Router's IP decision.
 
-### Proxy-owned shared entry
+#### Proxy-owned shared entry
 
 This VLESS fragment resolves its logical target through its own proxy entry.
 Define `vpn-tls -> TcpConnector` with a numeric outer VPN endpoint, as above.
@@ -591,7 +653,7 @@ The generated line keeps its numeric DNS target and exact UDP/TCP protocol. The
 logical client consumes the destination pin; its outer connector independently
 selects the VPN endpoint. The original application has no DNS-origin marker.
 
-### Connector with a separate branch
+#### Connector with a separate branch
 
 This complete local SOCKS configuration gives the connector an explicit DNS
 branch. Use a protected proxy branch in place of `dns-out` to protect DNS.
@@ -611,42 +673,7 @@ branch. Use a protected proxy branch in place of `dns-out` to protect DNS.
 }
 ```
 
-## DNS Servers and Options for Direct and Chain
-
-`servers` must contain 1–32 numeric endpoints. Supported forms are:
-
-| Endpoint | Meaning |
-| --- | --- |
-| `192.0.2.53` | IPv4 address with the core DNS ports. |
-| `192.0.2.53:5353` | IPv4 address using port 5353 for both UDP and TCP. |
-| `2001:db8::53` | IPv6 address with the core DNS ports. |
-| `[2001:db8::53]:5353` | IPv6 address using port 5353 for both UDP and TCP. |
-
-Without a suffix, `dns.udp-port` and `dns.tcp-port` from core apply; each defaults
-to 53. Hostnames, interface scopes, malformed addresses and zero or invalid
-ports are rejected.
-
-These modes inherit core c-ares retry, timeout, cache, flags, search-domain,
-lookup/hosts-file, EDNS, port, rotation and failover settings. Their explicit
-server list replaces core server discovery. Configured core
-`socket-send-buffer-size`, `socket-receive-buffer-size`, `sortlist` and
-`resolvconf-path` are rejected because this backend does not support those
-requirements.
-
-Each direct/chain provider, whether standalone or embedded, keeps a reusable
-channel and cache per worker across queries. With the default core flags
-`["edns", "stayopen"]`, c-ares also retains idle UDP and TCP DNS connections so
-later queries can reuse their DNS lines and transport connections. Errors,
-downstream closure, server or connection rotation, and shutdown can still close
-those connections; a later query opens another when needed. Setting core
-`"dns": {"flags": ["edns"]}` disables idle connection reuse without changing the
-provider's channel lifetime.
-
-A failed query may retry another configured server, but never switches to native
-DNS or another mode. Closing one application request does not cancel other
-requests sharing the channel.
-
-## DNS Destinations and Router Matching
+### DNS Destinations and Router Matching
 
 Generated DNS lines carry an authoritative DNS-server destination and exact UDP
 or TCP transport. The first logical proxy destination selector or outbound
@@ -663,7 +690,9 @@ from the original application and an independently created outer VPN carrier.
 It does not identify arbitrary application DNS, TUN packets, or traffic merely
 because it uses port 53.
 
-## Scope of the Selected Mode
+## Advanced behavior
+
+### Scope of the Selected Mode
 
 Each policy controls lookups owned by its consumer. TcpConnector, UdpConnector,
 TcpUdpConnector, Router, SOCKS5/Trojan/VLESS/VMess clients, HttpProxyClient,
@@ -680,7 +709,9 @@ Selecting chain mode does not control every DNS source or intercept arbitrary
 application DNS. Bootstrap the outer VPN endpoint numerically or through an
 independent policy/path.
 
-## Runtime and Failure Behavior
+## Implementation details
+
+### Runtime and Failure Behavior
 
 On upstream `Init`, the node initializes its application-line state. If DNS is
 needed, it delays the next node's `Init` until it has selected an address. It
@@ -726,7 +757,7 @@ and settles c-ares callbacks and retained references. Channel cleanup drains DNS
 lines while neighbors and pools remain alive. Worker stop releases the quiesced
 transport; final destruction releases configuration and private children.
 
-## Node Metadata
+### Node Metadata
 
 The application edge is a transparent middle node; it cannot be the chain's
 head or tail. Its DNS side edge is separately constrained to L4. Upstream Init

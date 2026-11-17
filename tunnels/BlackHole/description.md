@@ -1,9 +1,11 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/BlackHole.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/BlackHole.mdx, and all files must keep the same documentation version.
 -->
 
 # BlackHole Node
+
+## Overview
 
 `BlackHole` is a terminal sink adapter. It is placed at the end of a chain and consumes upstream traffic from the previous node without creating a socket, connecting to a remote peer, or forwarding payload to another node.
 
@@ -14,18 +16,7 @@ It supports two behaviors:
 
 Because `BlackHole` is an adapter, downstream callbacks are not part of its valid runtime surface. Do not place another node after it.
 
-## What It Does
-
-- can be used as the last node in a chain
-- rejects configuration with a `next` node
-- drops every upstream payload buffer it receives
-- recycles dropped payload buffers with `lineReuseBuffer()`
-- does not prepend, frame, encrypt, decode, or rewrite payload
-- does not allocate per-line tunnel state
-- does not change buffer padding requirements
-- does not create or destroy packet lines
-
-## Typical Placement
+## Typical placement
 
 Common examples:
 
@@ -35,9 +26,13 @@ Common examples:
 
 `BlackHole` is not a middle tunnel. For a chain such as `TcpListener <--> BlackHole <--> TcpConnector`, use another policy or routing tunnel instead.
 
-## Configuration Example
+## Minimal practical example
 
-### Passive mode
+These are node fragments. Add a listener or another upstream node that names this sink as its `next`; do not configure a `next` on `BlackHole`.
+
+### Configuration Example
+
+#### Passive mode
 
 ```json
 {
@@ -57,7 +52,7 @@ Equivalent passive aliases:
 - `silent`
 - `calm`
 
-### Active mode
+#### Active mode
 
 ```json
 {
@@ -77,9 +72,11 @@ Equivalent active aliases:
 - `kill`
 - `kill-connection`
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen node name.
@@ -87,7 +84,7 @@ Equivalent active aliases:
 - `type` `(string)`
   Must be exactly `"BlackHole"`.
 
-### `settings`
+#### `settings`
 
 `settings` must contain:
 
@@ -95,9 +92,9 @@ Equivalent active aliases:
 
 `next` must not be configured. `BlackHole` is a chain-end adapter.
 
-## `mode` Meaning
+### `mode` Meaning
 
-### `passive`
+#### `passive`
 
 In passive mode:
 
@@ -108,7 +105,7 @@ In passive mode:
 
 Passive mode does not close the line by itself. It consumes payload until the previous side closes the line.
 
-### `active`
+#### `active`
 
 In active mode:
 
@@ -118,9 +115,32 @@ In active mode:
 
 This behaves like an immediate connection reject at the end of the chain.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Payload handling
+### Notes And Caveats
+
+- `required_padding_left = 0`.
+- `kLineStateSize = 0`; the node has no per-line tunnel state.
+- `BlackHole` is layer-agnostic in node metadata, but it does not transform between stream and packet semantics.
+- `passive` mode can leave the previous side open indefinitely if that side keeps the line open.
+- `active` mode is best used as a deliberate reject or kill endpoint.
+
+## Implementation details
+
+### What It Does
+
+- can be used as the last node in a chain
+- rejects configuration with a `next` node
+- drops every upstream payload buffer it receives
+- recycles dropped payload buffers with `lineReuseBuffer()`
+- does not prepend, frame, encrypt, decode, or rewrite payload
+- does not allocate per-line tunnel state
+- does not change buffer padding requirements
+- does not create or destroy packet lines
+
+### Detailed Behavior
+
+#### Payload handling
 
 Upstream payload calls `lineReuseBuffer()` on the received buffer and returns.
 
@@ -130,7 +150,7 @@ That means:
 - buffer ownership stays correct
 - no extra framing or padding assumptions are introduced
 
-### Lifecycle handling
+#### Lifecycle handling
 
 `BlackHole` follows downstream-end adapter direction rules:
 
@@ -139,15 +159,15 @@ That means:
 - it never calls `tunnelNextUpStream*()` because there is no next node
 - downstream callbacks into `BlackHole` are invalid and blocked by `adapterCreate()`
 
-## Notes And Caveats
+### Splice support
 
-- `required_padding_left = 0`.
-- `kLineStateSize = 0`; the node has no per-line tunnel state.
-- `BlackHole` is layer-agnostic in node metadata, but it does not transform between stream and packet semantics.
-- `passive` mode can leave the previous side open indefinitely if that side keeps the line open.
-- `active` mode is best used as a deliberate reject or kill endpoint.
+The upstream sink recycles input, discarding any remaining private-pipe body. Healthy empty pipes may remain cached for reuse. Passive mode still consumes data; active mode closes during Init and does not accept later payload on that closed normal line. There is no downstream payload handler.
 
-## Node Metadata
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
+
+Packet configurations of this dual-layer node still do not enable splice.
+
+### Node Metadata
 
 Source-backed metadata:
 
@@ -160,11 +180,3 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayerAnything` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |
-
-## Splice support
-
-The upstream sink recycles input, discarding any remaining private-pipe body. Healthy empty pipes may remain cached for reuse. Passive mode still consumes data; active mode closes during Init and does not accept later payload on that closed normal line. There is no downstream payload handler.
-
-Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
-
-Packet configurations of this dual-layer node still do not enable splice.

@@ -1,30 +1,29 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/EncryptionClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/EncryptionClient.mdx, and all files must keep the same documentation version.
 -->
 
 # EncryptionClient
 
+## Overview
+
 `EncryptionClient` applies AEAD encryption on upstream traffic and decrypts downstream traffic carried in TLS-like application-data records.
+
+The default behavior described here is stream mode. Set `packet-mode: true`
+for the separate IPv4 packet profile described below.
+
+## Typical placement
 
 Recommended chain usage:
 
 - Client side: `TcpListener -> EncryptionClient -> TcpConnector`
 - Server side counterpart: `TcpListener -> EncryptionServer -> TcpConnector`
 
-The default behavior described here is stream mode. Set `packet-mode: true`
-for the separate IPv4 packet profile described below.
+## Minimal practical example
 
-## Settings
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
-- `packet-mode` (boolean, optional): `false` by default; `true` selects IPv4 payload encryption.
-- `algorithm` (string or number, optional): stream mode uses `chacha20-poly1305` (default) or `aes-gcm`; packet mode uses only `xchacha20-poly1305` (its default).
-- `password` (string, required): shared secret used for key derivation
-- `salt` (string, optional): key-derivation salt, default `waterwall-encryption`
-- `kdf-iterations` (number, optional): key derivation rounds, default `12000`
-- `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `16356`
-
-## Example
+### Example
 
 ```json
 {
@@ -40,7 +39,20 @@ for the separate IPv4 packet profile described below.
 }
 ```
 
-## Packet Mode
+## Configuration
+
+### Settings
+
+- `packet-mode` (boolean, optional): `false` by default; `true` selects IPv4 payload encryption.
+- `algorithm` (string or number, optional): stream mode uses `chacha20-poly1305` (default) or `aes-gcm`; packet mode uses only `xchacha20-poly1305` (its default).
+- `password` (string, required): shared secret used for key derivation
+- `salt` (string, optional): key-derivation salt, default `waterwall-encryption`
+- `kdf-iterations` (number, optional): key derivation rounds, default `12000`
+- `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `16356`
+
+## Advanced behavior
+
+### Packet Mode
 
 Set `"packet-mode": true` explicitly when the node receives complete IPv4
 packets. This selects Layer-3 metadata and a stateless packet transform instead
@@ -117,7 +129,7 @@ The following record framing, frame limits, buffering and stream lifecycle
 sections describe `packet-mode: false`. Packet mode uses chain-owned packet
 lines, no per-line reader state, and the normal packet-tunnel callback defaults.
 
-## Wire Format
+### Wire Format
 
 Encrypted payloads are sent as TLS-like application-data records:
 
@@ -133,7 +145,9 @@ record remains buffered between callbacks. Once its header is complete, the reco
 length is checked against `max-frame-size` before waiting for the rest of the body.
 Malformed records or AEAD authentication failure close both directions.
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,27 +1,19 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ConnectionFisherClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ConnectionFisherClient.mdx, and all files must keep the same documentation version.
 -->
 
 # ConnectionFisherClient Node
 
+## Overview
+
 `ConnectionFisherClient` is a client-side bridge tunnel that fans one incoming Waterwall line out into several simultaneous outbound candidate lines, sends a fixed `5`-byte probe on each candidate, and keeps the first candidate that proves it reached `ConnectionFisherServer`.
 
 It is meant for stream chains. The original line stays on the previous side of the tunnel, while the candidate lines are internal helper lines that only exist toward the next side of the chain.
 
-## What It Does
+## Typical placement
 
-- reads `settings.simultaneous-tries-perline`
-- creates up to that many child lines on every upstream `Init`; synchronous selection stops further attempts
-- sends upstream `Init` on every child line immediately
-- sends the `5`-byte client probe `FISH?` on every child line
-- waits for the `5`-byte server reply `FISH!`
-- buffers upstream payload on the original line until one child is validated
-- keeps exactly one validated child and closes the rest
-- closes the original line if no child validates within `5000 ms`
-- closes the original line if any child returns non-handshake bytes before selection
-
-## Intended Placement
+### Intended Placement
 
 A typical client-side chain is:
 
@@ -33,7 +25,9 @@ The matching server side is:
 
 `ConnectionFisherClient` only bridges toward `next`. The original accepted line is never sent to `next` directly.
 
-## Configuration
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
 ```json
 {
@@ -46,13 +40,29 @@ The matching server side is:
 }
 ```
 
+## Configuration
+
 ### `settings`
 
 - `simultaneous-tries-perline` `(integer, default: 2)`
   Number of concurrent child lines created for each incoming line.
   Values smaller than `1` are rejected.
 
-## Lifecycle Notes
+## Implementation details
+
+### What It Does
+
+- reads `settings.simultaneous-tries-perline`
+- creates up to that many child lines on every upstream `Init`; synchronous selection stops further attempts
+- sends upstream `Init` on every child line immediately
+- sends the `5`-byte client probe `FISH?` on every child line
+- waits for the `5`-byte server reply `FISH!`
+- buffers upstream payload on the original line until one child is validated
+- keeps exactly one validated child and closes the rest
+- closes the original line if no child validates within `5000 ms`
+- closes the original line if any child returns non-handshake bytes before selection
+
+### Lifecycle Notes
 
 - upstream `Init` on the original line allocates per-line bridge state and spawns the child lines
 - child lines are initialized before any buffered payload is released
@@ -73,7 +83,7 @@ Temporary downstream ordering during selection also has a 2 MiB bound and keeps
 coalesced reply bytes before reentrant replies. Close settles all retained bytes
 and exact child/main references.
 
-## Finish And Safety Behavior
+### Finish And Safety Behavior
 
 - if the winner child closes, the original line is closed
 - if every child fails before a winner is chosen, the original line is closed
@@ -81,7 +91,7 @@ and exact child/main references.
 - child-line close destroys child protocol state first, closes the next side of that child line, and only then decides whether the main line must also be closed
 - every child line holds a positive ref on the main line so child callbacks never dereference a freed main-line pointer
 
-## Important Composition Rule
+### Important Composition Rule
 
 The child lines created by `ConnectionFisherClient` are internal bridge lines.
 
@@ -91,7 +101,7 @@ The child lines created by `ConnectionFisherClient` are internal bridge lines.
 
 This is why the tunnel manually bridges payload, `Est`, `Pause`, `Resume`, and `Finish` between the winning child and the original line instead of forwarding the original line directly.
 
-## Splice Support and Setup Retirement
+### Splice Support and Setup Retirement
 
 Both nodes accept ordinary buffers and private-pipe payloads. Complete deliveries entering handshake
 or selection parsing are materialized with `sbufEnsureOrdinary()`; application FIFOs retain buffers
@@ -105,7 +115,7 @@ and replay settle. Ready payloads preserve their buffers without inspection, mat
 backlog limit. Server backend initialization still waits for the first application payload, so losing
 candidates create no backend connection. Neither node requests ordinary reads for the established TCP stream.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

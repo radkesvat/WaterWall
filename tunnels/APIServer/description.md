@@ -1,9 +1,11 @@
 <!--
-Documentation version: 8
+Documentation version: 9
 Sync note: Keep synchronized with WaterWall-Docs/docs/02-noderefs/APIServer.mdx and the Persian node reference.
 -->
 
 # APIServer
+
+## Overview
 
 `APIServer` exposes explicitly registered node operations over a reliable byte
 stream. It is a terminal node and opens no socket itself. Access uses independent
@@ -12,7 +14,9 @@ own their request and result schemas: see
 [AuthenticationClient status](../AuthenticationClient/description.md) and the
 [AuthenticationServer management API](../AuthenticationServer/description.md#management-api).
 
-## Placement
+## Typical placement
+
+### Placement
 
 ```text
 TcpListener -> APIServer
@@ -30,6 +34,47 @@ examples to loopback; remote access requires an authenticated encrypted transpor
 with peer identity verification. API tokens do not prevent unauthenticated resource
 consumption. Restrict endpoint reachability or authenticate peers in the transport;
 bounded input allocation does not eliminate connection floods.
+
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Replace the token placeholder with 32 random bytes encoded as 64 hexadecimal characters and replace the exact config/node names with registered targets. Put this terminal node after an access-controlled reliable stream, with TLS for remote access. Its operator credentials are independent of user authentication.
+
+```json
+{
+  "name": "management-api",
+  "type": "APIServer",
+  "settings": {
+    "clients": [
+      {
+        "name": "monitor",
+        "token": "<64 hexadecimal characters representing 32 random bytes>",
+        "allow": [
+          {
+            "config": "edge-europe",
+            "node": "auth-client",
+            "operations": [
+              "status"
+            ]
+          },
+          {
+            "config": "central",
+            "node": "auth-db",
+            "operations": [
+              "status",
+              "get-user",
+              "list-users"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+See [Configuration](#configuration) for defaults and conditional requirements.
 
 ## Configuration
 
@@ -89,7 +134,7 @@ Generated internal child nodes are private. A node-only selector works only when
 its name is unique across all declared top-level nodes, before filtering by
 registration or permissions. Use qualified selectors when names may repeat.
 
-## Optional Limits
+### Optional Limits
 
 All fields below are positive finite integers. Startup rejects inconsistent geometry that cannot accommodate a bounded request and response. Byte budgets include allocator charge and temporary copies where applicable; envelope limits exclude their four-byte prefixes.
 
@@ -170,7 +215,9 @@ write may have committed. Base64 operations may return arbitrary bytes.
 
 Zero does not disable a protection. Trickle input does not reset frame assembly time. Malformed framing, malformed envelope/schema and invalid authentication close after at most one bounded error. Gateway `timeout` and `invalid_encoding` errors also close the connection. The request deadline ends when a complete response is published; delivery then has its separate output deadline. Disconnect and timeout abandon execution but retain job reservations until queued cancellation or a running bounded handler actually settles.
 
-## Protocol And Examples
+## Advanced behavior
+
+### Protocol And Examples
 
 The runnable client and source-checkout instructions live in [examples/README.md](examples/README.md).
 
@@ -195,7 +242,9 @@ Operation schemas remain in their owning node references. A lost write reply can
 follow a successful in-memory commit; consult that operation's recovery rules
 before deciding whether to submit another request.
 
-## Lifecycle And Metadata
+## Implementation details
+
+### Lifecycle And Metadata
 
 APIServer borrows every accepted normal line and never calls `lineDestroy()`. It initializes session state before establishing the previous side and produces replies downstream. Keep client pipelining shallow enough that queued requests can finish within `request_timeout_ms`.
 A queued timeout closes the connection to preserve response order. One operation executes at a time per connection; admitted pipelined requests wait in FIFO order. Output Pause/Resume controls its reply producer while hard budgets and deadlines remain active. Detached cross-worker jobs carry session/request tokens; only the connection's worker resolves a live session and accesses its line. Shutdown closes global API admission before target quiescence, and actual line owners drain accepted lines before final registry destruction.
