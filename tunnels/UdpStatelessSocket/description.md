@@ -9,14 +9,14 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `UdpStatelessSocket` is a UDP chain-head adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
 
-It exists primarily to support components such as `WireGuardDevice`, which need one UDP socket that can both send to configured peers and accept packets from peers that contact the socket first.
+It supports UDP chain heads that send datagrams and accept inbound peer flows.
 
 ## Typical placement
 
 The supported layout starts with `UdpStatelessSocket`:
 
 ```text
-UdpStatelessSocket -> WireGuardDevice -> packet side node
+UdpStatelessSocket -> datagram consumer
 ```
 
 Head-only placement is the current design decision, not a temporary restriction. A previous node or a missing next node is rejected at startup. Tail placement and downstream peer initialization are disabled.
@@ -186,7 +186,7 @@ omit them unless the interface, address, and routing policy are configured.
 
 ### Notes And Caveats
 
-- `UdpStatelessSocket` is intended for UDP edge traffic, especially around `WireGuardDevice`.
+- `UdpStatelessSocket` accepts UDP edge traffic.
 - For non-owned lines, the tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
 - For packet lines, unresolved domain sends snapshot the domain and port for that datagram before resolving, because packet-line routing context is scratch metadata.
 - Received UDP peers get distinct normal lines; packet lines are not destroyed during runtime.
@@ -246,7 +246,7 @@ count; there is no timer-driven summary. The line remains open. These warnings
 require the DNS logger's WARN level, not `verbose`. Normal cache operations do
 not produce them.
 
-This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.
+Inbound peers retain distinct return paths.
 
 #### Listener and connector role
 
@@ -255,7 +255,7 @@ Although the implementation always binds a local UDP socket, the tunnel can act 
 - it can receive packets from arbitrary peers like a listener
 - it can also send packets to a chosen peer like a connector
 
-That combination is why it is useful for `WireGuardDevice`, where the device may need to initiate contact to a peer or receive the first packet from a peer using the same stateless UDP socket.
+This adapter serves protocols that need shared-socket datagrams and distinct inbound peer lifetimes.
 
 #### Chain integration
 

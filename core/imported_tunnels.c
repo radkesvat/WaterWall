@@ -84,8 +84,11 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "StreamToPackets/interface.h"
 #endif
 
-#ifdef INCLUDE_WIREGUARD_DEVICE
-#include "WireGuardDevice/interface.h"
+#ifdef INCLUDE_WIREGUARD_CLIENT
+#include "WireGuardClient/interface.h"
+#endif
+#ifdef INCLUDE_WIREGUARD_SERVER
+#include "WireGuardServer/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
@@ -489,8 +492,11 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
     USING(StreamToPackets);
 #endif
 
-#ifdef INCLUDE_WIREGUARD_DEVICE
-    USING(WireGuardDevice);
+#ifdef INCLUDE_WIREGUARD_CLIENT
+    USING(WireGuardClient);
+#endif
+#ifdef INCLUDE_WIREGUARD_SERVER
+    USING(WireGuardServer);
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE

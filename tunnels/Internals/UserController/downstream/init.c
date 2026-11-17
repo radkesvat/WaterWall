@@ -15,15 +15,14 @@ void usercontrollerTunnelDownStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    // Reverse origin: the line was initiated from the next side (this downstream Init), as in
-    // TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket. This flips the
+    // Reverse origin: the line was initiated from the next side. This flips the
     // upload/download mapping (downstream payload becomes the user's upload).
     usercontrollerLinestateInitialize(ls, true);
     ls->payload_mode = mode;
     usercontrollerBandwidthInitialize(t, l);
 
     // Admit the line at start if it already carries an authenticated user. Lines with no user (the
-    // usual reverse case, where a node like WireGuardDevice authenticates later) pass through
+    // deferred authentication case) pass through
     // unmanaged and are promoted on demand via usercontrollerTunnelTryManageLine().
     user_admission_result_t result = usercontrollerTunnelTryManageLine(t, l);
 

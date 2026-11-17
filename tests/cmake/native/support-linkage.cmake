@@ -95,7 +95,6 @@ foreach(fixture_target IN ITEMS
   vlessserver_no_splice_test
   vlessserver_splice_test
   widle_table_cancellation_test
-  wireguarddevice_orderly_shutdown_test
 )
   if(TARGET ${fixture_target})
     target_link_libraries(${fixture_target} PRIVATE ww_test_support)

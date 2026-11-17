@@ -72,7 +72,7 @@ TunDevice <--> PacketsToConnection <--> TcpConnector
 or:
 
 ```text
-WireGuardDevice <--> PacketsToConnection <--> HttpClient
+WireGuardServer <--> PacketsToConnection <--> HttpClient
 ```
 
 The key idea is that the previous side is packet-oriented, while the next side is normal Waterwall connection-oriented chaining.

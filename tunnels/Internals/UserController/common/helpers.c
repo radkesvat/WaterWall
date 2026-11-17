@@ -203,8 +203,7 @@ void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_
 // The user sits on the side the line was initiated from:
 //   - started_from_next == false (forward, prev-initiated): upstream payload is the user's upload.
 //   - started_from_next == true  (reverse, next-initiated):  upstream payload is the user's download.
-// So a line started from the next side flips the mapping, which is exactly the
-// TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket case.
+// A line started from the next side flips the directional mapping.
 //
 bool usercontrollerObserveDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes, bool upstream_payload)
 {

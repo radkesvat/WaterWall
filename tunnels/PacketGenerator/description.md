@@ -14,17 +14,11 @@ packet lines during the configured duration.
 
 ### WireGuard Placement
 
-To send generated packets through a WireGuard packet path, connect separate
-chain-head branches with paired `Bridge` nodes:
+Generated packets can enter the client directly:
 
 ```text
-PacketGenerator -> Bridge A
-UdpStatelessSocket -> WireGuardDevice -> Bridge B
+PacketGenerator -> WireGuardClient -> UdpConnector
 ```
-
-Pair `Bridge A` and `Bridge B`. Both `PacketGenerator` and
-`UdpStatelessSocket` are chain-head-only, so neither can follow
-`WireGuardDevice` in one linear chain.
 
 ## Minimal practical example
 

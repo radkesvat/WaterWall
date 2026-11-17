@@ -8,8 +8,8 @@
 
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 <generic-runner> <waterwall-binary> <case-dir> <timeout-seconds> <python>" >&2
+if [[ $# -lt 5 || $# -gt 7 ]]; then
+  echo "usage: $0 <generic-runner> <waterwall-binary> <case-dir> <timeout-seconds> <python> [cookie|junk|endpoint] [workers]" >&2
   exit 2
 fi
 
@@ -18,6 +18,14 @@ binary_path=$2
 case_dir=$3
 timeout_seconds=$4
 python_executable=$5
+relay_options=()
+load_environment=(WATERWALL_TEST_FORCE_SYSTEM_LOAD=1)
+if [[ "${6:-cookie}" == junk ]]; then
+  relay_options=(--junk --server-port 26751 --listen-port 26750)
+  load_environment=()
+elif [[ "${6:-cookie}" == endpoint ]]; then
+  relay_options=(--endpoint-probe)
+fi
 source "$(dirname "$(realpath "$0")")/case_run_dir.lib.sh"
 source "$(dirname "$(realpath "$0")")/support/shell/runner.lib.sh"
 test_dir=$(mktemp -d "${TMPDIR:-/tmp}/waterwall-cookie-XXXXXX")
@@ -26,6 +34,12 @@ run_root_file="$test_dir/run-root.txt"
 trace_file="$test_dir/trace.jsonl"
 ready_file="$test_dir/ready"
 relay_pid=""
+
+if [[ -n "${7:-}" ]]; then
+  cp -a "$case_dir" "$test_dir/case"
+  case_dir="$test_dir/case"
+  printf '%s\n' "$7" > "$case_dir/workers.txt"
+fi
 
 cleanup() {
   local cleanup_status=$?
@@ -45,7 +59,7 @@ trap 'exit 143' TERM
 
 "$python_executable" "$(dirname "$generic_runner")/wireguard_cookie_relay.py" \
   --trace-file "$trace_file" \
-  --ready-file "$ready_file" &
+  --ready-file "$ready_file" "${relay_options[@]}" &
 relay_pid=$!
 
 for _ in {1..100}; do
@@ -64,7 +78,7 @@ if [[ ! -e "$ready_file" ]]; then
   exit 1
 fi
 
-WATERWALL_TEST_RUN_ROOT_FILE="$run_root_file" WATERWALL_TEST_FORCE_SYSTEM_LOAD=1 \
+env "${load_environment[@]}" WATERWALL_TEST_RUN_ROOT_FILE="$run_root_file" \
   "$generic_runner" "$binary_path" "$case_dir" "$timeout_seconds"
 
 kill -TERM "$relay_pid"
@@ -73,4 +87,4 @@ relay_pid=""
 
 "$python_executable" "$(dirname "$generic_runner")/wireguard_cookie_relay.py" \
   --verify \
-  --trace-file "$trace_file"
+  --trace-file "$trace_file" "${relay_options[@]}"

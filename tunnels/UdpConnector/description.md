@@ -11,11 +11,11 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used at the end of a chain.
 
-`UdpConnector` accepts normal layer-4 lines only. A layer-3 worker packet line
-must cross an explicit bridge such as `PacketsToStream` before reaching this
-node. Use `StreamToPackets` on the receiving side when the remote payload must
-return to a layer-3 packet chain. For direct packet-line UDP endpoint behavior,
-use a packet-capable adapter such as `UdpStatelessSocket` instead.
+`UdpConnector` accepts normal layer-4 lines, including a carrier created by
+WireGuardClient. In `TunDevice -> WireGuardClient -> UdpConnector`, use
+`dest_context->address` and `dest_context->port` to connect to the WireGuard
+endpoint, or configure another destination such as a UDP relay. Compatible
+datagram transforms may appear between the client and connector.
 
 ## Typical placement
 

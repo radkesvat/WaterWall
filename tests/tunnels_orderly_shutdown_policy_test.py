@@ -275,10 +275,6 @@ RECYCLE_BEFORE_VERDICT = [
 #   (relative path, function, ordered snippets, description)
 
 RETRYABLE_LOCAL = [
-    ("tunnels/WireGuardDevice/instance/start.c", "wireguarddeviceQueueWorkerTransportLineInit",
-     ("WireGuardDevice: worker transport line was rejected at startup",
-      "return;"),
-     "one transport line may be rejected and retried on a later output"),
 ]
 
 

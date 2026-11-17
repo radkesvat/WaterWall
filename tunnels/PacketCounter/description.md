@@ -21,7 +21,7 @@ RawSocket -> PacketCounter
 Receive packets from a tunnel path:
 
 ```text
-UdpStatelessSocket -> WireGuardDevice -> PacketCounter
+UdpListener -> WireGuardServer(mode=packet) -> PacketCounter
 ```
 
 `PacketCounter` can consume packets from upstream or downstream callbacks. It

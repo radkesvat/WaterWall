@@ -94,19 +94,12 @@ TcpListener -> Socks5Server -> ConnectionToPackets
 A practical encrypted topology sends the packets through WireGuard:
 
 ```text
-local application branch: TcpListener -> Socks5Server -> ConnectionToPackets -> Bridge A
-local UDP branch:         UdpStatelessSocket -> WireGuardDevice -> Bridge B
-
-remote UdpStatelessSocket
-  -> WireGuardDevice
-  -> PacketsToConnection
-  -> TcpUdpConnector
-  -> destination
+TcpListener -> Socks5Server -> ConnectionToPackets -> WireGuardClient -> UdpConnector
+UdpListener -> WireGuardServer(mode=connection) -> TcpUdpConnector -> destination
 ```
 
-Pair `Bridge A` and `Bridge B` so the connection-to-packet branch joins the
-WireGuard packet side. `UdpStatelessSocket` is chain-head-only, so it stays at
-the head of its own branch instead of following `WireGuardDevice`.
+The server references its AuthenticationClient service and inserts its private
+PTC, account binding and UserController automatically.
 
 The configured virtual source address must be routable back through the packet topology. For WireGuard, the local side
 normally selects the peer with a destination route such as `0.0.0.0/0`, and the remote peer must allow the configured
@@ -162,7 +155,7 @@ Example:
     "tcp-connect-timeout-ms": 30000,
     "max-pending-bytes": 262144
   },
-  "next": "wireguard-device"
+  "next": "wireguard-client"
 }
 ```
 

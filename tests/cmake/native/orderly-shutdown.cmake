@@ -8,7 +8,6 @@ foreach(orderly_case IN ITEMS
   "AuthenticationClient|authenticationclient_orderly_shutdown_test|authenticationclient|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/authentication/authenticationclient_orderly_shutdown_test.c"
   "KeepAliveClient|keepaliveclient_orderly_shutdown_test|keepaliveclient|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/keepalive/keepaliveclient_orderly_shutdown_test.c"
   "UserController|usercontroller_orderly_shutdown_test|usercontroller|ON|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/usercontroller/usercontroller_orderly_shutdown_test.c"
-  "WireGuardDevice|wireguarddevice_orderly_shutdown_test|wireguarddevice|OFF|${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_orderly_shutdown_test.c"
 )
   string(REPLACE "|" ";" orderly_fields "${orderly_case}")
   list(GET orderly_fields 0 orderly_tunnel)
@@ -30,15 +29,6 @@ foreach(orderly_case IN ITEMS
     endif()
     if(orderly_tunnel STREQUAL "PacketsToStream")
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=lineScheduleTask")
-    endif()
-    if(orderly_tunnel STREQUAL "WireGuardDevice")
-      target_sources(${orderly_test} PRIVATE
-        ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/instance/start.c
-      )
-      target_link_options(${orderly_test} PRIVATE
-        "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
-        "-Wl,--wrap=wtimerAdd"
-      )
     endif()
     if(orderly_tunnel STREQUAL "SpeedTestClient")
       target_link_options(${orderly_test} PRIVATE

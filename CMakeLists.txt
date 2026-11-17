@@ -212,7 +212,8 @@ option(INCLUDE_SPEEDTEST_SERVER         "link SpeedTestServer staticly to the co
 option(INCLUDE_AUTHENTICATION_CLIENT    "link AuthenticationClient staticly to the core"                            TRUE)
 option(INCLUDE_API_SERVER               "link APIServer statically to the core"                                     TRUE)
 option(INCLUDE_AUTHENTICATION_SERVER    "link AuthenticationServer staticly to the core"                            TRUE)
-option(INCLUDE_WIREGUARD_DEVICE         "link WireGuardDevice staticly to the core"                                 TRUE)
+option(INCLUDE_WIREGUARD_CLIENT         "link WireGuardClient statically to the core" TRUE)
+option(INCLUDE_WIREGUARD_SERVER         "link WireGuardServer statically to the core" TRUE)
 option(INCLUDE_PACKET_TO_CONNECTION     "link PacketsToConnection staticly to the core"                             TRUE)
 option(INCLUDE_CONNECTION_TO_PACKETS    "link ConnectionToPackets staticly to the core"                             TRUE)
 option(INCLUDE_STREAM_TO_PACKETS        "link StreamToPackets staticly to the core"                                 TRUE)
@@ -757,14 +758,6 @@ if(INCLUDE_RAWSOCKET)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} RawSocket)
 endif()
 
-#wiregurad device
-if(INCLUDE_WIREGUARD_DEVICE)
-  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_WIREGUARD_DEVICE=1)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/WireGuardDevice)
-  target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/WireGuardDevice)
-  target_link_libraries(${WATERWALL_APPLICATION_TARGET} WireGuardDevice)
-endif()
-
 #layer3 ip route table
 if(INCLUDE_LAYER3_IP_ROUTING_TABLE)
   target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_LAYER3_IP_ROUTING_TABLE=1)
@@ -945,6 +938,21 @@ if(INCLUDE_TCP_UDP_CONNECTOR)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpUdpConnector)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/TcpUdpConnector)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} TcpUdpConnector)
+endif()
+
+# WireGuard protocol and fixed-role wrappers
+if(INCLUDE_WIREGUARD_CLIENT OR INCLUDE_WIREGUARD_SERVER)
+  add_subdirectory(tunnels/Internals/WireGuardCommon)
+endif()
+if(INCLUDE_WIREGUARD_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_WIREGUARD_CLIENT=1)
+  add_subdirectory(tunnels/WireGuardClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} WireGuardClient)
+endif()
+if(INCLUDE_WIREGUARD_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_WIREGUARD_SERVER=1)
+  add_subdirectory(tunnels/WireGuardServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} WireGuardServer)
 endif()
 
 #udp stateless socket

@@ -29,20 +29,11 @@ Manual placement is still useful for other tunnels that call `lineAddUser()` the
 `AuthenticationClient` node. Lines without a valid user handle (for example a `Socks5Server` in `no-auth` mode) are
 passed through without enforcement.
 
-Some nodes authenticate the user only *after* the line is already open, and their next side carries packet lines (one
-per worker) rather than per-user lines, so they cannot place a `UserController` after themselves the way `Socks5Server`
-or `TrojanServer` do. A `WireGuardDevice` doing database-backed peer authentication is the motivating example; it places
-the `UserController` on its own side that still carries per-peer lines. Depending on which adapter is the chain head,
-that per-peer line is initiated from either side of the `UserController`:
-
-```text
-UdpStatelessSocket -> UserController -> WireGuardDevice -> TunDevice   (line starts from prev)
-TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket   (line starts from next)
-```
-
-In both layouts the per-peer line first passes through unmanaged (no user yet). A custom authenticating integration can record a user with `lineAddUser()` and call the
-[programmatic promotion API](#programmatic-promotion-api). WireGuardDevice currently uses its configured peers and does
-not attach database users; its internal controller therefore remains unmanaged transport plumbing.
+WireGuardServer connection mode inserts PTC, user binding and UserController
+before the configured outbound node. Accounts are attached to each inner TCP/UDP
+line before Init. WireGuard carriers and persistent packet lines consume no user
+connection or inner-IP reservations. Source-IP admission uses the preserved inner
+client source, so endpoint roaming does not change IP slots.
 
 `UserController` is bidirectional: it works whether the line is initiated from its `prev` side (an upstream `Init`) or
 its `next` side (a downstream `Init`), and it records that origin per line. The origin matters for traffic accounting —
@@ -232,9 +223,9 @@ Internal creators instead bind `usercontrollerSetPayloadModeResolver(controller,
 construction, before preparation. A configured mode and a resolver cannot both be supplied. The pure owner-worker
 metadata query runs once in either Init direction; every mode source is resolved and saved before admission or forwarding.
 The saved mode also governs later promotion and cannot change with destination metadata.
-SOCKS/Trojan/VLESS resolve initialized TCP versus decoded UDP remote-line roles; HTTP fixes stream mode; WireGuard fixes
-datagram mode on its normal transport side in either orientation. Packet lines never enter UserController. This binding
-does not add WireGuard database-user authentication; its existing unmanaged transport behavior remains.
+SOCKS/Trojan/VLESS resolve initialized TCP versus decoded UDP remote-line roles; HTTP fixes stream mode.
+WireGuardServer's private connection pipeline selects stream for PTC-owned inner TCP lines and datagram for inner UDP
+lines. Its binding helper attaches the account before Init. Packet lines and encrypted carriers never enter UserController.
 
 ### Direction Awareness (Upload vs Download)
 
@@ -245,12 +236,11 @@ traffic arriving at the user. The user always sits on the side the line started 
 | Line origin | Initiated by | Upstream payload counts as | Downstream payload counts as |
 |---|---|---|---|
 | From `prev` (upstream `Init`) | a head/prev adapter (e.g. `UdpStatelessSocket` at the front) | upload | download |
-| From `next` (downstream `Init`) | a tail/next adapter (e.g. `UdpStatelessSocket` at the back) | download | upload |
+| From `next` (downstream `Init`) | a next-side normal-line creator | download | upload |
 
-The forward row is the common case (`Socks5Server`, `TrojanServer`, `VlessServer`). The reverse row happens when the
-user-facing adapter is the chain tail, as in `TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket`:
-there the user's packets arrive on the `next` side, so downstream payload is the user's upload. Quota enforcement is
-otherwise identical in both directions.
+The forward row applies to authenticated servers and WireGuardServer's inner
+connection pipeline. A reverse-origin normal line reverses this directional
+accounting; quota enforcement otherwise follows the same lifecycle.
 
 ## Implementation details
 

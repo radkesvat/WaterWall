@@ -89,6 +89,11 @@ add_test(NAME waterwall.python_test_support
 set_tests_properties(waterwall.python_test_support PROPERTIES
   TIMEOUT 45 LABELS "unit;test-harness")
 
+add_test(NAME waterwall.wireguard_cookie_relay
+  COMMAND "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/wireguard_cookie_relay_test.py")
+set_tests_properties(waterwall.wireguard_cookie_relay PROPERTIES
+  TIMEOUT 10 LABELS "unit;test-harness;wireguard")
+
 add_test(
   NAME waterwall.test_runner_edge_cases
   COMMAND
