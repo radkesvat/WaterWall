@@ -24,6 +24,7 @@ must reach the same `ConnectionStripeServer` instance in one WaterWall process.
 ### Transport placement
 
 Every member opens a separate line through the same client `next` path.
+The member's TCP protocol flags let `TcpUdpConnector` select its TCP connector.
 The corresponding server transport must decode that path before handing bytes
 to `ConnectionStripeServer`:
 
@@ -210,7 +211,9 @@ hard storage limit closes the session instead of dropping stream bytes.
 Finish closes the application line as a whole; this node does not expose a
 separate TCP half-close API. An orderly application Finish sends a CLOSE with
 the final byte and record counts. The peer acknowledges it after consuming all
-preceding records in order.
+preceding records in order. If the application finishes before READY with
+bytes already queued, the client finishes setup and sends those bytes before
+CLOSE. The setup deadline still applies, and the drain deadline starts at Finish.
 The protocol can retain its transport group while this bounded drain completes;
 it does not continue calling the detached application line. Incoming reverse
 data after local Finish is consumed and discarded because its application has
