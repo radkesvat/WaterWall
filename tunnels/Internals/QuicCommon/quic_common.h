@@ -60,8 +60,8 @@ void quicSubmitCarrier(tunnel_t *t, line_t *l, sbuf_t *buffer);
  * destroyed; neither helper reflects Finish toward its caller. */
 void quicFinishApplication(tunnel_t *t, line_t *l);
 void quicFinishCarrier(tunnel_t *t, line_t *l);
-void quicRelayUp(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
-void quicRelayDown(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
+void quicRelayEst(tunnel_t *t, line_t *l);
+void quicSetApplicationPaused(tunnel_t *t, line_t *l, bool paused);
 void quicSetCarrierPaused(tunnel_t *t, line_t *l, bool paused);
 
 void quicCloseAdmission(tunnel_t *t);

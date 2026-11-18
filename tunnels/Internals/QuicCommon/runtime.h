@@ -42,6 +42,7 @@ struct quic_context
     bool                        next_init_sent : 1;
     bool                        pressure : 1;
     bool                        carrier_paused : 1;
+    bool                        application_paused_carrier : 1;
 };
 
 static inline size_t quicApplicationEntries(quic_context_t *context)

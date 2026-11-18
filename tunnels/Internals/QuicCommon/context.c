@@ -162,9 +162,15 @@ static void quicCopyContext(line_t *next, line_t *previous, const quic_tstate_t 
         linePreferOrdinaryReadUpstream(next);
     if (linePrefersOrdinaryReadDownstream(previous))
         linePreferOrdinaryReadDownstream(next);
+    address_context_t *destination = lineGetDestinationAddressContext(next);
+    if (state->client)
+    {
+        addresscontextSetDestinationPinned(destination, false);
+        addresscontextSetResolverDns(destination, false);
+    }
     const uint8_t protocol = state->client && ! state->stream_carrier ? IP_PROTO_UDP : IP_PROTO_TCP;
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(next), protocol);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(next), protocol);
+    addresscontextSetOnlyProtocol(destination, protocol);
 }
 
 quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
@@ -228,7 +234,30 @@ void quicCompleteLineInit(quic_context_t *context)
     quicLeave(context);
 }
 
-static void quicBeginDrain(quic_context_t *context)
+static bool quicForwardCarrierFlow(quic_context_t *context, bool paused)
+{
+    line_t *carrier = context->carrier_line;
+    if (carrier == NULL || ! lineIsAlive(carrier))
+        return false;
+    tunnel_t            *t      = context->tunnel;
+    const quic_tstate_t *state  = tunnelGetState(t);
+    LineTaskFnNoBuf      signal = state->client ? (paused ? tunnelNextUpStreamPause : tunnelNextUpStreamResume)
+                                                : (paused ? tunnelPrevDownStreamPause : tunnelPrevDownStreamResume);
+    return lineCallWithRef(carrier, signal, t) && quicSurvived(context);
+}
+
+static bool quicRetireIfDispatchClosed(quic_context_t *context)
+{
+    const quic_tstate_t *state = tunnelGetState(context->tunnel);
+    if (atomicLoadRelaxed(&state->stopping) || ! wloopNormalDispatchAllowed(getWorkerLoop(context->wid)))
+    {
+        quicRetire(context);
+        return true;
+    }
+    return false;
+}
+
+static bool quicDrainApplication(quic_context_t *context, bool notify)
 {
     if (context->final_deadline_us == 0)
     {
@@ -236,13 +265,23 @@ static void quicBeginDrain(quic_context_t *context)
         context->final_deadline_us = ww_quic_now_us() + (uint64_t) state->close_drain_timeout_ms * 1000;
     }
     context->final_flush = true;
+    quicDetachSide(context, true, notify);
+    if (! quicSurvived(context) || quicRetireIfDispatchClosed(context))
+        return false;
+
+    const bool held                     = context->application_paused_carrier;
+    context->application_paused_carrier = false;
+    /* Let ACKs and reciprocal FIN reach the draining association. The application
+     * is already detached if Resume synchronously delivers input or Finish. */
+    if (held && ! ww_quic_engine_closed(context->engine) && ! ww_quic_engine_closing(context->engine))
+        return quicForwardCarrierFlow(context, false) && ! quicRetireIfDispatchClosed(context);
+    return true;
 }
 
 void quicPeerFinish(quic_context_t *context)
 {
     assert(context->attached && context->driving);
-    quicBeginDrain(context);
-    quicDetachSide(context, true, true);
+    discard quicDrainApplication(context, true);
 }
 
 void quicFinishApplication(tunnel_t *t, line_t *l)
@@ -250,16 +289,8 @@ void quicFinishApplication(tunnel_t *t, line_t *l)
     quic_context_t *context = quicGetContext(t, l);
     assert(context != NULL && context->application_line == l);
     bool entered = quicEnter(context);
-    quicBeginDrain(context);
-    quicDetachSide(context, true, false);
-    if (quicSurvived(context))
-    {
-        const quic_tstate_t *state = tunnelGetState(t);
-        if (atomicLoadRelaxed(&state->stopping))
-            quicRetire(context);
-        else if (entered)
-            quicPump(context);
-    }
+    if (quicDrainApplication(context, false) && entered)
+        quicPump(context);
     if (entered)
         quicLeave(context);
 }
@@ -276,35 +307,42 @@ void quicFinishCarrier(tunnel_t *t, line_t *l)
         quicLeave(context);
 }
 
-static void quicRelay(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal, bool up)
+void quicRelayEst(tunnel_t *t, line_t *l)
 {
     quic_context_t *context = quicGetContext(t, l);
     assert(context != NULL);
     if (! context->attached)
         return;
     const quic_tstate_t *state  = tunnelGetState(t);
-    line_t              *target = up == state->client ? context->carrier_line : context->application_line;
+    line_t              *target = state->client ? context->application_line : context->carrier_line;
     if (target == NULL)
         return;
-    bool entered = quicEnter(context);
-    lineRef(target);
-    signal(t, target);
-    lineUnref(target);
+    bool    entered = quicEnter(context);
+    discard lineCallWithRef(target, tunnelPrevDownStreamEst, t);
     if (entered)
     {
+        /* The application may detach during Est while its carrier still drains. */
         if (quicSurvived(context))
             quicPump(context);
         quicLeave(context);
     }
 }
 
-void quicRelayUp(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal)
+void quicSetApplicationPaused(tunnel_t *t, line_t *l, bool paused)
 {
-    quicRelay(t, l, signal, true);
-}
-void quicRelayDown(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal)
-{
-    quicRelay(t, l, signal, false);
+    quic_context_t *context = quicGetContext(t, l);
+    assert(context != NULL && context->application_line == l);
+    if (! quicSurvived(context))
+        return;
+    context->application_paused_carrier = paused;
+    bool entered                        = quicEnter(context);
+    bool alive                          = quicForwardCarrierFlow(context, paused);
+    if (entered)
+    {
+        if (alive)
+            quicPump(context);
+        quicLeave(context);
+    }
 }
 
 /* The carrier's flow signals reach the application only while QUIC's own backlog does not hold it. A

@@ -169,7 +169,9 @@ The first local application Finish or peer FIN starts the fixed local
 shutdown can end the association sooner; retries and ACKs never restart it.
 
 Receiving peer FIN delivers preceding decoded bytes, then finishes and detaches
-the application. Already accepted output still drains before CONNECTION_CLOSE.
+the application. If the application had paused carrier reads, local Finish or
+peer FIN releases that hold after detachment so the live carrier can receive
+ACKs and FIN. Already accepted output still drains before CONNECTION_CLOSE.
 After the local FIN is acknowledged and peer FIN is received, the engine enters
 QUIC closing/draining. Its separate fixed retention interval is at most three
 probe timeouts (PTO), capped by `close-drain-timeout-ms`; it handles late close

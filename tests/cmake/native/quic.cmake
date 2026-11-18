@@ -27,6 +27,12 @@ if(TARGET QuicClient OR TARGET QuicServer)
   if(TARGET QuicServer)
     list(APPEND quic_node_test_libraries QuicServer)
   endif()
+  if(TARGET QuicClient AND TARGET TcpConnector)
+    list(APPEND quic_node_test_libraries TcpConnector)
+  endif()
+  if(TARGET QuicClient AND TARGET UdpConnector)
+    list(APPEND quic_node_test_libraries UdpConnector)
+  endif()
   waterwall_add_native_executable(quic_node_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/quic/quic_node_test.c
     INCLUDES ${CMAKE_SOURCE_DIR}/tunnels/Internals/QuicCommon
@@ -34,6 +40,8 @@ if(TARGET QuicClient OR TARGET QuicServer)
     DEFINITIONS
       QUIC_TEST_HAS_CLIENT=$<BOOL:$<TARGET_EXISTS:QuicClient>>
       QUIC_TEST_HAS_SERVER=$<BOOL:$<TARGET_EXISTS:QuicServer>>
+      QUIC_TEST_HAS_TCP_CONNECTOR=$<AND:$<TARGET_EXISTS:QuicClient>,$<TARGET_EXISTS:TcpConnector>>
+      QUIC_TEST_HAS_UDP_CONNECTOR=$<AND:$<TARGET_EXISTS:QuicClient>,$<TARGET_EXISTS:UdpConnector>>
       QUIC_TEST_CERT="${CMAKE_SOURCE_DIR}/tests/speedtests/_shared/server.crt"
       QUIC_TEST_KEY="${CMAKE_SOURCE_DIR}/tests/speedtests/_shared/server.key")
   target_link_options(quic_node_test PRIVATE

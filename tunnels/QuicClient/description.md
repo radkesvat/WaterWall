@@ -6,7 +6,10 @@
 decrypts downstream carrier datagrams back into application bytes. Google
 QUICHE performs the real QUIC v1/TLS 1.3 handshake, packet cryptography, loss
 recovery and congestion control. The node opens no socket and resolves no
-transport destination; configure the following carrier separately.
+transport destination. Configure the following carrier separately. The new
+carrier keeps the copied destination address and port for dynamic routing.
+`QuicClient` clears the destination pin and resolver DNS marker on the
+carrier before Init so the outbound adapter can select its configured peer.
 
 ## Typical placement
 
@@ -170,7 +173,9 @@ The first local application Finish or peer FIN starts the fixed local
 shutdown can end the association sooner; retries and ACKs never restart it.
 
 Receiving peer FIN delivers preceding decoded bytes, then finishes and detaches
-the application. Already accepted output still drains before CONNECTION_CLOSE.
+the application. If the application had paused carrier reads, local Finish or
+peer FIN releases that hold after detachment so the live carrier can receive
+ACKs and FIN. Already accepted output still drains before CONNECTION_CLOSE.
 After the local FIN is acknowledged and peer FIN is received, the engine enters
 QUIC closing/draining. Its separate fixed retention interval is at most three
 probe timeouts (PTO), capped by `close-drain-timeout-ms`; it handles late close
