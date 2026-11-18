@@ -904,7 +904,8 @@
       WW_EVENT_MEMORY_TEST_SEAM=1
     )
     target_link_libraries(line_task_scheduling_test PRIVATE ww)
-    target_link_options(line_task_scheduling_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+    target_link_options(line_task_scheduling_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=gettimeofday")
   add_dependencies(waterwall_unit_tests line_task_scheduling_test)
 
     add_waterwall_unit_test(

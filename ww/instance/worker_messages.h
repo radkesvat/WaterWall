@@ -63,7 +63,7 @@ typedef enum
 } worker_message_enqueue_test_stage_e;
 
 void workerMessageEnqueueTestSeam(worker_t *worker, worker_message_enqueue_test_stage_e stage);
-void workerMessageTimedRearmTestSeam(worker_t *worker, uint64_t *deadline_us);
+void workerMessageTimedDispatchTestSeam(worker_t *worker);
 void workerMessagesEnqueueTestSetFailure(worker_message_enqueue_test_failure_e failure);
 /* Close the target loop's normal admission immediately before the next timed
  * install attempt, after the worker-message precheck has passed. */

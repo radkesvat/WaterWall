@@ -1,7 +1,7 @@
 /*
  * Covers: Worker-context accessors, message admission and settlement, cross-worker pipe/HalfDuplex/Stripe
  * callbacks and worker teardown.
- * Setup: The suite-local fixture owns nine real workers and deterministic enqueue/wakeup/timed-rearm
+ * Setup: The suite-local fixture owns nine real workers and deterministic enqueue/wakeup/timed-dispatch
  * seams; individual forked cases retain their process boundaries.
  * Cases: Accessor module, message module, pipe cases, conditional HalfDuplex/Stripe cases and teardown races
  * are called explicitly below. --line-refcount-publication-only selects the publication case without
@@ -58,7 +58,7 @@ int main(int argc, char **argv)
 
     testWorkerMessageInitialCapacity();
 #if defined(WW_WORKER_MESSAGE_LINK_WRAP) && defined(HAS_UNIX_FORK)
-    testTimedRearmRefusalInIsolatedProcess();
+    testTimedDispatchQuiescenceInIsolatedProcess();
 #endif
 #if defined(HAS_UNIX_FORK)
     testLocalBatchCleanupCannotReadmitInIsolatedProcess();

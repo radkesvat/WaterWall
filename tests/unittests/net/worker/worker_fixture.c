@@ -85,7 +85,7 @@ WTHREAD_ROUTINE(messagePoolForeignRoutine)
 
 atomic_int  g_enqueue_pause_stage = ATOMIC_VAR_INIT(-1);
 atomic_int  g_enqueue_pause_wid   = ATOMIC_VAR_INIT(-1);
-atomic_bool g_force_timed_rearm_refusal;
+atomic_bool g_quiesce_during_timed_dispatch;
 atomic_bool g_enqueue_seam_reached;
 atomic_bool g_enqueue_seam_release;
 atomic_int  g_enqueue_seam_hits;
@@ -105,15 +105,14 @@ void        workerMessageEnqueueTestSeam(worker_t *worker, worker_message_enqueu
     }
 }
 
-void workerMessageTimedRearmTestSeam(worker_t *worker, uint64_t *deadline_us)
+void workerMessageTimedDispatchTestSeam(worker_t *worker)
 {
-    if (! atomicExchangeExplicit(&g_force_timed_rearm_refusal, false, memory_order_acq_rel))
+    if (! atomicExchangeExplicit(&g_quiesce_during_timed_dispatch, false, memory_order_acq_rel))
     {
         return;
     }
 
-    *deadline_us = wloopNowUS(worker->loop) + 1000000U;
-    require(wloopRequestQuiesce(worker->loop), "timed rearm seam could not close normal admission");
+    require(wloopRequestQuiesce(worker->loop), "timed dispatch seam could not close normal admission");
 }
 
 static void workerLoopNestedCallback(worker_t *worker, void *arg1, void *arg2, void *arg3)

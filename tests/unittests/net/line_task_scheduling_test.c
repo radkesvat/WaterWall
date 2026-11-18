@@ -28,6 +28,20 @@
 #include "worker_messages.h"
 #include "wwapi.h"
 
+static thread_local time_t wall_clock_offset_seconds;
+
+int __real_gettimeofday(struct timeval *value, void *zone);
+int __wrap_gettimeofday(struct timeval *value, void *zone);
+int __wrap_gettimeofday(struct timeval *value, void *zone)
+{
+    int result = __real_gettimeofday(value, zone);
+    if (result == 0)
+    {
+        value->tv_sec += wall_clock_offset_seconds;
+    }
+    return result;
+}
+
 typedef struct line_task_probe_s
 {
     atomic_uint   tasks;
@@ -245,7 +259,8 @@ static void probeTask(tunnel_t *t, line_t *line)
     line_task_probe_t *probe = taskProbe(t);
     require(lineIsOnCurrentWorker(line), "line task ran outside its owner worker");
     atomicStoreExplicit(&probe->callback_wid, (int) lineGetWID(line), memory_order_relaxed);
-    atomicStoreExplicit(&probe->task_time_us, wloopNowUS(getWorkerLoop(lineGetWID(line))), memory_order_relaxed);
+    atomicStoreExplicit(
+        &probe->task_time_us, wloopNowLoopRunTime(getWorkerLoop(lineGetWID(line))), memory_order_relaxed);
     atomicAddExplicit(&probe->tasks, 1, memory_order_release);
 }
 
@@ -384,10 +399,9 @@ void workerMessageEnqueueTestSeam(worker_t *worker, worker_message_enqueue_test_
     discard stage;
 }
 
-void workerMessageTimedRearmTestSeam(worker_t *worker, uint64_t *deadline_us)
+void workerMessageTimedDispatchTestSeam(worker_t *worker)
 {
     discard worker;
-    discard deadline_us;
 }
 
 static void testSuccessfulSubmissions(line_task_test_env_t *env)
@@ -434,13 +448,15 @@ static void testSuccessfulSubmissions(line_task_test_env_t *env)
     probeReset(&probe);
     line                 = createLine(env, 0);
     const uint32_t delay = 10;
-    const uint64_t start = wloopNowUS(getWorkerLoop(0));
+    const uint64_t start = getHRTimeUs();
     require(lineScheduleDelayedTask(line, probeTask, delay, probe_tunnel, probeCancellation) ==
                 kLineTaskSubmitTimerArmed,
             "owner positive delay did not report TimerArmed");
     discard wloopProcessEvents(getWorkerLoop(0), 0);
     require(probeTerminalCount(&probe) == 0, "positive-delay task ran before its minimum delay");
-    pumpOwnerUntilTerminal(&probe, "owner positive-delay task did not execute");
+    wall_clock_offset_seconds = -600;
+    pumpOwnerUntilTerminal(&probe, "a backward wall-clock step postponed the monotonic line task");
+    wall_clock_offset_seconds = 0;
     requireTaskDisposition(&probe, "owner positive-delay task violated task XOR cancellation");
     require(atomicLoadRelaxed(&probe.task_time_us) >= start + ((uint64_t) delay * 1000ULL),
             "positive-delay task ran before its true deadline");
