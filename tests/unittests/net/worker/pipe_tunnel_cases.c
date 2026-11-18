@@ -243,6 +243,40 @@ void pipeQueueBarrier(worker_t *worker, void *arg1, void *arg2, void *arg3)
     atomicStoreExplicit((atomic_bool *) arg1, true, memory_order_release);
 }
 
+static void testIngressContextCopy(tunnel_chain_t *chain)
+{
+    line_t            *source  = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t            *child   = lineCreate(tunnelchainGetLinePools(chain), 0);
+    routing_context_t *ingress = lineGetRoutingContext(source);
+    routing_context_t *copy    = lineGetRoutingContext(child);
+    addresscontextDomainSetByString(&ingress->src_ctx, "ingress.example");
+    addresscontextSetOnlyProtocol(&ingress->src_ctx, IP_PROTO_TCP);
+    addresscontextSetPort(&ingress->src_ctx, 8080);
+    ingress->local_listener_port = 8080;
+    ingress->peer_source_port    = 45123;
+    lineAddAuthenticatedCredentials(source, "ingress-user", "ingress-password");
+    addresscontextDomainSetByString(&copy->dest_ctx, "child.example");
+    addresscontextSetPort(&copy->dest_ctx, 443);
+
+    lineCopyIngressContext(child, source);
+    require(addresscontextIsDomain(&copy->src_ctx) && copy->src_ctx.domain != ingress->src_ctx.domain &&
+                copy->src_ctx.proto_tcp && copy->src_ctx.port == 8080,
+            "ingress copy lost the source endpoint");
+    require(copy->local_listener_port == 8080 && copy->peer_source_port == 45123,
+            "ingress copy lost the observed ports");
+    require(addresscontextIsDomain(&copy->dest_ctx) && stringCompare(copy->dest_ctx.domain, "child.example") == 0 &&
+                copy->dest_ctx.port == 443,
+            "ingress copy changed the child's selected destination");
+    require(lineGetAuthenticatedPassword(child) != lineGetAuthenticatedPassword(source),
+            "ingress copy shared owned credential storage");
+    lineDestroy(source);
+    require(stringCompare(copy->src_ctx.domain, "ingress.example") == 0,
+            "ingress copy lost its source hostname after source teardown");
+    require(lineHasAuthenticatedCredentials(child, "ingress-user", "ingress-password"),
+            "ingress copy lost the inherited identity after source teardown");
+    lineDestroy(child);
+}
+
 void testPipePublicationIsLinearizedWithPreStop(void)
 {
     atomicStoreRelaxed(&g_pipe_init_count, 0);
@@ -276,6 +310,7 @@ void testPipePublicationIsLinearizedWithPreStop(void)
     child->chain               = chain;
     tunnelchainFinalize(chain);
 
+    testIngressContextCopy(chain);
     pipe_tunnel->onStart(pipe_tunnel);
     line_t *source = lineCreate(tunnelchainGetLinePools(chain), 0);
     require(masterpoolGetCheckedOut(chain->masterpool_line_pool) == 1,

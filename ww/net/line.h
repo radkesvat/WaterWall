@@ -202,6 +202,16 @@ void lineSetAuthenticatedCredentials(line_t *const line, const char *username, c
 void lineCopyUsers(line_t *const dest, const line_t *const src);
 
 /**
+ * @brief Copy the source address context, observed peer and listener ports, and user identity.
+ *
+ * Both arguments must be distinct, live normal lines. The current worker
+ * must own the source and have exclusive access to the newly created,
+ * unpublished destination with no user markers. The destination may already
+ * be assigned to another worker. Its destination address is caller-managed.
+ */
+void lineCopyIngressContext(line_t *const dest, const line_t *const src);
+
+/**
  * @brief Copy routing context and user identity to a newly created companion line.
  *
  * Both lines must be distinct, live normal lines owned by the current worker.

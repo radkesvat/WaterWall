@@ -994,8 +994,7 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     pipe_pair_t *pair = memoryAllocateZero(sizeof(*pair));
 
     line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
-    lineCopyUsers(owned, line);
-    addresscontextCopy(lineGetSourceAddressContext(owned), lineGetSourceAddressContext(line));
+    lineCopyIngressContext(owned, line);
 
     /* Stage all metadata without publishing either line state. */
     *pair = (pipe_pair_t) {

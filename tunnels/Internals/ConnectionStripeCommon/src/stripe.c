@@ -832,8 +832,7 @@ static void stripeServerReady(stripe_session_t *s)
     line_t *app = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), s->wid);
     stripeLineInit(t, app, s, kStripeApplicationLine, 0);
     s->application = app;
-    lineCopyUsers(app, s->lanes[0]);
-    addresscontextCopy(lineGetSourceAddressContext(app), lineGetSourceAddressContext(s->lanes[0]));
+    lineCopyIngressContext(app, s->lanes[0]);
     lineRef(app);
     stripeState(t)->output->init_owned(t, app);
     if (! s->closed)
