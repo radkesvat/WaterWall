@@ -42,11 +42,17 @@ time and do not repeat queue reconstruction. A bit in the existing
 peer flags distinguishes an active timeout origin from a valid timestamp of
 zero. Queue reset clears it; acknowledgements and successful reliable-command
 removal, including the CONNECT handshake, invalidate it so the origin is rebuilt
-from remaining sent commands and queued retransmissions. Structure layouts,
-global time macros and socket-wait behavior are unchanged. Regular servicing is
+from remaining sent commands and queued retransmissions. Each outgoing reliable
+command retains its first transmission time for the maximum deadline and its
+most recent transmission time for the next retry. Regular servicing is
 still required; the 12-hour cap leaves half the time-comparison window for delay.
 WaterWall rejects timeout/ping settings above this cap and services active
 protocol work every 10 ms, subject to event-loop delay.
+
+`host.c` computes host and peer bandwidth allowances and packet throttle ratios
+with 64-bit arithmetic. Each peer accumulates queued outgoing bytes in a 64-bit
+counter for the sampling interval. Bandwidth settings on the wire use ENet's
+32-bit fields.
 
 `tests/enet_vendor_source_policy_test.py` holds the SHA-256 of every vendored file,
 including these local patches, and fails when one differs or when another C source
@@ -79,8 +85,9 @@ WaterWall relies on these upstream details. Re-check them when the pin moves:
 
 To refresh: copy the listed files from the new upstream commit and update the pin
 above. Check whether upstream already provides reassembly initialization,
-receive-queue allocation accounting and bounded peer timing; retain each local
-patch still needed, then update this record and `radkesvat_changes.txt`.
+receive-queue allocation accounting, bounded peer timing and bandwidth
+arithmetic. Retain each local patch still needed, then update this record and
+`radkesvat_changes.txt`.
 Replace the digests in
 `tests/enet_vendor_source_policy_test.py` with the final vendored contents and run
 the `waterwall.enet_*` tests.

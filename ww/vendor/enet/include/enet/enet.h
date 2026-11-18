@@ -5,6 +5,7 @@
 #ifndef __ENET_ENET_H__
 #define __ENET_ENET_H__
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #ifdef _WIN32
@@ -162,6 +163,7 @@ typedef struct _ENetOutgoingCommand
    ENetListNode outgoingCommandList;
    enet_uint16  reliableSequenceNumber;
    enet_uint16  unreliableSequenceNumber;
+   enet_uint32  firstSentTime;
    enet_uint32  sentTime;
    enet_uint32  roundTripTimeout;
    enet_uint32  queueTime;
@@ -278,7 +280,7 @@ typedef struct _ENetPeer
    enet_uint32   incomingBandwidthThrottleEpoch;
    enet_uint32   outgoingBandwidthThrottleEpoch;
    enet_uint32   incomingDataTotal;
-   enet_uint32   outgoingDataTotal;
+   uint64_t      outgoingDataTotal;
    enet_uint32   lastSendTime;
    enet_uint32   lastReceiveTime;
    enet_uint32   nextTimeout;

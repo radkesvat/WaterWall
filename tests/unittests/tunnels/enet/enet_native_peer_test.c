@@ -345,8 +345,49 @@ static void testOversizedPacketIsRefused(void)
     fixtureClose(&fixture);
 }
 
+static void testBandwidthThrottleArithmetic(void)
+{
+    const uint32_t mib = 1024U * 1024U;
+    const struct
+    {
+        uint32_t host_rate;
+        uint32_t peer_rate;
+        uint32_t interval_ms;
+        uint64_t outgoing_bytes;
+        uint32_t expected_throttle;
+    } cases[] = {
+        {512 * mib, 0, 1000, 256 * mib, ENET_PEER_PACKET_THROTTLE_SCALE},
+        {512 * mib, 0, 1000, 1024 * mib, ENET_PEER_PACKET_THROTTLE_SCALE / 2},
+        {0, 512 * mib, 1000, 1024 * mib, ENET_PEER_PACKET_THROTTLE_SCALE / 2},
+        {UINT32_MAX, UINT32_MAX, 2000, 2ULL * UINT32_MAX, ENET_PEER_PACKET_THROTTLE_SCALE},
+        {UINT32_MAX, 0, 1000, 2ULL * UINT32_MAX, ENET_PEER_PACKET_THROTTLE_SCALE / 2},
+    };
+    /* Supply the bytes queued in one sampling interval without a multi-gigabyte transfer. */
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        ENetPeer                   peer     = {.state             = ENET_PEER_STATE_CONNECTED,
+                                               .incomingBandwidth = cases[i].peer_rate,
+                                               .outgoingDataTotal = cases[i].outgoing_bytes,
+                                               .packetThrottle    = ENET_PEER_PACKET_THROTTLE_SCALE};
+        ENetHost                   host     = {.peers                 = &peer,
+                                               .peerCount             = 1,
+                                               .connectedPeers        = 1,
+                                               .bandwidthLimitedPeers = cases[i].peer_rate != 0,
+                                               .outgoingBandwidth     = cases[i].host_rate};
+        enet_platform_transport_t  clock    = {.now_ms = cases[i].interval_ms};
+        enet_platform_transport_t *previous = enetPlatformEnter(&clock);
+        enet_host_bandwidth_throttle(&host);
+        enetPlatformLeave(previous);
+        TEST_EQUAL_UINT(TEST_FAILURE_EXIT,
+                        peer.packetThrottle,
+                        cases[i].expected_throttle,
+                        "bandwidth throttle used the wrong interval allowance");
+    }
+}
+
 int main(void)
 {
+    TEST_RUN_CASE(testBandwidthThrottleArithmetic);
     TEST_RUN_CASE(testNativeReliablePacketsBecomeStreamBytes);
     TEST_RUN_CASE(testUnreliablePacketIsAProtocolFailure);
     TEST_RUN_CASE(testOversizedPacketIsRefused);
