@@ -11,7 +11,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.select_fd_range_unit
  */
-#include "wwapi.h"
+#include "wevent.h"
 
 #include "test_assert.h"
 

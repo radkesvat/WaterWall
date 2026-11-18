@@ -338,6 +338,23 @@ void wioFinalizeNow(wio_t *io)
 }
 #endif
 
+int wioCloseWithError(wio_t *io, int error)
+{
+    assert(error != 0);
+    io->error = error;
+    return wioClose(io);
+}
+
+void wioSetContext(wio_t *io, void *ctx)
+{
+    weventSetUserData(io, ctx);
+}
+
+void *wioGetContext(wio_t *io)
+{
+    return weventGetUserdata(io);
+}
+
 bool wioIsOpened(wio_t *io)
 {
     if (io == NULL)

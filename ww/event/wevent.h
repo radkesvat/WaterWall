@@ -23,6 +23,28 @@
 #define WIO_READ_UNTIL_LENGTH 0x2
 #define WIO_READ_UNTIL_DELIM  0x4
 
+#define WEVENT_FLAGS                                                                                                   \
+    unsigned destroy : 1;                                                                                              \
+    unsigned active : 1;                                                                                               \
+    unsigned pending : 1;
+
+#define WEVENT_FIELDS                                                                                                  \
+    wloop_t         *loop;                                                                                             \
+    wevent_type_e    event_type;                                                                                       \
+    uint64_t         event_id;                                                                                         \
+    wevent_cb        cb;                                                                                               \
+    void            *userdata;                                                                                         \
+    void            *privdata;                                                                                         \
+    struct wevent_s *pending_next;                                                                                     \
+    int              priority;                                                                                         \
+    WEVENT_FLAGS
+
+// sizeof(struct wevent_s)=64 on x64
+struct wevent_s
+{
+    WEVENT_FIELDS
+};
+
 ARRAY_DECL(wio_t *, io_array)
 QUEUE_DECL(wevent_t, event_queue)
 
@@ -272,7 +294,6 @@ struct wio_s
 void     wioInit(wio_t *io);
 void     wioReady(wio_t *io);
 void     wioDone(wio_t *io);
-void     wioFree(wio_t *io);
 uint32_t wioSetNextID(void);
 // Return a closed, detached WIO after all callback/IOCP references have retired.
 void wioFinalizeNow(wio_t *io);

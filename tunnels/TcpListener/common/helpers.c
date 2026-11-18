@@ -81,7 +81,7 @@ static void onClose(wio_t *io)
 
 void tcplistenerOnInboundConnected(wevent_t *ev)
 {
-    wloop_t                *loop = ev->loop;
+    wloop_t                *loop = weventGetLoop(ev);
     socket_accept_result_t *data = (socket_accept_result_t *) weventGetUserdata(ev);
     wio_t                  *io   = data->io;
     wid_t                   wid  = data->wid;

@@ -10,6 +10,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.windows_console_shutdown_unit
  */
+#include "wevent.h"
 #include "wwapi.h"
 
 #include "test_assert.h"

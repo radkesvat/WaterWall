@@ -1,6 +1,6 @@
 #pragma once
 
-#include "wloop.h"
+#include "wevent.h"
 
 /* Internal non-owning task transport for event and worker plumbing. */
 bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
