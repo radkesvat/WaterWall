@@ -59,6 +59,9 @@ struct kcpserver_session_s
     line_t              *service; // Creator reference; detached before Finish callouts.
     bool                 init_entered;
     bool                 carrier_pause_delivered;
+    bool                 carrier_read_held;
+    bool                 carrier_est_delivered;
+    bool                 service_est_delivered;
     tou_settings_t       offered_settings;
 };
 
@@ -72,6 +75,7 @@ struct kcpserver_carrier_s
     kcpserver_carrier_t *prev;
     kcpserver_session_t *sessions;
     size_t               session_count;
+    size_t               carrier_read_holds;
     uint32_t             refs;
     wtimer_t            *pending_timer;
     uint64_t             pending_deadline;
@@ -162,10 +166,10 @@ void                   kcpserverLinestateDestroy(kcpserver_lstate_t *ls);
 void                   kcpserverCarrierRetain(kcpserver_carrier_t *carrier);
 void                   kcpserverCarrierRelease(kcpserver_carrier_t *carrier);
 void                   kcpserverCarrierClose(kcpserver_carrier_t *carrier, bool notify_owner);
-void                   kcpserverRetireService(kcpserver_session_t *session, bool notify_service);
+void                   kcpserverFinishService(kcpserver_session_t *session);
 void                   kcpserverCarrierInput(kcpserver_carrier_t *carrier, sbuf_t *buf);
 void kcpserverCarrierControl(kcpserver_carrier_t *carrier, uint8_t kind, const uint8_t client[kTouNonceSize],
                              const uint8_t server[kTouNonceSize], const tou_settings_t *settings);
 
 bool kcpserverArmPending(kcpserver_carrier_t *carrier, uint64_t deadline);
-void kcpserverRelayToServices(kcpserver_carrier_t *carrier, TunnelFlowRoutineEst callback, bool pressure);
+void kcpserverRelayToServices(kcpserver_carrier_t *carrier, bool pressure);

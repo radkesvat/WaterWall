@@ -7,6 +7,6 @@ void kcpserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     kcpserver_carrier_t *carrier = ls->carrier;
     kcpserverCarrierRetain(carrier);
     carrier->transport_paused = false;
-    kcpserverRelayToServices(carrier, tunnelNextUpStreamResume, true);
+    kcpserverRelayToServices(carrier, true);
     kcpserverCarrierRelease(carrier);
 }

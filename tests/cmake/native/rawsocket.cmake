@@ -517,6 +517,10 @@ if(TARGET KcpClient AND TARGET KcpServer)
       "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_client.c"
       "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_server.c")
     target_link_libraries(${kcp_test} PRIVATE KcpClient KcpServer KcpCommon ww)
+    if(TARGET UdpConnector)
+      target_link_libraries(${kcp_test} PRIVATE UdpConnector)
+      target_compile_definitions(${kcp_test} PRIVATE WATERWALL_KCP_TEST_UDP_CONNECTOR)
+    endif()
     target_link_options(${kcp_test} PRIVATE
       "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd"
       "-Wl,--wrap=touSessionCreate" "-Wl,--wrap=ikcp_create" "-Wl,--wrap=ikcp_release"

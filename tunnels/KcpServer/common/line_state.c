@@ -18,7 +18,8 @@ void kcpserverCarrierRelease(kcpserver_carrier_t *carrier)
     assert(carrier != NULL && carrier->refs > 0);
     if (--carrier->refs == 0)
     {
-        assert(! carrier->active && carrier->sessions == NULL && carrier->pending_timer == NULL);
+        assert(! carrier->active && carrier->sessions == NULL && carrier->pending_timer == NULL &&
+               carrier->carrier_read_holds == 0);
         lineUnref(carrier->line);
         memoryFree(carrier);
     }

@@ -102,7 +102,7 @@ There are no required tunnel-specific settings.
   Default: `8192`
 
 - `kcp-recv-window` `(number)`
-  KCP receive window in segments.
+  Local KCP receive window in segments. The available window advertised to the peer is capped at 65535 segments.
   Default: `8192`
 
 - `kcp-initial-cwnd` `(number)`
@@ -118,11 +118,11 @@ There are no required tunnel-specific settings.
   Default: `0`
 
 - `ping-interval-ms` `(number)`
-  Time without received packets before sending an internal ping.
+  Time since the last valid session packet before sending an internal ping.
   Default: `10000`
 
 - `no-recv-timeout-ms` `(number)`
-  Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
+  Time since the last valid session packet before closing the session. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
 - `close-drain-timeout-ms` `(integer)`
@@ -179,10 +179,12 @@ session/service identities while old sessions can continue acknowledging retries
 This per-carrier cap is not a process-wide KCP/FEC heap budget.
 
 Incoming KCP records carry a one-byte internal frame flag. Replies are chunked,
-framed and sent through KCP toward the previous side. Actual transport Est maps
-promptly between associated lines; protocol readiness remains separate. KCP/FEC
-callbacks stage output before neighboring tunnels run, and nested input is
-serialized with finite byte/allocation-charge admission.
+framed and sent through KCP toward the previous side. Carrier Est is remembered
+and delivered once to each live service whose Init has begun. Each service
+also relays its first Est to the carrier. These callbacks report transport
+readiness independently of KCP handshake progress. KCP/FEC callbacks stage
+output before neighboring tunnels run, and nested input is serialized with
+finite byte/allocation-charge admission.
 
 #### Internal frame flags
 
@@ -298,12 +300,12 @@ receipt, not remote application consumption or persistence. No TCP half-close
 semantics are added. Transport Finish, fatal protocol failure and shutdown abort
 immediately; shutdown never waits for graceful-close deadlines.
 
-Normal sessions ping after `ping-interval-ms` of silence and expire after
-`no-recv-timeout-ms`. Closing sessions use their fixed close deadlines instead
-of letting the normal idle check truncate promised ACK retention. Invalid or
-unrelated packets refresh no session deadline. Once no session or pending
-challenge needs a carrier, local state is cleared and the UDP owner receives
-Finish. Closing one session preserves a carrier still needed by another.
+Normal sessions schedule ping and receive expiry from the last valid reception,
+independently of the KCP update interval. Expiry takes precedence if both are
+due. Closing sessions use their fixed close deadlines. Invalid or unrelated
+packets refresh no session deadline. Once no session or pending challenge needs
+a carrier, local state is cleared and the UDP owner receives Finish. Closing one
+session preserves a carrier still needed by another.
 
 #### Backpressure behavior
 
@@ -316,7 +318,13 @@ notify that service only while the carrier is not paused; neither reason can
 release the other's hold.
 After a new service's Init, any pending carrier Pause is delivered even if Init
 also created KCP pressure, so that service receives its initial hold.
-Service-side Pause/Resume still maps to the carrier.
+In the other direction, each service's latest Pause/Resume controls its own
+hold on carrier reads. Repeated Pause leaves a single hold for that service,
+and the carrier receives Resume only when every service hold is clear. On
+service Finish or peer CLOSE, the session enters closing, retires its service
+and releases that service's hold so the live carrier can receive ACKs for the
+drain. A session that terminates independently also releases its hold if the
+carrier survives.
 
 After an admitted stream payload is encoded and KCP output settles, queued and
 unacknowledged KCP segments above `kcp-send-buffer-limit` set that session's local

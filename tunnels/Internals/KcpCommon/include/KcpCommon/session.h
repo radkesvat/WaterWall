@@ -120,7 +120,8 @@ void touSessionSetReady(tou_session_t *session);
 void touSessionSend(tou_session_t *session, sbuf_t *payload);
 /* Input takes ownership of the complete outer datagram. Identity is checked before FEC/KCP. */
 void                  touSessionInput(tou_session_t *session, sbuf_t *packet);
-void                  touSessionAppFinish(tou_session_t *session);
+/* Publish closing before calling the detached application's hook, then drain if still alive. */
+void                  touSessionAppFinish(tou_session_t *session, void (*before_drain)(void *user));
 void                  touSessionAbort(tou_session_t *session, tou_result_t result);
 void                  touSessionTick(tou_session_t *session, uint64_t now);
 void                  touSessionQuiesce(tou_session_t *session);

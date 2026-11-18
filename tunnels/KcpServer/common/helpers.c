@@ -5,7 +5,44 @@
 static atomic_log_rate_limiter_t kcpserver_session_limit_log;
 static atomic_ullong             kcpserver_session_limit_refusals;
 
-void kcpserverRetireService(kcpserver_session_t *session, bool notify_service)
+static void setCarrierReadHold(kcpserver_session_t *session, bool held)
+{
+    if (session->carrier_read_held == held)
+    {
+        return;
+    }
+    session->carrier_read_held = held;
+    if (held)
+    {
+        ++session->carrier->carrier_read_holds;
+    }
+    else
+    {
+        assert(session->carrier->carrier_read_holds > 0);
+        --session->carrier->carrier_read_holds;
+    }
+}
+
+static void relayToCarrier(kcpserver_carrier_t *carrier, TunnelFlowRoutineEst callback)
+{
+    if (! carrier->active || ! lineIsAlive(carrier->line))
+    {
+        return;
+    }
+    line_t *line = carrier->line;
+    lineRef(line);
+    callback(carrier->tunnel, line);
+    lineUnref(line);
+}
+
+static bool carrierCanDrain(const kcpserver_carrier_t *carrier)
+{
+    const kcpserver_tstate_t *ts = tunnelGetState(carrier->tunnel);
+    return carrier->active && lineIsAlive(carrier->line) && ! atomicLoadRelaxed(&ts->stopping) &&
+           ! ts->workers[carrier->wid].quiescing && wloopNormalDispatchAllowed(getWorkerLoop(carrier->wid));
+}
+
+static void retireService(kcpserver_session_t *session, bool notify_service)
 {
     line_t *service = session->service;
     if (service == NULL)
@@ -25,6 +62,48 @@ void kcpserverRetireService(kcpserver_session_t *session, bool notify_service)
         lineDestroy(service);
     }
     lineUnref(service);
+}
+
+static void releaseServiceReadHold(kcpserver_session_t *session, bool resume)
+{
+    assert(session->service == NULL);
+    if (! session->carrier_read_held)
+    {
+        return;
+    }
+    kcpserver_carrier_t *carrier = session->carrier;
+    setCarrierReadHold(session, false);
+    if (resume && carrier->carrier_read_holds == 0 && carrierCanDrain(carrier))
+    {
+        relayToCarrier(carrier, tunnelPrevDownStreamResume);
+    }
+}
+
+static void resumeCarrierForDrain(void *user)
+{
+    kcpserver_session_t *session = user;
+    releaseServiceReadHold(session, true);
+    if (touSessionIsAlive(session->engine) && ! carrierCanDrain(session->carrier))
+    {
+        touSessionAbort(session->engine, kTouAborted);
+    }
+}
+
+void kcpserverFinishService(kcpserver_session_t *session)
+{
+    tou_session_t *engine = session->engine;
+    touSessionRetain(engine);
+    /* Destroy the owned service before any carrier callback resumes protocol work. */
+    retireService(session, false);
+    if (carrierCanDrain(session->carrier))
+    {
+        touSessionAppFinish(engine, resumeCarrierForDrain);
+    }
+    else
+    {
+        touSessionAbort(engine, kTouAborted);
+    }
+    touSessionRelease(engine);
 }
 
 void kcpserverCarrierClose(kcpserver_carrier_t *carrier, bool notify_owner)
@@ -81,7 +160,7 @@ void kcpserverCarrierClose(kcpserver_carrier_t *carrier, bool notify_owner)
 static void sessionDestroyed(void *user)
 {
     kcpserver_session_t *session = user;
-    assert(session->service == NULL);
+    assert(session->service == NULL && ! session->carrier_read_held);
     kcpserverCarrierRelease(session->carrier);
     memoryFree(session);
 }
@@ -106,7 +185,8 @@ static void sessionTerminal(void *user, tou_result_t result)
     session->prev = session->next = NULL;
     assert(carrier->session_count > 0);
     --carrier->session_count;
-    kcpserverRetireService(session, true);
+    retireService(session, true);
+    releaseServiceReadHold(session, carrier->sessions != NULL || carrier->pending);
     if (result != kTouConfirmed && result != kTouPeerDrained && result != kTouAborted)
     {
         LOGD("KcpServer: session aborted (result %d)", (int) result);
@@ -150,7 +230,9 @@ static void sessionPayload(void *user, sbuf_t *payload)
 
 static void sessionPeerClose(void *user)
 {
-    kcpserverRetireService(user, true);
+    kcpserver_session_t *session = user;
+    retireService(session, true);
+    resumeCarrierForDrain(session);
 }
 
 static void sessionPressure(void *user, bool paused)
@@ -223,6 +305,19 @@ static void copyServiceContext(line_t *service, line_t *carrier)
     {
         linePreferOrdinaryReadDownstream(service);
     }
+}
+
+static void deliverCarrierEst(kcpserver_session_t *session)
+{
+    line_t *service = session->service;
+    if (service == NULL || ! session->init_entered || ! lineIsAlive(service) || session->carrier_est_delivered)
+    {
+        return;
+    }
+    session->carrier_est_delivered = true;
+    lineRef(service);
+    tunnelNextUpStreamEst(session->carrier->tunnel, service);
+    lineUnref(service);
 }
 
 static void promoteSession(kcpserver_carrier_t *carrier)
@@ -304,14 +399,11 @@ static void promoteSession(kcpserver_carrier_t *carrier)
                 session->carrier_pause_delivered = true;
                 lineRef(service);
                 tunnelNextUpStreamPause(carrier->tunnel, service);
-                attached = lineIsAlive(service) && session->service == service;
                 lineUnref(service);
             }
-            if (attached && carrier->transport_established)
+            if (carrier->transport_established)
             {
-                lineRef(service);
-                tunnelNextUpStreamEst(carrier->tunnel, service);
-                lineUnref(service);
+                deliverCarrierEst(session);
             }
             if (touSessionIsAlive(engine))
             {
@@ -487,37 +579,37 @@ void kcpserverCarrierInput(kcpserver_carrier_t *carrier, sbuf_t *buf)
     kcpserverCarrierRelease(carrier);
 }
 
-static void serviceControl(tunnel_t *t, line_t *l, TunnelFlowRoutineEst callback)
+void kcpserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
 {
     kcpserver_lstate_t *ls = lineGetState(l, t);
     assert(ls->kind == kKcpServerService && ls->session != NULL);
-    kcpserver_carrier_t *carrier = ls->carrier;
-    if (! carrier->active)
+    if (! ls->session->service_est_delivered)
     {
-        return;
+        ls->session->service_est_delivered = true;
+        relayToCarrier(ls->carrier, tunnelPrevDownStreamEst);
     }
-    line_t *line = carrier->line;
-    lineRef(line);
-    callback(t, line);
-    lineUnref(line);
-}
-
-void kcpserverTunnelDownStreamEst(tunnel_t *t, line_t *l)
-{
-    serviceControl(t, l, tunnelPrevDownStreamEst);
 }
 
 void kcpserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
 {
-    serviceControl(t, l, tunnelPrevDownStreamPause);
+    kcpserver_lstate_t *ls = lineGetState(l, t);
+    assert(ls->kind == kKcpServerService && ls->session != NULL);
+    setCarrierReadHold(ls->session, true);
+    relayToCarrier(ls->carrier, tunnelPrevDownStreamPause);
 }
 
 void kcpserverTunnelDownStreamResume(tunnel_t *t, line_t *l)
 {
-    serviceControl(t, l, tunnelPrevDownStreamResume);
+    kcpserver_lstate_t *ls = lineGetState(l, t);
+    assert(ls->kind == kKcpServerService && ls->session != NULL);
+    setCarrierReadHold(ls->session, false);
+    if (ls->carrier->carrier_read_holds == 0)
+    {
+        relayToCarrier(ls->carrier, tunnelPrevDownStreamResume);
+    }
 }
 
-void kcpserverRelayToServices(kcpserver_carrier_t *carrier, TunnelFlowRoutineEst callback, bool pressure)
+void kcpserverRelayToServices(kcpserver_carrier_t *carrier, bool pressure)
 {
     tou_session_t *engines[kTouMaximumSessions];
     size_t         count = 0;
@@ -533,18 +625,26 @@ void kcpserverRelayToServices(kcpserver_carrier_t *carrier, TunnelFlowRoutineEst
         {
             if (session->engine == engines[i] && session->service != NULL && session->init_entered)
             {
-                line_t *service = session->service;
-                if (pressure)
+                if (! pressure)
                 {
-                    if (touSessionIsPressured(session->engine))
-                        break;
-                    session->carrier_pause_delivered = carrier->transport_paused;
-                    /* A preceding callback may have changed the shared carrier hold. */
-                    callback = carrier->transport_paused ? tunnelNextUpStreamPause : tunnelNextUpStreamResume;
+                    deliverCarrierEst(session);
                 }
-                lineRef(service);
-                callback(carrier->tunnel, service);
-                lineUnref(service);
+                else if (! touSessionIsPressured(session->engine) && lineIsAlive(session->service))
+                {
+                    line_t *service = session->service;
+                    /* A preceding callback may have changed the shared carrier hold. */
+                    session->carrier_pause_delivered = carrier->transport_paused;
+                    lineRef(service);
+                    if (carrier->transport_paused)
+                    {
+                        tunnelNextUpStreamPause(carrier->tunnel, service);
+                    }
+                    else
+                    {
+                        tunnelNextUpStreamResume(carrier->tunnel, service);
+                    }
+                    lineUnref(service);
+                }
                 break;
             }
         }
@@ -559,6 +659,6 @@ void kcpserverTunnelUpStreamEst(tunnel_t *t, line_t *l)
     kcpserver_carrier_t *carrier = ls->carrier;
     kcpserverCarrierRetain(carrier);
     carrier->transport_established = true;
-    kcpserverRelayToServices(carrier, tunnelNextUpStreamEst, false);
+    kcpserverRelayToServices(carrier, false);
     kcpserverCarrierRelease(carrier);
 }
