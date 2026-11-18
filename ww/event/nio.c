@@ -494,9 +494,9 @@ read_ordinary:
     }
     if (UNLIKELY(nread == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0))
     {
-        wioHandleReadEOF(io);
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
-        goto disconnect;
+        wioHandleReadEOF(io);
+        return;
     }
     // printf("%d \n",nread);
 
@@ -510,7 +510,6 @@ read_ordinary:
     // user consumed buffer
     return;
 read_error:
-disconnect:
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
     {
         wioClose(io);

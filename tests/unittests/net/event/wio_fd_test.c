@@ -2225,7 +2225,8 @@ static void observeEOFClose(wio_t *io)
     require(wioHasPeerWriteShutdown(io) == peer_shutdown_result, "EOF close lost its cached peer shutdown result");
 }
 
-static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, int diagnostic_error)
+static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, int diagnostic_error,
+                                 bool close_before_eof)
 {
     test_env_t env;
     setup(&env);
@@ -2265,9 +2266,9 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     sbufSetLength(queued, sizeof(sentinel));
     require(wioWrite(io, queued) == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
             "EOF fixture output was not queued");
+    if (close_before_eof)
+        require(wioClose(io) == 0 && wioIsOpened(io), "local close did not start a graceful drain");
     require(shutdown(sockets[1], SHUT_WR) == 0, "failed to send fixture EOF");
-    io->revents = WW_READ;
-    EVENT_PENDING(io);
     require(wloopProcessEvents(env.loop, 0) >= 0 && wioHasReadEOF(io), "fixture EOF was not dispatched");
 
     require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && wioHasPeerWriteShutdown(io) == peer_half_closed,
@@ -2280,10 +2281,9 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     {
         require(wioIsOpened(io) && eof_close_calls == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
                 "unconfirmed peer shutdown discarded queued writes");
-        wioHandleReadEOF(io);
-        require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && ! wioHasPeerWriteShutdown(io),
-                "repeated EOF re-queried or changed the cached diagnostic result");
-        wioReadStop(io);
+        require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsOpened(io) && eof_close_calls == 0 &&
+                    wioGetWriteBufSize(io) == sizeof(sentinel),
+                "repeated dispatch after EOF interrupted the output drain");
     }
 
     size_t received = 0;
@@ -2297,8 +2297,6 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     }
     if (! peer_half_closed)
     {
-        io->revents = WW_WRITE;
-        EVENT_PENDING(io);
         require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io) && eof_close_calls == 1,
                 "unconfirmed peer shutdown did not finish after its queue drained");
         require(recv(sockets[1], filler, sizeof(filler), MSG_DONTWAIT) == sizeof(sentinel) &&
@@ -2702,10 +2700,12 @@ int main(void)
     testBudgetReleaseUnderflow();
     testBufferQueueCharge();
     testOrdinaryLargeRead();
-    testQueuedWriteOnEOF(false, false, 0);
-    testQueuedWriteOnEOF(true, false, EACCES);
-    testQueuedWriteOnEOF(true, false, 0);
-    testQueuedWriteOnEOF(true, true, 0);
+    testQueuedWriteOnEOF(false, false, 0, false);
+    testQueuedWriteOnEOF(true, false, EACCES, false);
+    testQueuedWriteOnEOF(true, false, 0, false);
+    testQueuedWriteOnEOF(true, true, 0, false);
+    testQueuedWriteOnEOF(false, false, 0, true);
+    testQueuedWriteOnEOF(true, true, 0, true);
     testPrimaryDescriptorZero();
     testPipeDescriptorZero();
     testPendingDescriptorReuse();

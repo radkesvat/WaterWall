@@ -394,12 +394,20 @@ void wioSetPeerWriteShutdownDetection(wio_t *io, bool enabled)
 
 void wioHandleReadEOF(wio_t *io)
 {
-    if (io->read_eof)
-        return;
+    if (! io->read_eof)
+    {
+        io->read_eof = 1;
+        if (io->detect_peer_write_shutdown && io->error == 0)
+            io->peer_write_shutdown = tcpSocketPeerHasWriteShutdown(wioGetFD(io));
+    }
 
-    io->read_eof = 1;
-    if (io->detect_peer_write_shutdown && io->error == 0)
-        io->peer_write_shutdown = tcpSocketPeerHasWriteShutdown(wioGetFD(io));
+    if (io->io_type & WIO_TYPE_SOCK_STREAM)
+    {
+        // EOF stays readable on readiness backends. An existing graceful drain owns the write interest and timeout.
+        wioReadStop(io);
+        if (! io->close || io->peer_write_shutdown || io->error != 0)
+            wioClose(io);
+    }
 }
 
 uint32_t wioGetID(wio_t *io)

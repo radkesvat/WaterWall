@@ -841,10 +841,11 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     {
         // Real error or stream EOF.
         io->error = record->error;
-        if (record->error == 0 && ! is_dgram)
-            wioHandleReadEOF(io);
         recordRetire(record); // recycles the still-attached sbuf
-        wioClose(io);
+        if (io->error == 0)
+            wioHandleReadEOF(io);
+        else
+            wioClose(io);
         return;
     }
 

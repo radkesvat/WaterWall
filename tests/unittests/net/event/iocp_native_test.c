@@ -2128,6 +2128,13 @@ static void testCloseDrainsWriteQueue(env_t *env)
     }
     require(st.conn != NULL, "close-drain connection was not accepted");
 
+    require(wioRead(st.conn) == 0 && shutdown(client, SD_SEND) == 0, "failed to request close-drain peer EOF");
+    for (int i = 0; i < 200 && st.conn->iocp_completed_head == NULL; ++i)
+    {
+        require(iowatcherPollEvents(loop, 10) >= 0, "failed to dequeue close-drain peer EOF");
+    }
+    require(st.conn->iocp_completed_head != NULL, "peer EOF was not ready before close-drain setup");
+
     st.initial_bytes  = forceQueuedSend(st.conn, env->buffer_pool, 'A', SEND_TEST_CHUNK_SIZE);
     st.expected_bytes = st.initial_bytes;
     wioSetCallBackWrite(st.conn, closeDrainWrite);
@@ -2138,6 +2145,9 @@ static void testCloseDrainsWriteQueue(env_t *env)
     require(st.closes == 0, "queued graceful close callback fired before draining");
     require(! write_queue_empty(&st.conn->write_queue), "queued graceful close discarded the software write queue");
     require(st.conn->close_timer != NULL, "queued graceful close did not arm its timeout");
+
+    require(wloopProcessEvents(loop, 0) >= 0 && wioHasReadEOF(st.conn) && wioIsOpened(st.conn),
+            "peer EOF interrupted an active graceful drain");
 
     setSocketNonblocking(client);
     size_t received_bytes = 0;
