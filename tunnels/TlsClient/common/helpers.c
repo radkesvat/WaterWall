@@ -402,6 +402,11 @@ static void tlsclientShapingOutputTimerCallback(wtimer_t *timer)
 
 bool tlsclientScheduleShapedOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
+    if (ls->upstream_finished)
+    {
+        return true;
+    }
+
     if (ls->shaping_retired)
     {
         return true;
@@ -515,7 +520,7 @@ bool tlsclientFlushSslOutput(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
         ls->shaping_state.maximum_queued_ciphertext_bytes = queued;
     }
 
-    bool force = queued >= kTlsRecordShapingQueueHardLimit;
+    bool force = ls->upstream_finished || queued >= kTlsRecordShapingQueueHardLimit;
     if (! tlsclientDrainShapedOutput(t, l, ls, force))
     {
         return false;
