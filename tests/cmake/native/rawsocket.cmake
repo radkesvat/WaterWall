@@ -172,12 +172,13 @@ if(TARGET HalfDuplexServer)
   target_compile_definitions(halfduplexserver_reentrant_init_test PRIVATE
     WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM=1
   )
-  target_link_options(halfduplexserver_reentrant_init_test PRIVATE
-    ${WATERWALL_LINE_FAILURE_WRAPS}
+  set(WATERWALL_HALFDUPLEXSERVER_REENTRANT_WRAPS
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=sbufAppendMerge"
     "-Wl,--wrap=bufferqueueTryPushBack"
   )
+  target_link_options(halfduplexserver_reentrant_init_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS} ${WATERWALL_HALFDUPLEXSERVER_REENTRANT_WRAPS})
   target_link_libraries(halfduplexserver_reentrant_init_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexserver_reentrant_init_test)
 
