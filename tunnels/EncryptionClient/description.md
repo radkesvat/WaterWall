@@ -45,8 +45,8 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 
 - `packet-mode` (boolean, optional): `false` by default; `true` selects IPv4 payload encryption.
 - `algorithm` (string or number, optional): stream mode uses `chacha20-poly1305` (default) or `aes-gcm`; packet mode uses only `xchacha20-poly1305` (its default).
-- `password` (string, required): shared secret used for key derivation
-- `salt` (string, optional): key-derivation salt, default `waterwall-encryption`
+- `password` (non-empty string, required): shared secret used for key derivation. Stream mode limits it to 32 bytes when `kdf-iterations` is greater than 1.
+- `salt` (string, optional): key-derivation salt of at most 32 bytes in either mode, default `waterwall-encryption`.
 - `kdf-iterations` (number, optional): key derivation rounds, default `12000`
 - `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `16356`
 

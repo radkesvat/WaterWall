@@ -58,8 +58,8 @@ static void realityV2WriteBe16(uint8_t out[2], uint16_t value)
     out[1] = (uint8_t) value;
 }
 
-bool realityV2DeriveRootKey(const char *password, const char *salt, uint32_t iterations,
-                            uint8_t out_key[kRealityV2KeySize])
+wcrypto_status_t realityV2DeriveRootKey(const char *password, const char *salt, uint32_t iterations,
+                                        uint8_t out_key[kRealityV2KeySize])
 {
     if (out_key != NULL)
     {
@@ -68,7 +68,7 @@ bool realityV2DeriveRootKey(const char *password, const char *salt, uint32_t ite
     if (password == NULL || salt == NULL || out_key == NULL || iterations < kRealityV2MinKdfIterations ||
         iterations > kRealityV2MaxKdfIterations)
     {
-        return false;
+        return kWCryptoInvalidArgument;
     }
 
     size_t password_len = stringLength(password);
@@ -76,44 +76,32 @@ bool realityV2DeriveRootKey(const char *password, const char *salt, uint32_t ite
     if (password_len < kRealityV2MinCredentialByteLength || password_len > kRealityV2MaxPasswordByteLength ||
         salt_len < kRealityV2MinCredentialByteLength || salt_len > kRealityV2MaxSaltByteLength)
     {
-        return false;
+        return kWCryptoInvalidArgument;
     }
 
-    if (wCryptoBlake2s(out_key,
-                       kRealityV2KeySize,
-                       (const unsigned char *) salt,
-                       salt_len,
-                       (const unsigned char *) password,
-                       password_len) != kWCryptoOk)
-    {
-        return false;
-    }
+    wcrypto_status_t status = wCryptoBlake2s(out_key,
+                                             kRealityV2KeySize,
+                                             (const unsigned char *) salt,
+                                             salt_len,
+                                             (const unsigned char *) password,
+                                             password_len);
 
     uint8_t iter_block[kRealityV2KeySize + sizeof(uint32_t)] = {0};
-    for (uint32_t i = 1; i < iterations; ++i)
+    for (uint32_t i = 1; status == kWCryptoOk && i < iterations; ++i)
     {
         uint32_t iter_be = htobe32(i);
 
         memoryCopy(iter_block, out_key, kRealityV2KeySize);
         memoryCopy(iter_block + kRealityV2KeySize, &iter_be, sizeof(iter_be));
 
-        if (wCryptoBlake2s(out_key,
-                           kRealityV2KeySize,
-                           (const unsigned char *) password,
-                           password_len,
-                           iter_block,
-                           sizeof(iter_block)) != kWCryptoOk)
-        {
-            memoryZero(iter_block, sizeof(iter_block));
-            memoryZero(out_key, kRealityV2KeySize);
-            return false;
-        }
-
+        status = wCryptoBlake2s(
+            out_key, kRealityV2KeySize, (const unsigned char *) password, password_len, iter_block, sizeof(iter_block));
         memoryZero(iter_block, sizeof(iter_block));
     }
 
-    memoryZero(iter_block, sizeof(iter_block));
-    return true;
+    if (status != kWCryptoOk)
+        memoryZero(out_key, kRealityV2KeySize);
+    return status;
 }
 
 void realityV2WriteBe64(uint8_t out[8], uint64_t value)
