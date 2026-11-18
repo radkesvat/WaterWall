@@ -326,7 +326,7 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     {
         // The loop wake transport carries one byte per armed wake and must not
         // reserve a full network payload buffer for its lifetime.
-        record->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
+        record->sbuf = bufferpoolGetBestFit(io->loop->bufpool, 1, 0);
     }
     else if (io->io_type == WIO_TYPE_UDP)
     {
@@ -335,6 +335,10 @@ static int post_recv(wio_t *io, woverlapped_t *record)
     else if (io->io_type == WIO_TYPE_IP)
     {
         record->sbuf = bufferpoolGetSmallBuffer(io->loop->bufpool);
+    }
+    else if (io->io_type == WIO_TYPE_TCP)
+    {
+        record->sbuf = wioGetTcpReadBuffer(io);
     }
     else
     {
@@ -848,6 +852,9 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
             wioClose(io);
         return;
     }
+
+    if (io->io_type == WIO_TYPE_TCP && ! wloopIOIsControl(io))
+        wioUpdateTcpReadCapacity(io, record->bytes, record->buf.len);
 
     // Detach the buffer: read_cb owns it, the record no longer points at it.
     sbuf_t *buf  = record->sbuf;
@@ -1494,6 +1501,7 @@ error:
 
 int wioRead(wio_t *io)
 {
+    assert(io->loop->bufpool != NULL);
     // Restore read interest first so a restart re-enables the one-shot/stopped
     // read even when an uncancelled receive is still live.
     int add_error = wioAdd(io, wio_handle_events, WW_READ);

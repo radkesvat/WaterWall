@@ -34,6 +34,7 @@
 //   * ConnectEx accepts a socket that was already bound to a source address;
 //   * async DNS polls and reads c-ares sockets without IOCP readiness callbacks;
 //   * TCP writes use one active WSASend and preserve queued data across callbacks;
+//   * full TCP reads promote the next posted buffer before a callback restarts reading;
 //   * direct datagram and TCP writes stop at normal-admission closure;
 //   * per-IO and loop-wide operation accounting returns to a clean baseline.
 //
@@ -86,6 +87,13 @@ typedef struct env_s
     uint32_t                   saved_workers_count;
 } env_t;
 
+enum
+{
+    kTestSmallBufferSize  = 128,
+    kTestMediumBufferSize = 512,
+    kTestLargeBufferSize  = 8192
+};
+
 static void envSetup(env_t *env)
 {
     env->large_master  = masterpoolCreateWithCapacity(64);
@@ -97,11 +105,12 @@ static void envSetup(env_t *env)
                                         env->medium_master,
                                         env->small_master,
                                         64,
-                                        8192,
-                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        1024,
+                                        kTestLargeBufferSize,
+                                        kTestMediumBufferSize,
+                                        kTestSmallBufferSize,
                                         8192,
                                         8192);
+    require(env->buffer_pool != NULL, "test buffer pool creation failed");
     env->wio_pool      = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0]  = env->wio_pool;
     env->wio_pools[1]  = env->wio_pool;
@@ -2551,40 +2560,51 @@ static void testConnectTimerLifecycle(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
-// Test 15: restarting a one-shot read from inside its callback must never leave
-// two uncancelled WSARecv operations on one connection.
+// Test 15: a callback-driven one-shot restart must post a single WSARecv
+// using the capacity selected by the receive that just completed.
 // ---------------------------------------------------------------------------
 
-enum
+static const struct
 {
-    READ_RESTART_EXPECTED_READS = 3
+    uint32_t capacity;
+    uint32_t length;
+} read_restart_steps[] = {
+    {kTestSmallBufferSize, kTestSmallBufferSize},
+    {kTestMediumBufferSize, kTestMediumBufferSize},
+    {kTestLargeBufferSize, 1},
+    {kTestLargeBufferSize, 1},
 };
 
 typedef struct read_restart_state_s
 {
     wio_t *conn;
-    int    reads;
-    int    surplus_receives;
-    char   bytes[READ_RESTART_EXPECTED_READS + 1];
+    size_t reads;
 } read_restart_state_t;
+
+static void requireReadRestartCapacity(const read_restart_state_t *st)
+{
+    const woverlapped_t *record = st->conn->iocp_posted_head;
+    require(record != NULL && record->kind == WOVERLAPPED_RECV, "read-restart did not post a receive record");
+    require(record->buf.len == read_restart_steps[st->reads].capacity, "read-restart posted the wrong TCP buffer tier");
+}
 
 static void readRestartRead(wio_t *io, sbuf_t *buf)
 {
     read_restart_state_t *st = weventGetUserdata(io);
-    require(st->reads < READ_RESTART_EXPECTED_READS, "read-restart received more callbacks than bytes were sent");
-    st->bytes[st->reads] = *(const char *) sbufGetRawPtr(buf);
-    st->reads++;
+    require(st->reads < ARRAY_SIZE(read_restart_steps), "read-restart received an extra callback");
+    require(sbufGetLength(buf) == read_restart_steps[st->reads].length,
+            "read-restart changed the queued receive length");
+    for (size_t i = 0; i < sbufGetLength(buf); ++i)
+        require(sbufGetRawPtr(buf)[i] == (uint8_t) ('1' + st->reads),
+                "read-restart changed or reordered payload bytes");
+    ++st->reads;
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
 
-    if (st->reads < READ_RESTART_EXPECTED_READS)
+    if (st->reads < ARRAY_SIZE(read_restart_steps))
     {
-        // wioReadCallBack already stopped the one-shot read; restarting here must
-        // post exactly one replacement receive.
         require(wioReadOnce(io) == 0, "read-restart could not restart the one-shot read");
-        if (liveUncancelledReceives(io) != 1)
-        {
-            st->surplus_receives++;
-        }
+        require(liveUncancelledReceives(io) == 1, "callback-driven restart did not post exactly one WSARecv");
+        requireReadRestartCapacity(st);
     }
 }
 
@@ -2594,7 +2614,6 @@ static void readRestartAccept(wio_t *connio)
     require(st->conn == NULL, "read-restart test accepted more than one connection");
     st->conn = connio;
     wioSetCallBackRead(connio, readRestartRead);
-    require(wioReadOnce(connio) == 0, "read-restart could not start the one-shot read");
 }
 
 static void testReadRestartFromCallback(env_t *env)
@@ -2609,10 +2628,29 @@ static void testReadRestartFromCallback(env_t *env)
 
     SOCKET client = connectClient(boundPort(server));
     for (int i = 0; i < 200 && st.conn == NULL; ++i)
-    {
         wloopProcessEvents(loop, 10);
-    }
     require(st.conn != NULL, "read-restart connection was not accepted");
+
+    // Stage both full receives at the peer before posting the first WSARecv.
+    char payload[kTestSmallBufferSize + kTestMediumBufferSize];
+    memorySet(payload, '1', kTestSmallBufferSize);
+    memorySet(payload + kTestSmallBufferSize, '2', kTestMediumBufferSize);
+    for (size_t sent = 0; sent < sizeof(payload);)
+    {
+        const int progress = send(client, payload + sent, (int) (sizeof(payload) - sent), 0);
+        require(progress > 0, "read-restart full payload send failed");
+        sent += (size_t) progress;
+    }
+    u_long queued = 0;
+    for (int spin = 0; spin < 500 && queued < sizeof(payload); ++spin)
+    {
+        require(ioctlsocket(wioGetFD(st.conn), FIONREAD, &queued) == 0, "read-restart could not inspect queued input");
+        if (queued < sizeof(payload))
+            wloopProcessEvents(loop, 10);
+    }
+    require(queued == sizeof(payload), "read-restart full payload did not arrive before reading");
+    require(wioReadOnce(st.conn) == 0, "read-restart could not start the one-shot read");
+    requireReadRestartCapacity(&st);
 
     // Repeated read starts must be idempotent, matching the readiness backend.
     require(liveUncancelledReceives(st.conn) == 1, "the one-shot start did not post exactly one receive");
@@ -2620,33 +2658,23 @@ static void testReadRestartFromCallback(env_t *env)
     require(liveUncancelledReceives(st.conn) == 1, "a repeated wioReadStart posted a second WSARecv");
     require(wioGetIocpLiveRecords(st.conn) == 1, "a repeated wioReadStart allocated a second receive record");
 
-    for (int i = 0; i < READ_RESTART_EXPECTED_READS; ++i)
-    {
-        const char payload = (char) ('1' + i);
-        const int  before  = st.reads;
-        require(send(client, &payload, 1, 0) == 1, "read-restart send failed");
-        for (int spin = 0; spin < 500 && st.reads == before; ++spin)
-        {
-            wloopProcessEvents(loop, 10);
-        }
-        require(st.reads == before + 1, "read-restart callback did not run for every byte");
+    for (int spin = 0; spin < 500 && st.reads < 2; ++spin)
+        wloopProcessEvents(loop, 10);
+    require(st.reads == 2, "read-restart did not deliver both full receives");
 
-        if (i + 1 < READ_RESTART_EXPECTED_READS)
-        {
-            require(liveUncancelledReceives(st.conn) == 1,
-                    "a callback-driven read restart left more than one uncancelled receive");
-            require(wioGetIocpLiveRecords(st.conn) == 1, "the completed receive record was reposted as well");
-            require(wioIsOpened(st.conn), "read-restart closed the connection");
-        }
+    for (size_t i = 2; i < ARRAY_SIZE(read_restart_steps); ++i)
+    {
+        require(wioIsOpened(st.conn) && liveUncancelledReceives(st.conn) == 1 && wioGetIocpLiveRecords(st.conn) == 1,
+                "callback restart left the wrong number of receives after dispatch");
+        const char byte = (char) ('1' + i);
+        require(send(client, &byte, 1, 0) == 1, "read-restart short send failed");
+        for (int spin = 0; spin < 500 && st.reads == i; ++spin)
+            wloopProcessEvents(loop, 10);
+        require(st.reads == i + 1, "read-restart did not deliver the short receive");
     }
 
-    require(st.reads == READ_RESTART_EXPECTED_READS, "read-restart ran the wrong number of callbacks");
-    require(st.surplus_receives == 0, "a callback-posted receive coexisted with another uncancelled receive");
-    require(strncmp(st.bytes, "123", READ_RESTART_EXPECTED_READS) == 0,
-            "read-restart bytes were lost, duplicated or reordered");
     require(liveUncancelledReceives(st.conn) == 0, "the final one-shot read left a receive posted");
     require(wioGetIocpLiveRecords(st.conn) == 0, "the final one-shot read left a receive record live");
-
     wioClose(st.conn);
     wioClose(server);
     closesocket(client);

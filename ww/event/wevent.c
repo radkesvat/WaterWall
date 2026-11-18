@@ -158,6 +158,7 @@ void wioReady(wio_t *io)
     io->last_read_hrtime = io->last_write_hrtime = io->loop->cur_hrtime;
 
     io->read_flags = 0;
+    io->tcp_read_min_payload = 1;
     // write_queue
     io->write_bufsize     = 0;
     io->max_write_bufsize = MAX_WRITE_BUFSIZE;

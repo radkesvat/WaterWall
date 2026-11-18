@@ -413,6 +413,7 @@ WW_EXPORT int wioAccept(wio_t *io);
 // connect => wioAdd(io, WW_WRITE) => wconnect_cb
 WW_EXPORT int wioConnect(wio_t *io);
 
+// Buffered reads require a loop with a buffer pool.
 // wioAdd(io, WW_READ) => read => wread_cb
 WW_EXPORT int wioRead(wio_t *io);
 #define wioReadStart(io) wioRead(io)

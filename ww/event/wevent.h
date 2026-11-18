@@ -94,7 +94,7 @@ struct wloop_s
     // ios: with fd as array.index
     struct io_array ios;
     uint32_t        nios;
-    // one loop per thread, so one readbuf per loop is OK. operates on large mode by default.
+    // Worker-owned buffer pool used by this loop's I/O handles.
     buffer_pool_t *bufpool;
     void          *iowatcher;
 #ifdef EVENT_IOCP
@@ -220,6 +220,7 @@ struct wio_s
     uint64_t last_write_hrtime;
     // read
     unsigned int read_flags;
+    uint32_t     tcp_read_min_payload; // Minimum ordinary TCP read capacity for this descriptor.
     // write
     struct write_queue write_queue;
     // wrecursive_mutex_t  write_mutex; // lock write and write_queue
