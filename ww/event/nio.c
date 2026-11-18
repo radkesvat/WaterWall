@@ -199,20 +199,16 @@ connect_error:
 
 static void nio_connect_event_cb(wevent_t *ev)
 {
-    wio_t   *io = (wio_t *) ev->userdata;
-    uint32_t id = (uint32_t) (uintptr_t) ev->privdata;
-    if (io->id != id)
-        return;
-    nio_connect(io);
+    wio_t *io = wioResolveDeferredEvent(ev);
+    if (io != NULL)
+    {
+        nio_connect(io);
+    }
 }
 
 static int nio_connect_async(wio_t *io)
 {
-    wevent_t ev;
-    memoryZero(&ev, sizeof(ev));
-    ev.cb       = nio_connect_event_cb;
-    ev.userdata = io;
-    ev.privdata = (void *) (uintptr_t) io->id;
+    wevent_t ev = wioMakeDeferredEvent(io, nio_connect_event_cb);
     return wloopPostEvent(io->loop, &ev) ? 0 : -1;
 }
 

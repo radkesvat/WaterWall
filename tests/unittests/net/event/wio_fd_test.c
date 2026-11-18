@@ -573,6 +573,45 @@ static void testPendingDescriptorReuse(void)
     teardown(&env);
 }
 
+static void testDeferredSocketOperations(void)
+{
+    test_env_t env;
+    setup(&env);
+    wloop_t  *destination = wloopCreate(WLOOP_FLAG_RUN_ONCE, env.buffers, 0);
+    const int fd          = socket(AF_INET, SOCK_DGRAM, 0);
+    require(fd >= 0, "failed to create a datagram socket for immediate connect");
+    wio_t             *io   = wioGet(env.loop, fd);
+    struct sockaddr_in peer = {.sin_family = AF_INET, .sin_port = htons(9), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    wioSetPeerAddr(io, (struct sockaddr *) &peer, sizeof(peer));
+    // UDP connect only sets the peer. No listener or packet traffic is required.
+    require(wioConnect(io) == 0 && wioCloseAsync(io) == 0, "failed to queue socket operations on the source loop");
+    wioDetach(io);
+    wioAttach(destination, io);
+    require(wloopRun(env.loop) >= 0 && wioIsOpened(io) && ! wioIsConnected(io) && ! wioExists(env.loop, fd),
+            "a deferred source-loop operation followed the socket through handoff");
+
+    require(wioConnect(io) == 0 && wloopRun(destination) >= 0 && wioIsConnected(io),
+            "the owning loop failed to deliver a live socket's immediate connect");
+    int replacement[2];
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "failed to create replacement socket pair");
+    require(wioConnect(io) == 0 && wioCloseAsync(io) == 0, "failed to queue socket operations before retirement");
+    const uint32_t old_id = wioGetID(io);
+    wioFree(io);
+    require(dup2(replacement[0], fd) == fd, "failed to reuse the retired socket's descriptor");
+    close(replacement[0]);
+    wio_t *fresh = wioGet(destination, fd);
+    require(fresh != NULL && wioGetID(fresh) != old_id, "replacement socket retained the retired generation");
+    require(wloopRun(destination) >= 0 && wioIsOpened(fresh) && ! wioIsConnected(fresh),
+            "a replacement socket received its predecessor's deferred operation");
+
+    require(wioCloseAsync(fresh) == 0 && wloopRequestQuiesce(destination), "failed to request close and quiescence");
+    wloopQuiesceNormalWork(destination);
+    requireClosed(fd);
+    close(replacement[1]);
+    wloopDestroy(&destination);
+    teardown(&env);
+}
+
 static void testPendingDetachRejected(void)
 {
     pid_t child = fork();
@@ -2695,6 +2734,7 @@ static void testSpliceModeSwitch(void)
 int main(void)
 {
     testCaseSet("wio_fd_test");
+    testDeferredSocketOperations();
     testSharedBudget();
     testBudgetRebinding();
     testBudgetReleaseUnderflow();

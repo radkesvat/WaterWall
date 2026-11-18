@@ -7,6 +7,10 @@ bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
 /* Cleanup roots accepted here are drained before the worker publishes Quiesced. */
 bool wloopPostControlEvent(wloop_t *loop, wevent_t *ev);
 
+/* Deferred socket operations resolve their original descriptor slot and WIO ID on dispatch. */
+wevent_t wioMakeDeferredEvent(const wio_t *io, wevent_cb cb);
+wio_t   *wioResolveDeferredEvent(const wevent_t *ev);
+
 bool wloopNormalAdmissionBegin(wloop_t *loop);
 void wloopNormalAdmissionEnd(wloop_t *loop);
 /* The wake transport is control infrastructure and remains admissible while normal work closes. */

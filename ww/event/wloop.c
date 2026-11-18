@@ -2274,22 +2274,42 @@ int wioDel(wio_t *io, int events)
     return 0;
 }
 
+wevent_t wioMakeDeferredEvent(const wio_t *io, wevent_cb cb)
+{
+    return (wevent_t) {
+        .cb       = cb,
+        .userdata = (void *) (intptr_t) io->io_slot,
+        .privdata = (void *) (uintptr_t) io->id,
+    };
+}
+
+static wio_t *wioFindOpen(wloop_t *loop, int slot, uint32_t id)
+{
+    if (! wioExists(loop, slot))
+    {
+        return NULL;
+    }
+    wio_t *io = loop->ios.ptr[slot];
+    return wioIsOpened(io) && io->id == id ? io : NULL;
+}
+
+wio_t *wioResolveDeferredEvent(const wevent_t *ev)
+{
+    return wioFindOpen(ev->loop, (int) (intptr_t) ev->userdata, (uint32_t) (uintptr_t) ev->privdata);
+}
+
 static void wio_close_event_cb(wevent_t *ev)
 {
-    wio_t   *io = (wio_t *) ev->userdata;
-    uint32_t id = (uint32_t) (uintptr_t) ev->privdata;
-    if (io->id != id)
-        return;
-    wioClose(io);
+    wio_t *io = wioResolveDeferredEvent(ev);
+    if (io != NULL)
+    {
+        wioClose(io);
+    }
 }
 
 int wioCloseAsync(wio_t *io)
 {
-    wevent_t ev;
-    memoryZero(&ev, sizeof(ev));
-    ev.cb       = wio_close_event_cb;
-    ev.userdata = io;
-    ev.privdata = (void *) (uintptr_t) io->id;
+    wevent_t ev = wioMakeDeferredEvent(io, wio_close_event_cb);
     return wloopPostControlEvent(io->loop, &ev) ? 0 : -1;
 }
 
