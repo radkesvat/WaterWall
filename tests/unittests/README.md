@@ -23,31 +23,29 @@ Scenario-only helpers remain beside their suite. Public CMake execution and
 portable/Windows registration entry files keep their paths in this directory;
 [cmake/native](../cmake/README.md) contains the explicit registration bodies.
 
-## Run a focused native test
+## Run focused native tests
 
-Choose a registered test for the changed contract. For example, a change to Base64
-encoding can be checked with the codec fixture in Debug, where assertions are active.
+Select all fixtures that exercise the changed contract and its affected callers.
+For example, a change to HTTP/1 chunk terminators split across reads affects
+the decoder, HttpClient response handling and HttpServer request handling.
+Run the decoder fixture and both node fixtures together.
 
 ```bash
 cmake --preset linux-unit-tests
-ctest --preset linux-unit-debug --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
+ctest --preset linux-unit-debug --output-on-failure --no-tests=error \
+  -R '^waterwall\.(http_chunk_decoder|http(client|server)_chunked_terminator)_unit$'
 ```
 
-Use `ctest --preset linux-unit-debug -N -R 'base64'` to list matching registrations.
-Use Release when the change depends on optimization, `NDEBUG` or a Release-only
-path. If both configurations exercise distinct affected behavior, run the same
-selection in both.
+Use `ctest --preset linux-unit-debug -N -R 'http.*chunk'` to list matching
+registrations. Debug enables assertions. Use `linux-unit-release` for optimized
+or `NDEBUG` behavior. When both configurations exercise distinct affected paths,
+run the relevant cases in each.
 
-```bash
-ctest --preset linux-unit-release --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
-```
+Stop once the selected tests pass and cover the affected paths. Reserve complete
+local suites for an explicit request or a concrete risk that narrower checks
+cannot cover. Linux CI runs the full Debug and Release suites.
 
-Stop when the affected paths are covered. Add cases for uncovered callers or
-failure modes. Reserve complete local suites for an explicit request or a
-concrete risk that narrower checks cannot cover. Linux CI runs the full Debug
-and Release suites.
-
-Focused native CTest auto-builds the selected target through
+Focused native CTest auto-builds each selected fixture's target through
 [run_unit_test.cmake](run_unit_test.cmake), using the accepted per-tree lock and
 bounded lock/build/child waits. Runs use private CWDs under
 `<build>/test-runs/<configuration>/<test-name>/<invocation>/`; source/fixture

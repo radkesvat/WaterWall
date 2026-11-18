@@ -202,14 +202,15 @@ clang-format --dry-run -Werror --style=file path/to/changed_file.c
 
 ### Validation policy
 
-- Run the smallest local check that exercises the changed behavior and affected
-  callers. Stop once those checks pass. For prose, inspect the diff and verify
+- Run all focused tests that exercise the changed behavior, affected callers
+  and relevant failure paths. The change determines how many tests to select.
+  Stop once that coverage passes. For prose, inspect the diff and verify
   changed links or command examples.
 - Add focused regression coverage for new behavior, changed contracts and
   meaningful edge cases when existing tests leave them uncovered.
-- For native units, run named CTest cases in one relevant configuration. A filtered
-  native run builds its target. Use Debug for assertions and Release for optimized
-  or `NDEBUG` paths. Add the second configuration when it exercises a distinct risk.
+- For native units, select the relevant CTest cases together. The runner builds
+  their targets. Use Debug for assertions and Release for optimized or `NDEBUG`
+  paths. Exercise both when the change affects both paths.
 - Leave routine full suites to CI. Run a whole lane or unit suite locally only on
   explicit request or when a concrete risk spans its cases and a focused selection
   cannot cover it. For shared code, trace affected callers to select those cases.

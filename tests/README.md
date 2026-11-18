@@ -20,12 +20,13 @@ children; they are not all small library-only tests.
 | [benchmarks/](benchmarks/README.md) | Explicitly built diagnostic benchmarks, excluded from ordinary CTest gates. |
 | `fixtures/` | Small runner regression inputs. |
 
-## Run a focused check
+## Run focused tests
 
-Choose the smallest test that exercises the changed behavior. For a codec or
-component contract, select a [named native test](unittests/README.md). For a change
-to how nodes work together, select the matching integration case. For example,
-run the TLS roundtrip from the repository root with the current production binary.
+Run all focused tests that exercise the changed behavior, affected callers and
+relevant failure paths. Combine [native fixtures](unittests/README.md) and
+integration cases when the change affects both a component and how nodes work
+together. For example, the following selects the TLS roundtrip when that chain
+is affected.
 
 ```bash
 cmake --preset linux
@@ -33,8 +34,8 @@ cmake --build --preset linux --config Release --target Waterwall -j8
 ctest --preset linux --output-on-failure --no-tests=error -R '^waterwall\.tls_roundtrip$'
 ```
 
-Use `ctest --preset linux -N -R 'tls'` to discover related cases. Stop once the
-selected checks cover the changed behavior and affected callers. Expand locally
+Use `ctest --preset linux -N -R 'tls'` to discover related cases. Run the
+selected set and stop when it passes and covers the affected paths. Expand locally
 when a specific risk needs additional coverage or the task requests a broader run.
 For lane commands and prerequisites, see [Developer Guide Part 6](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/part6-build-test-review.mdx#testing).
 
