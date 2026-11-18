@@ -1930,16 +1930,34 @@ wio_t *wioGet(wloop_t *loop, int fd)
     return io;
 }
 
+static void wioRequireTransferable(const wio_t *io)
+{
+    if (UNLIKELY(io->closed || io->events != 0 || io->pending))
+    {
+        LOGF("Cannot transfer WIO fd=%d during close, with active I/O interest, or with pending dispatch", io->fd);
+        abortProgramNow(1);
+    }
+    if (UNLIKELY(io->connect_timer || io->close_timer || io->read_timer || io->write_timer || io->keepalive_timer ||
+                 io->heartbeat_timer))
+    {
+        LOGF("Cannot transfer WIO fd=%d while a socket timer belongs to its original loop", io->fd);
+        abortProgramNow(1);
+    }
+#ifdef EVENT_IOCP
+    // Stopping interest cannot move a socket's completion-port association to another loop.
+    if (UNLIKELY(io->iocp_associated || io->iocp_live_records != 0 || io->iocp_accept_retry_timer))
+    {
+        LOGF("Cannot transfer WIO fd=%d with a completion-port association or outstanding IOCP work", io->fd);
+        abortProgramNow(1);
+    }
+#endif
+}
+
 void wioDetach(wio_t *io)
 {
     assert(wioGetFD(io) >= 0);
-    assert((io->events & WW_READ) != WW_READ);
-    assert((io->events & WW_WRITE) != WW_WRITE);
-    if (UNLIKELY(io->pending))
-    {
-        LOGF("wioDetach: cannot transfer a WIO until its original loop has released pending dispatch");
-        abortProgramNow(1);
-    }
+    assert(currentThreadOwnsWorker((wid_t) io->loop->wid));
+    wioRequireTransferable(io);
 
     wloop_t *loop = io->loop;
     int      fd   = wioGetFD(io);
@@ -1951,13 +1969,6 @@ void wioDetach(wio_t *io)
 
 void wioAttach(wloop_t *loop, wio_t *io)
 {
-    assert((io->events & WW_READ) != WW_READ);
-    assert((io->events & WW_WRITE) != WW_WRITE);
-    if (UNLIKELY(io->pending))
-    {
-        LOGF("wioAttach: cannot attach a WIO still owned by pending dispatch on its original loop");
-        abortProgramNow(1);
-    }
     if (! currentThreadOwnsWorker((wid_t) loop->wid))
     {
         printError("wioAttach: loop wid %ld is not owned by the current worker (wid %d)",
@@ -1977,6 +1988,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
         return;
     }
 
+    wioRequireTransferable(io);
     assert(io->io_slot == -1);
     // NOTE: wio was not freed for reused when closed, but attached wio can't be reused,
     // so we need to free it if fd exists to avoid memory leak.

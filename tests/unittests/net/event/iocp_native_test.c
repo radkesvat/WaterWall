@@ -63,6 +63,7 @@ int main(void)
 #include "wloop_internal.h"
 #include "wsocket.h"
 
+#include <process.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -2858,8 +2859,31 @@ static void testDestroyWithPending(env_t *env)
     // diagnostic deadline so a stuck operation cannot block forever.
 }
 
-int main(void)
+static int detachAssociatedSocket(void)
 {
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+        return 2;
+    env_t env;
+    envSetup(&env);
+    wloop_t *loop = wloopCreate(0, env.buffer_pool, 0);
+    if (loop == NULL)
+        return 2;
+    wio_t *io = wioCreateSocket(loop, "127.0.0.1", 0, WIO_TYPE_TCP, WIO_CLIENT_SIDE);
+    if (io == NULL || wioAdd(io, NULL, WW_READ) != 0 || wioDel(io, WW_READ) != 0 || ! io->iocp_associated ||
+        io->events != 0 || io->pending || wioGetIocpLiveRecords(io) != 0)
+        return 2;
+
+    // The stopped socket has no pending operation, but is still bound to the source completion port.
+    wioDetach(io);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "--detach-associated") == 0)
+        return detachAssociatedSocket();
+
     WSADATA wsa;
     require(WSAStartup(MAKEWORD(2, 2), &wsa) == 0, "WSAStartup failed");
 
@@ -2868,6 +2892,12 @@ int main(void)
 
     env_t env;
     envSetup(&env);
+
+    wchar_t executable[MAX_PATH];
+    DWORD   length = GetModuleFileNameW(NULL, executable, ARRAY_SIZE(executable));
+    require(length > 0 && length < ARRAY_SIZE(executable), "cannot locate IOCP handoff test executable");
+    require(_wspawnl(_P_WAIT, executable, L"iocp_native_test", L"--detach-associated", (wchar_t *) NULL) == 1,
+            "handoff accepted a socket already associated with the source completion port");
 
     testDirectStreamWriteAdmission(&env);
     testDirectDatagramWriteAdmission(&env);

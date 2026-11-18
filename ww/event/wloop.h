@@ -314,8 +314,8 @@ WW_EXPORT int    wioAdd(wio_t *io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 
 // Detach on the original owner thread, then attach on the destination owner thread.
-// Read/write interest must be stopped and pending dispatch must have finished.
-// Attempting to detach/attach a pending WIO logs with LOGF and aborts in every build.
+// Stop read/write interest, disarm WIO timers and let pending dispatch finish before detach.
+// On native Windows IOCP, transfer the socket before it is associated with a completion port.
 // A canceled handoff of a freshly accepted socket releases the detached WIO with wioFree().
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);

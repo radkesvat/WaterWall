@@ -633,6 +633,37 @@ static void testPendingDetachRejected(void)
             "pending detach was not rejected before handoff");
 }
 
+static void testTimedSocketHandoff(void)
+{
+    test_env_t env;
+    setup(&env);
+    int    sockets[2];
+    wio_t *io = socketIO(&env, sockets);
+    wioSetReadTimeout(io, 60000);
+    require(io->read_timer != NULL && io->read_timer->loop == env.loop, "read timeout was not armed on the source");
+
+    pid_t child = fork();
+    require(child >= 0, "failed to fork timed handoff test");
+    if (child == 0)
+    {
+        wioDetach(io);
+        _Exit(0);
+    }
+    int status;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "a socket with a live source-loop timeout was allowed to detach");
+
+    wioSetReadTimeout(io, 0);
+    wloop_t *destination = wloopCreate(WLOOP_FLAG_RUN_ONCE, env.buffers, 0);
+    wioDetach(io);
+    wioAttach(destination, io);
+    wioSetReadTimeout(io, 60000);
+    require(io->read_timer != NULL && io->read_timer->loop == destination, "read timeout did not move with rearming");
+    wloopDestroy(&destination);
+    close(sockets[1]);
+    teardown(&env);
+}
+
 static void testPipeDescriptorZero(void)
 {
 #if WW_HAVE_SPLICE
@@ -2750,6 +2781,7 @@ int main(void)
     testPipeDescriptorZero();
     testPendingDescriptorReuse();
     testPendingDetachRejected();
+    testTimedSocketHandoff();
 #if WW_HAVE_SPLICE
     testSpliceModeSwitch();
     testDirectSpliceRead();
