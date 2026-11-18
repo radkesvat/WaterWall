@@ -20,11 +20,16 @@ static void localAsyncCloseLineDownStream(tunnel_t *t, line_t *l)
 
 void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
 {
-    halfduplexserver_lstate_t *ls_main_line  = lineGetState(l, t);
-    tunnel_t *const            download_tunnel = ls_main_line->download_tunnel;
-    tunnel_t *const            upload_tunnel   = ls_main_line->upload_tunnel;
-    line_t *const              download_line = ls_main_line->download_line;
-    line_t *const              upload_line   = ls_main_line->upload_line;
+    halfduplexserver_lstate_t *ls_main_line = lineGetState(l, t);
+    if (closeDrainIsActive(&ls_main_line->close_drain))
+    {
+        halfduplexserverCloseService(t, l, false, NULL);
+        return;
+    }
+    tunnel_t *const download_tunnel = ls_main_line->download_tunnel;
+    tunnel_t *const upload_tunnel   = ls_main_line->upload_tunnel;
+    line_t *const   download_line   = ls_main_line->download_line;
+    line_t *const   upload_line     = ls_main_line->upload_line;
 
     lineRef(l);
     lineRef(download_line);

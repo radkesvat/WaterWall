@@ -176,6 +176,8 @@ if(TARGET HalfDuplexServer)
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=sbufAppendMerge"
     "-Wl,--wrap=bufferqueueTryPushBack"
+    "-Wl,--wrap=getHRTimeUs"
+    "-Wl,--wrap=wtimerAddDeadline"
   )
   target_link_options(halfduplexserver_reentrant_init_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS} ${WATERWALL_HALFDUPLEXSERVER_REENTRANT_WRAPS})

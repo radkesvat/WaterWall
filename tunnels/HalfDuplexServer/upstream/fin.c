@@ -11,10 +11,10 @@ static void localAsyncCloseLineUpStream(tunnel_t *t, line_t *l)
     tunnelPrevDownStreamFinish(t, l);
 }
 
-static void closeDirectTransportPair(tunnel_t *t, line_t *current_line, bool current_is_download)
+void halfduplexserverAbortDirectTransportPair(tunnel_t *t, line_t *current_line, bool current_is_download)
 {
-    halfduplexserver_lstate_t *current_ls   = lineGetState(current_line, t);
-    tunnel_t *const            owner        = halfduplexserverOwner(t);
+    halfduplexserver_lstate_t *current_ls = lineGetState(current_line, t);
+    tunnel_t *const            owner      = halfduplexserverOwner(t);
     tunnel_t *const sibling_tunnel = current_is_download ? current_ls->upload_tunnel : current_ls->download_tunnel;
     line_t *const              main_line    = current_ls->main_line;
     line_t *const              sibling_line = current_is_download ? current_ls->upload_line : current_ls->download_line;
@@ -102,25 +102,7 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     break;
 
     case kCsUploadInTable: {
-
-        mutexLock(&(ts->pending_line_maps_mutex));
-
-        hmap_cons_t_iter f_iter = hmap_cons_t_find(&(ts->upload_line_map), ls->pair_id);
-        bool             found  = f_iter.ref != hmap_cons_t_end(&(ts->upload_line_map)).ref;
-        if (! found)
-        {
-            LOGF("HalfDuplexServer: Thread safety is done incorrectly  [%s:%d]", __FILENAME__, __LINE__);
-            abortProgramNow(1);
-        }
-        hmap_cons_t_erase_at(&(ts->upload_line_map), f_iter);
-
-        mutexUnlock(&(ts->pending_line_maps_mutex));
-        if (ls->buffering)
-        {
-            lineReuseBuffer(l, ls->buffering);
-            ls->buffering = NULL;
-        }
-        halfduplexserverLinestateDestroy(ls);
+        halfduplexserverDetachWaitingUpload(t, l);
     }
     break;
 
@@ -141,13 +123,46 @@ void halfduplexserverTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     }
     break;
 
+    case kCsDownloadFinishPending:
+        halfduplexserverLinestateDestroy(ls);
+        break;
+
     case kCsDownloadDirect: {
-        closeDirectTransportPair(t, l, true);
+        tunnel_t                  *owner   = halfduplexserverOwner(t);
+        line_t                    *main    = ls->main_line;
+        halfduplexserver_lstate_t *service = main != NULL ? lineGetState(main, owner) : NULL;
+        if (service != NULL && closeDrainIsActive(&service->close_drain))
+        {
+            const bool release       = ls->transport_paused && ! service->startup_initializing;
+            service->download_line   = NULL;
+            service->download_tunnel = NULL;
+            halfduplexserverLinestateDestroy(ls);
+            if (release)
+                tunnelNextUpStreamResume(owner, main);
+        }
+        else
+            halfduplexserverAbortDirectTransportPair(t, l, true);
     }
     break;
 
     case kCsUploadDirect: {
-        closeDirectTransportPair(t, l, false);
+        line_t *main = ls->main_line;
+        if (main == NULL)
+        {
+            halfduplexserverLinestateDestroy(ls);
+            break;
+        }
+        tunnel_t                  *owner    = halfduplexserverOwner(t);
+        halfduplexserver_lstate_t *service  = lineGetState(main, owner);
+        halfduplexserver_lstate_t *download = lineGetState(service->download_line, service->download_tunnel);
+        download->upload_line               = NULL;
+        download->upload_tunnel             = NULL;
+        service->upload_line                = NULL;
+        service->upload_tunnel              = NULL;
+        service->source_paused              = false;
+        halfduplexserverBeginServiceClose(owner, main, 0);
+        halfduplexserverLinestateDestroy(ls);
+        halfduplexserverPumpClose(owner, main);
     }
     break;
 

@@ -265,7 +265,7 @@ static void fixtureSetup(halfduplexserver_fixture_t *fixture)
     twfWorkerEnvSetup(&fixture->env, kTestLargeBufferSize, 0);
 
     fixture->prev       = twfCreatePrevTunnel(&fixture->trace);
-    fixture->halfduplex = tunnelCreate(NULL, sizeof(halfduplexserver_tstate_t), sizeof(halfduplexserver_lstate_t));
+    fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize + sizeof(close_drain_t *), kLineStateSize);
     fixture->next       = twfCreateNextTunnel(&fixture->trace);
     twfRequire(fixture->halfduplex != NULL, "failed to create the HalfDuplexServer tunnel");
 
@@ -462,6 +462,22 @@ typedef struct halfduplexserver_protocol_fixture_s
 
 static halfduplexserver_protocol_fixture_t *g_protocol_fixture;
 static uint32_t                             g_protocol_pool_size = kTestLargeBufferSize;
+static uint64_t                             close_clock_offset_us;
+static bool                                 refuse_close_timer;
+
+unsigned long long __real_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void);
+unsigned long long __wrap_getHRTimeUs(void)
+{
+    return __real_getHRTimeUs() + close_clock_offset_us;
+}
+
+wtimer_t *__real_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms)
+{
+    return refuse_close_timer ? NULL : __real_wtimerAddDeadline(loop, callback, delay_ms);
+}
 
 static tunnel_t *protocolIngress(halfduplexserver_protocol_fixture_t *fixture, line_t *line)
 {
@@ -528,7 +544,7 @@ static void protocolFixtureSetup(halfduplexserver_protocol_fixture_t *fixture)
                                      g_protocol_pool_size);
 
     fixture->prev       = twfCreatePrevTunnel(&fixture->trace);
-    fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize, kLineStateSize);
+    fixture->halfduplex = tunnelCreate(NULL, kTunnelStateSize + sizeof(close_drain_t *), kLineStateSize);
     fixture->next       = twfCreateNextTunnel(&fixture->trace);
     twfRequire(fixture->halfduplex != NULL, "failed to create the HalfDuplexServer protocol fixture");
 
@@ -628,6 +644,7 @@ static void protocolFixtureTeardown(halfduplexserver_protocol_fixture_t *fixture
         }
     }
 
+    halfduplexserverStopDrains(fixture->halfduplex, 0, NULL);
     twfRequireNoLeakedBuffers();
     tunnelchainDestroy(fixture->chain);
     tunnelDestroy(fixture->next);
@@ -1033,7 +1050,7 @@ static void caseSetupClosureAndRefusal(void)
 typedef struct startup_order_test_s
 {
     line_t  *upload, *download;
-    bool     in_init, replayed, tail_seen, empty, fragmented;
+    bool     in_init, replayed, tail_seen, empty, fragmented, upload_closed;
     unsigned mode, callbacks, pauses, resumes, next_finishes;
     unsigned close_stage, close_side;
     sbuf_t  *direct;
@@ -1048,6 +1065,8 @@ static void orderClose(unsigned side)
     else
     {
         line_t *half = side == 1 ? order.upload : order.download;
+        if (side == 1)
+            order.upload_closed = true;
         halfduplexserverTunnelUpStreamFinish(protocolIngress(f, half), half);
         // A received Finish must not have been reflected to its sender.
         twfRequire(lineIsAlive(half), "received Finish reflected toward half owner");
@@ -1116,10 +1135,11 @@ static void orderPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     lineReuseBuffer(line, buf);
     if (order.close_stage == 2)
     {
+        order.close_stage = 0;
         orderClose(order.close_side);
         return;
     }
-    if (order.mode != 0 && ! order.empty && ! order.replayed)
+    if (! order.upload_closed && order.mode != 0 && ! order.empty && ! order.replayed)
     {
         order.replayed = true;
         orderSend("D");
@@ -1236,11 +1256,115 @@ static void casePairingOrder(void)
             halfduplexserver_protocol_fixture_t f;
             orderSetup(&f, 4, stage, side);
             orderPair(&f, false, false, false);
+            if (side == 1 && f.main_line != NULL)
+                halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
             twfRequire(f.main_line == NULL && f.transport_finish_count == 2,
                        "close during startup callback leaked association");
             twfRequire(order.next_finishes == (side == 0 ? 0 : 1), "Finish reflected toward next or missed next");
             protocolFixtureTeardown(&f);
         }
+}
+
+static void caseUploadFinishDrainsPausedService(bool service_closes)
+{
+    twfSetCase("HalfDuplexServer upload Finish drains its paused service FIFO");
+    halfduplexserver_protocol_fixture_t f;
+    orderSetup(&f, 2, 0, 0);
+    orderPair(&f, false, false, false);
+    twfRequire(f.forwarded_length == 0, "service accepted bytes through startup Pause");
+    orderClose(1);
+    twfRequire(f.main_line != NULL && order.next_finishes == 0, "upload Finish closed the paused service early");
+    if (service_closes)
+    {
+        order.close_stage = 2;
+        order.close_side  = 0;
+    }
+    halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
+    const size_t length = service_closes ? 1 : 3;
+    twfRequire(f.main_line == NULL && order.next_finishes == ! service_closes && f.transport_finish_count == 2 &&
+                   f.forwarded_length == length && memoryEqual(f.forwarded_payload, "ABC", length),
+               "service drain misdelivered body or reflected Finish");
+    protocolFixtureTeardown(&f);
+}
+
+static void finishDownloadDuringServiceFinish(tunnel_t *next, line_t *main)
+{
+    orderNextFinish(next, main);
+    halfduplexserver_protocol_fixture_t *f       = g_protocol_fixture;
+    tunnel_t                            *ingress = protocolIngress(f, order.download);
+    halfduplexserverTunnelUpStreamPause(ingress, order.download);
+    halfduplexserverTunnelUpStreamResume(ingress, order.download);
+    protocolSendBytes(f, order.download, (const uint8_t *) "D", 1);
+    // A middle transport on this borrowed line can finish while its owner keeps the line alive.
+    halfduplexserverTunnelUpStreamFinish(ingress, order.download);
+}
+
+static void caseDownloadFinishesDuringServiceFinish(void)
+{
+    twfSetCase("HalfDuplexServer download Finish during service Finish cancels its pending notification");
+    halfduplexserver_protocol_fixture_t f;
+    orderSetup(&f, 2, 0, 0);
+    orderPair(&f, false, false, false);
+    f.next->fnFinU = finishDownloadDuringServiceFinish;
+    orderClose(1);
+    lineRef(order.download);
+    halfduplexserverTunnelDownStreamResume(f.halfduplex, f.main_line);
+    twfRequire(order.next_finishes == 1 && f.main_line == NULL && f.forwarded_length == 3 &&
+                   memoryEqual(f.forwarded_payload, "ABC", 3),
+               "service did not receive its final upload bytes and one Finish");
+    twfRequire(lineIsAlive(order.download) && f.transport_finish_count == 1,
+               "service Finish reflected Finish to the retired download");
+    protocolTransportFinish(protocolIngress(&f, order.download)->prev, order.download);
+    lineUnref(order.download);
+    protocolFixtureTeardown(&f);
+}
+
+static void caseUploadEofBeforeDownload(unsigned mode)
+{
+    twfSetCase("HalfDuplexServer retains validated upload after EOF until independent download intro");
+    halfduplexserver_protocol_fixture_t f;
+    protocolFixtureSetup(&f);
+    order          = (startup_order_test_t) {0};
+    f.next->fnFinU = orderNextFinish;
+    order.upload   = protocolCreateTransport(&f);
+    order.download = protocolCreateTransport(&f);
+    uint8_t id[16] = {9}, up[20], down[17];
+    protocolBuildIntro(up, kHLFDCmdUpload, id);
+    memoryCopy(up + kHLFDIntroSize, "ABC", 3);
+    protocolBuildIntro(down, kHLFDCmdDownload, id);
+    protocolSendBytes(&f, order.upload, up, sizeof(up));
+    refuse_close_timer = mode == 2;
+    orderClose(1);
+    refuse_close_timer            = false;
+    halfduplexserver_tstate_t *ts = tunnelGetState(f.halfduplex);
+    if (mode == 2)
+    {
+        twfRequire(ts->detached_count == 0 && ts->detached_charge == 0 && f.env.loop->ntimers == 0,
+                   "timer refusal stranded an unmatched upload");
+        protocolFixtureTeardown(&f);
+        return;
+    }
+    twfRequire(ts->detached_count == 1 && f.main_init_count == 0 && f.env.loop->ntimers == 1,
+               "upload EOF did not retain a bounded rendezvous item");
+    if (mode == 1)
+    {
+        close_clock_offset_us = (kCloseDrainTimeoutMs + 1U) * UINT64_C(1000);
+        f.env.loop->status    = WLOOP_STATUS_RUNNING;
+        twfRequire(wloopProcessEvents(f.env.loop, 0) >= 0, "close deadline timer failed to dispatch");
+        close_clock_offset_us = 0;
+        twfRequire(ts->detached_count == 0 && ts->detached_charge == 0 && f.env.loop->ntimers == 0,
+                   "unmatched upload survived its 30-second deadline");
+        protocolSendBytes(&f, order.download, down, sizeof(down));
+        twfRequire(f.main_init_count == 0 && f.forwarded_length == 0, "expired upload matched a late download");
+        protocolFixtureTeardown(&f);
+        return;
+    }
+    protocolSendBytes(&f, order.download, down, sizeof(down));
+    twfRequire(ts->detached_count == 0 && ts->detached_charge == 0 && f.env.loop->ntimers == 0 &&
+                   f.main_init_count == 1 && order.next_finishes == 1 && f.transport_finish_count == 2 &&
+                   f.forwarded_length == 3 && memoryEqual(f.forwarded_payload, "ABC", 3),
+               "detached upload rendezvous lost data, terminal ordering or accounting");
+    protocolFixtureTeardown(&f);
 }
 
 static unsigned budget_dimension;
@@ -1447,6 +1571,11 @@ static void runSuite(void)
     splice_inputs = false;
     caseEarlyTransportPressure();
     casePairingOrder();
+    caseUploadFinishDrainsPausedService(false);
+    caseUploadFinishDrainsPausedService(true);
+    caseDownloadFinishesDuringServiceFinish();
+    for (unsigned mode = 0; mode < 3; ++mode)
+        caseUploadEofBeforeDownload(mode);
     caseStartupBudget();
     const uint32_t sizes[] = {32768, 64 * 1024, SPLICE_PAYLOAD_LIMIT};
     for (unsigned i = 0; i < ARRAY_SIZE(sizes); ++i)
@@ -1470,6 +1599,11 @@ static void runSuite(void)
     splice_inputs = true;
     caseEarlyTransportPressure();
     casePairingOrder();
+    caseUploadFinishDrainsPausedService(false);
+    caseUploadFinishDrainsPausedService(true);
+    caseDownloadFinishesDuringServiceFinish();
+    for (unsigned mode = 0; mode < 3; ++mode)
+        caseUploadEofBeforeDownload(mode);
     caseStartupBudget();
     runRejectedPairingCase(true, false);
     runRejectedPairingCase(false, false);
