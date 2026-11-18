@@ -3,7 +3,7 @@
 CTest is the test selector. Native component fixtures, deterministic integration
 cases, policy/runner checks, external cases, privileged cases and serial speed
 workloads retain distinct execution requirements. The canonical lane policy,
-build commands and planning timings live in [Developer Guide Part 6](../WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx).
+build commands and planning timings live in [Developer Guide Part 6](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/part6-build-test-review.mdx).
 
 The production `linux` tree keeps LTO enabled. Native units use the separate
 `linux-unit-tests` tree, with asserted Debug and optimized `NDEBUG` Release.
@@ -20,43 +20,28 @@ children; they are not all small library-only tests.
 | [benchmarks/](benchmarks/README.md) | Explicitly built diagnostic benchmarks, excluded from ordinary CTest gates. |
 | `fixtures/` | Small runner regression inputs. |
 
-Run from the repository root:
+## Run a focused check
+
+Choose the smallest test that exercises the changed behavior. For a codec or
+component contract, select a [named native test](unittests/README.md). For a change
+to how nodes work together, select the matching integration case. For example,
+run the TLS roundtrip from the repository root with the current production binary.
 
 ```bash
 cmake --preset linux
-cmake --build --preset linux -j8
-bash tests/run_test_lane.sh support build/linux Release --no-tests=error
-bash tests/run_test_lane.sh functional build/linux Release --no-tests=error
-# Routine support, functional and external lanes:
-bash tests/run_test_lane.sh all build/linux Release --no-tests=error
-# Opt-in throughput and longer traffic/churn workloads:
-bash tests/run_test_lane.sh speed build/linux Release --no-tests=error
-bash tests/run_test_lane.sh stress build/linux Release --no-tests=error
-# Requires the privileges/tools stated by the individual cases:
-sudo -E bash tests/run_test_lane.sh privileged build/linux Release --no-tests=error
-
-cmake --preset linux-unit-tests
-cmake --build --preset linux-unit-debug -j8
-ctest --preset linux-unit-debug --output-on-failure --no-tests=error
-cmake --build --preset linux-unit-release -j8
-ctest --preset linux-unit-release --output-on-failure --no-tests=error
-```
-
-The `linux` and `linux-packed` CTest presets exclude speed and stress workloads.
-Short verified/unverified SpeedTestClient smoke cases remain in the functional
-lane. Source-only policy checks run in production support once per source revision;
-native Debug/Release presets exclude `source-policy` while retaining runtime and
-build-policy checks. CI's manual `extended_tests` input enables the optional lanes.
-
-Discover actual names and properties rather than maintaining a manual catalog:
-
-```bash
-ctest --preset linux -N
-ctest --preset linux -N -V -R '^waterwall\.tls_roundtrip$'
+cmake --build --preset linux --config Release --target Waterwall -j8
 ctest --preset linux --output-on-failure --no-tests=error -R '^waterwall\.tls_roundtrip$'
-ctest --preset linux-unit-debug -N -L unit
-ctest --preset linux-unit-release --show-only=json-v1
 ```
+
+Use `ctest --preset linux -N -R 'tls'` to discover related cases. Stop once the
+selected checks cover the changed behavior and affected callers. Expand locally
+when a specific risk needs additional coverage or the task requests a broader run.
+For lane commands and prerequisites, see [Developer Guide Part 6](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/part6-build-test-review.mdx#testing).
+
+Linux CI runs the production lanes and complete Debug and Release native suites.
+Source-only policy checks run once per revision in production support. Short
+SpeedTestClient smoke cases run in the functional lane. Speed and stress workloads
+are opt-in through CI's manual `extended_tests` input.
 
 Choose the existing public runner that matches the verdict:
 
@@ -103,6 +88,4 @@ namespace, prerequisites, labels, locks, timeout and feature variants. Add
 `workers.txt` only for a deliberate non-default worker count and explain it
 locally. `allow-early-response=true` and `streaming-response=true` are useful
 when the scenario must exercise bidirectional overlap. Keep JSON configuration
-valid; documentation belongs outside JSON. Build and run focused Debug/Release
-native coverage and the applicable production lane; shared changes use the full
-matrix in Part 6.
+valid and documentation outside JSON. Run the new registration by its CTest name.

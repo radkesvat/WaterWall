@@ -23,19 +23,29 @@ Scenario-only helpers remain beside their suite. Public CMake execution and
 portable/Windows registration entry files keep their paths in this directory;
 [cmake/native](../cmake/README.md) contains the explicit registration bodies.
 
-Configure and exercise both complementary configurations:
+## Run a focused native test
+
+Choose a registered test for the changed contract. For example, a change to Base64
+encoding can be checked with the codec fixture in Debug, where assertions are active.
 
 ```bash
 cmake --preset linux-unit-tests
-cmake --build --preset linux-unit-debug -j8
-ctest --preset linux-unit-debug --output-on-failure --no-tests=error
-cmake --build --preset linux-unit-release -j8
-ctest --preset linux-unit-release --output-on-failure --no-tests=error
-
-ctest --preset linux-unit-debug -N -R '^waterwall\.base64_unit$'
 ctest --preset linux-unit-debug --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
+```
+
+Use `ctest --preset linux-unit-debug -N -R 'base64'` to list matching registrations.
+Use Release when the change depends on optimization, `NDEBUG` or a Release-only
+path. If both configurations exercise distinct affected behavior, run the same
+selection in both.
+
+```bash
 ctest --preset linux-unit-release --output-on-failure --no-tests=error -R '^waterwall\.base64_unit$'
 ```
+
+Stop when the affected paths are covered. Add cases for uncovered callers or
+failure modes. Reserve complete local suites for an explicit request or a
+concrete risk that narrower checks cannot cover. Linux CI runs the full Debug
+and Release suites.
 
 Focused native CTest auto-builds the selected target through
 [run_unit_test.cmake](run_unit_test.cmake), using the accepted per-tree lock and
@@ -68,7 +78,6 @@ before shared initialization and live pipe/HalfDuplex/pool/batch cases before
 teardown races. Final accessor death checks run after shared shutdown; the
 `--line-refcount-publication-only` selection remains independent.
 
-Format changed C/header ranges with portable `clang-format --style=file`, run
-focused Debug then Release coverage, and use the broader matrix for shared
-changes. [Developer Guide Part 6](../../WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx)
+Format changed C/header ranges with portable `clang-format --style=file`.
+[Developer Guide Part 6](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/05-devguides/part6-build-test-review.mdx)
 is canonical for validation scope, sanitizer commands and lane timings.
