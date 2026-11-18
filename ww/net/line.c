@@ -209,12 +209,8 @@ void lineUnRefInternal(line_t *l)
     generic_pool_t *const provenance_pool = l->pools[0];
     debugAssertZeroBuf(&l->tunnels_line_state[0], genericpoolGetItemSize(provenance_pool) - sizeof(line_t));
 
-    if (l->routing_context.dest_ctx.domain != NULL && ! l->routing_context.dest_ctx.domain_constant)
-    {
-        memoryFree(l->routing_context.dest_ctx.domain);
-        l->routing_context.dest_ctx.domain = NULL;
-    }
-
+    addresscontextReset(&l->routing_context.src_ctx);
+    addresscontextReset(&l->routing_context.dest_ctx);
     lineClearUsers(l);
 
     worker_t *current = tryGetCurrentWorker();
