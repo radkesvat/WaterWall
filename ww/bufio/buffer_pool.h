@@ -32,7 +32,7 @@
 typedef struct buffer_pool_s buffer_pool_t;
 
 /**
- * Creates a buffer pool with specified parameters.
+ * Creates a buffer pool with independent, positive ordinary tier capacities.
  * @param mp_large The master pool for large buffers.
  * @param mp_medium The master pool for medium helper buffers.
  * @param mp_small The master pool for small buffers.
