@@ -1615,7 +1615,18 @@ void widleDelete(widle_t *idle)
     EVENT_DEL(idle);
 }
 
-wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+static uint64_t wtimeoutNextDeadline(const wtimeout_t *timer, uint64_t now_us)
+{
+    uint64_t deadline = now_us + (uint64_t) timer->timeout * 1000;
+    if (! timer->exact_deadline && timer->timeout >= 1000 && timer->timeout % 100 == 0)
+    {
+        deadline = deadline / 100000 * 100000;
+    }
+    return deadline;
+}
+
+static wtimer_t *wtimerAddTimeout(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat,
+                                  bool exact_deadline)
 {
     if (loop == NULL || timeout_ms == 0)
         return NULL;
@@ -1638,22 +1649,28 @@ wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t r
     {
         EVENTLOOP_ALLOC_SIZEOF(timer);
     }
-    timer->event_type = WEVENT_TYPE_TIMEOUT;
-    timer->priority   = WEVENT_HIGHEST_PRIORITY;
-    timer->repeat     = repeat;
-    timer->timeout    = timeout_ms;
+    timer->event_type     = WEVENT_TYPE_TIMEOUT;
+    timer->priority       = WEVENT_HIGHEST_PRIORITY;
+    timer->repeat         = repeat;
+    timer->timeout        = timeout_ms;
+    timer->exact_deadline = exact_deadline;
     wloopUpdateTime(loop);
-    timer->next_timeout = loop->cur_hrtime + (uint64_t) timeout_ms * 1000;
-    // NOTE: Limit granularity to 100ms
-    if (timeout_ms >= 1000 && timeout_ms % 100 == 0)
-    {
-        timer->next_timeout = timer->next_timeout / 100000 * 100000;
-    }
+    timer->next_timeout = wtimeoutNextDeadline(timer, loop->cur_hrtime);
     heap_insert(&loop->timers, &timer->node);
     EVENT_ADD(loop, timer, cb);
     loop->ntimers++;
     mutexUnlock(&loop->normal_admission_mutex);
     return (wtimer_t *) timer;
+}
+
+wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+{
+    return wtimerAddTimeout(loop, cb, timeout_ms, repeat, false);
+}
+
+wtimer_t *wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms)
+{
+    return wtimerAddTimeout(loop, cb, delay_ms, 1, true);
 }
 
 #ifdef WW_EVENT_MEMORY_TEST_SEAM
@@ -1704,12 +1721,11 @@ bool wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
     {
         timeout->timeout = timeout_ms;
     }
-    timer->next_timeout = loop->cur_hrtime + (uint64_t) timeout->timeout * 1000;
-    // NOTE: Limit granularity to 100ms
-    if (timeout->timeout >= 1000 && timeout->timeout % 100 == 0)
+    if (timeout->exact_deadline)
     {
-        timer->next_timeout = timer->next_timeout / 100000 * 100000;
+        wloopUpdateTime(loop);
     }
+    timer->next_timeout = wtimeoutNextDeadline(timeout, loop->cur_hrtime);
     heap_insert(&loop->timers, &timer->node);
     /* Dispatch may still hold its current or next pointer after this reset. */
     timer->pending_reset = timer->pending;

@@ -117,7 +117,8 @@ struct widle_s
     struct list_node quiesced_node;                                                                                    \
     generic_pool_t  *allocation_pool;                                                                                  \
     unsigned         quiesced : 1;                                                                                     \
-    unsigned         pending_reset : 1;
+    unsigned         pending_reset : 1;                                                                                \
+    unsigned         exact_deadline : 1;
 
 struct wtimer_s
 {

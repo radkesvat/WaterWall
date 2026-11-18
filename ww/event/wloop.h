@@ -259,6 +259,9 @@ WW_EXPORT void     widleDelete(widle_t *idle);
 
 // timer
 WW_EXPORT wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat DEFAULT(INFINITE));
+/* A one-shot due after at least delay_ms of monotonic time, measured when armed.
+ * Reset preserves that minimum delay from the time of the reset. */
+WW_EXPORT wtimer_t *wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms);
 /*
  * minute   hour    day     week    month       cb
  * 0~59     0~23    1~31    0~6     1~12
