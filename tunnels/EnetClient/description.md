@@ -31,7 +31,10 @@ in the same order.
 - After `EnetClient`: a path that keeps datagram boundaries. In practice that is
   `UdpConnector`, directly or behind tunnels that pass datagrams unchanged.
 - Every stream that enters gets its own carrier line toward `next` and its own
-  ENet connection. Streams do not share a connection.
+  ENet connection. The UDP adapter selects the ENet peer independently of any
+  destination pin or resolver-DNS marker on the application stream. The first
+  carrier `Est` reports transport readiness to the stream once, even during the
+  ENet handshake.
 - The remote side is `EnetServer`, or any ENet 1.3 application that uses the
   library defaults (no checksum, no compression) and exchanges reliable packets
   on channel 0.
@@ -60,7 +63,7 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 | `name` | Required node name, unique within the configuration. |
 | `type` | Exactly `"EnetClient"`. |
 | `next` | Required name of the node that carries the datagrams. |
-| `settings` | Optional object. Every setting has a default. |
+| `settings` | Omit this field or supply a JSON object. An empty object selects all defaults. |
 
 ### Settings
 
@@ -129,10 +132,11 @@ up native compatibility.
   four times as much, and one stream that `ConnectionStripeClient` spread over
   eight ENet connections carried 76 to 83 Mbit/s on the same path.
 - **A dead peer is found through missing acknowledgements.** An idle connection
-  sends a ping after `ping-interval-ms`. A peer that stops answering is detected
-  on the first protocol service pass at or after `T` from the first unanswered
-  command, where `T` is `no-recv-timeout-ms`. Active protocol work is serviced
-  every 10 ms, subject to event-loop scheduling delay. On an idle connection,
+  sends a ping after `ping-interval-ms`. Each unanswered reliable command has
+  a deadline of `no-recv-timeout-ms` from its first transmission. The first
+  service pass at or after the oldest such deadline closes the connection, even
+  if ENet retried the command or received ACKs for later commands. Active work
+  is serviced every 10 ms, subject to event-loop scheduling delay. On an idle connection,
   allow the ping interval before that unanswered-command timer starts.
   Timeout and ping settings above 12 hours are rejected; the separate
   `close-drain-timeout-ms` setting retains its documented range.
@@ -154,6 +158,10 @@ up native compatibility.
 - When the previous node pauses the downstream direction, `EnetClient` pauses
   the next node, which stops datagram intake. That also stops acknowledgements:
   a pause longer than the liveness timeout can end the connection.
+- An immediately processed stream write can exceed 2 MiB and follows the
+  ordinary send limits. Input that must wait for startup or a running callback
+  shares a queue capped at 2 MiB of payload and 8 MiB of buffer allocation
+  charge. Exceeding either queue limit closes the connection.
 - At `receive-buffer-limit` ENet stops admitting new queued messages. Refused
   reliable data is not acknowledged, so the peer can send it again later.
   To make room for loss recovery, the driver doubles the threshold for a datagram
@@ -171,8 +179,9 @@ up native compatibility.
 - When the previous node finishes the stream, `EnetClient` accepts no more
   bytes, lets ENet deliver every byte it already accepted, and then disconnects
   natively. The connection keeps its own carrier line for this after the
-  application line is gone. Bytes that arrive from the peer after that Finish
-  are discarded: a Finish closes both directions of the stream.
+  application line is gone. If the stream paused carrier reads, Finish releases
+  the hold so acknowledgements can arrive during the drain. The node discards
+  incoming stream bytes after Finish.
 - `close-drain-timeout-ms` after that Finish the node stops waiting, sends one
   disconnect and closes. It logs a warning with the number of unacknowledged
   bytes. A close that finished earlier is not proof of delivery either: ENet
@@ -189,7 +198,7 @@ up native compatibility.
 
 | Symptom | Checks |
 | --- | --- |
-| The stream opens, but no data arrives and it closes after 30 to 60 seconds | The carrier being ready only means that the UDP socket exists. Check that the datagrams reach an `EnetServer` and that the answers come back, and that no hop drops datagrams of `send-mtu` size. |
+| The stream opens, but no data arrives and the connection times out | The carrier being ready only means that the UDP socket exists. Check that the datagrams reach an `EnetServer` and that the answers come back, and that no hop drops datagrams of `send-mtu` size. |
 | One transfer is slow on a long path, while the link has capacity | This is ENet's window of 64 KiB per round trip. Parallel streams each get their own window, and `ConnectionStripeClient` before this node gives one stream several connections. |
 | Startup fails and names `send-mtu`, although the node does not set it | Core `misc.mtu` is below `604`. Set `send-mtu` in the node. |
 | Log line `the send limit refused a payload` | The previous node kept sending after Pause. Check the nodes before `EnetClient`, or raise `send-buffer-limit`. |

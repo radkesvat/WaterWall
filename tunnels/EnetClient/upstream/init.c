@@ -18,8 +18,12 @@ void enetclientTunnelUpStreamInit(tunnel_t *t, line_t *application)
     {
         lineRequestCloseLinger(carrier, kLineCloseLingerPeerWriteShutdown);
     }
+    address_context_t *destination = lineGetDestinationAddressContext(carrier);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
+    /* The UDP adapter selects the ENet peer independently of the application's destination. */
+    addresscontextSetDestinationPinned(destination, false);
+    addresscontextSetResolverDns(destination, false);
 
     if (! enetEndpointStartClient(t, application, carrier))
     {
