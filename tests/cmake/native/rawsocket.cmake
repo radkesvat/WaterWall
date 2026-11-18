@@ -283,7 +283,7 @@ if(TARGET TlsServer)
   waterwall_line_failure_test_use_tunnel(tlsserver_line_failure_test TlsServer)
   target_link_options(tlsserver_line_failure_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=wtimerAdd"
+    "-Wl,--wrap=wtimerAddDeadline"
     "-Wl,--wrap=BIO_new"
     "-Wl,--wrap=BIO_free"
     "-Wl,--wrap=SSL_new"
