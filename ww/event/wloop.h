@@ -316,6 +316,7 @@ WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 // Detach on the original owner thread, then attach on the destination owner thread.
 // Read/write interest must be stopped and pending dispatch must have finished.
 // Attempting to detach/attach a pending WIO logs with LOGF and aborts in every build.
+// A canceled handoff of a freshly accepted socket releases the detached WIO with wioFree().
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);
 // Release a Waterwall watcher for an fd owned by another subsystem.

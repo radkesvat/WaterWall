@@ -1944,7 +1944,9 @@ void wioDetach(wio_t *io)
     wloop_t *loop = io->loop;
     int      fd   = wioGetFD(io);
     assert(loop != NULL && fd < (int) loop->ios.maxsize);
+    assert(io->io_slot == fd && loop->ios.ptr[fd] == io);
     loop->ios.ptr[fd] = NULL;
+    io->io_slot       = -1;
 }
 
 void wioAttach(wloop_t *loop, wio_t *io)
@@ -1975,6 +1977,7 @@ void wioAttach(wloop_t *loop, wio_t *io)
         return;
     }
 
+    assert(io->io_slot == -1);
     // NOTE: wio was not freed for reused when closed, but attached wio can't be reused,
     // so we need to free it if fd exists to avoid memory leak.
     wio_t *preio = __wio_get(loop, fd);
