@@ -262,6 +262,12 @@ connection through its line owner.
 
 This protects the process from unbounded buffering when the client is slow or stalled.
 
+On `Finish`, TcpListener hands accepted writes to WIO, retires its line and
+normally closes the socket fully, including while client reads are paused.
+Only a line marked for a confirmed fallback peer write shutdown can use bounded
+socket linger on supported Linux systems. The listener can then detach its
+socket, flush writes, shut down its write side and briefly read and discard client input.
+
 #### Idle timeout behavior
 
 Each accepted connection is tracked in an idle table.

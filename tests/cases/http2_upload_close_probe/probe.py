@@ -33,6 +33,7 @@ RECEIVE_WINDOW = 1024
 DRAIN_TIMEOUT = 1.0
 BODY = bytes(range(256)) * 512
 PAIR_BODY = bytes(range(256)) * 16384
+BULK_RECEIPT = b"received bulk upload"
 PREFACE = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 
 
@@ -197,9 +198,13 @@ def run_close_before_upgrade(listener):
         # Accepted pre-handshake bytes must survive on the owned carrier line.
         peer.sendall(b"HTTP/1.1 101 Switching Protocols\r\n"
                      b"Connection: Upgrade\r\nUpgrade: h2c\r\n\r\n"
-                     + frame(4, 0, 0, struct.pack("!HI", 4, 262144))
-                     + frame(8, 0, 0, struct.pack("!I", len(BODY))))
+                     + frame(4, 0, 0, struct.pack("!HI", 4, 262144)))
         assert exact(peer, len(PREFACE)) == PREFACE
+        # The initial connection window holds the upload open until we acknowledge
+        # the client's SETTINGS. The final credit follows the ACK on the same socket.
+        kind, flags, sid, _ = receive_frame(peer)
+        assert (kind, flags, sid) == (4, 0, 0), "client preface missing initial SETTINGS"
+        peer.sendall(frame(8, 0, 0, struct.pack("!I", len(BODY))))
         stream = None
         received = bytearray()
         ended = False
@@ -343,7 +348,9 @@ def receive_pair_upload(listener):
     service, _ = listener.accept()
     with service:
         service.settimeout(10)
-        assert exact(service, len(PAIR_BODY), max_chunk=65536) == PAIR_BODY
+        assert exact(service, len(PAIR_BODY) - 1, max_chunk=65536) == memoryview(PAIR_BODY)[:-1]
+        service.sendall(BULK_RECEIPT)
+        assert exact(service, 1) == PAIR_BODY[-1:]
         assert service.recv(1) == b"", "production pair did not deliver EOF after upload"
 
 
@@ -353,7 +360,9 @@ def run_production_pair():
         with ThreadPoolExecutor(max_workers=1) as executor:
             receipt = executor.submit(receive_pair_upload, listener)
             with connect_application(PAIR_APPLICATION_PORT) as application:
-                application.sendall(PAIR_BODY)
+                application.sendall(memoryview(PAIR_BODY)[:-1])
+                assert exact(application, len(BULK_RECEIPT)) == BULK_RECEIPT, "missing bulk upload receipt"
+                application.sendall(PAIR_BODY[-1:])
             receipt.result(timeout=15)
     print("production HttpClient/HttpServer pair: exact 4 MiB upload and EOF", flush=True)
 

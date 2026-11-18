@@ -419,37 +419,35 @@ static inline bool lineIsFallback(const line_t *line)
 
 typedef enum line_close_linger_reason_e
 {
-    kLineCloseLingerProtocolDrain     = 1U << 0,
     kLineCloseLingerPeerWriteShutdown = 1U << 1
 } line_close_linger_reason_t;
 
-/* Request bounded socket-only cleanup after normal line destruction. A protocol
- * can finish output while its peer still sends control data; a transport can
- * independently observe a peer that shut down only its sending direction.
- * Each reason is idempotent. Retiring a branch clears only its own reason. */
+/* Only a fallback connector that detects peer write shutdown originates this
+ * request. A tunnel mapping that fallback path may propagate it to a related
+ * line, or clear it when retiring the fallback branch. */
 static inline void lineRequestCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
     assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
-    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerPeerWriteShutdown);
     line->close_linger_reasons |= (uint8_t) reason;
 }
 
 static inline void lineClearCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
     assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
-    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerPeerWriteShutdown);
     line->close_linger_reasons &= (uint8_t) ~reason;
 }
 
 static inline bool lineHasCloseLingerReason(const line_t *line, line_close_linger_reason_t reason)
 {
-    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerPeerWriteShutdown);
     return (line->close_linger_reasons & (uint8_t) reason) != 0;
 }
 
 static inline bool lineShouldLingerOnClose(const line_t *line)
 {
-    return line->close_linger_reasons != 0;
+    return lineHasCloseLingerReason(line, kLineCloseLingerPeerWriteShutdown);
 }
 
 /**

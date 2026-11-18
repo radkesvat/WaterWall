@@ -442,16 +442,9 @@ direction. It never sends another callback toward the finished backend. Completi
 cancellation cancel the timer; process shutdown also aborts the wait instead of waiting for the deadline.
 The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
 response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
-This deadline bounds retained HTTP response work, not the lifetime of the physical TCP socket: bytes already handed
-to the transport follow that adapter's close/write-flush policy. Expiry does not request successful-response linger.
+The deadline covers HTTP response work up to handoff or expiry. In either case HttpServer sends Finish
+to the live carrier. A TCP adapter normally flushes accepted writes and closes the socket fully.
 
-On Linux, successful response completion requests `TcpListener`'s socket-only linger. The Waterwall line is destroyed immediately;
-the detached socket may spend up to 60 seconds flushing its accepted writes, then shuts down its write direction
-and reads/discards remaining peer input for at most 5 seconds of inactivity or 30 seconds total. These limits are
-hardcoded and the latter phase starts after write completion. Reading remaining input avoids a TCP reset caused by
-closing with unread input. Transport errors, peer closure or process shutdown can end this earlier. Other platforms
-use the ordinary adapter close path. The normal `TcpListener` settings `initial-idle-timeout-ms` (60000 by default)
-and `active-idle-timeout-ms` (600000 by default) are separate from these linger limits.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 
 Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.

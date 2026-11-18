@@ -453,7 +453,9 @@ The first application `Finish` starts a fixed `close-drain-timeout-ms` deadline,
 
 HTTP/2 upload pressure pauses the application above **1 MiB** of pending body bytes and resumes below **256 KiB**, provided the next transport is also ready. The provider queue additionally has hard limits of **16 MiB pending payload** and **16 MiB retained allocation charge**; exceeding either closes that connection. Allocation charge remains counted until its buffer is released, even if part of that buffer has already been sent. These are queue limits, not total upload-size limits. The separate pre-handshake queue retains its **2 MiB payload / 8 MiB allocation-charge** limits.
 
-Successful HTTP/2 draining requests a bounded TCP close linger. On Linux, TcpConnector may retain the detached socket to flush writes already accepted by the adapter and discard unread response/control bytes, then wait for peer closure. HTTP state and the owned carrier line are already released. This socket phase is separate from `close-drain-timeout-ms`; handing bytes to the next tunnel does not acknowledge receipt by the remote application.
+After handing the final HTTP/2 frames to the next node, HttpClient finishes the carrier. A TCP adapter
+normally flushes accepted writes and closes the socket fully. The HTTP/2 deadline covers work up to
+that handoff. Delivery to the remote application is outside that deadline.
 
 ### Upgrade behavior
 

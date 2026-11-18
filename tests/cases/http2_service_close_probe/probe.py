@@ -1,5 +1,4 @@
-"""Close the service right after a large response, through HttpClient and HttpServer over HTTP/2.
-Every response byte and then EOF must reach the client.
+"""Exercise service Finish under HTTP/2 flow control and verify a complete bulk response over a real pair.
 CTest: waterwall.http2_service_close_probe. The existing runner supplies a private Linux network
 namespace and owns the runtime.
 """
@@ -26,7 +25,7 @@ SERVICE_PORT = 26702
 TIMED_CARRIER_PORT = 26703
 CLOSE_DRAIN_TIMEOUT = 1.0
 REQUEST = b"send-then-close"
-# More than the HTTP/2 windows, so most of it is still queued when the service closes.
+BULK_RECEIPT = b"received bulk response"
 BODY = bytes(range(256)) * 65536
 ROUNDS = 3
 DRAIN_BODY = bytes(range(256)) * 512
@@ -48,13 +47,19 @@ def connect_listener(port=LISTENER_PORT):
             time.sleep(0.02)
 
 
-def serve_service(listener, body=BODY):
+def serve_service(listener, body, wait_for_receipt=False):
     peer, _ = listener.accept()
     with peer:
         peer.settimeout(10)
         if exact(peer, len(REQUEST)) != REQUEST:
             raise AssertionError("HTTP/2 changed the request")
-        peer.sendall(body)
+        if wait_for_receipt:
+            peer.sendall(memoryview(body)[:-1])
+            if exact(peer, len(BULK_RECEIPT)) != BULK_RECEIPT:
+                raise AssertionError("missing bulk response receipt")
+            peer.sendall(body[-1:])
+        else:
+            peer.sendall(body)
 
 
 def h2_frame(kind, flags, stream, payload=b""):
@@ -194,13 +199,17 @@ def run_drain_timeout(listener, executor, active):
 
 
 def run_round(listener, executor, round_number):
-    service = executor.submit(serve_service, listener)
+    service = executor.submit(serve_service, listener, BODY, wait_for_receipt=True)
     with connect_listener() as client:
         client.sendall(REQUEST)
-        # A slow start leaves the HTTP/2 windows closed while the service finishes writing.
-        time.sleep(0.2)
-        if exact(client, len(BODY), max_chunk=1 << 20) != BODY:
+        time.sleep(0.2)  # Start reading slowly enough to exercise backpressure on the bulk transfer.
+        # Later control frames can race an ordinary TCP close. Acknowledge the
+        # bulk through the same chain before the service writes its final byte and closes.
+        if exact(client, len(BODY) - 1, max_chunk=1 << 20) != memoryview(BODY)[:-1]:
             raise AssertionError(f"round {round_number}: response changed")
+        client.sendall(BULK_RECEIPT)
+        if exact(client, 1) != BODY[-1:]:
+            raise AssertionError(f"round {round_number}: final response byte changed")
         if client.recv(1) != b"":
             raise AssertionError(f"round {round_number}: missing EOF after response")
     service.result(timeout=10)

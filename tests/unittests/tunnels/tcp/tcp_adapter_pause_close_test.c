@@ -678,12 +678,10 @@ static void runCloseLingerCase(bool queued_output, bool stopping)
     progressSetup(&fixture, false);
 #ifdef TCP_PAUSE_TEST_LISTENER
     neighbor->fnPayloadU = unexpectedLingerPayload;
-    lineMarkFallback(fixture.line);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 #else
     neighbor->fnPayloadD = unexpectedLingerPayload;
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
 #endif
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 
     const size_t body_bytes = queued_output ? 256 * 1024 : 0;
     if (queued_output)
@@ -762,12 +760,10 @@ static void runCloseLingerDeadlineCase(void)
     progressSetup(&fixture, false);
 #ifdef TCP_PAUSE_TEST_LISTENER
     neighbor->fnPayloadU = unexpectedLingerPayload;
-    lineMarkFallback(fixture.line);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 #else
     neighbor->fnPayloadD = unexpectedLingerPayload;
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
 #endif
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     const uint64_t start_ms      = UINT64_C(5000000000);
     fixture.env.loop->cur_hrtime = start_ms * 1000;
     finishLine(fixture.line);
@@ -804,7 +800,7 @@ static void runCloseLingerAdmissionCase(void)
     twfSetCase("quiescence refuses a new detached socket drain");
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, false);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     wloopCloseNormalAdmission(fixture.env.loop);
 #ifdef TCP_PAUSE_TEST_LISTENER
     tcplistenerTunnelOnQuiesceRequest(adapter, wwLifecycleProcessShutdown());
@@ -821,25 +817,21 @@ static void runCloseLingerAdmissionCase(void)
     progressTeardown(&fixture);
 }
 
-static void runCloseLingerReasonsCase(void)
+static void runFallbackLingerRequestCase(void)
 {
-    twfSetCase("retiring linger reasons preserves independent requests and restores ordinary close");
+    twfSetCase("retiring a fallback peer shutdown restores ordinary close");
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, false);
-    twfRequire(! lineShouldLingerOnClose(fixture.line), "new line requested socket linger");
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    lineMarkFallback(fixture.line);
+    twfRequire(! lineShouldLingerOnClose(fixture.line), "entering fallback requested socket linger before detection");
     lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
+    twfRequire(lineShouldLingerOnClose(fixture.line), "missing fallback peer shutdown request");
     lineClearCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
-    twfRequire(lineShouldLingerOnClose(fixture.line) &&
-                   lineHasCloseLingerReason(fixture.line, kLineCloseLingerProtocolDrain) &&
-                   ! lineHasCloseLingerReason(fixture.line, kLineCloseLingerPeerWriteShutdown),
-               "retiring a peer shutdown reason lost independent protocol completion");
-    lineClearCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
     finishLine(fixture.line);
     twfRequire(! lineIsAlive(fixture.line) && wioIsClosed(fixture.io) &&
                    localidletableGetItemCount(fixture.tables[0]) == 0,
-               "cleared linger reasons retained a socket or idle entry");
+               "cleared fallback peer shutdown retained a socket or idle entry");
     progressTeardown(&fixture);
 }
 
@@ -1520,7 +1512,7 @@ int main(void)
     runCloseLingerCase(true, true);
     runCloseLingerDeadlineCase();
     runCloseLingerAdmissionCase();
-    runCloseLingerReasonsCase();
+    runFallbackLingerRequestCase();
 #if WW_HAVE_SPLICE
     runReadPreferenceCase();
     runPauseCase(true, true);

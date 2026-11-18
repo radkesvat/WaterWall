@@ -442,12 +442,8 @@ static void checkMetadata(line_t *copy, line_t *original, bool udp)
             "split line lost authenticated credentials");
     require(copy->prefer_ordinary_read_u && copy->prefer_ordinary_read_d && lineIsFallback(copy),
             "split line lost routing/read policy fields");
-    require(lineHasCloseLingerReason(copy, kLineCloseLingerPeerWriteShutdown) &&
-                ! lineHasCloseLingerReason(copy, kLineCloseLingerProtocolDrain),
-            "split line copied unrelated close-linger reasons or lost peer shutdown");
-    require(lineHasCloseLingerReason(original, kLineCloseLingerPeerWriteShutdown) &&
-                lineHasCloseLingerReason(original, kLineCloseLingerProtocolDrain),
-            "split line changed the source close-linger reasons");
+    require(lineShouldLingerOnClose(copy) && lineShouldLingerOnClose(original),
+            "split line lost the detected fallback peer write shutdown");
 }
 static void serviceInit(tunnel_t *t, line_t *line)
 {
@@ -747,7 +743,6 @@ static void wireInit(tunnel_t *t, line_t *line)
         active->carrier->prefer_ordinary_read_u = active->carrier->prefer_ordinary_read_d = true;
         lineMarkFallback(active->carrier);
         lineRequestCloseLinger(active->carrier, kLineCloseLingerPeerWriteShutdown);
-        lineRequestCloseLinger(active->carrier, kLineCloseLingerProtocolDrain);
         tunnelNextUpStreamInit(t, active->carrier);
         require(active->service_inits == 0 || active->count > 1, "carrier Init eagerly initialized a service");
         discard notifyFirstCarrierEst(kEstOnCarrierInit);
@@ -957,7 +952,6 @@ static endpoint_t *openApp(void)
     ep->app->prefer_ordinary_read_u = ep->app->prefer_ordinary_read_d = true;
     lineMarkFallback(ep->app);
     lineRequestCloseLinger(ep->app, kLineCloseLingerPeerWriteShutdown);
-    lineRequestCloseLinger(ep->app, kLineCloseLingerProtocolDrain);
     tunnelNextUpStreamInit(active->source, ep->app);
     refreshSessions();
     return ep;

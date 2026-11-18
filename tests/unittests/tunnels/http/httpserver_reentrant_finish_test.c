@@ -432,13 +432,15 @@ static void fixtureRequireCompleteResponse(httpserver_fixture_t *fixture)
     twfRequireEqualU32(end_streams, 1, "response did not emit exactly one END_STREAM");
 }
 
-static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish)
+static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish, bool fallback_peer_half_closed)
 {
     twfSetCase(queued_before_finish ? "HttpServer queued DATA after reentrant service Finish"
                                     : "HttpServer later DATA after service Finish");
     httpserver_fixture_t fixture;
     fixtureSetup(&fixture);
     fixtureQueueBlockedResponse(&fixture);
+    if (fallback_peer_half_closed)
+        lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     uint8_t captured[kHttp2BodySize + 4096];
     fixture.trace.capture          = captured;
     fixture.trace.capture_capacity = sizeof(captured);
@@ -459,6 +461,8 @@ static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish
     fixtureIncreaseResponseWindow(&fixture, 65535);
 
     fixtureRequireCompleteResponse(&fixture);
+    twfRequire(lineShouldLingerOnClose(fixture.line) == fallback_peer_half_closed,
+               "HttpServer changed the carrier's TCP linger decision");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "completed response did not close the carrier exactly once");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "completed response reflected Finish toward the service");
     twfRequireLineStateZeroed(fixture.line, fixture.http, "completed deferred response retained HTTP/2 state");
@@ -639,8 +643,9 @@ int main(void)
     caseFinishDuringFirstFinalChunkStopsRemainingOutput();
     caseHttp2FinishDuringActiveProvider(false);
     caseHttp2FinishDuringActiveProvider(true);
-    caseHttp2DiscardsRequestAfterServiceFinish(true);
-    caseHttp2DiscardsRequestAfterServiceFinish(false);
+    caseHttp2DiscardsRequestAfterServiceFinish(true, false);
+    caseHttp2DiscardsRequestAfterServiceFinish(false, false);
+    caseHttp2DiscardsRequestAfterServiceFinish(false, true);
     caseHttp2CarrierFinishWhileResponseBlocked();
     caseHttp2ResetWhileResponseBlocked();
     caseHttp2DrainDeadlineWithoutInput();

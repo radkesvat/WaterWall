@@ -204,7 +204,7 @@ static void testDenseSlots(void)
         line->prefer_ordinary_read_u = true;
         line->prefer_ordinary_read_d = true;
         line->fallback_mode              = true;
-        line->close_linger_reasons       = kLineCloseLingerProtocolDrain | kLineCloseLingerPeerWriteShutdown;
+        line->close_linger_reasons       = kLineCloseLingerPeerWriteShutdown;
         lineDestroy(line);
         require(masterpoolGetCheckedOut(master) == 0, "dense line was not returned to its pool");
     }

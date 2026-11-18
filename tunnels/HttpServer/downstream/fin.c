@@ -140,11 +140,6 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     // receive a reflected Finish; we still own the single state destruction here.
     bool prev_already_finished = ls->prev_finished;
 
-    if (ls->runtime_proto == kHttpServerRuntimeHttp2)
-    {
-        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
-    }
-
     ls->prev_finished = true;
     httpserverLinestateDestroy(ls);
     if (! prev_already_finished)

@@ -922,6 +922,7 @@ static void setupBlockedUpload(fixture_t *f)
 static void requireCarrierClosed(fixture_t *f, unsigned next_finish)
 {
     twfRequire(! lineIsAlive(f->carrier), "HttpClient retained its owned carrier after terminal close");
+    twfRequire(! lineShouldLingerOnClose(f->carrier), "HttpClient requested TCP linger on an ordinary carrier");
     twfRequireLineStateZeroed(f->carrier, f->http, "carrier close retained protocol state");
     twfRequireEqualU32(twfLineRefCount(f->carrier), 1, "carrier close leaked a line reference");
     twfRequireEqualU32(f->trace.next_finish, next_finish, "carrier close used the wrong Finish direction/count");
@@ -968,7 +969,6 @@ static void caseHttp2FinishDrainsAfterApplicationDies(void)
     peerConsume(&f);
     twfRequire(f.received_body == kLargeBody && f.end_streams == 1,
                "draining lost accepted bytes or failed to emit exactly one END_STREAM");
-    twfRequire(lineShouldLingerOnClose(f.carrier), "completed upload did not request TCP close linger");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1000,8 +1000,7 @@ static void caseHttp2DrainDeadline(bool progress)
         }
     }
     advanceClock(&f, deadline * 1000 + 1000);
-    twfRequire(f.end_streams == 0 && ! lineShouldLingerOnClose(f.carrier),
-               "timed-out upload falsely completed or requested successful-drain linger");
+    twfRequire(f.end_streams == 0, "timed-out upload emitted END_STREAM");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1019,7 +1018,6 @@ static void caseHttp2DeadlineDuringSynchronousOutput(void)
     finishApplication(&f);
     twfRequire(f.wire_length == 9 + kH2BodyLimit && f.writes == 1,
                "final drain emitted another HTTP/2 frame after its fixed deadline");
-    twfRequire(! lineShouldLingerOnClose(f.carrier), "expired synchronous output requested successful-drain linger");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }

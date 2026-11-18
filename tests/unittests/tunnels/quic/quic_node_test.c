@@ -468,7 +468,7 @@ static void testSplitLineContexts(void)
     {
         if (! roleEnabled(client != 0))
             continue;
-        for (unsigned linger_reasons = 0; linger_reasons < 4; ++linger_reasons)
+        for (unsigned peer_shutdown = 0; peer_shutdown < 2; ++peer_shutdown)
         {
             est_fixture_t f;
             setupQuic(&f, client != 0);
@@ -486,10 +486,6 @@ static void testSplitLineContexts(void)
             lineGetRoutingContext(f.line)->peer_source_port    = 23456;
             lineAddAuthenticatedCredentials(f.line, "fixture-user", "fixture-secret");
             lineMarkFallback(f.line);
-            const bool protocol_drain = (linger_reasons & kLineCloseLingerProtocolDrain) != 0;
-            const bool peer_shutdown  = (linger_reasons & kLineCloseLingerPeerWriteShutdown) != 0;
-            if (protocol_drain)
-                lineRequestCloseLinger(f.line, kLineCloseLingerProtocolDrain);
             if (peer_shutdown)
                 lineRequestCloseLinger(f.line, kLineCloseLingerPeerWriteShutdown);
             linePreferOrdinaryReadUpstream(f.line);
@@ -508,12 +504,9 @@ static void testSplitLineContexts(void)
                            lineIsFallback(owned_line) && linePrefersOrdinaryReadUpstream(owned_line) &&
                            linePrefersOrdinaryReadDownstream(owned_line),
                        "split QUIC line lost routing, authentication, fallback or read-preference context");
-            twfRequire(lineHasCloseLingerReason(owned_line, kLineCloseLingerPeerWriteShutdown) == peer_shutdown &&
-                           ! lineHasCloseLingerReason(owned_line, kLineCloseLingerProtocolDrain),
-                       "split QUIC line copied unrelated close-linger reasons or lost peer shutdown");
-            twfRequire(lineHasCloseLingerReason(f.line, kLineCloseLingerPeerWriteShutdown) == peer_shutdown &&
-                           lineHasCloseLingerReason(f.line, kLineCloseLingerProtocolDrain) == protocol_drain,
-                       "split QUIC line changed the source close-linger reasons");
+            twfRequire(lineShouldLingerOnClose(owned_line) == peer_shutdown &&
+                           lineShouldLingerOnClose(f.line) == peer_shutdown,
+                       "split QUIC line changed the fallback peer write-shutdown decision");
             abortCarrier(&f);
             destroyQuic(&f);
         }

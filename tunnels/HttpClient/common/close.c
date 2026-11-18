@@ -116,8 +116,6 @@ void httpclientProgressClose(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
         goto done;
     if (ls->runtime_proto == kHttpClientRuntimeHttp2 && ! ls->h2_end_stream_emitted)
         goto waiting;
-    if (ls->runtime_proto == kHttpClientRuntimeHttp2)
-        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
 close:
     if (lineIsAlive(l))
         httpclientCarrierClose(t, l, false);
