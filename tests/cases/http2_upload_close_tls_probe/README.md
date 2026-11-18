@@ -11,4 +11,10 @@ HTTP/2 END_STREAM before finishing TlsClient. TcpConnector uses ordinary full
 close on this carrier. The peer sends its final window credit and then only reads,
 checking the complete HTTP/2 body, its stream end and EOF.
 
+A second chain enables `stay-alive` and sets the upload deadline to 1000 ms.
+The TLS peer observes both sides finish the HTTP/2 stream, then obtains a
+PING acknowledgment on the same connection after the upload deadline.
+A new application establishes an independent TLS connection. Sending GOAWAY
+on the original connection produces EOF.
+
 CTest: `waterwall.http2_upload_close_tls_probe` (30-second runner deadline).

@@ -46,6 +46,52 @@
         "verify": false
       },
       "next": "normal-carrier"
+    },
+    {
+      "name": "timed-application",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26802,
+        "nodelay": true
+      },
+      "next": "timed-http"
+    },
+    {
+      "name": "timed-http",
+      "type": "HttpClient",
+      "settings": {
+        "host": "h2.example.test",
+        "path": "/ww/h2",
+        "scheme": "http",
+        "port": 26801,
+        "method": "POST",
+        "http-version": "2",
+        "verbose": true,
+        "stay-alive": true,
+        "close-drain-timeout-ms": 1000
+      },
+      "next": "timed-tls"
+    },
+    {
+      "name": "timed-tls",
+      "type": "TlsClient",
+      "settings": {
+        "sni": "tls.integration.test",
+        "alpns": ["h2"],
+        "verify": false
+      },
+      "next": "timed-carrier"
+    },
+    {
+      "name": "timed-carrier",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26801,
+        "nodelay": true,
+        "fastopen": false
+      }
     }
   ]
 }

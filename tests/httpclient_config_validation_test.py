@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HttpClient close-drain timeout constructor coverage through the real runtime.
+"""HttpClient close-drain timeout and stay-alive constructor coverage through the real runtime.
 
 Accept omission and boundary integers; reject malformed values and embedded-NUL
 key aliases, including aliases beside a valid duplicate. Namespace loopback only.
@@ -24,7 +24,7 @@ from wwtest.run_directory import RunDirectory
 SETTING = "close-drain-timeout-ms"
 
 
-def run_case(binary, name, extra, valid):
+def run_case(binary, name, extra, valid, setting=SETTING):
     config = {"name": "httpclient-close-drain-config", "nodes": [
         {"name": "listener", "type": "TcpListener", "next": "http",
          "settings": {"address": "127.0.0.1", "port": 29904}},
@@ -50,7 +50,7 @@ def run_case(binary, name, extra, valid):
             assert not valid, f"{name}: valid configuration failed startup\n{output}"
             assert process.poll() is not None, f"{name}: invalid configuration did not exit"
             assert process.returncode > 0, f"{name}: invalid configuration succeeded or crashed\n{output}"
-            assert "HttpClient" in output and SETTING in output, \
+            assert "HttpClient" in output and setting in output, \
                 f"{name}: missing setting-specific diagnostic\n{output}"
 
 
@@ -66,7 +66,13 @@ def main():
     run_case(binary, "nul-alias", {alias: 1000}, False)
     run_case(binary, "nul-alias-after-valid", {SETTING: 1000, alias: 1000}, False)
     run_case(binary, "nul-alias-before-valid", {alias: 1000, SETTING: 1000}, False)
-    print("HttpClient close-drain timeout constructor: 18 cases passed")
+    flag = "stay-alive"
+    for value in (True, False):
+        run_case(binary, f"stay-alive-{value}", {flag: value}, True)
+    for index, value in enumerate((None, "true", 1, [], {})):
+        run_case(binary, f"stay-alive-invalid-{index}", {flag: value}, False, flag)
+    run_case(binary, "stay-alive-nul-alias", {flag: False, flag + "\0suffix": True}, False, flag)
+    print("HttpClient close-drain timeout and stay-alive constructor cases passed")
 
 
 if __name__ == "__main__":

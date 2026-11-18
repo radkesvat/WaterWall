@@ -55,8 +55,8 @@ def frame(kind, flags, stream, payload=b""):
             + struct.pack("!I", stream) + payload)
 
 
-def receive_frame(peer, allow_upgrade_cancel=False):
-    header = exact(peer, 9)
+def receive_frame(peer, allow_upgrade_cancel=False, first_byte=b""):
+    header = first_byte + exact(peer, 9 - len(first_byte))
     size = int.from_bytes(header[:3], "big")
     assert size <= 16384, f"client exceeded peer's default frame size: {size}"
     kind, flags = header[3:5]
@@ -122,7 +122,7 @@ def barrier(peer, stream, received, token):
     peer.sendall(frame(6, 0, 0, token))
     while True:
         kind, flags, payload = read_upload_frame(peer, stream, received)
-        assert not (kind == 0 and flags & 1), "upload ended before all bytes were sent"
+        assert not (kind == 0 and flags & 1), "unexpected upload END_STREAM while waiting for PING ACK"
         if kind == 6 and flags & 1 and payload == token:
             return
 
@@ -160,6 +160,16 @@ def begin_blocked_upload(listener, port=APPLICATION_PORT, tls_context=None):
         raise
 
 
+def finish_upload(peer, stream, received):
+    peer.sendall(frame(8, 0, 0, struct.pack("!I", len(BODY)))
+                 + frame(8, 0, stream, struct.pack("!I", len(BODY))))
+    while True:
+        kind, flags, _ = read_upload_frame(peer, stream, received)
+        if kind == 0 and flags & 1:
+            break
+    assert received == BODY, f"upload changed or truncated: {len(received)} bytes"
+
+
 def run_complete_upload(listener, tls_context=None):
     peer, stream, received, _ = begin_blocked_upload(listener, tls_context=tls_context)
     with peer:
@@ -168,15 +178,31 @@ def run_complete_upload(listener, tls_context=None):
         peer.sendall(frame(1, 4, stream, b"\x88")  # HPACK static :status 200.
                      + frame(0, 1, stream, b"response after application close"))
         barrier(peer, stream, received, b"response")
-        peer.sendall(frame(8, 0, 0, struct.pack("!I", len(BODY)))
-                     + frame(8, 0, stream, struct.pack("!I", len(BODY))))
-        while True:
-            kind, flags, payload = read_upload_frame(peer, stream, received)
-            if kind == 0 and flags & 1:
-                break
-        assert received == BODY, f"upload changed or truncated: {len(received)} bytes"
+        finish_upload(peer, stream, received)
         assert peer.recv(1) == b"", "missing TCP EOF after upload END_STREAM"
     print("blocked upload, late response, and response END_STREAM: passed", flush=True)
+
+
+def run_stay_alive(listener, tls_context=None):
+    peer, stream, received, _ = begin_blocked_upload(listener, TIMED_APPLICATION_PORT, tls_context=tls_context)
+    with peer:
+        finish_upload(peer, stream, received)
+        peer.sendall(frame(1, 4, stream, b"\x88")  # HPACK static :status 200.
+                     + frame(0, 1, stream, b"response after request END_STREAM"))
+        barrier(peer, stream, received, b"complete")
+
+        # A new application must get a separate carrier while the old one is alive.
+        application, next_peer, _ = begin(listener, TIMED_APPLICATION_PORT, tls_context=tls_context)
+        with application, next_peer:
+            time.sleep(DRAIN_TIMEOUT + 0.2)
+            barrier(peer, stream, received, b"retained")
+            assert received == BODY, "client sent DATA after request END_STREAM"
+            peer.sendall(frame(7, 0, 0, struct.pack("!II", stream, 0)))  # GOAWAY(NO_ERROR).
+            peer.settimeout(2)
+            while first_byte := peer.recv(1):
+                kind, _, sid, _ = receive_frame(peer, first_byte=first_byte)
+                assert sid == 0 and kind != 0, "unexpected stream output after GOAWAY"
+    print("stay-alive: independent carrier, post-deadline PING ACK, and EOF on GOAWAY", flush=True)
 
 
 def run_close_before_upgrade(listener):
@@ -371,6 +397,7 @@ def main():
     with socket.socket() as listener:
         configure_listener(listener, (HOST, PEER_PORT), timeout=10)
         run_complete_upload(listener)
+        run_stay_alive(listener)
         run_close_before_upgrade(listener)
         run_close_before_websocket_handshake(listener)
         run_timeout(listener, active=False)
