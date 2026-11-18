@@ -1,4 +1,15 @@
 # Root/platform registrations, including standalone archive and Windows seams.
+if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME MATCHES "^(Darwin|FreeBSD|OpenBSD|NetBSD|SunOS)$")
+  waterwall_add_native_executable(native_watcher_registration_test SUPPORT
+    SOURCES tests/unittests/net/event/native_watcher_registration_test.c)
+  target_link_libraries(native_watcher_registration_test PRIVATE ww)
+  set_target_properties(native_watcher_registration_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+  waterwall_register_native_test(waterwall.native_watcher_registration_unit native_watcher_registration_test
+    "unit;event;registration" TIMEOUT 30)
+  waterwall_register_platform_native_unit(waterwall.native_watcher_registration_unit native_watcher_registration_test
+    "unit;event;registration")
+endif()
+
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME MATCHES "^(FreeBSD|OpenBSD|NetBSD)$")
   waterwall_add_native_executable(tun_bsd_reader_test SUPPORT SOURCES tests/unittests/devices/tun_bsd_reader_test.c)
   target_include_directories(tun_bsd_reader_test PRIVATE "${PROJECT_SOURCE_DIR}/ww/devices/tun")

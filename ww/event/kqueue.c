@@ -1,227 +1,142 @@
 #include "iowatcher.h"
 
 #ifdef EVENT_KQUEUE
-#include "wplatform.h"
-
-#if defined(COMPILER_CLANG)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wsign-compare"
-#elif defined(COMPILER_GCC)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wsign-compare"
-#endif
-
-#include "wdef.h"
+#include "ev_memory.h"
+#include "loggers/internal_logger.h"
+#include "wevent.h"
+#include "wmath.h"
 
 #include <sys/event.h>
 
-#include "wevent.h"
-
 #define EVENTS_INIT_SIZE 64
-
-#define READ_INDEX        0
-#define WRITE_INDEX       1
-#define EVENT_INDEX(type) ((type == EVFILT_READ) ? READ_INDEX : WRITE_INDEX)
 
 typedef struct kqueue_ctx_s
 {
     int            kqfd;
     int            capacity;
-    int            nchanges;
-    struct kevent *changes;
-    // int nevents; // nevents == nchanges
     struct kevent *events;
 } kqueue_ctx_t;
-
-static void kqueue_ctx_resize(kqueue_ctx_t *kqueue_ctx, int size)
-{
-    int bytes            = (int) (sizeof(struct kevent) * (size_t) size);
-    int oldbytes         = (int) (sizeof(struct kevent) * (size_t) kqueue_ctx->capacity);
-    kqueue_ctx->changes  = (struct kevent *) eventloopRealloc(kqueue_ctx->changes, (size_t) bytes, (size_t) oldbytes);
-    kqueue_ctx->events   = (struct kevent *) eventloopRealloc(kqueue_ctx->events, (size_t) bytes, (size_t) oldbytes);
-    kqueue_ctx->capacity = size;
-}
 
 int iowatcherInit(wloop_t *loop)
 {
     if (loop->iowatcher)
         return 0;
-    kqueue_ctx_t *kqueue_ctx;
-    EVENTLOOP_ALLOC_SIZEOF(kqueue_ctx);
-    kqueue_ctx->kqfd     = kqueue();
-    kqueue_ctx->capacity = EVENTS_INIT_SIZE;
-    kqueue_ctx->nchanges = 0;
-    int bytes            = (int) (sizeof(struct kevent) * (size_t) kqueue_ctx->capacity);
-    EVENTLOOP_ALLOC(kqueue_ctx->changes, (size_t) bytes);
-    EVENTLOOP_ALLOC(kqueue_ctx->events, (size_t) bytes);
-    loop->iowatcher = kqueue_ctx;
+
+    int fd = kqueue();
+    if (fd < 0)
+        return -errno;
+
+    kqueue_ctx_t *ctx;
+    EVENTLOOP_ALLOC_SIZEOF(ctx);
+    ctx->kqfd     = fd;
+    ctx->capacity = EVENTS_INIT_SIZE;
+    EVENTLOOP_ALLOC(ctx->events, (size_t) ctx->capacity * sizeof(*ctx->events));
+    loop->iowatcher = ctx;
     return 0;
 }
 
 int iowatcherCleanUp(wloop_t *loop)
 {
-    if (loop->iowatcher == NULL)
-        return 0;
-    kqueue_ctx_t *kqueue_ctx = (kqueue_ctx_t *) loop->iowatcher;
-    close(kqueue_ctx->kqfd);
-    EVENTLOOP_FREE(kqueue_ctx->changes);
-    EVENTLOOP_FREE(kqueue_ctx->events);
-    EVENTLOOP_FREE(loop->iowatcher);
+    kqueue_ctx_t *ctx = loop->iowatcher;
+    if (ctx)
+    {
+        close(ctx->kqfd);
+        EVENTLOOP_FREE(ctx->events);
+        EVENTLOOP_FREE(loop->iowatcher);
+    }
     return 0;
 }
 
-static int __add_event(wloop_t *loop, int fd, int event)
+static int kqueueChangeFilter(int queue_fd, int fd, short filter, unsigned short flags)
 {
-    if (loop->iowatcher == NULL)
+    struct kevent change = {0};
+    EV_SET(&change, (uintptr_t) fd, filter, flags, 0, 0, NULL);
+    int result;
+    do
     {
-        iowatcherInit(loop);
-    }
-    kqueue_ctx_t *kqueue_ctx = (kqueue_ctx_t *) loop->iowatcher;
-    wio_t        *io         = loop->ios.ptr[fd];
-    int           idx        = io->event_index[EVENT_INDEX(event)];
-    if (idx < 0)
-    {
-        io->event_index[EVENT_INDEX(event)] = idx = kqueue_ctx->nchanges;
-        kqueue_ctx->nchanges++;
-        if (idx == kqueue_ctx->capacity)
-        {
-            kqueue_ctx_resize(kqueue_ctx, kqueue_ctx->capacity * 2);
-        }
-        memoryZero(kqueue_ctx->changes + idx, sizeof(struct kevent));
-        kqueue_ctx->changes[idx].ident = (uintptr_t) fd;
-    }
-    assert(kqueue_ctx->changes[idx].ident == fd);
-    kqueue_ctx->changes[idx].filter = (int16_t) event;
-    kqueue_ctx->changes[idx].flags  = EV_ADD | EV_ENABLE;
-    struct timespec ts;
-    ts.tv_sec  = 0;
-    ts.tv_nsec = 0;
-    kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
-    return 0;
+        result = kevent(queue_fd, &change, 1, NULL, 0, NULL);
+    } while (result < 0 && errno == EINTR);
+    return result < 0 ? -errno : 0;
 }
 
 int iowatcherAddEvent(wloop_t *loop, int fd, int events)
 {
+    int result = iowatcherInit(loop);
+    if (result != 0)
+        return result;
+    kqueue_ctx_t *ctx = loop->iowatcher;
+
     if (events & WW_READ)
     {
-        __add_event(loop, fd, EVFILT_READ);
+        result = kqueueChangeFilter(ctx->kqfd, fd, EVFILT_READ, EV_ADD);
+        if (result != 0)
+            return result;
     }
     if (events & WW_WRITE)
     {
-        __add_event(loop, fd, EVFILT_WRITE);
-    }
-    return 0;
-}
-
-static int __del_event(wloop_t *loop, int fd, int event)
-{
-    kqueue_ctx_t *kqueue_ctx = (kqueue_ctx_t *) loop->iowatcher;
-    if (kqueue_ctx == NULL)
-        return 0;
-    wio_t *io  = loop->ios.ptr[fd];
-    int    idx = io->event_index[EVENT_INDEX(event)];
-    if (idx < 0)
-        return 0;
-    assert(kqueue_ctx->changes[idx].ident == fd);
-    kqueue_ctx->changes[idx].flags      = EV_DELETE;
-    io->event_index[EVENT_INDEX(event)] = -1;
-    int lastidx                         = kqueue_ctx->nchanges - 1;
-    if (idx < lastidx)
-    {
-        // swap
-        struct kevent tmp;
-        tmp                          = kqueue_ctx->changes[idx];
-        kqueue_ctx->changes[idx]     = kqueue_ctx->changes[lastidx];
-        kqueue_ctx->changes[lastidx] = tmp;
-        wio_t *last                  = loop->ios.ptr[kqueue_ctx->changes[idx].ident];
-        if (last)
+        result = kqueueChangeFilter(ctx->kqfd, fd, EVFILT_WRITE, EV_ADD);
+        if (result != 0 && (events & WW_READ))
         {
-            last->event_index[EVENT_INDEX(kqueue_ctx->changes[idx].filter)] = idx;
+            /* The caller supplies only new interests. Undo this call's read filter. */
+            int rollback = kqueueChangeFilter(ctx->kqfd, fd, EVFILT_READ, EV_DELETE);
+            if (rollback != 0 && rollback != -ENOENT)
+            {
+                LOGF("kqueue: could not roll back read registration (fd=%d, error=%d)", fd, -rollback);
+                abortProgramNow(1);
+            }
         }
     }
-    struct timespec ts;
-    ts.tv_sec  = 0;
-    ts.tv_nsec = 0;
-    kevent(kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, NULL, 0, &ts);
-    kqueue_ctx->nchanges--;
-    return 0;
+    return result;
 }
 
 int iowatcherDelEvent(wloop_t *loop, int fd, int events)
 {
-    if (events & WW_READ)
-    {
-        __del_event(loop, fd, EVFILT_READ);
-    }
-    if (events & WW_WRITE)
-    {
-        __del_event(loop, fd, EVFILT_WRITE);
-    }
-    return 0;
+    kqueue_ctx_t *ctx = loop->iowatcher;
+    if (ctx == NULL)
+        return 0;
+    int read_error  = (events & WW_READ) ? kqueueChangeFilter(ctx->kqfd, fd, EVFILT_READ, EV_DELETE) : 0;
+    int write_error = (events & WW_WRITE) ? kqueueChangeFilter(ctx->kqfd, fd, EVFILT_WRITE, EV_DELETE) : 0;
+    return read_error != 0 ? read_error : write_error;
 }
 
 int iowatcherPollEvents(wloop_t *loop, int timeout)
 {
-    kqueue_ctx_t *kqueue_ctx = (kqueue_ctx_t *) loop->iowatcher;
-    if (kqueue_ctx == NULL)
+    kqueue_ctx_t *ctx = loop->iowatcher;
+    if (ctx == NULL || loop->nios == 0)
         return 0;
-    if (kqueue_ctx->nchanges == 0)
-        return 0;
-    struct timespec ts, *tp;
-    if (timeout == (int) INFINITE)
+    /* Each active descriptor can report one read and one write filter. */
+    int max_events = (int) loop->nios * 2;
+    if (max_events > ctx->capacity)
     {
-        tp = NULL;
+        int capacity = (int) ceil2e((unsigned) max_events);
+        ctx->events  = eventloopRealloc(
+            ctx->events, (size_t) capacity * sizeof(*ctx->events), (size_t) ctx->capacity * sizeof(*ctx->events));
+        ctx->capacity = capacity;
     }
-    else
+    struct timespec ts = {0};
+    if (timeout >= 0)
     {
         ts.tv_sec  = timeout / 1000;
         ts.tv_nsec = (timeout % 1000) * 1000000;
-        tp         = &ts;
     }
-    int nkqueue = kevent(
-        kqueue_ctx->kqfd, kqueue_ctx->changes, kqueue_ctx->nchanges, kqueue_ctx->events, kqueue_ctx->nchanges, tp);
-    if (nkqueue < 0)
+    int count = kevent(ctx->kqfd, NULL, 0, ctx->events, ctx->capacity, timeout >= 0 ? &ts : NULL);
+    if (count < 0)
+        return errno == EINTR ? 0 : -errno;
+
+    for (int i = 0; i < count; ++i)
     {
-        printError("kevent");
-        return nkqueue;
-    }
-    if (nkqueue == 0)
-        return 0;
-    int nevents = 0;
-    for (int i = 0; i < nkqueue; ++i)
-    {
-        if (kqueue_ctx->events[i].flags & EV_ERROR)
-        {
-            continue;
-        }
-        ++nevents;
-        int    fd     = (int) kqueue_ctx->events[i].ident;
-        int    filter = kqueue_ctx->events[i].filter;
-        wio_t *io     = loop->ios.ptr[fd];
+        const struct kevent *event = &ctx->events[i];
+        if (event->flags & EV_ERROR)
+            return event->data != 0 ? -(int) event->data : -EIO;
+        wio_t *io = loop->ios.ptr[event->ident];
         if (io)
         {
-            if (filter == EVFILT_READ)
-            {
-                io->revents |= WW_READ;
-            }
-            else if (filter == EVFILT_WRITE)
-            {
-                io->revents |= WW_WRITE;
-            }
+            io->revents |= event->filter == EVFILT_READ ? WW_READ : WW_WRITE;
             EVENT_PENDING(io);
         }
-        if (nevents == nkqueue)
-            break;
     }
-    return nevents;
+    return count;
 }
-
-#if defined(COMPILER_CLANG)
-#pragma clang diagnostic pop
-#elif defined(COMPILER_GCC)
-#pragma GCC diagnostic pop
-#endif
-
 #else
 typedef int ww_kqueue_dummy_t;
 #endif

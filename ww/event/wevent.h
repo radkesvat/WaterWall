@@ -247,8 +247,8 @@ struct wio_s
     wtimer_t             *heartbeat_timer;
 
 // private:
-#if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
-    int event_index[2]; // for poll,kqueue
+#ifdef EVENT_POLL
+    int event_index[2]; // for poll
 #endif
 
 #ifdef EVENT_IOCP

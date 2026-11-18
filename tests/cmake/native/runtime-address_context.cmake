@@ -649,7 +649,7 @@
 
     waterwall_add_native_executable(wloop_stop_request_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/event/wloop_stop_request_test.c)
   target_link_libraries(wloop_stop_request_test PRIVATE ww_test_support)
-    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=send" "-Wl,--wrap=wloopInvokeWriteCallback")
+    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=epoll_ctl" "-Wl,--wrap=send" "-Wl,--wrap=wloopInvokeWriteCallback")
     target_link_libraries(wloop_stop_request_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wloop_stop_request_test)
 

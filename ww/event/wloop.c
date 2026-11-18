@@ -2185,10 +2185,11 @@ static int wioAddWithNormalAuthority(wio_t *io, wio_cb cb, int events, bool alre
         wioReady(io);
     }
 
-    if (! (io->events & events))
+    const int new_events = events & ~io->events;
+    if (new_events != 0)
     {
         // printDebug("wioAdd: fd=%x on loop wid %d, real wid %d\n", wioGetFD(io), loop->wid, getWID());
-        int add_error = iowatcherAddEvent(loop, wioGetFD(io), events);
+        int add_error = iowatcherAddEvent(loop, wioGetFD(io), new_events);
         if (UNLIKELY(add_error != 0))
         {
             io->error = add_error < 0 ? -add_error : add_error;
@@ -2250,7 +2251,7 @@ int wioDel(wio_t *io, int events)
          */
         wioIocpCancel(io, events, WOVERLAPPED_CANCEL_STOP);
 #else
-        iowatcherDelEvent(io->loop, wioGetFD(io), events);
+        iowatcherDelEvent(io->loop, wioGetFD(io), events & io->events);
 #endif
         io->events &= ~events;
     }
