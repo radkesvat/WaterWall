@@ -2352,8 +2352,9 @@ wio_t *wWrite(wloop_t *loop, int fd, sbuf_t *buf, wwrite_cb write_cb)
     {
         io->write_cb = write_cb;
     }
+    const uint32_t id = io->id;
     wioWrite(io, buf);
-    return io;
+    return wioFindOpen(loop, fd, id);
 }
 
 wio_t *waccept(wloop_t *loop, int listenfd, waccept_cb accept_cb)

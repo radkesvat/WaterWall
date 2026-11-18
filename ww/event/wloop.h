@@ -483,7 +483,8 @@ WW_EXPORT int wioCloseAsync(wio_t *io);
 //------------------high-level apis-------------------------------------------
 // wioGet -> wioSetReadBuf -> wioSetCallBackRead -> wioRead
 WW_EXPORT wio_t *wRead(wloop_t *loop, int fd, wread_cb read_cb);
-// wioGet -> wioSetCallBackWrite -> wioWrite
+// wWrite, wSend and wSendTo return the original open WIO if it still belongs to this loop.
+// A synchronous callback may retire it, so a completed write can return NULL.
 WW_EXPORT wio_t *wWrite(wloop_t *loop, int fd, sbuf_t *buf, wwrite_cb write_cb DEFAULT(NULL));
 // wioGet -> wioClose
 WW_EXPORT void wClose(wloop_t *loop, int fd);

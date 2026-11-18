@@ -501,6 +501,43 @@ static void testCloseCallback(test_env_t *env)
     close(other[1]);
 }
 
+static void replaceInWriteCallback(wio_t *io)
+{
+    wloop_t       *loop    = weventGetLoop(io);
+    const int      fd      = wioGetFD(io);
+    const uint32_t id      = wioGetID(io);
+    const int      next_fd = *(const int *) wioGetContext(io);
+    wioFree(io);
+    require(dup2(next_fd, fd) == fd, "could not reuse descriptor in write callback");
+    wio_t *next = wioGet(loop, fd);
+    require(wioIsOpened(next) && wioGetID(next) != id, "write callback failed to install replacement");
+}
+
+static void testWriteCallbackResult(test_env_t *env)
+{
+    int    sockets[2], replacement[2];
+    wio_t *io = socketIO(env, sockets);
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "could not open replacement socket pair");
+
+    sbuf_t *first = bufferpoolGetSmallBuffer(env->buffers);
+    sbufAppendBytesInPlace(first, "a", 1);
+    require(wWrite(env->loop, sockets[0], first, NULL) == io, "write failed to return the live socket");
+
+    wioSetContext(io, &replacement[0]);
+    sbuf_t *last = bufferpoolGetSmallBuffer(env->buffers);
+    sbufAppendBytesInPlace(last, "b", 1);
+    require(wWrite(env->loop, sockets[0], last, replaceInWriteCallback) == NULL,
+            "write returned a socket retired or replaced by its callback");
+    char bytes[2];
+    require(recv(sockets[1], bytes, sizeof(bytes), MSG_WAITALL) == 2 && memcmp(bytes, "ab", 2) == 0,
+            "peer did not receive both writes before retirement");
+
+    wioFree(wioGet(env->loop, sockets[0]));
+    close(sockets[1]);
+    close(replacement[0]);
+    close(replacement[1]);
+}
+
 typedef struct pending_reuse_probe_s
 {
     test_env_t  *env;
@@ -2812,6 +2849,7 @@ int main(void)
     testNoClose(&env);
     testFileDescriptor(&env);
     testCloseCallback(&env);
+    testWriteCallbackResult(&env);
     teardown(&env);
     return 0;
 }
