@@ -23,6 +23,11 @@ static bool settingsReadInteger(const cJSON *json, const char *node_type, const 
 
 bool enetSettingsParse(enet_settings_t *settings, const cJSON *json, const char *node_type)
 {
+    if (json != NULL && ! cJSON_IsObject(json))
+    {
+        LOGF("JSON Error: %s->settings must be an object", node_type);
+        return false;
+    }
     *settings = (enet_settings_t) {
         .ping_interval_ms       = kEnetPingIntervalDefault,
         .no_recv_timeout_ms     = kEnetNoRecvTimeoutDefault,
