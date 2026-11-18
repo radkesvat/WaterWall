@@ -8,71 +8,31 @@ typedef enum quic_input_kind
     kQuicInputCarrier
 } quic_input_kind_t;
 
-void quicReleaseActive(quic_context_t *context, bool application)
+void quicReleaseActiveApplication(quic_context_t *context)
 {
-    sbuf_t                     **active = application ? &context->active_application : &context->active_input;
-    buffer_budget_reservation_t *reservation =
-        application ? &context->application_reservation : &context->input_reservation;
-    if (*active != NULL)
+    if (context->active_application != NULL)
     {
-        bufferpoolReuseBuffer(context->pool, *active);
-        *active = NULL;
-        bufferbudgetReservationRelease(reservation);
+        bufferpoolReuseBuffer(context->pool, context->active_application);
+        context->active_application = NULL;
+        bufferbudgetReservationRelease(&context->application_reservation);
     }
 }
 
 bool quicFeedInput(quic_context_t *context)
 {
-    if (context->active_input == NULL)
-    {
-        context->active_input = bufferqueuePopFrontReserved(&context->input, &context->input_reservation);
-    }
-    sbuf_t *buffer = context->active_input;
+    sbuf_t *buffer = bufferqueuePopFront(&context->input);
     if (buffer == NULL)
     {
         return false;
     }
-    quic_tstate_t *state  = tunnelGetState(context->tunnel);
-    size_t         length = sbufGetLength(buffer);
-    if (! state->stream_carrier)
+    /* Each buffer contains one datagram. The engine stages output without
+     * dispatching tunnel callbacks during the call. */
+    const size_t length = sbufGetLength(buffer);
+    if (length > 0 && length <= WW_QUIC_MAX_DATAGRAM)
     {
-        if (length > 0 && length <= WW_QUIC_MAX_DATAGRAM)
-        {
-            ww_quic_engine_feed(context->engine, sbufGetRawPtr(buffer), length);
-        }
-        /* Oversized/empty carrier datagrams are dropped without engine allocation. */
-        quicReleaseActive(context, false);
-        return true;
+        ww_quic_engine_feed(context->engine, sbufGetRawPtr(buffer), length);
     }
-    size_t                   consumed;
-    const uint8_t           *packet;
-    size_t                   packet_length;
-    ww_quic_carrier_result_t result =
-        ww_quic_carrier_decode(&context->carrier, sbufGetRawPtr(buffer), length, &consumed, &packet, &packet_length);
-    if (result == WW_QUIC_CARRIER_PACKET)
-    {
-        ww_quic_engine_feed(context->engine, packet, packet_length);
-        ww_quic_carrier_release_packet(&context->carrier);
-    }
-    if (result == WW_QUIC_CARRIER_INVALID || result == WW_QUIC_CARRIER_REFUSED)
-    {
-        char reason[192];
-        snprintf(reason,
-                 sizeof(reason),
-                 "%s (declared_packet_bytes=%u, protocol_limit_bytes=%u)",
-                 result == WW_QUIC_CARRIER_INVALID ? "invalid stream carrier length"
-                                                   : "carrier storage admission refused",
-                 context->carrier.body_length,
-                 (unsigned) WW_QUIC_MAX_DATAGRAM);
-        quicFail(context, reason);
-        return true;
-    }
-    sbufShiftRight(buffer, consumed);
-    bufferbudgetReservationSetBytes(&context->input_reservation, sbufGetLength(buffer));
-    if (sbufGetLength(buffer) == 0)
-    {
-        quicReleaseActive(context, false);
-    }
+    bufferpoolReuseBuffer(context->pool, buffer);
     return true;
 }
 
@@ -118,10 +78,7 @@ static void quicSubmit(tunnel_t *t, line_t *l, sbuf_t *buffer, quic_input_kind_t
     }
     else
     {
-        size_t retained = ww_quic_carrier_retained(&context->carrier);
-        size_t queued   = bufferbudgetGetUsage(&context->input_budget).bytes;
-        admitted        = quicInputEntries(context) < state->max_buffers &&
-                   retained + queued + sbufGetLength(buffer) <= state->max_bytes &&
+        admitted = bufferqueueGetEntryCount(&context->input) < state->max_buffers &&
                    bufferqueueTryPushBack(&context->input, &buffer);
     }
     if (! admitted)

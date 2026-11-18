@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Raw QUIC transforms through direct, UDP and explicitly framed TCP carriers.
+"""Raw QUIC transforms through direct, UDP and UdpOverTcp carriers.
 
 Loopback tests use the namespace runner and the canonical local TLS certificate;
 they verify server-first delivery with zero client bytes, binary byte order in
 both directions, deterministic UDP loss/duplication/reordering and shutdown143.
 The speed case runs the exact VLESS/QUIC chain in speedtests/quic_vless_udp and
 reports verified upload/download Mbit/s from the fixed measured byte interval.
-CTest: waterwall.quic_direct, waterwall.quic_udp, waterwall.quic_stream,
+CTest: waterwall.quic_direct, waterwall.quic_udp, waterwall.quic_udp_over_tcp,
 waterwall.quic_udp_impaired, waterwall.quic_shutdown, waterwall.quic_failures,
-waterwall.quic_service_close_udp, waterwall.quic_service_close_stream,
-waterwall.quic_upload_close_udp, waterwall.quic_upload_close_stream,
-waterwall.quic_server_first_close_udp, waterwall.quic_server_first_close_stream,
+waterwall.quic_service_close_udp, waterwall.quic_service_close_udp_over_tcp,
+waterwall.quic_upload_close_udp, waterwall.quic_upload_close_udp_over_tcp,
+waterwall.quic_server_first_close_udp, waterwall.quic_server_first_close_udp_over_tcp,
 waterwall.quic_speedtest_vless_udp. No internet, timing performance gate or HTTP/3.
 """
 
@@ -178,7 +178,7 @@ class StreamRelay:
 
     def forward(self, source, target, direction):
         def frame():
-            prefix = exact(source, 4, eof_error=EOFError)
+            prefix = exact(source, 2, eof_error=EOFError)
             length = int.from_bytes(prefix, "big")
             assert 0 < length <= 1472, "encoder emitted an invalid stream carrier length"
             return prefix + exact(source, length, eof_error=EOFError)
@@ -195,12 +195,11 @@ class StreamRelay:
                     target.sendall(packet)
                     continue
                 if self.fragmented[direction] < 2:
-                    # The first four writes split every prefix boundary. A
-                    # delayed first body byte additionally forces partial body.
-                    for offset in range(5):
+                    # Split the two-byte prefix and the first body byte.
+                    for offset in range(3):
                         target.sendall(packet[offset:offset + 1])
                         time.sleep(0.005)
-                    target.sendall(packet[5:])
+                    target.sendall(packet[3:])
                     self.fragmented[direction] += 1
                 else:
                     if select.select([source], [], [], 0.002)[0]:
@@ -249,24 +248,29 @@ class StreamRelay:
                 assert self.first_reply.is_set(), "server handshake was never gated"
 
 
-def roundtrip_nodes(mode):
-    stream = mode == "stream"
-    carrier_mode = "stream" if stream else "datagram"
-    return [
+def roundtrip_nodes(mode, *, relay=False):
+    udp_over_tcp = mode == "udp-over-tcp"
+    nodes = [
         {"name": "application", "type": "TcpListener", "next": "quic-client",
          "settings": {"address": HOST, "port": APP_PORT, "nodelay": True}},
-        {"name": "quic-client", "type": "QuicClient", "next": "carrier-out",
-         "settings": client_settings(**{"carrier-mode": carrier_mode})},
-        {"name": "carrier-out", "type": "TcpConnector" if stream else "UdpConnector",
-         "settings": {"address": HOST, "port": RELAY_PORT if mode in ("udp-impaired", "stream") else CARRIER_PORT,
-                      **({"nodelay": True, "fastopen": False} if stream else {"balance-mode": "packet"})}},
-        {"name": "carrier-in", "type": "TcpListener" if stream else "UdpListener", "next": "quic-server",
+        {"name": "quic-client", "type": "QuicClient",
+         "next": "encode-carrier" if udp_over_tcp else "carrier-out", "settings": client_settings()},
+        {"name": "carrier-out", "type": "TcpConnector" if udp_over_tcp else "UdpConnector",
+         "settings": {"address": HOST, "port": RELAY_PORT if relay else CARRIER_PORT,
+                      **({"nodelay": True, "fastopen": False} if udp_over_tcp else {"balance-mode": "packet"})}},
+        {"name": "carrier-in", "type": "TcpListener" if udp_over_tcp else "UdpListener",
+         "next": "decode-carrier" if udp_over_tcp else "quic-server",
          "settings": {"address": HOST, "port": CARRIER_PORT}},
-        {"name": "quic-server", "type": "QuicServer", "next": "application-out",
-         "settings": server_settings(**{"carrier-mode": carrier_mode})},
+        {"name": "quic-server", "type": "QuicServer", "next": "application-out", "settings": server_settings()},
         {"name": "application-out", "type": "TcpConnector",
          "settings": {"address": HOST, "port": BACKEND_PORT, "nodelay": True, "fastopen": False}},
     ]
+    if udp_over_tcp:
+        nodes.extend([
+            {"name": "encode-carrier", "type": "UdpOverTcpClient", "next": "carrier-out"},
+            {"name": "decode-carrier", "type": "UdpOverTcpServer", "next": "quic-server"},
+        ])
+    return nodes
 
 
 def roundtrip(binary, mode):
@@ -275,11 +279,11 @@ def roundtrip(binary, mode):
     upload = bytes(range(256)) * 4096
     download = upload[::-1]
     with RunDirectory("waterwall-quic-" + mode + "-") as root:
-        write_inputs(root, roundtrip_nodes(mode), workers=2)
+        write_inputs(root, roundtrip_nodes(mode, relay=mode != "udp"), workers=2)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
-            relay_context = (DatagramRelay() if mode == "udp-impaired" else StreamRelay() if mode == "stream"
-                             else contextlib.nullcontext())
+            relay_context = (DatagramRelay() if mode == "udp-impaired"
+                             else StreamRelay() if mode == "udp-over-tcp" else contextlib.nullcontext())
             with relay_context as relay, Process([binary], cwd=root, log_path=root / "stdout.log") as process:
                 client = connect_when_ready(process, (HOST, APP_PORT), deadline=time.monotonic() + 10,
                     failure=lambda: AssertionError("QUIC runtime exited before application connection"))
@@ -322,9 +326,7 @@ def service_close(binary, mode):
     # More than one final wire drain carries, so most of it is still queued when the service closes.
     response = bytes(range(256)) * 65536
     with RunDirectory("waterwall-quic-service-close-" + mode + "-") as root:
-        nodes = roundtrip_nodes(mode)
-        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = CARRIER_PORT
-        write_inputs(root, nodes, workers=1)
+        write_inputs(root, roundtrip_nodes(mode), workers=1)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
             with Process([binary], cwd=root, log_path=root / "stdout.log") as process:
@@ -352,9 +354,7 @@ def service_close(binary, mode):
 def upload_close(binary, mode):
     upload = bytes(range(256)) * 65536
     with RunDirectory("waterwall-quic-upload-close-" + mode + "-") as root:
-        nodes = roundtrip_nodes(mode)
-        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = CARRIER_PORT
-        write_inputs(root, nodes, workers=1)
+        write_inputs(root, roundtrip_nodes(mode), workers=1)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
             with Process([binary], cwd=root, log_path=root / "stdout.log") as process:
@@ -384,11 +384,9 @@ def upload_close(binary, mode):
 def server_first_close(binary, mode):
     greeting = b"\0server-first-before-handshake\xff" * 1024
     gate = threading.Event()
-    relay_context = StreamRelay(reply_gate=gate) if mode == "stream" else DatagramRelay(reply_gate=gate)
+    relay_context = StreamRelay(reply_gate=gate) if mode == "udp-over-tcp" else DatagramRelay(reply_gate=gate)
     with RunDirectory("waterwall-quic-server-first-close-" + mode + "-") as root:
-        nodes = roundtrip_nodes(mode)
-        next(node for node in nodes if node["name"] == "carrier-out")["settings"]["port"] = RELAY_PORT
-        write_inputs(root, nodes, workers=1)
+        write_inputs(root, roundtrip_nodes(mode, relay=True), workers=1)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
             with relay_context as relay, Process([binary], cwd=root, log_path=root / "stdout.log") as process:
@@ -435,8 +433,8 @@ def shutdown(binary):
     nodes = [
         {"name": "application", "type": "TcpListener", "next": "quic-client",
          "settings": {"address": HOST, "port": APP_PORT}},
-        {"name": "quic-client", "type": "QuicClient", "next": "carrier",
-         "settings": client_settings(**{"carrier-mode": "stream"})},
+        {"name": "quic-client", "type": "QuicClient", "next": "encode-carrier", "settings": client_settings()},
+        {"name": "encode-carrier", "type": "UdpOverTcpClient", "next": "carrier"},
         {"name": "carrier", "type": "TcpConnector",
          "settings": {"address": HOST, "port": BACKEND_PORT, "fastopen": False}},
     ]
@@ -450,10 +448,12 @@ def shutdown(binary):
                 with client, backend.accept()[0] as carrier:
                     client.settimeout(10)
                     carrier.settimeout(10)
-                    assert carrier.recv(4096), "client did not emit a real QUIC handshake"
+                    length = int.from_bytes(exact(carrier, 2), "big")
+                    assert 1200 <= length <= 1472, "client did not emit a framed QUIC Initial"
+                    exact(carrier, length)
                     client.sendall(b"pending application data" * 1024)
                     # A partial carrier frame and uncompleted handshake remain live at quiescence.
-                    carrier.sendall(b"\0\0")
+                    carrier.sendall(b"\0")
                     orderly_stop(process)
                     # Shutdown may close either socket before reading its pending bytes,
                     # which legitimately produces a TCP reset instead of EOF.
@@ -466,7 +466,7 @@ def shutdown(binary):
 
 
 def failures(binary):
-    for mismatch in ("protocol", "hostname", "trust", "carrier-mode"):
+    for mismatch in ("protocol", "hostname", "trust"):
         nodes = roundtrip_nodes("udp")
         client, server = nodes[1]["settings"], nodes[4]["settings"]
         client["handshake-timeout-ms"] = server["handshake-timeout-ms"] = 500
@@ -474,10 +474,8 @@ def failures(binary):
             server["protocol"] = "other-raw-protocol"
         elif mismatch == "hostname":
             client["sni"] = "wrong.integration.test"
-        elif mismatch == "trust":
-            del client["ca-file"]  # The local self-signed certificate is absent from bundled roots.
         else:
-            server["carrier-mode"] = "stream"
+            del client["ca-file"]  # The local self-signed certificate is absent from bundled roots.
         with RunDirectory("waterwall-quic-mismatch-" + mismatch + "-") as root:
             write_inputs(root, nodes)
             with socket.socket() as backend:
@@ -490,7 +488,7 @@ def failures(binary):
                         client_socket.sendall(b"application must wait for authenticated readiness")
                         assert client_socket.recv(1) == b"", f"{mismatch}: failed peer exposed application data"
                     orderly_stop(process)
-    print("QUIC ALPN, hostname, trust and explicit-carrier mismatches close within finite deadline")
+    print("QUIC ALPN, hostname and trust mismatches close within finite deadline")
 
 
 def speed(binary):
@@ -529,12 +527,12 @@ if __name__ == "__main__":
         speed(binary)
     elif mode == "failures":
         failures(binary)
-    elif mode in ("service-close-udp", "service-close-stream"):
-        service_close(binary, mode.rsplit("-", 1)[1])
-    elif mode in ("upload-close-udp", "upload-close-stream"):
-        upload_close(binary, mode.rsplit("-", 1)[1])
-    elif mode in ("server-first-close-udp", "server-first-close-stream"):
-        server_first_close(binary, mode.rsplit("-", 1)[1])
+    elif mode in ("service-close-udp", "service-close-udp-over-tcp"):
+        service_close(binary, mode[len("service-close-"):])
+    elif mode in ("upload-close-udp", "upload-close-udp-over-tcp"):
+        upload_close(binary, mode[len("upload-close-"):])
+    elif mode in ("server-first-close-udp", "server-first-close-udp-over-tcp"):
+        server_first_close(binary, mode[len("server-first-close-"):])
     else:
-        assert mode in ("udp", "stream", "udp-impaired"), mode
+        assert mode in ("udp", "udp-over-tcp", "udp-impaired"), mode
         roundtrip(binary, mode)

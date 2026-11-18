@@ -87,7 +87,6 @@ static bool quicDeliverEvent(quic_context_t *context)
         ww_quic_engine_consume(context->engine);
         return true;
     }
-    uint32_t prefix = wire && state->stream_carrier ? 4 : 0;
     assert(event.length <= WW_QUIC_WRITE_CHUNK);
     /* Retire staging before allocating the onward buffer, so their heap
      * allocations never overlap at the output backlog's hard boundary. */
@@ -98,7 +97,7 @@ static bool quicDeliverEvent(quic_context_t *context)
     ww_quic_engine_storage(context->engine, &storage);
     size_t retained = (wire ? storage.wire_bytes : storage.plaintext_bytes) +
                       ((size_t) state->max_buffers + (wire ? 1 : 2)) * WW_QUIC_EVENT_DESCRIPTOR_CHARGE;
-    uint32_t          length  = (uint32_t) event.length + prefix;
+    uint32_t          length  = (uint32_t) event.length;
     uint16_t          padding = bufferpoolGetLargeBufferPadding(context->pool);
     buffer_pool_fit_t fit;
     const bool        representable = bufferpoolQueryBestFit(context->pool, length, padding, &fit);
@@ -137,12 +136,7 @@ static bool quicDeliverEvent(quic_context_t *context)
         quicFail(context, reason);
         return true;
     }
-    uint8_t *data = sbufGetMutablePtr(buffer);
-    if (prefix != 0)
-    {
-        ww_quic_carrier_header(data, (uint32_t) event.length);
-    }
-    memoryCopy(data + prefix, staged, event.length);
+    memoryCopy(sbufGetMutablePtr(buffer), staged, length);
     sbufSetLength(buffer, length);
     lineRef(line);
     if (wire)
@@ -176,7 +170,7 @@ static bool quicWriteApplication(quic_context_t *context)
     size_t length = sbufGetLength(buffer);
     if (length == 0)
     {
-        quicReleaseActive(context, true);
+        quicReleaseActiveApplication(context);
         return true;
     }
     uint32_t          chunk = (uint32_t) min(length, (size_t) WW_QUIC_WRITE_CHUNK);
@@ -210,7 +204,7 @@ static bool quicWriteApplication(quic_context_t *context)
     bufferbudgetReservationSetBytes(&context->application_reservation, sbufGetLength(buffer));
     if (sbufGetLength(buffer) == 0)
     {
-        quicReleaseActive(context, true);
+        quicReleaseActiveApplication(context);
     }
     return true;
 }

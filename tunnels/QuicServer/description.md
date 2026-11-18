@@ -18,7 +18,7 @@ UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
 
 Node fragment; define the referenced neighbors and peers in the same deployment.
 
-Feed this node from a datagram carrier, replace the certificate/key paths, and define `application-out` for the decoded application stream. The client must trust this certificate and use its name. Both peers must agree on ALPN and carrier mode; `h3` does not make this an HTTP/3 server.
+Feed this node from a datagram carrier, replace the certificate/key paths, and define `application-out` for the decoded application stream. The client must trust this certificate and use its name. Both peers must agree on ALPN; `h3` does not make this an HTTP/3 server.
 
 ```json
 {
@@ -28,8 +28,7 @@ Feed this node from a datagram carrier, replace the certificate/key paths, and d
   "settings": {
     "cert-file": "server.crt",
     "key-file": "server.key",
-    "protocol": "h3",
-    "carrier-mode": "datagram"
+    "protocol": "h3"
   }
 }
 ```
@@ -57,11 +56,10 @@ WaterWall line does not by itself validate that address.
 | Setting | Default | Accepted values and behavior |
 | --- | --- | --- |
 | `protocol` | `"h3"` | One exact, printable ASCII ALPN identifier, 1–255 bytes. Both peers must agree. |
-| `carrier-mode` | `"datagram"` | Exactly `datagram` or `stream`. Select explicitly for a stream carrier. |
 | `handshake-timeout-ms` | `10000` | Integer 1–86,400,000. Total deadline through authenticated handshake and application-stream opening; partial input does not restart it. |
 | `idle-timeout-ms` | `60000` | Integer 1–86,400,000. QUIC idle lifetime, subject to peer negotiation and the carrier's own lifetime. |
 | `close-drain-timeout-ms` | `30000` | Integer 1–86,400,000. Local delivery deadline from the first local application Finish or peer FIN, including before handshake readiness; it is not extended by progress or retries. |
-| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram, excluding the stream envelope; input independently accepts up to 1,472 bytes. |
+| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram. Input independently accepts up to 1,472 bytes. |
 | `max-buffered-bytes` | `2097152` | Integer 65,536–67,108,864. Per-line bound for each independent retained application/output backlog, including accepted unacknowledged plaintext. |
 | `max-buffered-buffers` | `1024` | Integer 1–65,536. Per-backlog entry bound, including active retention. |
 | `receive-window-bytes` | `1048576` | Integer 16,384–16,777,216 and no greater than `max-buffered-bytes`; initial stream receive credit. |
@@ -92,16 +90,18 @@ budgets even while the rings are empty; closing releases them.
   "settings": {
     "cert-file": "server.crt",
     "key-file": "server.key",
-    "protocol": "h3",
-    "carrier-mode": "datagram"
+    "protocol": "h3"
   }
 }
 ```
 
 `name`, `type`, `next` and an object `settings` are required. `type` must be
-exactly `QuicServer`. Full UDP and framed TCP client/server configurations and
+exactly `QuicServer`. Full UDP and TCP client/server configurations and
 local certificate instructions are in
 [`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+
+For a TCP carrier, use `TcpListener -> UdpOverTcpServer -> QuicServer` and
+place `UdpOverTcpClient` between the peer's `QuicClient` and `TcpConnector`.
 
 ## Advanced behavior
 
@@ -115,13 +115,8 @@ normal line and owns a separate service line. This separates application closure
 from the lifetime needed for delivery and acknowledgements. Adapters own their
 sockets; each normal line is destroyed only by its creator.
 
-In `datagram` mode, one carrier Payload is exactly one complete QUIC datagram,
-with no private outer prefix. In `stream` mode every datagram has a four-byte
-unsigned big-endian length followed by that many bytes. Both peers must select
-`stream` over a byte-stream carrier. Its incremental parser accepts fragmented
-prefixes/bodies and coalesced frames; zero lengths or lengths above 1,472 close
-the association. There is no automatic carrier detection, fallback or adapter
-insertion.
+Each carrier Payload is exactly one complete QUIC datagram. The QUIC nodes drop
+empty carrier datagrams and those larger than 1,472 bytes.
 
 The client sends one encrypted opening byte `0x00` before application data. The
 server consumes it internally, allowing a server-first application to send even

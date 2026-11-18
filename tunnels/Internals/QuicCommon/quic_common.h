@@ -24,7 +24,6 @@ typedef struct quic_tstate
     uint32_t             max_buffers;
     uint32_t             close_drain_timeout_ms;
     bool                 client;
-    bool                 stream_carrier;
     bool                 verbose;
     atomic_bool          stopping;
 } quic_tstate_t;
@@ -37,7 +36,6 @@ typedef struct quic_lstate
 typedef struct quic_node_settings
 {
     ww_quic_settings_t engine;
-    bool               stream_carrier;
     bool               verbose;
 } quic_node_settings_t;
 

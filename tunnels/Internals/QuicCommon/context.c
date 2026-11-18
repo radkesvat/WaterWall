@@ -34,26 +34,6 @@ void quicLeave(quic_context_t *context)
         quicFree(context);
 }
 
-static void *quicCarrierAllocate(void *owner, size_t length)
-{
-    quic_context_t      *context = owner;
-    quic_tstate_t       *state   = tunnelGetState(context->tunnel);
-    buffer_budget_cost_t cost    = {.charge = length};
-    if (quicInputEntries(context) >= state->max_buffers || ! bufferbudgetTryAcquire(&context->input_budget, cost))
-        return NULL;
-    ++context->carrier_allocations;
-    return memoryAllocate(length);
-}
-
-static void quicCarrierDeallocate(void *owner, void *pointer, size_t length)
-{
-    quic_context_t *context = owner;
-    memoryFree(pointer);
-    assert(context->carrier_allocations != 0);
-    --context->carrier_allocations;
-    bufferbudgetRelease(&context->input_budget, (buffer_budget_cost_t) {.charge = length});
-}
-
 /* Null the association before calling out. A sibling callback can finish the
  * other line; the entered driver keeps only the independent context alive. */
 static void quicDetachSide(quic_context_t *context, bool application, bool notify)
@@ -93,12 +73,9 @@ void quicRetire(quic_context_t *context)
     if (context->next != NULL)
         context->next->previous = context->previous;
     context->previous = context->next = NULL;
-    quicReleaseActive(context, true);
-    quicReleaseActive(context, false);
+    quicReleaseActiveApplication(context);
     bufferqueueDestroy(&context->application);
     bufferqueueDestroy(&context->input);
-    ww_quic_carrier_destroy(&context->carrier);
-    assert(context->carrier_allocations == 0);
     bufferbudgetAssertEmpty(&context->application_budget);
     bufferbudgetAssertEmpty(&context->input_budget);
     /* Next before prev. Nested Finish of the other side is allowed, but the
@@ -122,7 +99,7 @@ void quicFail(quic_context_t *context, const char *reason)
         LOGW("%s: closing association on worker %u: %s "
              "(application_bytes=%zu, application_entries=%zu, application_charge_bytes=%zu, "
              "send_bytes=%zu, send_entries=%zu, send_charge_bytes=%zu, carrier_queued_bytes=%zu, "
-             "carrier_entries=%zu, carrier_charge_bytes=%zu, carrier_parser_bytes=%zu, "
+             "carrier_entries=%zu, carrier_charge_bytes=%zu, "
              "max-buffered-bytes=%u, max-buffered-buffers=%u, allocation_limit_bytes=%zu)",
              state->client ? "QuicClient" : "QuicServer",
              (unsigned) context->wid,
@@ -134,9 +111,8 @@ void quicFail(quic_context_t *context, const char *reason)
              storage.send_entries,
              storage.send_allocation,
              input.bytes,
-             quicInputEntries(context),
+             bufferqueueGetEntryCount(&context->input),
              input.charge,
-             ww_quic_carrier_retained(&context->carrier),
              state->max_bytes,
              state->max_buffers,
              (size_t) state->max_bytes * 2);
@@ -168,7 +144,7 @@ static void quicCopyContext(line_t *next, line_t *previous, const quic_tstate_t 
         addresscontextSetDestinationPinned(destination, false);
         addresscontextSetResolverDns(destination, false);
     }
-    const uint8_t protocol = state->client && ! state->stream_carrier ? IP_PROTO_UDP : IP_PROTO_TCP;
+    const uint8_t protocol = state->client ? IP_PROTO_UDP : IP_PROTO_TCP;
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(next), protocol);
     addresscontextSetOnlyProtocol(destination, protocol);
 }
@@ -193,8 +169,6 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     context->carrier_line                              = state->client ? next : l;
     ((quic_lstate_t *) lineGetState(next, t))->context = context;
     line_state->context                                = context;
-    context->carrier =
-        (ww_quic_carrier_t) {.context = context, .allocate = quicCarrierAllocate, .deallocate = quicCarrierDeallocate};
     buffer_budget_cost_t limits = {.bytes = state->max_bytes, .charge = (size_t) state->max_bytes * 2};
     bufferbudgetInit(&context->application_budget, limits);
     bufferbudgetInit(&context->input_budget, limits);
@@ -207,10 +181,9 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
         context->next->previous = context;
     state->workers[context->wid] = context;
     if (state->verbose)
-        LOGD("%s: initializing split association on worker %u with %s carrier",
+        LOGD("%s: initializing split association on worker %u with datagram carrier",
              state->client ? "QuicClient" : "QuicServer",
-             (unsigned) context->wid,
-             state->stream_carrier ? "stream" : "datagram");
+             (unsigned) context->wid);
     bool entered = quicEnter(context);
     assert(entered);
     discard entered;

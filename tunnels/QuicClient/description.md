@@ -22,7 +22,7 @@ SpeedTestClient -> VlessClient -> QuicClient -> UdpConnector
 
 Node fragment; define the referenced neighbors and peers in the same deployment.
 
-Define `carrier-out` as a datagram carrier to the QuicServer peer. Replace the SNI and CA path with the peer identity and trust bundle. Both peers must agree on ALPN and carrier mode. The value `h3` is only an ALPN label here: this is raw QUIC, not HTTP/3.
+Define `carrier-out` as a datagram carrier to the QuicServer peer. Replace the SNI and CA path with the peer identity and trust bundle. Both peers must agree on ALPN. The value `h3` is only an ALPN label here: this is raw QUIC, not HTTP/3.
 
 ```json
 {
@@ -33,8 +33,7 @@ Define `carrier-out` as a datagram carrier to the QuicServer peer. Replace the S
     "sni": "quic.example.test",
     "verify": true,
     "ca-file": "server.crt",
-    "protocol": "h3",
-    "carrier-mode": "datagram"
+    "protocol": "h3"
   }
 }
 ```
@@ -60,11 +59,10 @@ version mismatch fail the connection without fallback.
 | Setting | Default | Accepted values and behavior |
 | --- | --- | --- |
 | `protocol` | `"h3"` | One exact, printable ASCII ALPN identifier, 1–255 bytes. Both peers must agree. |
-| `carrier-mode` | `"datagram"` | Exactly `datagram` or `stream`. Select explicitly for a stream carrier. |
 | `handshake-timeout-ms` | `10000` | Integer 1–86,400,000. Total deadline through authenticated handshake and application-stream opening; partial input does not restart it. |
 | `idle-timeout-ms` | `60000` | Integer 1–86,400,000. QUIC idle lifetime, subject to peer negotiation and the carrier's own lifetime. |
 | `close-drain-timeout-ms` | `30000` | Integer 1–86,400,000. Local delivery deadline from the first local application Finish or peer FIN, including before handshake readiness; it is not extended by progress or retries. |
-| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram, excluding the stream envelope; input independently accepts up to 1,472 bytes. |
+| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram. Input independently accepts up to 1,472 bytes. |
 | `max-buffered-bytes` | `2097152` | Integer 65,536–67,108,864. Per-line bound for each independent retained application/output backlog, including accepted unacknowledged plaintext. |
 | `max-buffered-buffers` | `1024` | Integer 1–65,536. Per-backlog entry bound, including active retention. |
 | `receive-window-bytes` | `1048576` | Integer 16,384–16,777,216 and no greater than `max-buffered-bytes`; initial stream receive credit. |
@@ -96,16 +94,22 @@ budgets even while the rings are empty; closing releases them.
     "sni": "quic.example.test",
     "verify": true,
     "ca-file": "server.crt",
-    "protocol": "h3",
-    "carrier-mode": "datagram"
+    "protocol": "h3"
   }
 }
 ```
 
 `name`, `type`, `next` and an object `settings` are required. `type` must be
-exactly `QuicClient`. Full UDP and framed TCP client/server configurations and
+exactly `QuicClient`. Full UDP and TCP client/server configurations and
 local certificate instructions are in
 [`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+
+For a TCP carrier, use `UdpOverTcpClient` and `UdpOverTcpServer` as a pair.
+
+```text
+Client: TcpListener -> QuicClient -> UdpOverTcpClient -> TcpConnector
+Server: TcpListener -> UdpOverTcpServer -> QuicServer -> TcpConnector
+```
 
 ## Advanced behavior
 
@@ -119,13 +123,8 @@ normal line and owns a separate service line. This separates application closure
 from the lifetime needed for delivery and acknowledgements. Adapters own their
 sockets; each normal line is destroyed only by its creator.
 
-In `datagram` mode, one carrier Payload is exactly one complete QUIC datagram,
-with no private outer prefix. In `stream` mode every datagram has a four-byte
-unsigned big-endian length followed by that many bytes. Both peers must select
-`stream` over a byte-stream carrier. Its incremental parser accepts fragmented
-prefixes/bodies and coalesced frames; zero lengths or lengths above 1,472 close
-the association. There is no automatic carrier detection, fallback or adapter
-insertion.
+Each carrier Payload is exactly one complete QUIC datagram. The QUIC nodes drop
+empty carrier datagrams and those larger than 1,472 bytes.
 
 The client sends one encrypted opening byte `0x00` before application data. The
 server consumes it internally, allowing a server-first application to send even
