@@ -416,6 +416,9 @@ WW_EXPORT int wioConnect(wio_t *io);
 // Buffered reads require a loop with a buffer pool.
 // wioAdd(io, WW_READ) => read => wread_cb
 WW_EXPORT int wioRead(wio_t *io);
+/** Suspend TCP producer reads for flow control. On IOCP, an already submitted
+ * receive can complete while paused. wioRead() resumes delivery in order. */
+WW_EXPORT void wioPauseTcpRead(wio_t *io);
 #define wioReadStart(io) wioRead(io)
 #define wioReadStop(io)  wioDel(io, WW_READ)
 

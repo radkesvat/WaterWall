@@ -210,6 +210,8 @@ void wioReady(wio_t *io)
     io->iocp_pending_dispatch                         = 0;
     io->iocp_close_in_progress                        = 0;
     io->iocp_associated                               = 0;
+    io->iocp_read_paused                              = 0;
+    assert(io->iocp_held_recv == NULL);
 #endif
 
     // io_type
@@ -391,6 +393,17 @@ void wioSetPeerWriteShutdownDetection(wio_t *io, bool enabled)
 {
     assert(wioIsOpened(io) && ! io->read_eof);
     io->detect_peer_write_shutdown = enabled;
+}
+
+void wioPauseTcpRead(wio_t *io)
+{
+    assert(io->io_type == WIO_TYPE_TCP);
+#ifdef EVENT_IOCP
+    /* Withdrawing interest would cancel a WSARecv that may already own bytes. */
+    io->iocp_read_paused = 1;
+#else
+    discard wioReadStop(io);
+#endif
 }
 
 void wioHandleReadEOF(wio_t *io)

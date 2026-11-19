@@ -841,6 +841,12 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     }
 
     const bool is_dgram = (io->io_type & WIO_TYPE_SOCK_DGRAM) != 0 || (io->io_type & WIO_TYPE_SOCK_RAW) != 0;
+    if (io->iocp_read_paused && record->error == 0)
+    {
+        assert(io->io_type == WIO_TYPE_TCP && io->iocp_held_recv == NULL);
+        io->iocp_held_recv = record;
+        return;
+    }
     if (record->error != 0 || (record->bytes == 0 && ! is_dgram))
     {
         // Real error or stream EOF.
@@ -883,7 +889,7 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
     }
 
     // Repost only if still open, same generation, and read is still enabled.
-    if (! io->closed && record->io_id == io->id && (io->events & WW_READ) &&
+    if (! io->closed && ! io->iocp_read_paused && record->io_id == io->id && (io->events & WW_READ) &&
         LIKELY(wloopNormalDispatchAllowed(io->loop)))
     {
         if (hasUncancelledReceive(io))
@@ -1239,6 +1245,12 @@ void wioIocpCancel(wio_t *io, int event_mask, woverlapped_cancel_reason_e reason
 
     if ((event_mask & WW_READ) != 0)
     {
+        io->iocp_read_paused = 0;
+        if (io->iocp_held_recv != NULL)
+        {
+            recordRetire(io->iocp_held_recv);
+            io->iocp_held_recv = NULL;
+        }
         // Read/accept interest is being withdrawn (read stop, close,
         // release-no-close, loop shutdown). A scheduled AcceptEx replenishment
         // must not outlive it, or it would fire on a pooled wio_t.
@@ -1509,6 +1521,25 @@ int wioRead(wio_t *io)
     {
         wioClose(io);
         return add_error;
+    }
+
+    io->iocp_read_paused = 0;
+    if (io->iocp_held_recv != NULL)
+    {
+        // Deliver through the ordinary dispatch path. Resume must not run a
+        // tunnel or EOF callback inline or post another receive ahead of it.
+        woverlapped_t *held = io->iocp_held_recv;
+        io->iocp_held_recv  = NULL;
+        recordMarkPosted(held);
+        int replay_error = wioIocpRequeueReceive(held);
+        if (replay_error != 0)
+        {
+            recordUnpost(held);
+            recordRetire(held);
+            io->error = replay_error;
+            wioClose(io);
+        }
+        return replay_error;
     }
 
     // Idempotent, like the readiness backend: repeated wioReadStart() calls (and

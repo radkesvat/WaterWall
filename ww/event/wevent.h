@@ -262,6 +262,7 @@ struct wio_s
     struct woverlapped_s *iocp_posted_tail;
     struct woverlapped_s *iocp_completed_head; // FIFO: dequeued, awaiting dispatch
     struct woverlapped_s *iocp_completed_tail;
+    struct woverlapped_s *iocp_held_recv;    // one successful receive or EOF awaiting flow-control Resume
     struct woverlapped_s *iocp_send_active;  // sole TCP send, posted or locally dispatching
     uint32_t              iocp_live_records; // records holding this wio_t alive
     uint32_t              iocp_posted_count; // records currently posted to the kernel
@@ -278,6 +279,7 @@ struct wio_s
     unsigned  iocp_pending_dispatch : 1;  // generic pending loop still holds its cursor
     unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
     unsigned  iocp_associated : 1;        // socket handle is already bound to this loop's IOCP
+    unsigned  iocp_read_paused : 1;
 #endif
 };
 /*

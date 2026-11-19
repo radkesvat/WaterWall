@@ -30,6 +30,7 @@
 //   * destroying a loop with operations still posted drains the kernel before
 //     freeing memory;
 //   * read-stop suppresses a receive that IOCP already dequeued;
+//   * TCP flow-control Pause preserves a completed receive and EOF until Resume;
 //   * ConnectEx and callback-driven wioFree keep the pending cursor valid;
 //   * ConnectEx accepts a socket that was already bound to a source address;
 //   * async DNS polls and reads c-ares sockets without IOCP readiness callbacks;
@@ -985,6 +986,73 @@ static void testReadStopAfterDequeue(env_t *env)
     wioClose(server);
     closesocket(client);
     require(pumpUntilLiveOperations(loop, 0, 500), "read-stop test operations did not drain");
+    wloopDestroy(&loop);
+}
+
+static void pauseAfterRead(wio_t *io, sbuf_t *buf)
+{
+    read_stop_state_t *st = weventGetUserdata(io);
+    require(sbufGetLength(buf) == 1, "paused TCP read delivered an unexpected byte count");
+    st->byte = *(const char *) sbufGetRawPtr(buf);
+    ++st->reads;
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    wioPauseTcpRead(io);
+}
+
+static void testTcpReadPause(env_t *env, bool close_while_paused)
+{
+    wloop_t          *loop   = createRunningTestLoop(env, 0);
+    read_stop_state_t st     = {0};
+    wio_t            *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, readStopAccept);
+    require(server != NULL, "TCP Pause listener failed");
+    weventSetUserData(server, &st);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+        wloopProcessEvents(loop, 10);
+    require(st.conn != NULL, "TCP Pause connection failed");
+    wioSetCallBackRead(st.conn, pauseAfterRead);
+
+    require(send(client, "a", 1, 0) == 1, "first TCP Pause send failed");
+    for (int i = 0; i < 200 && st.conn->iocp_completed_head == NULL; ++i)
+        require(iowatcherPollEvents(loop, 10) >= 0, "TCP Pause poll failed");
+    require(st.conn->iocp_completed_head != NULL, "receive did not complete before TCP Pause");
+    wioPauseTcpRead(st.conn);
+    wloopProcessEvents(loop, 0);
+    require(st.reads == 0 && wioGetIocpLiveRecords(st.conn) == 1 && st.conn->iocp_held_recv != NULL,
+            "Pause failed to retain exactly one completed receive");
+
+    if (! close_while_paused)
+    {
+        require(send(client, "b", 1, 0) == 1 && shutdown(client, SD_SEND) == 0, "TCP Pause tail/EOF failed");
+        for (int n = 1; n <= 2; ++n)
+        {
+            require(wioRead(st.conn) == 0 && wioRead(st.conn) == 0, "TCP Resume failed");
+            for (int i = 0; i < 200 && st.reads < n; ++i)
+                wloopProcessEvents(loop, 10);
+            require(st.reads == n && st.byte == "ab"[n - 1], "TCP Resume reordered or lost bytes");
+            require(wioGetIocpLiveRecords(st.conn) == 0, "reposted a read after callback Pause");
+        }
+
+        require(wioRead(st.conn) == 0, "could not post TCP EOF read");
+        wioPauseTcpRead(st.conn);
+        for (int i = 0; i < 200 && st.conn->iocp_held_recv == NULL; ++i)
+            wloopProcessEvents(loop, 10);
+        require(st.conn->iocp_held_recv != NULL && ! wioHasReadEOF(st.conn) && wioIsOpened(st.conn),
+                "TCP EOF was lost or delivered before Resume");
+        require(wioRead(st.conn) == 0, "could not resume held TCP EOF");
+        for (int i = 0; i < 200 && wioIsOpened(st.conn); ++i)
+            wloopProcessEvents(loop, 10);
+        require(wioIsClosed(st.conn) && wioHasReadEOF(st.conn) && st.reads == 2,
+                "held EOF was not delivered after both bytes");
+    }
+    else
+    {
+        wioClose(st.conn);
+        require(st.reads == 0 && wioGetIocpLiveRecords(st.conn) == 0, "closing retained a paused receive");
+    }
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "TCP Pause left live IOCP operations");
     wloopDestroy(&loop);
 }
 
@@ -2938,6 +3006,8 @@ int main(int argc, char **argv)
     testCloseListenerFromAccept(&env);
     testReadCallbackCloses(&env);
     testReadStopAfterDequeue(&env);
+    testTcpReadPause(&env, false);
+    testTcpReadPause(&env, true);
     testPendingFreeAndDescriptorReuse(&env);
     testConnectCallbackFreeAndFamilies(&env);
     testConnectWithPreBoundSocket(&env);
