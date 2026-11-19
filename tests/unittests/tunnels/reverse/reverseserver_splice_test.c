@@ -29,6 +29,7 @@ typedef struct reverse_fixture_s
     tunnel_t        *reverse;
     line_t          *u;
     line_t          *d;
+    line_t          *second;
     uint8_t          upstream[8192];
     uint8_t          downstream[8192];
     uint32_t         upstream_length;
@@ -38,6 +39,7 @@ typedef struct reverse_fixture_s
     bool             close_on_payload;
     bool             user_initialized;
     unsigned         activation_count;
+    uint32_t         expected_close_bytes;
 } reverse_fixture_t;
 
 static reverse_fixture_t *fixture;
@@ -85,9 +87,8 @@ static void receive(tunnel_t *t, line_t *line, sbuf_t *buf)
     lineReuseBuffer(line, buf);
     if (activation && f->on_activation)
         f->on_activation(f);
-    if (f->close_on_payload)
+    if (f->close_on_payload && t == f->prev)
     {
-        twfRequire(t == f->prev, "close must originate from reverse transport");
         reverseserverTunnelUpStreamFinish(f->reverse, line);
         lineDestroy(line);
     }
@@ -234,16 +235,17 @@ static void testPairing(bool local_first, bool splice, bool close_on_replay)
     twfRequire(f.activation_count == 1, "pair did not emit exactly one activation");
     twfRequire(f.downstream_length == local_length && memcmp(f.downstream, "local", local_length) == 0,
                "local replay changed bytes");
+    const char *expected = local_first ? "re" : "remote";
+    twfRequire(f.upstream_length == strlen(expected) && memcmp(f.upstream, expected, strlen(expected)) == 0,
+               "reverse handshake stripping/replay changed bytes");
     if (close_on_replay)
     {
         twfRequire(! lineIsAlive(f.u) && ! lineIsAlive(f.d), "reentrant close left a live half");
-        twfRequire(f.upstream_length == 0, "replay continued after close");
+        twfRequire(f.next_trace.next_finish == 1 && f.prev_trace.prev_finish == 0,
+                   "reentrant close did not finish only its surviving side");
     }
     else
     {
-        const char *expected = local_first ? "re" : "remote";
-        twfRequire(f.upstream_length == strlen(expected) && memcmp(f.upstream, expected, strlen(expected)) == 0,
-                   "reverse handshake stripping/replay changed bytes");
         uint8_t opaque[3000];
         for (uint32_t i = 0; i < sizeof(opaque); ++i)
             opaque[i] = (uint8_t) i;
@@ -326,8 +328,8 @@ static void testFragmentedHandshakeRejection(bool splice, uint32_t mismatch_offs
         twfRequire(lineIsAlive(f.d), "partial handshake exposed a mismatching prefix through early close");
         reverseserver_lstate_t *ls = lineGetState(f.d, f.reverse);
         reverseserver_tstate_t *ts = tunnelGetState(f.reverse);
-        twfRequire(ls->handshake_read == i + 1 && ! ls->handshaked && ! ls->source_paused &&
-                       atomicLoad(&ts->threadlocal_pool[0].d_count) == 0,
+        twfRequire(ls->handshake_read == i + 1 && ls->phase == kReverseHalfOpening && ! ls->source_paused &&
+                       atomicLoad(&ts->threadlocal_pool[0].reverse_links.count) == 0,
                    "partial handshake was admitted, paused or lost its received offset");
         reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload("", 0, false, 0));
         twfRequire(lineIsAlive(f.d) && f.activation_count == 0 && f.prev_trace.prev_finish == 0,
@@ -388,12 +390,131 @@ static void testPausedActivation(bool close_waiting, bool splice, uint32_t activ
         reverseserverTunnelUpStreamResume(f.reverse, f.d);
         twfRequire(f.activation_count == 1 && f.downstream_length == 10 && memcmp(f.downstream, "queuedtail", 10) == 0,
                    "Resume did not preserve application FIFO or repeated activation");
-        reverseserverTunnelUpStreamPause(f.reverse, f.d);
         f.expected_identity = payload("direct", 6, splice, 0);
         reverseserverTunnelDownStreamPayload(f.reverse, f.u, f.expected_identity);
         twfRequire(f.downstream_length == 16 && memcmp(f.downstream + 10, "direct", 6) == 0,
-                   "paired forwarding retained an admitted payload solely for Pause");
+                   "unpaused paired forwarding changed direct payload");
     }
+    teardown(&f);
+}
+
+static void fixtureFinishHalf(reverse_fixture_t *f, line_t *line)
+{
+    if (line == f->u)
+        reverseserverTunnelDownStreamFinish(f->reverse, line);
+    else
+        reverseserverTunnelUpStreamFinish(f->reverse, line);
+    lineDestroy(line);
+}
+
+static void closeDestinationOnPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    receive(t, line, buf);
+    fixtureFinishHalf(fixture, line);
+}
+
+static void requireCloseAfterPayload(tunnel_t *t, line_t *line)
+{
+    const uint32_t received = t == fixture->prev ? fixture->downstream_length : fixture->upstream_length;
+    twfRequireEqualU32(received, fixture->expected_close_bytes, "ReverseServer sent Finish before its accepted bytes");
+    ownerFinish(t, line);
+}
+
+typedef enum close_case_e
+{
+    kCloseAfterResume,
+    kCloseWithoutPayload,
+    kClosePeerBeforeResume,
+    kClosePeerDuringPayload,
+    kCloseAtDeadline,
+    kCloseOnWorkerStop,
+} close_case_t;
+
+static void testPairedClose(bool from_user, bool splice, close_case_t scenario)
+{
+    twfSetCase(from_user ? "paired user Finish drains to the reverse transport"
+                         : "paired reverse Finish drains to the user transport");
+    reverse_fixture_t f;
+    setup(&f);
+    initUser(&f);
+    reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload(handshake, sizeof(handshake), splice, 0));
+    line_t *source      = from_user ? f.u : f.d;
+    line_t *destination = from_user ? f.d : f.u;
+    if (from_user)
+        reverseserverTunnelUpStreamPause(f.reverse, destination);
+    else
+        reverseserverTunnelDownStreamPause(f.reverse, destination);
+    const char body[] = "queuedtail";
+    if (scenario != kCloseWithoutPayload)
+    {
+        if (from_user)
+        {
+            reverseserverTunnelDownStreamPayload(f.reverse, source, payload(body, 6, splice, 0));
+            reverseserverTunnelDownStreamPayload(f.reverse, source, payload(body + 6, 4, splice, 0));
+        }
+        else
+        {
+            reverseserverTunnelUpStreamPayload(f.reverse, source, payload(body, 6, splice, 0));
+            reverseserverTunnelUpStreamPayload(f.reverse, source, payload(body + 6, 4, splice, 0));
+        }
+    }
+    const uint32_t *received = from_user ? &f.downstream_length : &f.upstream_length;
+    twfRequire(*received == 0, "paired payload bypassed destination Pause");
+    f.prev->fnFinD = f.next->fnFinU = requireCloseAfterPayload;
+    f.expected_close_bytes          = scenario == kCloseAfterResume ? sizeof(body) - 1 : 0;
+    fixtureFinishHalf(&f, source);
+    if (scenario != kCloseWithoutPayload)
+    {
+        twfRequire(lineIsAlive(destination) && *received == 0,
+                   "source Finish bypassed the surviving destination Pause");
+        reverseserver_lstate_t *receiver    = lineGetState(destination, f.reverse);
+        const uint64_t          deadline_ms = receiver->close_drain.deadline_ms;
+        if (from_user)
+            reverseserverTunnelUpStreamPause(f.reverse, destination);
+        else
+            reverseserverTunnelDownStreamPause(f.reverse, destination);
+        twfRequire(deadline_ms != 0 && receiver->close_drain.deadline_ms == deadline_ms,
+                   "duplicate Pause restarted the close deadline");
+        if (scenario == kClosePeerBeforeResume)
+            fixtureFinishHalf(&f, destination);
+        else if (scenario == kCloseAtDeadline)
+        {
+            receiver->close_drain.deadline_ms = getHRTimeUs() / 1000U;
+            twfRequire(wtimerReset(receiver->close_drain.timer, 1), "failed to advance drain timer in close fixture");
+            for (unsigned int attempt = 0; attempt < 4 && lineIsAlive(destination); ++attempt)
+                discard wloopProcessEvents(f.env.loop, 10);
+        }
+        else if (scenario == kCloseOnWorkerStop)
+        {
+            reverseserverQuiesceDrains(f.reverse, 0, wwLifecycleProcessShutdown());
+            reverseserverStopDrains(f.reverse, 0, wwLifecycleProcessShutdown());
+        }
+        else
+        {
+            if (scenario == kClosePeerDuringPayload)
+            {
+                if (from_user)
+                    f.prev->fnPayloadD = closeDestinationOnPayload;
+                else
+                    f.next->fnPayloadU = closeDestinationOnPayload;
+            }
+            if (from_user)
+                reverseserverTunnelUpStreamResume(f.reverse, destination);
+            else
+                reverseserverTunnelDownStreamResume(f.reverse, destination);
+        }
+    }
+    const bool     peer_closed = scenario == kClosePeerBeforeResume || scenario == kClosePeerDuringPayload;
+    const uint32_t delivered   = scenario == kClosePeerDuringPayload ? 6 : f.expected_close_bytes;
+    twfRequireEqualU32(*received, delivered, "paired close delivered the wrong number of bytes");
+    twfRequire(memoryEqual(from_user ? f.downstream : f.upstream, body, delivered), "paired close changed FIFO bytes");
+    twfRequireEqualU32(f.activation_count, 1, "paired close repeated the activation prefix");
+    twfRequireEqualU32(f.prev_trace.prev_finish, from_user && ! peer_closed ? 1 : 0, "reverse Finish count changed");
+    twfRequireEqualU32(f.next_trace.next_finish, ! from_user && ! peer_closed ? 1 : 0, "user Finish count changed");
+    twfRequire(! lineIsAlive(destination), "paired close retained its destination line");
+    reverseserver_tstate_t *ts = tunnelGetState(f.reverse);
+    twfRequire(ts->threadlocal_pool[0].drains == NULL, "paired close retained a worker drain");
+    twfRequireNoLeakedBuffers();
     teardown(&f);
 }
 
@@ -645,6 +766,75 @@ static void closeOnUserResume(tunnel_t *t, line_t *u)
     closeOnUserPause(t, u);
 }
 
+/* The waiting notification may open a pair and finish it before returning.
+ * A second connection of the same role as the departed sender then waits. */
+static void closeFirstPairWhileMatching(tunnel_t *t, line_t *survivor)
+{
+    reverse_fixture_t *f = fixture;
+    if (t == f->prev)
+    {
+        reverseserverTunnelUpStreamPause(f->reverse, survivor);
+        initUser(f);
+        reverseserverTunnelDownStreamPayload(f->reverse, f->u, payload("first", 5, false, 0));
+        fixtureFinishHalf(f, f->u);
+        reverseserverTunnelDownStreamInit(f->reverse, f->second);
+    }
+    else
+    {
+        reverseserverTunnelDownStreamPause(f->reverse, survivor);
+        reverseserverTunnelUpStreamPayload(f->reverse, f->d, payload(handshake, sizeof(handshake), false, 0));
+        reverseserverTunnelUpStreamPayload(f->reverse, f->d, payload("first", 5, false, 0));
+        fixtureFinishHalf(f, f->d);
+        reverseserverTunnelUpStreamInit(f->reverse, f->second);
+        reverseserverTunnelUpStreamPayload(f->reverse, f->second, payload(handshake, sizeof(handshake), false, 0));
+    }
+}
+
+static void testDrainingHalfCannotMatchAgain(bool reverse_survives, bool during_est)
+{
+    twfSetCase("a draining half must not match another connection after reentrant Est or Pause");
+    reverse_fixture_t f;
+    setup(&f);
+    f.second = twfLinePoolCreateLine(&f.lines);
+    if (reverse_survives)
+    {
+        f.prev->fnPauseD = closeFirstPairWhileMatching;
+        reverseserverTunnelUpStreamPayload(f.reverse, f.d, payload(handshake, sizeof(handshake), false, 0));
+    }
+    else
+    {
+        if (during_est)
+            f.next->fnEstU = closeFirstPairWhileMatching;
+        else
+            f.next->fnPauseU = closeFirstPairWhileMatching;
+        initUser(&f);
+    }
+    reverseserver_tstate_t     *ts  = tunnelGetState(f.reverse);
+    reverseserver_thread_box_t *box = &ts->threadlocal_pool[0];
+    twfRequire(atomicLoad(&box->users.count) == (unsigned) reverse_survives &&
+                   atomicLoad(&box->reverse_links.count) == (unsigned) ! reverse_survives,
+               "draining half consumed a second waiting connection");
+    twfRequire(f.activation_count == 1 && f.upstream_length == 0 && f.downstream_length == 0,
+               "another connection received the first pair's bytes");
+    if (reverse_survives)
+        reverseserverTunnelUpStreamResume(f.reverse, f.d);
+    else
+        reverseserverTunnelDownStreamResume(f.reverse, f.u);
+    twfRequire(f.upstream_length == (reverse_survives ? 0U : 5U) &&
+                   f.downstream_length == (reverse_survives ? 5U : 0U) &&
+                   memoryEqual(reverse_survives ? f.downstream : f.upstream, "first", 5) && ! lineIsAlive(f.u) &&
+                   ! lineIsAlive(f.d) && lineIsAlive(f.second),
+               "first pair did not deliver its bytes and Finish to its own receiver");
+    if (reverse_survives)
+        reverseserverTunnelDownStreamFinish(f.reverse, f.second);
+    else
+        reverseserverTunnelUpStreamFinish(f.reverse, f.second);
+    lineDestroy(f.second);
+    twfRequire(atomicLoad(&box->users.count) == 0 && atomicLoad(&box->reverse_links.count) == 0,
+               "waiting list retained a connection");
+    teardown(&f);
+}
+
 static void testSourceResumeClose(void)
 {
     twfSetCase("Finish during startup Resume stops the remaining source notification");
@@ -692,10 +882,16 @@ int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom() && frandGlobalInit(), "random initialization failed");
     testWaitingPause();
+    testDrainingHalfCannotMatchAgain(true, false);
+    testDrainingHalfCannotMatchAgain(false, false);
+    testDrainingHalfCannotMatchAgain(false, true);
     testCombinedConsumerHolds();
     testSourceCallbackReentry(false);
     testSourceCallbackReentry(true);
     testSourceResumeClose();
+    for (unsigned from_user = 0; from_user < 2; ++from_user)
+        for (close_case_t scenario = kCloseAfterResume; scenario <= kCloseOnWorkerStop; ++scenario)
+            testPairedClose(from_user != 0, WW_HAVE_SPLICE && scenario == kCloseAfterResume, scenario);
     for (unsigned user = 0; user < 2; ++user)
         for (unsigned entries = 0; entries < 2; ++entries)
             for (unsigned paired = 0; paired < 2; ++paired)
