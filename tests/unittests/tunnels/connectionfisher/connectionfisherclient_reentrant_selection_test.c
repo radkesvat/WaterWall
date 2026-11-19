@@ -99,10 +99,11 @@ static void fixtureSetup(connectionfisher_selection_fixture_t *fixture)
                      tunnelGetCorrectAlignedLineStateSize(sizeof(connectionfisherclient_lstate_t)),
                      kConnectionFisherSelectionLineCap);
 
-    fixture->prev = twfCreatePrevTunnel(&fixture->trace);
-    fixture->fisher =
-        tunnelCreate(NULL, sizeof(connectionfisherclient_tstate_t), sizeof(connectionfisherclient_lstate_t));
-    fixture->next = tunnelCreate(NULL, sizeof(connectionfisher_selection_fixture_t *), 0);
+    fixture->prev   = twfCreatePrevTunnel(&fixture->trace);
+    fixture->fisher = tunnelCreate(NULL,
+                                   sizeof(connectionfisherclient_tstate_t) + sizeof(close_drain_t *),
+                                   sizeof(connectionfisherclient_lstate_t));
+    fixture->next   = tunnelCreate(NULL, sizeof(connectionfisher_selection_fixture_t *), 0);
     twfRequire(fixture->fisher != NULL && fixture->next != NULL, "failed to create selection fixture tunnels");
 
     *(connectionfisher_selection_fixture_t **) tunnelGetState(fixture->next) = fixture;
@@ -353,10 +354,11 @@ static void timeoutFixtureSetup(connectionfisher_timeout_fixture_t *fixture, lin
     workerMessagesInit(&fixture->env.worker);
     twfRequire(workerMessagesOpenAdmission(&fixture->env.worker), "failed to open ConnectionFisher message admission");
 
-    fixture->prev = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
-    fixture->fisher =
-        tunnelCreate(NULL, sizeof(connectionfisherclient_tstate_t), sizeof(connectionfisherclient_lstate_t));
-    fixture->next = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
+    fixture->prev   = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
+    fixture->fisher = tunnelCreate(NULL,
+                                   sizeof(connectionfisherclient_tstate_t) + sizeof(close_drain_t *),
+                                   sizeof(connectionfisherclient_lstate_t));
+    fixture->next   = tunnelCreate(NULL, sizeof(connectionfisher_timeout_fixture_t *), 0);
     twfRequire(fixture->prev != NULL && fixture->fisher != NULL && fixture->next != NULL,
                "failed to create the ConnectionFisher timeout fixture tunnels");
     *(connectionfisher_timeout_fixture_t **) tunnelGetState(fixture->prev) = fixture;
@@ -685,6 +687,121 @@ static void caseProtocolPressureReentryAndClose(void)
     }
 }
 
+typedef enum winner_close_case_e
+{
+    kWinnerDrain,
+    kWinnerClosedBeforeResume,
+    kWinnerClosedDuringDrain,
+    kWinnerDeadline,
+    kWinnerWorkerStop,
+    kWinnerTimerRefusal,
+    kWinnerEmpty,
+} winner_close_case_t;
+
+static unsigned            close_drain_payloads, close_drain_finishes;
+static winner_close_case_t close_drain_case;
+
+wtimer_t *__real_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms)
+{
+    return close_drain_case == kWinnerTimerRefusal ? NULL : __real_wtimerAddDeadline(loop, callback, delay_ms);
+}
+
+static void captureCloseDrainFinish(tunnel_t *next, line_t *line)
+{
+    twfRequire(next == active_flow->next && line == active_flow->selected_child,
+               "source close reached a non-winning candidate");
+    twfRequire(close_drain_case != kWinnerDrain || close_drain_payloads == 2,
+               "winner received Finish before its final payload callback");
+    ++close_drain_finishes;
+}
+
+static void captureCloseDrainPayload(tunnel_t *next, line_t *line, sbuf_t *buf)
+{
+    twfRequire(next == active_flow->next && line == active_flow->selected_child && close_drain_finishes == 0 &&
+                   sbufGetLength(buf) == 1,
+               "unexpected payload during winner close drain");
+    const char byte = *((const char *) sbufGetRawPtr(buf));
+    twfRequire(byte == (close_drain_payloads == 0 ? 'A' : 'B'), "winner close drain reordered bytes");
+    ++close_drain_payloads;
+    lineReuseBuffer(line, buf);
+    if (close_drain_case == kWinnerClosedDuringDrain)
+        connectionfisherclientTunnelDownStreamFinish(active_flow->fisher, line);
+    else if (close_drain_case == kWinnerDeadline)
+        connectionfisherclientTunnelDownStreamPause(active_flow->fisher, line);
+}
+
+static void caseSourceFinishDrainsWinner(void)
+{
+    twfSetCase("Fisher source Finish moves AB to its paused winner and settles once");
+    for (close_drain_case = kWinnerDrain; close_drain_case <= kWinnerEmpty; ++close_drain_case)
+    {
+        connectionfisher_selection_fixture_t fixture;
+        fixtureSetup(&fixture);
+        active_flow          = &fixture;
+        close_drain_payloads = close_drain_finishes = 0;
+        line_t                          *winner     = fixture.selected_child;
+        connectionfisherclient_lstate_t *child      = lineGetState(winner, fixture.fisher);
+        if (close_drain_case != kWinnerEmpty)
+            connectionfisherclientTunnelUpStreamPayload(fixture.fisher, fixture.main_line, flowPayload("A"));
+        connectionfisherclientTunnelDownStreamPause(fixture.fisher, winner);
+        child->ping_sent = child->child_handshake_complete = true;
+        twfRequire(connectionfisherclientSelectChild(fixture.fisher, winner), "selection failed");
+        if (close_drain_case != kWinnerEmpty)
+            connectionfisherclientTunnelUpStreamPayload(fixture.fisher, fixture.main_line, flowPayload("B"));
+        fixture.next->fnFinU     = captureCloseDrainFinish;
+        fixture.next->fnPayloadU = captureCloseDrainPayload;
+
+        lineRef(winner);
+        connectionfisherclientTunnelUpStreamFinish(fixture.fisher, fixture.main_line);
+        lineDestroy(fixture.main_line);
+        fixture.main_line = NULL;
+        if (close_drain_case < kWinnerTimerRefusal)
+        {
+            twfRequire(lineIsAlive(winner) && child->main_line == NULL && fixture.env.loop->ntimers == 1 &&
+                           close_drain_payloads == 0,
+                       "main Finish dropped or forwarded a paused winner's backlog");
+            const uint64_t deadline = child->close_drain.deadline_ms;
+            connectionfisherclientTunnelDownStreamPause(fixture.fisher, winner);
+            twfRequire(child->close_drain.deadline_ms == deadline, "repeat Pause restarted the deadline");
+            if (close_drain_case == kWinnerClosedBeforeResume)
+                connectionfisherclientTunnelDownStreamFinish(fixture.fisher, winner);
+            else if (close_drain_case == kWinnerWorkerStop)
+            {
+                connectionfisherclientQuiesceDrains(fixture.fisher, 0, NULL);
+                connectionfisherclientStopDrains(fixture.fisher, 0, NULL);
+            }
+            else
+                connectionfisherclientTunnelDownStreamResume(fixture.fisher, winner);
+            if (close_drain_case == kWinnerDeadline)
+            {
+                twfRequire(close_drain_payloads == 1 && child->close_drain.deadline_ms == deadline,
+                           "progress restarted the deadline or bypassed a nested Pause");
+                child->close_drain.deadline_ms = getHRTimeUs() / 1000U;
+                twfRequire(wtimerReset(child->close_drain.timer, 1), "failed to advance winner deadline timer");
+                fixture.env.loop->status = WLOOP_STATUS_RUNNING;
+                for (unsigned i = 0; i < 4 && lineIsAlive(winner); ++i)
+                    discard wloopProcessEvents(fixture.env.loop, 10);
+            }
+        }
+        const bool receiver_closed =
+            close_drain_case == kWinnerClosedBeforeResume || close_drain_case == kWinnerClosedDuringDrain;
+        const unsigned delivered = close_drain_case == kWinnerDrain ? 2
+                                   : close_drain_case == kWinnerClosedDuringDrain || close_drain_case == kWinnerDeadline
+                                       ? 1
+                                       : 0;
+        twfRequire(! lineIsAlive(winner) && fixture.env.loop->ntimers == 0 &&
+                       ! ((connectionfisherclient_tstate_t *) tunnelGetState(fixture.fisher))->drains[0] &&
+                       close_drain_payloads == delivered && close_drain_finishes == ! receiver_closed &&
+                       fixture.trace.prev_finish == 0,
+                   "drain termination retained a timer or misdelivered payload or Finish");
+        lineUnref(winner);
+        twfRequireNoLeakedBuffers();
+        fixtureTeardown(&fixture);
+    }
+}
+
 int main(void)
 {
     caseReentrantSiblingFinishKeepsSnapshotValid();
@@ -696,6 +813,7 @@ int main(void)
     caseCoalescedReplyPrecedesNewResponse();
     casePendingBudgetBeforeSelection();
     caseProtocolPressureReentryAndClose();
+    caseSourceFinishDrainsWinner();
     puts("connectionfisherclient_reentrant_selection_test: all cases passed");
     return 0;
 }

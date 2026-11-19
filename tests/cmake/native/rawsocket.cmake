@@ -269,6 +269,7 @@ if(TARGET ConnectionFisherClient)
   waterwall_line_failure_test_use_tunnel(connectionfisherclient_reentrant_selection_test ConnectionFisherClient)
   target_link_options(connectionfisherclient_reentrant_selection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAddDeadline"
   )
   target_link_libraries(connectionfisherclient_reentrant_selection_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests connectionfisherclient_reentrant_selection_test)

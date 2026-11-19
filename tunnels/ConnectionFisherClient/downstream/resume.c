@@ -6,7 +6,12 @@ void connectionfisherclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     if (ls->role != kConnectionFisherClientRoleChild)
         return;
     ls->next_paused = false;
-    line_t *main_l  = ls->main_line;
+    if (closeDrainIsActive(&ls->close_drain))
+    {
+        connectionfisherclientPumpClose(t, l);
+        return;
+    }
+    line_t *main_l = ls->main_line;
     if (main_l == NULL || ! lineIsAlive(main_l))
         return;
     lineRef(l);
