@@ -3,10 +3,12 @@
 #include "WireGuardCommon/engine.h"
 #include "loggers/network_logger.h"
 
-typedef struct carrier_line_s
+typedef enum carrier_phase_e
 {
-    bool owned;
-} carrier_line_t;
+    kCarrierUnused = 0,
+    kCarrierStarting,
+    kCarrierOpen,
+} carrier_phase_t;
 
 typedef struct client_s
 {
@@ -20,7 +22,6 @@ typedef struct client_s
     uint32_t             last_attempt;
     bool                 attempted;
     bool                 paused;
-    bool                 established;
     sbuf_t              *pending[128];
     unsigned             pending_head, pending_count;
     size_t               pending_charge;
@@ -35,8 +36,12 @@ static void absorb(tunnel_t *t, line_t *l)
 static line_t *ensureCarrier(client_t *state)
 {
     assert(currentThreadOwnsWorker(0));
-    if (LIKELY(state->carrier != NULL))
-        return state->carrier;
+    line_t *line = state->carrier;
+    if (LIKELY(line != NULL))
+    {
+        const carrier_phase_t *phase = lineGetState(line, state->tunnel);
+        return *phase == kCarrierOpen ? line : NULL;
+    }
     const uint32_t now = getTickMS();
     if (! atomic_load(&state->dispatch.open) || (state->attempted && now - state->last_attempt < 400))
         return NULL;
@@ -48,18 +53,17 @@ static line_t *ensureCarrier(client_t *state)
         abortProgramNow(1);
     }
     ++state->carrier_id;
-    line_t *line                  = lineCreate(tunnelchainGetLinePools(state->tunnel->chain), 0);
-    state->carrier                = line;
-    carrier_line_t *carrier_state = lineGetState(line, state->tunnel);
-    memoryZeroAligned32(carrier_state, state->tunnel->lstate_size);
-    carrier_state->owned = true;
-    state->paused        = false;
-    state->established   = false;
+    line                   = lineCreate(tunnelchainGetLinePools(state->tunnel->chain), 0);
+    state->carrier         = line;
+    carrier_phase_t *phase = lineGetState(line, state->tunnel);
+    *phase                 = kCarrierStarting;
+    state->paused          = false;
     addresscontextCopy(lineGetDestinationAddressContext(line), &state->endpoint);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_UDP);
-    if (! lineCallWithRef(line, tunnelNextUpStreamInit, state->tunnel))
+    if (! lineCallWithRef(line, tunnelNextUpStreamInit, state->tunnel) || state->carrier != line)
         return NULL;
-    return state->carrier == line ? line : NULL;
+    *phase = kCarrierOpen;
+    return line;
 }
 
 static bool output(void *context, sbuf_t *packet, wireguard_peer_t *selected_peer, const ip_addr_t *ip, uint16_t port)
@@ -69,7 +73,7 @@ static bool output(void *context, sbuf_t *packet, wireguard_peer_t *selected_pee
     discard   port;
     client_t *state = context;
     line_t   *line  = ensureCarrier(state);
-    if (line == NULL || state->paused || ! state->established)
+    if (line == NULL || state->paused || ! atomic_load(&state->dispatch.open))
     {
         reuseBuffer(packet);
         return false;
@@ -138,7 +142,7 @@ static void payloadDown(tunnel_t *t, line_t *l, sbuf_t *packet)
 {
     client_t *state = tunnelGetState(t);
     assert(currentThreadOwnsWorker(0));
-    if (UNLIKELY(state->carrier != l || ! state->established || ! atomic_load(&state->dispatch.open)))
+    if (UNLIKELY(state->carrier != l || ! atomic_load(&state->dispatch.open)))
     {
         lineReuseBuffer(l, packet);
         return;
@@ -151,18 +155,17 @@ static void finishDown(tunnel_t *t, line_t *l)
 {
     client_t *state = tunnelGetState(t);
     assert(currentThreadOwnsWorker(0) && ! tunnelchainIsWorkerPacketLine(t->chain, l));
-    carrier_line_t *carrier_state = lineGetState(l, t);
-    if (UNLIKELY(! carrier_state->owned))
+    carrier_phase_t *phase = lineGetState(l, t);
+    if (UNLIKELY(*phase == kCarrierUnused))
     {
         LOGF("WireGuardClient: Finish reached a normal line outside its carrier inventory");
         abortProgramNow(1);
     }
-    memoryZeroAligned32(carrier_state, t->lstate_size);
+    memoryZeroAligned32(phase, t->lstate_size);
     if (state->carrier == l)
     {
-        state->carrier     = NULL;
-        state->established = false;
-        state->paused      = false;
+        state->carrier = NULL;
+        state->paused  = false;
     }
     lineDestroy(l);
 }
@@ -175,12 +178,6 @@ static void finishUp(tunnel_t *t, line_t *l)
     abortProgramNow(1);
 }
 
-static void estDown(tunnel_t *t, line_t *l)
-{
-    client_t *state = tunnelGetState(t);
-    if (state->carrier == l)
-        state->established = true;
-}
 static void pauseDown(tunnel_t *t, line_t *l)
 {
     client_t *state = tunnelGetState(t);
@@ -302,7 +299,7 @@ finish:
 
 static tunnel_t *create(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(client_t), sizeof(carrier_line_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(client_t), sizeof(carrier_phase_t));
     if (t == NULL)
         return NULL;
     client_t *state = tunnelGetState(t);
@@ -327,7 +324,7 @@ static tunnel_t *create(node_t *node)
     }
     t->fnInitU          = absorb;
     t->fnEstU           = absorb;
-    t->fnEstD           = estDown;
+    t->fnEstD           = absorb;
     t->fnPauseU         = absorb;
     t->fnPauseD         = pauseDown;
     t->fnResumeU        = absorb;

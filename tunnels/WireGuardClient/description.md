@@ -51,10 +51,15 @@ the TunDevice and OS routes separately.
 
 One protocol engine and one owned normal carrier run on worker 0, sharing coherent
 handshake, nonce and replay state across all input workers. Cross-worker work is
-bounded to 512 messages and 8 MiB of retained allocation per node. Before session keys are ready, an additional FIFO retains at most 128 inner
-packets and 1 MiB of allocation. It flushes in order after the handshake; overflow
-drops new packets. Unavailable/paused carriers drop encrypted output. Protocol
-timers retry handshakes. Shutdown recycles every retained inner packet.
+bounded to 512 messages and 8 MiB of retained allocation per node. The protocol
+timer can send handshake datagrams after the next `Init` returns with the carrier
+alive and writes permitted. The client processes replies from that exact carrier
+before or after transport `Est`.
+
+Until session keys are ready, a FIFO retains at most 128 inner packets and 1 MiB
+of allocation. It flushes in order once the keys are ready. Overflow drops new
+packets. An unavailable or paused carrier drops encrypted output. The protocol
+timer retries handshakes. Shutdown recycles every retained inner packet.
 Carrier creation attempts are separated by at least 400 ms.
 
 The endpoint supplies the initial destination address, port and UDP protocol
