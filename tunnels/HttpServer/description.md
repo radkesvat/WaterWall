@@ -425,7 +425,9 @@ closes the connection. Its `large-send-buffer` / `large-recv-buffer` settings af
 After `Finish` from the next tunnel, `HttpServer` keeps its HTTP/2 state and borrowed carrier line available while
 accepted response bytes wait for flow-control credit. It still processes HTTP/2 control frames such as
 WINDOW_UPDATE, but discards later request-body data, including body events already decoded into its local queue.
-It sends no more callbacks toward the finished next tunnel. Once response DATA and `END_STREAM` have been handed
+If the service paused carrier reads, including before an h2c upgrade, HttpServer arms the close deadline and
+resumes the carrier so it can read WINDOW_UPDATE. It sends no more callbacks toward the finished next tunnel.
+Once response DATA and `END_STREAM` have been handed
 to the previous tunnel, it releases HTTP state and finishes that direction. Handing bytes to the transport is not
 confirmation that the client received them.
 

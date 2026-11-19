@@ -131,6 +131,13 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         {
             failAndCloseD(t, l, ls);
         }
+        else if (ls->service_read_paused)
+        {
+            /* WINDOW_UPDATE may be waiting behind the retired service's
+             * read hold. Resume can finish or cancel this drain inline. */
+            ls->service_read_paused = false;
+            tunnelPrevDownStreamResume(t, l);
+        }
         lineUnref(l);
         return;
     }

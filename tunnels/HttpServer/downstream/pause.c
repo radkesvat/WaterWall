@@ -10,5 +10,11 @@ void httpserverTunnelDownStreamPause(tunnel_t *t, line_t *l)
         tunnelPrevDownStreamPause(t, ls->split_upload_line);
         return;
     }
+    if (ls->split_role == kHttpServerSplitRoleNone)
+    {
+        if (ls->next_finished || ls->prev_finished)
+            return;
+        ls->service_read_paused = true;
+    }
     tunnelPrevDownStreamPause(t, l);
 }
