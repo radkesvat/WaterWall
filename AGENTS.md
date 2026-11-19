@@ -127,6 +127,9 @@ These guardrails do not replace the mandatory guide reading:
 14. Memory-manager OOM is fatal; never add recovery or orderly shutdown.
     Preserve geometry, budget, fixed-resource and I/O refusals. See
     [Part 5](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx#heap-allocation-failure).
+15. [Send startup bytes](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx#startup-without-est)
+    after live next `Init` as flow control permits. Justify each `Est` gate and
+    verify the event can arrive without the held bytes.
 
 ## 4. Implementation Workflow
 
