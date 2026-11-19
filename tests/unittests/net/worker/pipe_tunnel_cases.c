@@ -39,12 +39,12 @@ static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
 {
     *lifetime = (pipe_payload_lifetime_t) {0};
     atomic_init(&lifetime->releases, 0);
-#if WW_HAVE_SPLICE
-    sbuf_t *buf = sbufCreateSplice(64);
-    require(testSpliceSourceInitPipe(buf) == 0, "failed to create payload private pipe");
     uint8_t data[32];
     for (unsigned i = 0; i < sizeof(data); ++i)
         data[i] = (uint8_t) i;
+#if WW_HAVE_SPLICE
+    sbuf_t *buf = sbufCreateSplice(64);
+    require(testSpliceSourceInitPipe(buf) == 0, "failed to create payload private pipe");
     require(write(sbufSpliceMetadata(buf).pipefd[1], data + 8, 24) == 24, "pipe payload write failed");
     buf->capacity += 24;
     sbufSetLength(buf, 24);
@@ -53,6 +53,7 @@ static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
 #else
     sbuf_t *buf = sbufCreate(32);
     sbufSetLength(buf, 32);
+    memoryCopy(sbufGetMutablePtr(buf), data, sizeof(data));
 #endif
     watchBufferDisposal(buf, &lifetime->releases);
     return buf;
@@ -60,16 +61,18 @@ static sbuf_t *pipeTestPayload(pipe_payload_lifetime_t *lifetime)
 
 static void pipeCheckPayload(sbuf_t *buf)
 {
+    require(sbufGetLength(buf) == 32, "worker message changed payload length");
 #if WW_HAVE_SPLICE
-    require(sbufIsSplice(buf) && sbufGetLength(buf) == 32 && sbufGetResidentPrefixLength(buf) == 8,
-            "worker message changed splice representation");
+    require(sbufIsSplice(buf) && sbufGetResidentPrefixLength(buf) == 8, "worker message changed splice representation");
     sbuf_t *ordinary = sbufCreate(32);
     sbufSpliceReadToBuffer(buf, ordinary, 32);
-    for (unsigned i = 0; i < 32; ++i)
-        require(sbufGetMutablePtr(ordinary)[i] == i, "worker message changed splice byte order");
-    sbufDestroy(ordinary);
 #else
-    discard buf;
+    sbuf_t *ordinary = buf;
+#endif
+    for (unsigned i = 0; i < 32; ++i)
+        require(sbufGetRawPtr(ordinary)[i] == i, "worker message changed payload bytes");
+#if WW_HAVE_SPLICE
+    sbufDestroy(ordinary);
 #endif
 }
 
@@ -766,35 +769,124 @@ static void pipeRunAdmittedLateCase(bool upstream, bool finish)
     pipeMessageCaseDrainAndDestroy(&fixture);
 }
 
-static void pipeRunQueuedSourceClose(void)
+static void pipeRequirePayloadBeforeOwnedFinish(tunnel_t *t, line_t *line)
+{
+    require(atomicLoadRelaxed(&g_pipe_owned_payload_count) == 1,
+            "upstream Finish reached the destination before its 32 queued bytes");
+    pipeTestOwnedFinish(t, line);
+}
+
+static void pipeRequirePayloadBeforeBorrowedFinish(tunnel_t *t, line_t *line)
+{
+    require(atomicLoadRelaxed(&g_pipe_borrowed_payload_count) == 1,
+            "downstream Finish reached the destination before its 32 queued bytes");
+    pipeTestBorrowedFinish(t, line);
+}
+
+static void pipeUnexpectedPause(tunnel_t *t, line_t *line)
+{
+    discard t;
+    discard line;
+    require(false, "queued Pause crossed into a normally retired source");
+}
+
+static void pipePostDownstreamPause(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard                      worker;
+    discard                      arg2;
+    discard                      arg3;
+    pipe_message_case_fixture_t *fixture = arg1;
+    fixture->wrapper->fnPauseD(fixture->wrapper, fixture->owned);
+}
+
+static void pipeFinishDownstreamSource(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard                      worker;
+    discard                      arg3;
+    pipe_message_case_fixture_t *fixture = arg1;
+    fixture->wrapper->fnPayloadD(fixture->wrapper, fixture->owned, arg2);
+    lineRef(fixture->owned);
+    fixture->wrapper->fnFinD(fixture->wrapper, fixture->owned);
+    require(! lineIsAlive(fixture->owned), "PipeTunnel did not destroy its owned line on Finish");
+}
+
+static void pipeWaitForQueue(wid_t wid)
+{
+    atomic_bool done;
+    atomic_init(&done, false);
+    require(
+        sendWorkerMessageForceQueueWithCleanup(wid, (WorkerMessageCallback) pipeQueueBarrier, NULL, &done, NULL, NULL),
+        "source-close completion refused");
+    if (wid == 0)
+    {
+        for (unsigned attempt = 0; attempt < 64 && ! atomicLoadExplicit(&done, memory_order_acquire); ++attempt)
+            discard wloopProcessEvents(getWorkerLoop(0), 0);
+    }
+    waitForAtomicBool(&done, "source-close completion missing");
+}
+
+static void pipeRunQueuedSourceClose(bool upstream)
 {
     pipe_message_case_fixture_t fixture;
     pipeMessageCaseSetup(&fixture);
+    pipe_payload_lifetime_t lifetime;
+    sbuf_t                 *payload = pipeTestPayload(&lifetime);
     pipe_blocking_barrier_t barrier = {0};
-    atomic_init(&barrier.entered, false);
-    atomic_init(&barrier.release, false);
-    atomic_init(&barrier.done, false);
+
+    if (upstream)
+    {
+        fixture.previous->fnPauseD = pipeUnexpectedPause;
+        fixture.child->fnFinU      = pipeRequirePayloadBeforeOwnedFinish;
+        require(sendWorkerMessageForceQueueWithCleanup(1, pipePostDownstreamPause, NULL, &fixture, NULL, NULL),
+                "downstream Pause driver refused");
+    }
+    else
+    {
+        fixture.child->fnPauseU  = pipeUnexpectedPause;
+        fixture.previous->fnFinD = pipeRequirePayloadBeforeBorrowedFinish;
+    }
     require(sendWorkerMessageForceQueueWithCleanup(
                 1, (WorkerMessageCallback) pipeBlockingBarrier, NULL, &barrier, NULL, NULL),
             "source-close barrier refused");
     waitForAtomicBool(&barrier.entered, "source-close barrier not entered");
-    pipe_payload_lifetime_t lifetime;
-    fixture.wrapper->fnPayloadU(fixture.wrapper, fixture.borrowed, pipeTestPayload(&lifetime));
-    lineRef(fixture.borrowed);
-    fixture.wrapper->fnFinU(fixture.wrapper, fixture.borrowed);
-    lineDestroy(fixture.borrowed);
-    atomicStoreExplicit(&barrier.release, true, memory_order_release);
-    waitForAtomicBool(&barrier.done, "source-close barrier not released");
-    atomic_bool done;
-    atomic_init(&done, false);
-    require(
-        sendWorkerMessageForceQueueWithCleanup(1, (WorkerMessageCallback) pipeQueueBarrier, NULL, &done, NULL, NULL),
-        "source-close completion refused");
-    waitForAtomicBool(&done, "source-close completion missing");
-    require(atomicLoadRelaxed(&lifetime.releases) == 1 && atomicLoadRelaxed(&g_pipe_owned_payload_count) == 1 &&
-                atomicLoadRelaxed(&g_pipe_owned_finish_count) == 1,
-            "source closure lost queued private-pipe bytes or Finish ordering");
-    lineUnref(fixture.borrowed);
+
+    if (upstream)
+    {
+        fixture.wrapper->fnPayloadU(fixture.wrapper, fixture.borrowed, payload);
+        lineRef(fixture.borrowed);
+        fixture.wrapper->fnFinU(fixture.wrapper, fixture.borrowed);
+        lineDestroy(fixture.borrowed);
+        pipeWaitForQueue(0); // Dispatch the reverse Pause after source detach, while worker 1 is blocked.
+        atomicStoreExplicit(&barrier.release, true, memory_order_release);
+        pipeWaitForQueue(1);
+
+        require(atomicLoadRelaxed(&g_pipe_owned_payload_count) == 1 &&
+                    atomicLoadRelaxed(&g_pipe_owned_finish_count) == 1 &&
+                    atomicLoadRelaxed(&g_pipe_borrowed_payload_count) == 0 &&
+                    atomicLoadRelaxed(&g_pipe_borrowed_finish_count) == 0,
+                "upstream source close lost or duplicated callbacks");
+        require(atomicLoadU32Relaxed(&fixture.borrowed->refc) == 1, "upstream source retained a pipe reference");
+        lineUnref(fixture.borrowed);
+    }
+    else
+    {
+        require(sendWorkerMessageForceQueueWithCleanup(1, pipeFinishDownstreamSource, NULL, &fixture, payload, NULL),
+                "downstream source-close driver refused");
+        fixture.wrapper->fnPauseU(fixture.wrapper, fixture.borrowed);
+        atomicStoreExplicit(&barrier.release, true, memory_order_release);
+        pipeWaitForQueue(1); // The queued Pause follows source detach while worker 0 has yet to dispatch.
+        pipeWaitForQueue(0);
+
+        require(atomicLoadRelaxed(&g_pipe_borrowed_payload_count) == 1 &&
+                    atomicLoadRelaxed(&g_pipe_borrowed_finish_count) == 1 &&
+                    atomicLoadRelaxed(&g_pipe_owned_payload_count) == 0 &&
+                    atomicLoadRelaxed(&g_pipe_owned_finish_count) == 0,
+                "downstream source close lost or duplicated callbacks");
+        require(atomicLoadU32Relaxed(&fixture.owned->refc) == 1, "downstream source retained a pipe reference");
+        lineUnref(fixture.owned);
+        lineDestroy(fixture.borrowed);
+    }
+    require(atomicLoadRelaxed(&lifetime.releases) == 1, "source-close payload was not released once");
     require(masterpoolGetCheckedOut(fixture.chain->masterpool_line_pool) == 0, "queued source close leaked lines");
     tunnelchainDestroy(fixture.chain);
     pipetunnelDestroy(fixture.wrapper, testShutdownContext());
@@ -803,7 +895,8 @@ static void pipeRunQueuedSourceClose(void)
 
 void testPipePayloadFinishLateAndRefused(void)
 {
-    pipeRunQueuedSourceClose();
+    pipeRunQueuedSourceClose(true);
+    pipeRunQueuedSourceClose(false);
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
     const worker_message_enqueue_test_failure_e failures[] = {
         kWorkerMessageEnqueueFailWakeupPost,
