@@ -11,9 +11,9 @@ before held DATA in both directions, and drops a carrier from another session.
 Valid sessions use the production setup deadline. A separate runtime with a
 short deadline checks expiry of an incomplete introduction and an incomplete
 carrier group, for both splice settings.
-Four workers exercise actual worker handoff. Explicit splice on/off TCP variants
-check post-setup pipe-to-socket output at all four endpoints using strace; TLS
-and KCP remain splice blockers for their complete chains.
+Four workers exercise actual worker handoff. The TCP variants use strace to
+verify post-setup splice behavior at all four endpoints. The TLS and KCP cases
+exercise the blocked-chain topology with splice enabled globally.
 All sockets use the namespace harness's private loopback network. This verifies
 correctness; it makes no assertion about throughput improvement.
 CTest: waterwall.connection_stripe_{tcp,tls,kcp}.
@@ -406,10 +406,10 @@ def trace_boundary(root, trace):
     return len((root / "splice.log").read_text()) if trace else 0
 
 
-def check_trace(root, boundary, *, enabled, carrier):
+def check_trace(root, boundary, *, enabled):
     calls = list(successful_calls((root / "splice.log").read_text()[boundary:]))
-    if not enabled or carrier != "tcp":
-        assert not calls, "splice I/O occurred on a disabled or TLS/KCP-blocked chain"
+    if not enabled:
+        assert not calls, "splice I/O occurred with misc.splice disabled"
         return
     outputs = [call for call in calls if re.match(r"splice\(\d+<pipe:\[\d+\]>, NULL, \d+<TCP:", call)]
     for label, endpoint in (("client upload", f"->{HOST}:{RELAY_PORT}"),
@@ -483,7 +483,7 @@ def run_mux(binary, carrier, *, enabled=True, trace=False):
                 shutdown_active(process, survivor, service)
                 assert later[0].recv(1) == b"" and later[1].recv(1) == b"", "a Mux child survived shutdown"
         if trace:
-            check_trace(root, boundary, enabled=enabled, carrier=carrier)
+            check_trace(root, boundary, enabled=enabled)
     print(f"ConnectionStripe Mux {carrier}: shared eight-carrier group, full-duplex children, independent close, reuse and shutdown passed")
 
 
@@ -532,7 +532,7 @@ def run(binary, carrier, *, enabled=True, trace=False):
                     assert_no_extra_backend(backend)
                     shutdown_active(process, client, peer)
         if trace:
-            check_trace(root, boundary, enabled=enabled, carrier=carrier)
+            check_trace(root, boundary, enabled=enabled)
     if carrier == "tcp":
         run_setup_expiry(binary, enabled=enabled, trace=trace)
     detail = ", reordered DATA/CLOSE and member loss" if carrier == "tcp" else ""
@@ -545,10 +545,12 @@ if __name__ == "__main__":
     parser.add_argument("carrier", choices=("tcp", "tls", "kcp"))
     parser.add_argument("--mux", action="store_true", help="verify Mux children sharing one striped TCP/TLS group")
     parser.add_argument("--splice", choices=("true", "false"), default="true")
-    parser.add_argument("--trace-splice", action="store_true", help="require post-setup syscall evidence")
+    parser.add_argument("--trace-splice", action="store_true", help="check TCP splice syscalls after setup")
     args = parser.parse_args()
     if args.mux and args.carrier == "kcp":
         parser.error("--mux covers TCP and TLS carriers")
+    if args.trace_splice and args.carrier != "tcp":
+        parser.error("--trace-splice requires the TCP carrier")
     install_termination_handler()
     (run_mux if args.mux else run)(str(Path(args.binary).resolve()), args.carrier,
                                  enabled=args.splice == "true", trace=args.trace_splice)

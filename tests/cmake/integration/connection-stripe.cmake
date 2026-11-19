@@ -8,9 +8,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
        (stripe_carrier STREQUAL "kcp" AND TARGET KcpClient AND TARGET KcpServer AND
         TARGET UdpListener AND TARGET UdpConnector))
       set(stripe_case waterwall.connection_stripe_${stripe_carrier})
+      set(stripe_args --splice true)
+      if(stripe_carrier STREQUAL "tcp")
+        list(APPEND stripe_args --trace-splice)
+      endif()
       add_waterwall_isolated_test(${stripe_case}
         "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/connection_stripe_integration.py"
-        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}" --splice true --trace-splice)
+        "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}" ${stripe_args})
       set_tests_properties(${stripe_case} PROPERTIES TIMEOUT 75)
       add_waterwall_test_labels(${stripe_case} "integration" "tunnels" "connection-stripe" "${stripe_carrier}")
       if(stripe_carrier STREQUAL "tcp")
@@ -21,7 +25,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
         set(stripe_mux_case waterwall.connection_stripe_mux_${stripe_carrier})
         add_waterwall_isolated_test(${stripe_mux_case}
           "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/connection_stripe_integration.py"
-          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}" --mux --splice true --trace-splice)
+          "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" "${stripe_carrier}" --mux ${stripe_args})
         set_tests_properties(${stripe_mux_case} PROPERTIES TIMEOUT 75)
         add_waterwall_test_labels(${stripe_mux_case} "integration" "tunnels" "connection-stripe" "mux" "${stripe_carrier}")
         if(stripe_carrier STREQUAL "tcp")
