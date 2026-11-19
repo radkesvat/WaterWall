@@ -63,8 +63,7 @@ Stream mode:
 ### Optional `settings`
 
 - `packet-mode` `(boolean)`
-  When `false` or omitted, `TesterClient` creates a normal stream `line_t` on each worker and expects normal
-  Waterwall `Est -> Payload -> Finish` behavior.
+  When `false` or omitted, `TesterClient` owns a normal `line_t` on each worker for testing TCP or UDP routes.
   Default: `false`
 
   When `true`, `TesterClient` uses the chain worker packet line instead of creating a stream line. In this mode:
@@ -224,7 +223,7 @@ Packet mode with synthetic IPv4 packets:
 
 - acts as a chain head and creates the test lines itself
 - waits `100 ms` after startup before creating one worker-local test line per chain worker
-- initializes per-line state in `Init`, then drives the request side only after downstream `Est`
+- initializes per-line state before sending `Init` to the next tunnel
 - sends `11` fixed-size request chunks upstream by default
 - verifies `11` fixed-size response chunks coming back downstream by default
 - fails fast on any size, order, byte-pattern, or timeout mismatch
@@ -314,20 +313,19 @@ On tunnel start, `TesterClient` schedules one startup task per chain worker. Eac
 - picks the worker packet line when `packet-mode` is enabled, otherwise creates a fresh normal line
 - initializes this tunnel's per-line state immediately
 - sends upstream `Init` to the next tunnel while holding a temporary line reference
-- if `packet-start-immediately=true`, marks packet-mode establishment locally and schedules request sending without
-  waiting for downstream `Est`
 - arms a `30000 ms` watchdog for that worker line
 
 #### Establishment and request send
 
-`TesterClient` waits for downstream `Est` before it starts sending requests.
+On normal lines, request sending starts after the next tunnel's `Init` returns on a live line and flow control
+permits sending. Downstream `Est` reports transport readiness. The configured split-payload burst and delay
+govern request pacing.
 
-After `Est`:
+On worker packet lines, the first downstream `Est` starts sending by default. Set `packet-start-immediately=true`
+to start after `Init` with the configured `packet-start-delay-ms`. The delay applies even if the next node sends
+`Est` or `Resume` during `Init`. The worker schedules a single request sender.
 
-- the line is marked established if needed
-- request sending is scheduled onto the line's worker loop
-- request chunks are sent in order on the upstream path
-- downstream `Pause` and `Resume` toggle request sending for backpressure
+A downstream `Pause` suspends sending until `Resume`.
 
 #### Response verification
 

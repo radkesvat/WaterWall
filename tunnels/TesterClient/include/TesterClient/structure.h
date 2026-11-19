@@ -77,7 +77,7 @@ typedef struct testerclient_lstate_s
     uint32_t request_tx_offset;
     uint32_t packet_stateless_response_mask;
 
-    bool est_received;
+    bool request_ready;
     bool request_paused;
     bool request_send_scheduled;
     bool request_complete;
@@ -128,5 +128,6 @@ void     testerclientRequestSendTask(tunnel_t *t, line_t *l);
 void     testerclientWatchdogTask(tunnel_t *t, line_t *l);
 void     testerclientCloseCompletedStreamTask(tunnel_t *t, line_t *l);
 void     testerclientCloseCompletedOwnedLine(tunnel_t *t, line_t *l, bool send_upstream_finish);
-void     testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate_t *ls);
+/* Returns false after a scheduling refusal has settled the request. */
+bool     testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate_t *ls);
 void     testerclientMarkWorkerComplete(tunnel_t *t, line_t *l);

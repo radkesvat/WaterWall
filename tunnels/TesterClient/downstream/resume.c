@@ -7,5 +7,5 @@ void testerclientTunnelDownStreamResume(tunnel_t *t, line_t *l)
     testerclient_lstate_t *ls = lineGetState(l, t);
 
     ls->request_paused = false;
-    testerclientScheduleRequestSend(t, l, ls);
+    discard testerclientScheduleRequestSend(t, l, ls);
 }

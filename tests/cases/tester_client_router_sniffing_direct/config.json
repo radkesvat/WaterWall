@@ -1,0 +1,28 @@
+{
+  "name": "tester-client-router-sniffing-direct",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "router",
+      "settings": {
+        "chunk-count": 3
+      }
+    },
+    {
+      "name": "router",
+      "type": "Router",
+      "next": "tester-server",
+      "settings": {
+        "sniffing": ["tls"]
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 3
+      }
+    }
+  ]
+}
