@@ -599,6 +599,8 @@ static void receiveRecords(tou_session_t *s, uint64_t now)
                 {
                     s->retention_deadline = touDeadline(now, s->settings.close_ms);
                 }
+                /* Let the driver acknowledge the first CLOSE after application retirement. */
+                s->flush = true;
                 bufferpoolReuseBuffer(s->config.pool, buffer);
                 if (s->callbacks.peer_close != NULL)
                 {
@@ -761,7 +763,9 @@ static void drive(tou_session_t *s)
             stageHandshake(s);
             s->retry_at = touDeadline(now, kTouHandshakeRetryMs);
         }
-        if (s->started && s->ready && s->dirty)
+        /* Sending can settle with pending ACKs just before periodic updates stop. */
+        const bool flush_retained_acks = s->send_settled && s->kcp->ackcount != 0;
+        if (s->started && s->ready && (s->dirty || flush_retained_acks))
         {
             assert(tou_packet_queue_t_is_empty(&s->output));
             if (! beginOutputBatch(s))
@@ -771,7 +775,7 @@ static void drive(tou_session_t *s)
             }
             s->dirty = false;
             ikcp_update(s->kcp, (IUINT32) now);
-            if (s->flush)
+            if (s->flush || flush_retained_acks)
             {
                 s->flush = false;
                 ikcp_flush(s->kcp);

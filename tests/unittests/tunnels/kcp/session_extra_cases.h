@@ -249,6 +249,43 @@ static void caseAckBatch(bool fec, unsigned direction)
             "kcp-ack-batch 32 did not retransmit the dropped data datagrams");
 }
 
+static void caseAckBatchFirstClose(bool fec, unsigned ack_batch, bool draining)
+{
+    testCaseSet(draining ? "kcp-ack-batch acknowledges first CLOSE while sending data drains"
+                         : "kcp-ack-batch acknowledges first CLOSE before entering retention");
+    const unsigned close_ms = 5;
+    char           extra[40];
+    snprintf(extra, sizeof(extra), ",\"kcp-ack-batch\":%u", ack_batch);
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, close_ms, close_ms, 1500, 1500, extra);
+    endpoint_t *ep = openApp();
+    established(ep);
+
+    advance(1);
+    if (draining)
+        sendBytes(ep, 1, 1);
+    const ikcpcb *receiver = touSessionKcp(ep->server_session);
+    const ikcpcb *sender   = touSessionKcp(ep->client_session);
+    const IUINT32 now      = (IUINT32) (clock_us / 1000);
+    require(ikcp_waitsnd(receiver) == (draining ? 1 : 0), "receiver has unexpected queued data before CLOSE");
+    require(receiver->ackcount == 0 && ikcp_check(receiver, now) - now > close_ms &&
+                ikcp_check(sender, now) - now > close_ms,
+            "first CLOSE would not exercise a partial ACK batch between interval ticks");
+
+    closeApp(ep);
+    flushDirection(0);
+    require(fixture.close_transmissions == 1 && ep->service_finishes == 1, "fixture did not deliver the first CLOSE");
+    flushDirection(1);
+    require(touSessionCloseConfirmed(ep->client_session), "first CLOSE ACK did not confirm before any retry");
+    if (draining)
+    {
+        /* The peer sent data with the CLOSE ACK. The sender owes a data ACK as its CLOSE settles. */
+        flushDirection(0);
+        require(ikcp_waitsnd(receiver) == 0, "entering retention left the peer's data ACK pending");
+    }
+    teardown();
+}
+
 static void caseAckBatchRetention(bool fec)
 {
     testCaseSet("kcp-ack-batch still acknowledges each duplicate CLOSE during ACK-only retention");
@@ -274,11 +311,15 @@ static void caseAckBatchRetention(bool fec)
 
 static void kcpExtraCases(void)
 {
-    caseAckBatchRetention(false);
-    caseAckBatchRetention(true);
     for (unsigned fec = 0; fec < 2; ++fec)
+    {
+        caseAckBatchFirstClose(fec != 0, 0, false);
+        caseAckBatchFirstClose(fec != 0, 32, false);
+        caseAckBatchFirstClose(fec != 0, 32, true);
+        caseAckBatchRetention(fec != 0);
         for (unsigned direction = 0; direction < 2; ++direction)
             caseAckBatch(fec != 0, direction);
+    }
     casePendingChallengeBound();
     caseTrafficCannotExtendDeadline(false);
     caseTrafficCannotExtendDeadline(true);
