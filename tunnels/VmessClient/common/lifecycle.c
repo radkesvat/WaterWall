@@ -33,7 +33,7 @@ void vmessclientStartUdpCarrier(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls
     addresscontextCopy(&carrier_ls->target_addr, &ls->target_addr);
     setLineProtocol(carrier, IP_PROTO_TCP);
     ls->carrier_line = carrier;
-    tunnelNextUpStreamInit(t, carrier);
+    vmessclientStartNext(t, carrier, l);
 }
 
 static sbuf_t *termination(line_t *l, vmessclient_lstate_t *ls)

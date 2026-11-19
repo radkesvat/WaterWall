@@ -6,6 +6,7 @@ void vmessclientLinestateDestroy(vmessclient_lstate_t *ls);
 void vmessclientTunnelstateDestroy(vmessclient_tstate_t *ts);
 bool vmessclientApplyTargetContext(tunnel_t *t, line_t *l);
 void vmessclientStartUdpCarrier(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls);
+void vmessclientStartNext(tunnel_t *t, line_t *l, line_t *application);
 void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls);
 void vmessclientCloseLine(tunnel_t *t, line_t *l, vmessclient_close_origin_t origin);
 bool vmessclientAssociationAlive(tunnel_t *t, line_t *next_line, line_t *prev_line);

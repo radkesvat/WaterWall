@@ -257,7 +257,7 @@ In UDP mode:
 
 ### First payload and transport establishment
 
-`Init` prepares the destination and starts the next node without emitting a request.
+`Init` prepares the destination and initializes the next node.
 The first eligible application payload may arrive before transport `Est`, during its
 callback, or after Pause. It is sent immediately with the complete request
 in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
@@ -267,8 +267,9 @@ Empty TCP input does not trigger a request. Empty Trojan UDP datagrams are valid
 
 Direct TCP transport `Est` reaches the live application promptly, including repeated
 notifications, independently of protocol data and Pause. UDP carrier establishment
-maps once to its application. If the request remains unsent, its first-payload
-deadline starts at the first Est.
+maps once to its application. If the request remains unsent after the
+next node's `Init` returns and the line is still alive, the client starts its
+first-payload deadline. In UDP mode this is the TCP carrier's `Init`.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
 Paused time counts. On direct TCP, expiry sends one header-only request even after
@@ -285,8 +286,8 @@ not keep application output queues. Trojan has no success response; downstream T
 Once the complete initial TCP request is ready, the client destroys its setup state,
 cancels the timer and permanently bypasses itself before handing off that buffer.
 All later callbacks follow the same line directly through the neighbouring tunnels.
-Reentrant Est continuations check that the client is still active before
-accessing its state. UDP application and carrier lines remain active for framing,
+After a reentrant `Init` returns, the client checks that its setup state is
+still active before starting the timer. UDP application and carrier lines remain active for framing,
 signal mapping and owned-carrier cleanup.
 
 UDP application lines remain borrowed UDP-facing lines. The client creates one dependent,

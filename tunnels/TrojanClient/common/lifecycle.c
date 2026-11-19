@@ -28,7 +28,7 @@ void trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *
     carrier_ls->protocol = ls->protocol;
     setLineProtocol(carrier, IP_PROTO_TCP);
     ls->carrier_line = carrier;
-    tunnelNextUpStreamInit(t, carrier);
+    trojanclientStartNext(t, carrier, l);
 }
 
 void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t origin)
