@@ -111,15 +111,17 @@ static void initializePair(client_framing_fixture_t *fixture, client_pair_t *pai
     pair->upload_line            = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
     pair->download_line          = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
 
-    halfduplexclient_lstate_t *main_ls     = lineGetState(pair->main_line, fixture->halfduplex);
-    halfduplexclient_lstate_t *upload_ls   = lineGetState(pair->upload_line, fixture->halfduplex);
-    halfduplexclient_lstate_t *download_ls = lineGetState(pair->download_line, fixture->halfduplex);
-    halfduplexclientLinestateInitialize(main_ls, pair->main_line);
-    halfduplexclientLinestateInitialize(upload_ls, pair->main_line);
-    halfduplexclientLinestateInitialize(download_ls, pair->main_line);
+    halfduplexclient_pair_t *state = halfduplexclientCreatePair(fixture->halfduplex, pair->main_line);
+    state->upload                  = pair->upload_line;
+    state->download                = pair->download_line;
+    halfduplexclientSetPair(fixture->halfduplex, state->upload, state);
+    halfduplexclientSetPair(fixture->halfduplex, state->download, state);
+}
 
-    main_ls->upload_line   = pair->upload_line;
-    main_ls->download_line = pair->download_line;
+static void absorbFinish(tunnel_t *t, line_t *line)
+{
+    discard t;
+    discard line;
 }
 
 static void fixtureSetup(client_framing_fixture_t *fixture)
@@ -138,6 +140,9 @@ static void fixtureSetup(client_framing_fixture_t *fixture)
     ts->download_tunnel                = fixture->download_next;
     fixture->download_next->fnPayloadU = captureFramedPayload;
     fixture->next->fnPayloadU = captureFramedPayload;
+    fixture->next->fnFinU              = absorbFinish;
+    fixture->next->fnFinD              = absorbFinish;
+    fixture->halfduplex->prev          = fixture->next;
 
     fixture->chain                      = tunnelchainCreate(1);
     fixture->chain->sum_line_state_size = fixture->halfduplex->lstate_size;
@@ -153,11 +158,7 @@ static void fixtureSetup(client_framing_fixture_t *fixture)
 
 static void destroyPair(client_framing_fixture_t *fixture, client_pair_t *pair)
 {
-    halfduplexclientLinestateDestroy(lineGetState(pair->download_line, fixture->halfduplex));
-    halfduplexclientLinestateDestroy(lineGetState(pair->upload_line, fixture->halfduplex));
-    halfduplexclientLinestateDestroy(lineGetState(pair->main_line, fixture->halfduplex));
-    lineDestroy(pair->download_line);
-    lineDestroy(pair->upload_line);
+    halfduplexclientTunnelDownStreamFinish(fixture->halfduplex, pair->download_line);
     lineDestroy(pair->main_line);
 }
 

@@ -145,7 +145,9 @@ if(TARGET HalfDuplexClient)
   waterwall_add_native_executable(halfduplexclient_reentrant_close_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexclient_reentrant_close_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(halfduplexclient_reentrant_close_test HalfDuplexClient)
-  target_link_options(halfduplexclient_reentrant_close_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(halfduplexclient_reentrant_close_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAddDeadline")
   target_link_libraries(halfduplexclient_reentrant_close_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexclient_reentrant_close_test)
 

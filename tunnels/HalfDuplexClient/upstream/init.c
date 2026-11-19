@@ -3,42 +3,34 @@
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
 {
     halfduplexclient_tstate_t *ts = tunnelGetState(t);
-    halfduplexclient_lstate_t *ls = lineGetState(main, t);
-    halfduplexclientLinestateInitialize(ls, main);
-    ls->pair_initializing = true;
+    halfduplexclient_pair_t   *pair = halfduplexclientCreatePair(t, main);
+    pair->starting                  = true;
+    ++pair->refs;
     lineRef(main);
-    line_t *upload = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(main));
-    lineRef(upload);
-    halfduplexclient_lstate_t *up = lineGetState(upload, t);
-    halfduplexclientLinestateInitialize(up, main);
-    // Publishing a child immediately precedes its adjacent Init admission.
-    ls->upload_line = upload;
-    tunnelUpStreamInit(ts->upload_tunnel, upload);
-    if (! lineIsAlive(main) || ! lineIsAlive(upload) || ls->main_line != main)
+    generic_pool_t **pools = tunnelchainGetLinePools(tunnelGetChain(t));
+    wid_t            wid   = lineGetWID(main);
+    pair->upload           = lineCreate(pools, wid);
+    halfduplexclientSetPair(t, pair->upload, pair);
+    if (lineCallWithRef(pair->upload, tunnelUpStreamInit, ts->upload_tunnel) && lineIsAlive(main) && pair->main != NULL)
     {
-        lineUnref(upload);
-        lineUnref(main);
-        return;
-    }
-    line_t *download = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(main));
-    lineRef(download);
-    halfduplexclient_lstate_t *down = lineGetState(download, t);
-    halfduplexclientLinestateInitialize(down, main);
-    ls->download_line = download;
-    tunnelUpStreamInit(ts->download_tunnel, download);
-    if (halfduplexclientPairAlive(t, main, upload, download))
-    {
-        // A Pause received before the download child existed remains effective.
-        if (ls->pending_read_pause)
-            halfduplexclientSetPrevPaused(t, main, true);
-        if (halfduplexclientPairAlive(t, main, upload, download))
+        pair->download = lineCreate(pools, wid);
+        halfduplexclientSetPair(t, pair->download, pair);
+        if (lineCallWithRef(pair->download, tunnelUpStreamInit, ts->download_tunnel) && lineIsAlive(main) &&
+            pair->main != NULL)
         {
-            ls->pair_initializing = false;
-            if (halfduplexclientNotifyEstablished(t, main) && halfduplexclientPairAlive(t, main, upload, download))
-                discard halfduplexclientDrainPending(t, main, false);
+            pair->starting = false;
+            if (pair->pending_read_pause)
+            {
+                // Apply the remembered read hold before Est releases any queued application input.
+                pair->pumping = true;
+                halfduplexclientSetPrevPaused(t, main, true);
+                pair->pumping = false;
+            }
+            if (lineIsAlive(main) && pair->main != NULL)
+                halfduplexclientNotifyEstablished(pair);
+            halfduplexclientPump(pair, NULL);
         }
     }
-    lineUnref(download);
-    lineUnref(upload);
     lineUnref(main);
+    halfduplexclientReleasePair(pair);
 }
