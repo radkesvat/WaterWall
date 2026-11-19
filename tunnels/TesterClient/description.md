@@ -127,7 +127,7 @@ Stream mode:
 
 - `dest-context` `(object)`
   Optional initial destination context copied into each synthetic line before upstream `Init`.
-  This is intended for tests that need to verify tunnels which read `line->routing_context.dest_ctx`.
+  This is intended for tests that need to verify tunnels which read `lineGetDestinationAddressContext(line)`.
 
   Supported child fields:
   - `address` `(string)`
@@ -232,7 +232,7 @@ Packet mode with synthetic IPv4 packets:
 - in `packet-mode`, reuses the worker packet line and never expects normal runtime `Finish`
 - optionally wraps packet-mode payloads in a synthetic IPv4 packet with configured source, destination, protocol, and TTL
 - optionally builds deterministic TCP, UDP, or ICMP headers inside the synthetic IPv4 packet
-- can optionally seed `line->routing_context.dest_ctx` before sending `Init` into the tested chain
+- can optionally seed `lineGetDestinationAddressContext(line)` before sending `Init` into the tested chain
 
 ### Request And Response Pattern
 

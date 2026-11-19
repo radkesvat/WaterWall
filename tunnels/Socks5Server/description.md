@@ -239,7 +239,7 @@ important.
 
 For `CONNECT`:
 
-- the requested destination is copied into `line->routing_context.dest_ctx`
+- the requested destination is copied into `lineGetDestinationAddressContext(line)`
 - the transport protocol is set to TCP
 - upstream `Init` is sent to the next tunnel
 - authenticated upstream payload can proceed after adjacent Init, including before Est

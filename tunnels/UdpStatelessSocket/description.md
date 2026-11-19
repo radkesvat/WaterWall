@@ -230,7 +230,7 @@ Received datagrams always enter from the head and are forwarded upstream toward 
 When payload is sent through `UdpStatelessSocket`:
 
 - if the line was created for an inbound peer, the datagram is sent back to that stored peer endpoint
-- otherwise, the tunnel reads the destination address from `l->routing_context.dest_ctx`
+- otherwise, the tunnel reads the destination address from `lineGetDestinationAddressContext(l)`
 - with local resolution enabled, an unresolved hostname is looked up asynchronously if no cached answer is available;
   with resolution disabled, that datagram is dropped
 - async results are cached by domain, port, and strategy for 30 minutes in a fixed 256-entry FIFO. Existing keys

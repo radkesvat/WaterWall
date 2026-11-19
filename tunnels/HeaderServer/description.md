@@ -147,7 +147,7 @@ UDP over a TCP carrier still requires separate datagram framing, such as the
 ### Read source IP and port from PROXY protocol
 
 Use this when the previous real peer sends HAProxy PROXY protocol and the next
-WaterWall nodes should see the original client as `line->routing_context.src_ctx`.
+WaterWall nodes should see the original client as `lineGetSourceAddressContext(line)`.
 
 ```json
 {
@@ -234,7 +234,7 @@ When `override` is `"dest_context->port"` or `"line->dest_ctx->port"`,
 a big-endian port and written to:
 
 ```text
-line->routing_context.dest_ctx.port
+lineGetDestinationAddressContext(line)->port
 ```
 
 Upstream `Init` is intentionally delayed until the header is decoded. Payload
@@ -251,7 +251,7 @@ When `override` is `"dest_context->protocol"` or
 consumes `6` as TCP or `17` as UDP and replaces only:
 
 ```text
-line->routing_context.dest_ctx.protocol
+addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), protocol)
 ```
 
 The marker is read once per normal layer-4 line. All source metadata and the
@@ -288,9 +288,9 @@ Rejected headers include:
 Only these fields are applied:
 
 ```text
-line->routing_context.src_ctx.ip_address = PROXY source IPv4
-line->routing_context.src_ctx.port       = PROXY source port
-line->routing_context.src_ctx.protocol   = TCP
+lineGetSourceAddressContext(line)->ip_address = PROXY source IPv4
+lineGetSourceAddressContext(line)->port       = PROXY source port
+lineGetSourceAddressContext(line)->proto_tcp  = true
 ```
 
 Destination fields, TLVs, and every other PROXY field are consumed but ignored.
@@ -307,7 +307,7 @@ header.
 During upstream `Init`, it sets:
 
 ```text
-line->routing_context.dest_ctx.port = configured port
+lineGetDestinationAddressContext(line)->port = configured port
 ```
 
 Then it immediately forwards upstream `Init` to `next`. All upstream payload is

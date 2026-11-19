@@ -26,7 +26,7 @@ UDP-capable proxy chain:
 Important:
 
 - `Socks5Client` can use either fixed JSON target values or the incoming `line->dest_ctx`
-- it prepares the final SOCKS target during `Init` and mirrors that result into `line->routing_context.dest_ctx`
+- it prepares the final SOCKS target during `Init` and mirrors that result into `lineGetDestinationAddressContext(line)`
 - the actual connection to the SOCKS proxy itself is still made by the next adapter, usually a connector with a constant
   proxy address/port
 - UDP mode creates a TCP control line for `UDP ASSOCIATE` and a UDP relay line for SOCKS UDP datagrams, so the next
@@ -74,7 +74,7 @@ the selected strategy.
 ### Optional JSON Fields
 
 - `settings.protocol`
-  Selects the SOCKS command and the protocol placed in `line->routing_context.dest_ctx`.
+  Selects the SOCKS command and the protocol placed in `lineGetDestinationAddressContext(line)`.
 
   Supported values:
 

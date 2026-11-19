@@ -195,7 +195,7 @@ The internal child listeners are the real socket adapters:
 - Child upstream callbacks enter `TcpUdpListener`.
 - `TcpUdpListener` forwards those callbacks with `tunnelNextUpStream*`.
 - Downstream callbacks from the next node enter `TcpUdpListener`.
-- `TcpUdpListener` selects the internal TCP or UDP listener from `line->routing_context.src_ctx`.
+- `TcpUdpListener` selects the internal TCP or UDP listener from `lineGetSourceAddressContext(line)`.
 - The selected child listener handles downstream writes, pauses, resumes, establishment, and finish.
 
 `TcpUdpListener` has no per-line state and never calls `lineDestroy()`.
