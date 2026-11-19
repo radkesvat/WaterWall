@@ -295,6 +295,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "HttpClient/interface.h"
 #endif
 
+#ifdef INCLUDE_RTMP_CLIENT
+#include "RtmpClient/interface.h"
+#endif
+
+#ifdef INCLUDE_RTMP_SERVER
+#include "RtmpServer/interface.h"
+#endif
+
 #ifdef INCLUDE_SOCKS5_CLIENT
 #include "Socks5Client/interface.h"
 #endif
@@ -701,6 +709,14 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_HTTP_CLIENT
     USING(HttpClient);
+#endif
+
+#ifdef INCLUDE_RTMP_CLIENT
+    USING(RtmpClient);
+#endif
+
+#ifdef INCLUDE_RTMP_SERVER
+    USING(RtmpServer);
 #endif
 
 #ifdef INCLUDE_SOCKS5_CLIENT

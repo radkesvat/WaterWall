@@ -75,3 +75,10 @@ set_target_properties(rtmp_protocol PROPERTIES UNITY_BUILD OFF DISABLE_PRECOMPIL
 add_library(rtmp_session STATIC rtmp_session.c rtmp_credit.c rtmp_wire.c)
 target_include_directories(rtmp_session PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(rtmp_session PRIVATE ww rtmp_protocol)
+
+add_library(RtmpTunnelCommon STATIC rtmp_tunnel.c rtmp_settings.c)
+target_include_directories(RtmpTunnelCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(RtmpTunnelCommon PUBLIC ww PRIVATE rtmp_session)
+if(NOT APPLE)
+    target_precompile_headers(RtmpTunnelCommon REUSE_FROM ww)
+endif()

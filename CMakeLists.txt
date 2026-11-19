@@ -1096,6 +1096,18 @@ if(INCLUDE_RTMP_CLIENT OR INCLUDE_RTMP_SERVER)
   add_subdirectory(tunnels/Internals/RtmpCommon)
 endif()
 
+if(INCLUDE_RTMP_CLIENT)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_RTMP_CLIENT=1)
+  add_subdirectory(tunnels/RtmpClient)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} RtmpClient)
+endif()
+
+if(INCLUDE_RTMP_SERVER)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_RTMP_SERVER=1)
+  add_subdirectory(tunnels/RtmpServer)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} RtmpServer)
+endif()
+
 if(INCLUDE_SOCKS5_CLIENT OR INCLUDE_TROJAN_CLIENT OR INCLUDE_VLESS_CLIENT OR INCLUDE_VMESS_CLIENT)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/ProxyClientCommon)
 endif()
