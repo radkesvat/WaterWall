@@ -724,8 +724,15 @@ retained allocation charge per line. The first queued input pauses its source.
 This local DNS/order hold is separate from a received Pause and does not pause
 the DNS exchange itself. FIFO drain respects consumer pressure; reentrant input
 cannot overtake older bytes. Overflow or resolution failure closes only the
-already-initialized directions. Finish destroys local state first and never
-reflects a callback toward the side that sent Finish.
+already-initialized directions. Once the next Init has returned on a normal stream, source Finish hands off the
+accepted startup FIFO synchronously in order, including during advisory Pause. If the destination finishes during
+a handoff, the resolver discards the rest. The resolver releases local state before propagating Finish and sends
+no callbacks toward the finished source.
+
+The resolver records the application transport after its prepare hook, before the next node
+can change the address metadata. A normal line with no protocol on either address uses
+stream close behavior. An explicit destination protocol takes precedence over the source.
+UDP, unsupported protocol combinations and worker packet lines discard the pending FIFO on close.
 
 Failed hard-limit admission is reported through the DNS logger: `ERROR` when
 application retention or incoming DNS transport limits close a connection, and
