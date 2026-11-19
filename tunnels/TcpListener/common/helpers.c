@@ -35,6 +35,7 @@ static void onRecv(wio_t *io, sbuf_t *buf)
     tcplistener_lstate_t *ls = weventGetUserdata(io);
     if (UNLIKELY(ls == NULL))
     {
+        // WIO can still deliver reads after the line detaches while queued writes drain.
         bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
         return;
     }
