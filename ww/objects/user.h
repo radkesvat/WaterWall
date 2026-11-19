@@ -210,6 +210,11 @@ typedef enum user_bandwidth_direction_e
     kUserBandwidthDownload = 1
 } user_bandwidth_direction_t;
 
+enum
+{
+    kUserBandwidthStreamQuantum = 16384
+};
+
 typedef enum user_delivery_decision_e
 {
     kUserDeliveryForward = 0,
@@ -554,6 +559,9 @@ user_bandwidth_result_t  userBandwidthPreview(User *user, user_bandwidth_directi
                                               uint64_t bytes, bool datagram);
 user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
                                             uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
+/* Recheck eligibility and charge a queued stream chunk at orderly Finish. */
+user_delivery_decision_t userCommitFinalDelivery(User *user, user_bandwidth_direction_t direction, uint64_t bytes,
+                                                 uint32_t multiplier);
 /* Caller holds both configuration and stats write locks. Settle old policy and
  * clamp temporary datagram credit before applying the current configured rates. */
 void userBandwidthReconcileLocked(User *user, uint64_t now_ms);

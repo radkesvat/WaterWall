@@ -197,6 +197,10 @@ WW_EXPORT user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel
                                                                           uint64_t ticket, uint64_t bytes,
                                                                           bool datagram, bool more);
 
+WW_EXPORT user_delivery_decision_t authenticationclientUserCommitFinalDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                               user_bandwidth_direction_t direction,
+                                                                               uint64_t                   bytes);
+
 /* Owned, consistent authorization copy. Ranges use the account collection's
  * canonical non-overlapping CIDR. Clear the profile on every successful copy.
  * The continuity floor changes after key/range replacement, even if a later

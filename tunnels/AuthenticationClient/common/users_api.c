@@ -972,6 +972,22 @@ user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel_t *t, con
     return result;
 }
 
+user_delivery_decision_t authenticationclientUserCommitFinalDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                     user_bandwidth_direction_t direction,
+                                                                     uint64_t                   bytes)
+{
+    assert(t != NULL && userHandleIsValid(handle));
+    authenticationclient_tstate_t *ts     = tunnelGetState(t);
+    user_delivery_decision_t       result = kUserDeliveryReject;
+    rwlockReadLock(&ts->users_lock);
+    if (authenticationclientHandleCurrentLocked(ts, handle) &&
+        ! authenticationclientIdDetachedLocked(ts, handle->user_id))
+        result =
+            usersCommitFinalDeliveryByIdentifier(ts->users, handle->user_id, direction, bytes, ts->traffic_multiplier);
+    rwlockReadUnlock(&ts->users_lock);
+    return result;
+}
+
 void authenticationclientWireGuardAuthorizationClear(authenticationclient_wireguard_authorization_t *authorization)
 {
     authenticationclientUserProfileClear(&authorization->profile);

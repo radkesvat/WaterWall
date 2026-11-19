@@ -2845,7 +2845,8 @@ static user_bandwidth_result_t userBandwidthPreviewLocked(User *user, user_bandw
         return result;
     if ((ticket != 0 && ! waiter->eligible) || (head != NULL && head->ticket != ticket))
         return (user_bandwidth_result_t) {.decision = kUserDeliveryWait, .retry_ms = 10};
-    uint64_t wanted = datagram || (ticket == 0 && state->rate == 0) ? bytes : min(bytes, UINT64_C(16384));
+    uint64_t wanted =
+        datagram || (ticket == 0 && state->rate == 0) ? bytes : min(bytes, (uint64_t) kUserBandwidthStreamQuantum);
     if (state->rate == 0)
         return (user_bandwidth_result_t) {.decision = kUserDeliveryForward, .grant = wanted};
     uint64_t ordinary = userBandwidthCapacity(state->rate);
@@ -2865,21 +2866,53 @@ static user_bandwidth_result_t userBandwidthPreviewLocked(User *user, user_bandw
                                       .retry_ms = min(max(retry, UINT64_C(1)), UINT64_C(100))};
 }
 
-user_bandwidth_result_t userBandwidthPreview(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
-                                             uint64_t bytes, bool datagram)
+static uint64_t userDeliveryClockLocked(User *user)
 {
-    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload);
-    rwlockWriteLock(&user->lock);
-    rwlockWriteLock(&user->stats_lock);
     uint64_t now = getHRTimeUs() / 1000U;
     if (user->client_time.clock_valid)
     {
         now = userClientAdvanceAgeLocked(user, now);
         userClientProjectExpiryLocked(user, now);
     }
+    return now;
+}
+
+user_bandwidth_result_t userBandwidthPreview(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
+                                             uint64_t bytes, bool datagram)
+{
+    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    uint64_t                now    = userDeliveryClockLocked(user);
     user_bandwidth_result_t result = userBandwidthPreviewLocked(
         user, direction, ticket, bytes, datagram, now, user->client_view_expiry_valid ? now : getTimeOfDayMS());
     result.limited = (direction == kUserBandwidthUpload ? user->limit.bandwidth.u : user->limit.bandwidth.d) != 0;
+    rwlockWriteUnlock(&user->stats_lock);
+    rwlockWriteUnlock(&user->lock);
+    return result;
+}
+
+static user_delivery_decision_t userChargeDeliveryLocked(User *user, user_bandwidth_direction_t direction,
+                                                         uint64_t bytes, uint32_t multiplier)
+{
+    userChargeTrafficLocked(user,
+                            direction == kUserBandwidthUpload ? bytes : 0,
+                            direction == kUserBandwidthDownload ? bytes : 0,
+                            multiplier);
+    return userTrafficReachedLocked(user) ? kUserDeliveryForwardClose : kUserDeliveryForward;
+}
+
+user_delivery_decision_t userCommitFinalDelivery(User *user, user_bandwidth_direction_t direction, uint64_t bytes,
+                                                 uint32_t multiplier)
+{
+    assert(userObjectIsInitialized(user) && direction <= kUserBandwidthDownload &&
+           bytes <= kUserBandwidthStreamQuantum && multiplier != 0 && multiplier <= kUserTrafficMultiplierMax);
+    rwlockWriteLock(&user->lock);
+    rwlockWriteLock(&user->stats_lock);
+    uint64_t                 now    = userDeliveryClockLocked(user);
+    user_delivery_decision_t result = kUserDeliveryReject;
+    if (userEligibilityLocked(user, user->client_view_expiry_valid ? now : getTimeOfDayMS()) == kUserAdmissionOk)
+        result = userChargeDeliveryLocked(user, direction, bytes, multiplier);
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);
     return result;
@@ -2892,12 +2925,7 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
            multiplier <= kUserTrafficMultiplierMax);
     rwlockWriteLock(&user->lock);
     rwlockWriteLock(&user->stats_lock);
-    uint64_t now = getHRTimeUs() / 1000U;
-    if (user->client_time.clock_valid)
-    {
-        now = userClientAdvanceAgeLocked(user, now);
-        userClientProjectExpiryLocked(user, now);
-    }
+    uint64_t                now     = userDeliveryClockLocked(user);
     user_bandwidth_result_t preview = userBandwidthPreviewLocked(
         user, direction, ticket, bytes, datagram, now, user->client_view_expiry_valid ? now : getTimeOfDayMS());
     user_delivery_decision_t result = preview.decision;
@@ -2913,10 +2941,6 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
             discard granted;
         }
         userBandwidthEndOversized(state, ticket, now);
-        userChargeTrafficLocked(user,
-                                direction == kUserBandwidthUpload ? bytes : 0,
-                                direction == kUserBandwidthDownload ? bytes : 0,
-                                multiplier);
         if (ticket != 0)
         {
             user_bandwidth_waiter_t *waiter = userBandwidthFind(state, ticket);
@@ -2925,8 +2949,7 @@ user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction
             userBandwidthUnlink(state, waiter);
             userBandwidthAppend(state, waiter);
         }
-        if (userTrafficReachedLocked(user))
-            result = kUserDeliveryForwardClose;
+        result = userChargeDeliveryLocked(user, direction, bytes, multiplier);
     }
     rwlockWriteUnlock(&user->stats_lock);
     rwlockWriteUnlock(&user->lock);

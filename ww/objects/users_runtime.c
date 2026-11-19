@@ -747,6 +747,19 @@ user_bandwidth_result_t usersBandwidthPreviewByIdentifier(users_t *users, uint64
     return result;
 }
 
+user_delivery_decision_t usersCommitFinalDeliveryByIdentifier(users_t *users, uint64_t id,
+                                                              user_bandwidth_direction_t direction, uint64_t bytes,
+                                                              uint32_t multiplier)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t                  *user = usersIDTableLookupLocked(users, id);
+    user_delivery_decision_t result =
+        user == NULL ? kUserDeliveryReject : userCommitFinalDelivery(user, direction, bytes, multiplier);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
 user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_t id,
                                                          user_bandwidth_direction_t direction, uint64_t ticket,
                                                          uint64_t bytes, bool datagram, bool more, uint32_t multiplier)
