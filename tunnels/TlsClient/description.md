@@ -211,7 +211,9 @@ or change spacing on the wire; neither mode promises TCP packet boundaries.
 
 The helper borrows the same line and uses its own bounded FIFO: 8 MiB logical
 bytes, 8 MiB capacity charge, and 1,024 jobs. Reentry, Finish, and shutdown use
-StreamFragmenter's normal ordering and cleanup. The helper releases its own
+StreamFragmenter's normal ordering and cleanup. When configured, StreamFragmenter receives the final
+TLS ciphertext as a separate handoff. StreamFragmenter discards fragments still in its queue when it
+receives Finish. The helper releases its own
 pressure at its low watermarks, and combines it with the latest received pressure before resuming its source. When
 shaping and the startup wait have finished and retained work has drained, it
 destroys its line state and permanently bypasses itself. TlsClient remains active
