@@ -48,9 +48,11 @@ typedef struct server_lifecycle_context_s
     bool           kill_on_prev_finish;
     bool           finish_on_destination_payload;
     bool           kill_on_cover_payload;
+    bool           finish_on_final_cover;
     bool           kill_on_ack_payload;
     bool           kill_on_destination_finish;
     bool           kill_on_protected_init;
+    bool           pause_on_protected_init;
     bool           kill_on_protected_payload;
     bool           inject_destination_callbacks_on_ack;
     bool           inject_destination_callbacks_on_finish;
@@ -59,6 +61,8 @@ typedef struct server_lifecycle_context_s
     bool           require_allowance_consumed_on_destination_payload;
     bool           reenter_peer_close;
     bool           send_data_after_close;
+    bool           frontend_paused;
+    bool           confirm_on_ack;
     uint8_t        expected_alert_type;
     uint16_t       expected_alert_body_len;
     uint8_t        observed_alert;
@@ -73,6 +77,8 @@ typedef struct server_lifecycle_context_s
     sbuf_t        *request_on_cover_payload;
     sbuf_t        *destination_payload_on_cover_payload;
     sbuf_t        *request_on_destination_payload;
+    sbuf_t        *frontend_confirm;
+    sbuf_t        *frontend_application;
 } server_lifecycle_context_t;
 
 typedef struct server_lifecycle_fixture_s
@@ -140,13 +146,34 @@ static void serverPrevEst(tunnel_t *t, line_t *l)
 static void serverPrevPause(tunnel_t *t, line_t *l)
 {
     discard l;
-    serverEvent(serverContext(t), 'q');
+    server_lifecycle_context_t *context = serverContext(t);
+    context->frontend_paused            = true;
+    serverEvent(context, 'q');
+}
+
+static void serverFrontendConfirm(server_lifecycle_context_t *context, line_t *l)
+{
+    sbuf_t *confirm           = context->frontend_confirm;
+    context->frontend_confirm = NULL;
+    requireServer(context->handoff_ack_records == 1 && confirm != NULL &&
+                      realityserverProcessUpstream(context->reality, l, confirm),
+                  "frontend received Resume before an authenticated ACK");
 }
 
 static void serverPrevResume(tunnel_t *t, line_t *l)
 {
-    discard l;
-    serverEvent(serverContext(t), 's');
+    server_lifecycle_context_t *context = serverContext(t);
+    context->frontend_paused            = false;
+    serverEvent(context, 's');
+    if (context->frontend_confirm != NULL)
+        serverFrontendConfirm(context, l);
+    if (! context->frontend_paused && context->frontend_application != NULL)
+    {
+        sbuf_t *application           = context->frontend_application;
+        context->frontend_application = NULL;
+        requireServer(realityserverProcessUpstream(context->reality, l, application),
+                      "server rejected the frontend's first protected payload");
+    }
 }
 
 static void serverPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
@@ -261,6 +288,8 @@ static void serverNextInit(tunnel_t *t, line_t *l)
     requireServer(! lineIsFallback(l) && ! lineShouldLingerOnClose(l),
                   "camouflage fallback state reached protected Init");
     serverEvent(context, 'I');
+    if (context->pause_on_protected_init)
+        realityserverTunnelDownStreamPause(context->reality, l);
     if (context->kill_on_protected_init)
     {
         context->kill_on_protected_init = false;
@@ -307,6 +336,12 @@ static void serverHandoffPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             context->kill_on_cover_payload = false;
             serverKillLineFromPrevious(context, l);
             return;
+        }
+        if (context->finish_on_final_cover)
+        {
+            context->finish_on_final_cover = false;
+            realityserverTunnelDownStreamFinish(context->reality, l);
+            realityserverTunnelDownStreamResume(context->reality, l);
         }
         if (context->request_on_cover_payload != NULL)
         {
@@ -356,6 +391,8 @@ static void serverHandoffPrevPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         context->inject_destination_callbacks_on_ack = false;
         serverInjectDestinationDownstreamCallbacks(context, l);
     }
+    if (context->confirm_on_ack)
+        serverFrontendConfirm(context, l);
     if (context->kill_on_ack_payload)
     {
         context->kill_on_ack_payload = false;
@@ -2176,6 +2213,65 @@ static void prepareServerTls13ReentryFixture(server_lifecycle_fixture_t *fixture
     prepareServerPendingProfile(fixture, kRealityV2Tls13, &profile);
 }
 
+static void testServerTls13ReleasesCoverPressure(bool finish_in_record, bool pause_in_protected_init)
+{
+    testCaseSet("RealityServer releases cover pressure after TLS 1.3 handoff ACK");
+    server_lifecycle_fixture_t fixture;
+    prepareServerTls13ReentryFixture(&fixture);
+    server_lifecycle_context_t *context = &fixture.context;
+    realityserver_lstate_t     *ls      = lineGetState(fixture.line, fixture.reality);
+
+    const uint8_t  cover_record[] = {0x17, 0x03, 0x03, 0x00, 0x03, 0x81, 0x82, 0x83};
+    const uint32_t first          = 6;
+    realityserverTunnelDownStreamPayload(
+        fixture.reality, fixture.line, serverBufferFromBytes(&fixture, cover_record, first));
+    realityserverTunnelDownStreamPause(fixture.reality, fixture.line);
+    requireServer(
+        context->frontend_paused &&
+            realityserverProcessUpstream(fixture.reality,
+                                         fixture.line,
+                                         buildServerInboundControl(&fixture, kRealityV2RecordKindHandoffRequest, 0)),
+        "server did not enter partial-record handoff with paused frontend reads");
+
+    const uint8_t application      = 0x5a;
+    context->frontend_confirm      = buildServerInboundControl(&fixture, kRealityV2RecordKindHandoffConfirm, 1);
+    context->frontend_application  = buildServerInboundRecord(&fixture,
+                                                             kRealityV2Tls13,
+                                                             &ls->record_profile,
+                                                             kRealityV2RecordKindApplicationData,
+                                                             &application,
+                                                             sizeof(application),
+                                                             2);
+    context->finish_on_final_cover = finish_in_record;
+    context->inject_destination_callbacks_on_ack = ! finish_in_record;
+    context->confirm_on_ack                      = pause_in_protected_init;
+    context->pause_on_protected_init             = pause_in_protected_init;
+    realityserverTunnelDownStreamPayload(
+        fixture.reality,
+        fixture.line,
+        serverBufferFromBytes(&fixture, cover_record + first, sizeof(cover_record) - first));
+
+    if (pause_in_protected_init)
+    {
+        requireServer(context->frontend_paused && ls->protected_init_sent && context->frontend_application != NULL &&
+                          strcmp(context->events, "cqcKIq") == 0,
+                      "ACK completion released pressure re-established during protected Init");
+        realityserverTunnelDownStreamResume(fixture.reality, fixture.line);
+    }
+    TEST_EQUAL_TEXT(TEST_FAILURE_EXIT,
+                    context->events,
+                    pause_in_protected_init ? "cqcKIqsA" : "cqcKsIA",
+                    "retired cover pressure withheld frontend Resume or changed handoff order");
+    requireServer(context->handoff_ack_records == 1 && ls->mode == kRealityServerModeAuthorized &&
+                      ls->destination_up_finished && ! context->frontend_paused && context->frontend_confirm == NULL &&
+                      context->frontend_application == NULL &&
+                      context->cover_downstream_bytes == sizeof(cover_record) &&
+                      memoryEqual(context->cover_downstream, cover_record, sizeof(cover_record)),
+                  "handoff changed the final cover record or first protected payload");
+    realityserverLinestateDestroy(ls);
+    serverFixtureDestroy(&fixture);
+}
+
 static void testServerTls13LineDeathAtHandoffCallbacks(void)
 {
     server_lifecycle_fixture_t fixture;
@@ -2477,6 +2573,9 @@ void realityTestServerCloseLifecycle(void)
     testServerTls13NestedDestinationPayloadCompletesBoundary();
     testServerTls13LineDeathAtHandoffCallbacks();
     testServerTls13DestinationCallbacksStaySuppressed();
+    testServerTls13ReleasesCoverPressure(false, false);
+    testServerTls13ReleasesCoverPressure(true, false);
+    testServerTls13ReleasesCoverPressure(true, true);
     testServerTls13AuthenticatedHandoff();
     testServerTls13HandoffTailBound();
 }
