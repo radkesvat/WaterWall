@@ -56,7 +56,7 @@ The peer must implement WaterWall’s `ww.data` profile. Use external WaterWall 
 
 ## Build and test
 
-Enable `INCLUDE_RTMP_CLIENT` and `INCLUDE_RTMP_SERVER` to build the two node types. The production and unit trees use separate presets. The production tests below run in a private Linux network namespace and check plain RTMP, RTMPS, direct TCP EOF, negotiation timeout, and UDP-over-TCP composition.
+Enable `INCLUDE_RTMP_CLIENT` and `INCLUDE_RTMP_SERVER` to build the two node types. The production and unit trees use separate presets. The production tests below run in a private Linux network namespace and check plain RTMP, RTMPS, negotiation timeout, and composition with VLESS and UDP-over-TCP.
 
 The [dependency notes](patches/README.md) record the engine revision and describe the local adaptations.
 

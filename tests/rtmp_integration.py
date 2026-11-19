@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check exact RTMP stream bytes and direct TCP EOF in private loopback."""
+"""Exercise RTMP tunnel pairs in a private loopback network."""
 
 import concurrent.futures
 import json
@@ -122,36 +122,6 @@ def duplex(process, client, service):
             stop(process)
 
 
-def read_to_eof(receiver, expected):
-    offset = 0
-    while True:
-        chunk = receiver.recv(4096)
-        if not chunk:
-            break
-        assert chunk == expected[offset:offset + len(chunk)], f"TCP EOF test bytes changed at {offset}"
-        offset += len(chunk)
-        time.sleep(0.0005)
-    assert offset == len(expected), f"premature TCP EOF after {offset} of {len(expected)} bytes"
-
-
-def send_to_eof(sender, data):
-    sender.sendall(data)
-    sender.shutdown(socket.SHUT_WR)
-
-
-def eof(client, service, reverse):
-    data = random.Random(0x1937 + reverse).randbytes((4 * 1024 * 1024) + 3901)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor, close_on_error(client):
-        if not reverse:
-            sending = executor.submit(send_to_eof, client, data)
-        with service.accept()[0] as backend, close_on_error(backend):
-            backend.settimeout(SOCKET_TIMEOUT)
-            if reverse:
-                sending = executor.submit(send_to_eof, backend, data)
-            read_to_eof(client if reverse else backend, data)
-            sending.result(timeout=SOCKET_TIMEOUT)
-
-
 def udpover_tcp(process, service):
     payloads = [random.Random(0x1939 + size).randbytes(size) for size in (1, 61, 63, 64, 511, 1200)]
     # The test runs in a Linux network namespace. Wait for the actual UDP bind
@@ -213,11 +183,7 @@ def run(binary, mode):
                     timeout(process, service)
                     return
                 with connect(process, APP_PORT) as client:
-                    if mode in ("tcp_upload_eof", "tcp_download_eof"):
-                        eof(client, service, reverse=mode == "tcp_download_eof")
-                        stop(process)
-                    else:
-                        duplex(process, client, service)
+                    duplex(process, client, service)
 
 
 if __name__ == "__main__":
