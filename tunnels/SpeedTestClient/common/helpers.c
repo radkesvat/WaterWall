@@ -278,22 +278,37 @@ static bool speedtestclientSendFrame(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static bool speedtestclientSendHello(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
 {
-    speedtestclient_tstate_t *state = tunnelGetState(t);
-    const uint16_t            flags = speedtestclientBaseFlags(state);
-    sbuf_t                   *buf   = speedtestclientCreateFrame(t,
+    speedtestclient_tstate_t *state  = tunnelGetState(t);
+    const uint16_t            flags  = speedtestclientBaseFlags(state);
+    const uint64_t            now_us = speedtestclientNowUs();
+    sbuf_t                   *buf    = speedtestclientCreateFrame(t,
                                              l,
                                              kSpeedTestClientFrameHello,
                                              flags,
                                              ls->stream_id,
                                              state->connection_count,
                                              kSpeedTestClientHelloSize,
-                                             speedtestclientNowUs(),
+                                             now_us,
                                              state->duration_ms,
                                              state->target_bandwidth_bps);
 
     speedtestclientWriteHelloPayload(state, ls, sbufGetMutablePtr(buf) + kSpeedTestClientFrameHeaderSize);
-    ls->hello_sent = true;
-    return speedtestclientSendFrame(t, l, buf);
+    if (! ls->hello_sent)
+    {
+        ls->start_ms         = now_us / 1000U;
+        ls->measure_start_ms = ls->start_ms + state->warmup_ms;
+        ls->measure_end_ms   = ls->measure_start_ms + state->duration_ms;
+        ls->last_report_ms   = ls->measure_start_ms;
+        ls->hello_sent       = true;
+    }
+    /* The send task sees any synchronous ACK or pressure change after this handoff. */
+    ls->hello_sending = true;
+    if (! speedtestclientSendFrame(t, l, buf))
+    {
+        return false;
+    }
+    ls->hello_sending = false;
+    return true;
 }
 
 static uint32_t speedtestclientPayloadSizeForNextFrame(tunnel_t *t, line_t *l)
@@ -392,11 +407,14 @@ static void speedtestclientSendEnd(tunnel_t *t, line_t *l, speedtestclient_lstat
     speedtestclientMaybeComplete(t, l);
 }
 
-void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
+bool speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
 {
-    if (ls->send_scheduled || ls->send_paused || ! ls->est_received || (ls->sender_finished && ls->hello_sent))
+    const speedtestclient_tstate_t *state            = tunnelGetState(t);
+    const bool                      awaiting_udp_ack = state->mode == kSpeedTestClientModeUdp && ! ls->ack_received;
+    if (ls->init_in_progress || ls->send_scheduled || ls->send_paused || ls->hello_sending ||
+        (ls->sender_finished && ls->hello_sent && ! awaiting_udp_ack))
     {
-        return;
+        return true;
     }
 
     ls->send_scheduled                     = true;
@@ -405,20 +423,19 @@ void speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_
     {
         ls->send_scheduled = false;
         speedtestclientFailLine(t, l, "failed to schedule send progress");
+        return false;
     }
-    else
-    {
-        assert(result == kLineTaskSubmitAcceptedAsync);
-    }
+    assert(result == kLineTaskSubmitAcceptedAsync);
+    return true;
 }
 
-void speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
+bool speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls)
 {
     speedtestclient_tstate_t *state = tunnelGetState(t);
 
     if (ls->report_scheduled || ls->line_complete)
     {
-        return;
+        return true;
     }
 
     ls->report_scheduled = true;
@@ -428,19 +445,17 @@ void speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstat
     {
         ls->report_scheduled = false;
         speedtestclientFailLine(t, l, "failed to schedule report progress");
+        return false;
     }
-    else
-    {
-        assert(result == kLineTaskSubmitTimerArmed);
-    }
+    assert(result == kLineTaskSubmitTimerArmed);
+    return true;
 }
 
 void speedtestclientSendTask(tunnel_t *t, line_t *l)
 {
-    speedtestclient_tstate_t *state          = tunnelGetState(t);
-    speedtestclient_lstate_t *ls             = lineGetState(l, t);
-    int                       burst          = 0;
-    bool                      sent_hello_now = false;
+    speedtestclient_tstate_t *state = tunnelGetState(t);
+    speedtestclient_lstate_t *ls    = lineGetState(l, t);
+    int                       burst = 0;
 
     ls->send_scheduled = false;
 
@@ -449,23 +464,18 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (! ls->hello_sent)
+    const bool first_hello = ! ls->hello_sent;
+    if (first_hello || (state->mode == kSpeedTestClientModeUdp && ! ls->ack_received))
     {
-        if (! speedtestclientSendHello(t, l, ls))
+        if (! speedtestclientSendHello(t, l, ls) || (first_hello && ! speedtestclientScheduleReport(t, l, ls)))
         {
             return;
         }
-        sent_hello_now = true;
     }
 
     if (state->mode == kSpeedTestClientModeUdp && ! ls->ack_received)
     {
-        if (! sent_hello_now && ! speedtestclientSendHello(t, l, ls))
-        {
-            return;
-        }
-
-        if (! ls->ack_received && ! ls->send_paused)
+        if (! ls->send_paused)
         {
             uint32_t retry_ms  = min(state->report_interval_ms, 250U);
             ls->send_scheduled = true;
@@ -564,7 +574,7 @@ void speedtestclientSendTask(tunnel_t *t, line_t *l)
 
     if (! ls->send_paused && ! ls->sender_finished)
     {
-        speedtestclientScheduleSend(t, l, ls);
+        discard speedtestclientScheduleSend(t, l, ls);
     }
 }
 
@@ -642,7 +652,7 @@ void speedtestclientReportTask(tunnel_t *t, line_t *l)
     }
 
     speedtestclientLogInterval(t, l, ls, false);
-    speedtestclientScheduleReport(t, l, ls);
+    discard speedtestclientScheduleReport(t, l, ls);
 }
 
 static void speedtestclientFinalizeReceiver(speedtestclient_lstate_t *ls, const speedtestclient_frame_t *frame)
@@ -801,10 +811,11 @@ static void speedtestclientHandleFrame(tunnel_t *t, line_t *l, const speedtestcl
     switch (frame->type)
     {
     case kSpeedTestClientFrameAck:
-        if (! ls->ack_received)
+        if (ls->hello_sent && ! ls->ack_received)
         {
             ls->ack_received = true;
-            if (! ls->send_paused && ! ls->sender_finished)
+            if (state->mode == kSpeedTestClientModeUdp && ! ls->hello_sending && ! ls->send_paused &&
+                ! ls->sender_finished)
             {
                 ls->send_scheduled                     = true;
                 const line_task_submit_result_e result = lineScheduleTask(l, speedtestclientSendTask, t, NULL);

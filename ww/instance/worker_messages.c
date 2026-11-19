@@ -27,7 +27,6 @@ typedef struct queued_worker_msg_s
 typedef struct timed_worker_msg_s
 {
     queued_worker_msg_t task;
-    uint64_t            deadline_us;
     wtimer_t           *timer;
     /* Used only after the record has moved to a local cancellation list. */
     wtimer_t        *detached_timer;
@@ -757,21 +756,6 @@ worker_message_submit_result_e sendWorkerMessageForceQueueRetainOnRefusal(wid_t 
     return sendWorkerMessageForceQueueTransactional(wid, cb, cleanup, arg1, arg2, arg3, true);
 }
 
-static void workerTimedMessageDetachFromOwner(worker_t *worker, wloop_t *loop, timed_worker_msg_t *timed_msg,
-                                              const char *context)
-{
-    mutexLock(&worker->control_mutex);
-    worker_message_queue_t *queue = worker->message_queue;
-    if (UNLIKELY(queue == NULL || worker->loop != loop))
-    {
-        mutexUnlock(&worker->control_mutex);
-        LOGF("runTimedTask: worker message queue detached during %s", context);
-        abortProgramNow(1);
-    }
-    workerTimedMessageUnlinkLocked(queue, timed_msg);
-    mutexUnlock(&worker->control_mutex);
-}
-
 static void runTimedTask(wtimer_t *timer)
 {
     timed_worker_msg_t *timed_msg = weventGetUserdata(timer);
@@ -787,34 +771,18 @@ static void runTimedTask(wtimer_t *timer)
     worker_t *worker = getWorker(owner_wid);
 
 #ifdef WW_WORKER_MESSAGE_TEST_SEAM
-    workerMessageTimedRearmTestSeam(worker, &timed_msg->deadline_us);
+    workerMessageTimedDispatchTestSeam(worker);
 #endif
-    const uint64_t now_us = wloopNowUS(loop);
-
-    if (now_us < timed_msg->deadline_us)
+    mutexLock(&worker->control_mutex);
+    worker_message_queue_t *queue = worker->message_queue;
+    if (UNLIKELY(queue == NULL || worker->loop != loop))
     {
-        const uint64_t remaining_us = timed_msg->deadline_us - now_us;
-        uint32_t       remaining_ms = (remaining_us > ((uint64_t) UINT32_MAX * 1000ULL))
-                                          ? UINT32_MAX
-                                          : (uint32_t) ((remaining_us + 999ULL) / 1000ULL);
-
-        if (remaining_ms == 0)
-        {
-            remaining_ms = 1;
-        }
-
-        /* Some timeout buckets are rounded early, so do not release delayed
-         * work before its true deadline. */
-        if (! wtimerReset(timer, remaining_ms))
-        {
-            workerTimedMessageDetachFromOwner(worker, loop, timed_msg, "timer reset failure");
-            weventSetUserData(timer, NULL);
-            cleanupTimedWorkerMessage(timed_msg, kWorkerMessageCancelAdmissionClosed);
-        }
-        return;
+        mutexUnlock(&worker->control_mutex);
+        LOGF("runTimedTask: worker message queue detached during deadline completion");
+        abortProgramNow(1);
     }
-
-    workerTimedMessageDetachFromOwner(worker, loop, timed_msg, "deadline completion");
+    workerTimedMessageUnlinkLocked(queue, timed_msg);
+    mutexUnlock(&worker->control_mutex);
 
     if (UNLIKELY(! wloopNormalDispatchAllowed(loop)))
     {
@@ -868,7 +836,7 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
     }
 #endif
 
-    wtimer_t *k_timer = wtimerAdd(loop, runTimedTask, delay_ms, 1);
+    wtimer_t *k_timer = wtimerAddDeadline(loop, runTimedTask, delay_ms);
     if (UNLIKELY(k_timer == NULL))
     {
         /* Timer allocation is fail-fast; only admission closure can refuse
@@ -885,8 +853,7 @@ static bool setupTimedTaskChecked(worker_t *worker, void *arg1, void *arg2, void
         return false;
     }
 
-    timed_msg->deadline_us = wloopNowUS(loop) + ((uint64_t) delay_ms * 1000ULL);
-    timed_msg->timer       = k_timer;
+    timed_msg->timer = k_timer;
     weventSetUserData(k_timer, timed_msg);
     assert(timed_msg->detached_timer == NULL);
     assert(list_empty(&timed_msg->timed_node));

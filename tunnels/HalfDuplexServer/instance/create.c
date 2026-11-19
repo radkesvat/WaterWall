@@ -50,7 +50,7 @@ static bool halfduplexserverReadPair(node_t *node, halfduplexserver_tstate_t *ts
 tunnel_t *halfduplexserverTunnelCreate(node_t *node)
 {
     assert(node != NULL);
-    tunnel_t *t = tunnelCreate(node, sizeof(halfduplexserver_tstate_t), sizeof(halfduplexserver_lstate_t));
+    tunnel_t *t = tunnelCreate(node, kTunnelStateSize + getWorkersCount() * sizeof(close_drain_t *), kLineStateSize);
     if (! t)
     {
         return NULL;
@@ -83,7 +83,9 @@ tunnel_t *halfduplexserverTunnelCreate(node_t *node)
     }
     if (ts->pair_node == NULL)
     {
-        ts->owner = t;
+        ts->owner          = t;
+        t->onWorkerQuiesce = &halfduplexserverQuiesceDrains;
+        t->onWorkerStop    = &halfduplexserverStopDrains;
         if (UNLIKELY(! mutexTryInit(&ts->pending_line_maps_mutex)))
         {
             halfduplexserverTunnelDestroy(t, wwLifecycleStartupRollback());

@@ -6,12 +6,11 @@ void kcpclientTunnelUpStreamFinish(tunnel_t *t, line_t *l)
     assert(ls->role == kKcpClientApplication && ls->session != NULL);
     kcpclient_session_t *session = ls->session;
     tou_session_t       *driver  = session->driver;
-    touSessionRetain(driver);
     kcpclientDetachApplication(session, false);
     kcpclient_tstate_t *ts = tunnelGetState(t);
-    if (atomicLoadRelaxed(&ts->stopping) || ts->workers[session->wid].quiescing)
+    if (atomicLoadRelaxed(&ts->stopping) || ts->workers[session->wid].quiescing ||
+        ! wloopNormalDispatchAllowed(getWorkerLoop(session->wid)))
         touSessionAbort(driver, kTouAborted);
     else
-        touSessionAppFinish(driver);
-    touSessionRelease(driver);
+        touSessionAppFinish(driver, kcpclientReleaseReadHold);
 }

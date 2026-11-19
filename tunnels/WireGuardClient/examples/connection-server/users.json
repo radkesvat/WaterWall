@@ -1,0 +1,14 @@
+{
+  "users": [
+    {
+      "id": 71,
+      "name": "wireguard-user",
+      "password": "wireguard-user-secret",
+      "wireguard-allowed-ips": "10.50.0.4/30",
+      "limit": {
+        "ips": 1,
+        "cons-out": 16
+      }
+    }
+  ]
+}

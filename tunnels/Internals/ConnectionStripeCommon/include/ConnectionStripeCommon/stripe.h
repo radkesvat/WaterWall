@@ -26,6 +26,18 @@ enum
     kStripeCloseAck         = 6,
 };
 
+/* Boundaries count all DATA bytes and records preceding them. Each missing
+ * record in the receive window must occupy between one and kStripeMaxFrame bytes. */
+static inline bool connectionstripeRecordGapFits(uint64_t first_index, uint64_t first_offset, uint64_t next_index,
+                                                 uint64_t next_offset)
+{
+    if (next_index < first_index || next_offset < first_offset)
+        return false;
+    const uint64_t records = next_index - first_index;
+    const uint64_t bytes   = next_offset - first_offset;
+    return records <= kStripeFrameWindow && bytes >= records && bytes <= records * kStripeMaxFrame;
+}
+
 typedef enum stripe_endpoint_role_e
 {
     kStripeClientEndpoint,

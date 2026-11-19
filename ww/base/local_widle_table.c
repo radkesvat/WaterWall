@@ -224,7 +224,7 @@ static bool localidletableEraseMapEntry(local_idle_table_t *self, local_idle_ite
     return true;
 }
 
-local_idle_table_t *localIdleTableCreate(wloop_t *loop)
+local_idle_table_t *localIdleTableTryCreate(wloop_t *loop)
 {
     assert(loop != NULL);
 
@@ -235,28 +235,34 @@ local_idle_table_t *localIdleTableCreate(wloop_t *loop)
         abortProgramNow(1);
     }
 
+    wtimer_t *timer = wtimerAdd(loop, localIdleCallBack, kLocalDefaultTimeout, INFINITE);
+    if (timer == NULL)
+        return NULL;
+
     local_idle_table_t *newtable = memoryAllocateCacheAligned(sizeof(*newtable));
     local_idle_item_t **heap     = memoryAllocate(kLocalIdleTableCap * sizeof(*heap));
 
-    *newtable = (local_idle_table_t) {.loop     = loop,
-                                      .heap     = heap,
-                                      .heap_len = 0,
-                                      .heap_cap = kLocalIdleTableCap,
-                                      .hmap     = local_hmap_idles_t_with_capacity(kLocalIdleTableCap),
-                                      .wid      = owner_wid};
+    *newtable = (local_idle_table_t) {.idle_handle = timer,
+                                      .loop        = loop,
+                                      .heap        = heap,
+                                      .heap_len    = 0,
+                                      .heap_cap    = kLocalIdleTableCap,
+                                      .hmap        = local_hmap_idles_t_with_capacity(kLocalIdleTableCap),
+                                      .wid         = owner_wid};
 
-    newtable->idle_handle = wtimerAdd(loop, localIdleCallBack, kLocalDefaultTimeout, INFINITE);
-    if (UNLIKELY(newtable->idle_handle == NULL))
+    weventSetUserData(timer, newtable);
+    return newtable;
+}
+
+local_idle_table_t *localIdleTableCreate(wloop_t *loop)
+{
+    local_idle_table_t *table = localIdleTableTryCreate(loop);
+    if (UNLIKELY(table == NULL))
     {
-        local_hmap_idles_t_drop(&newtable->hmap);
-        memoryFree(newtable->heap);
-        memoryFreeAligned(newtable);
         printError("LocalIdleTable: failed to create idle timer");
         abortProgramNow(1);
     }
-
-    weventSetUserData(newtable->idle_handle, newtable);
-    return newtable;
+    return table;
 }
 
 local_idle_item_t *localidletableCreateItem(local_idle_table_t *self, hash_t key, void *userdata,

@@ -87,7 +87,7 @@ and exact child/main references.
 
 - if the winner child closes, the original line is closed
 - if every child fails before a winner is chosen, the original line is closed
-- main-line close destroys main bridge state first, then closes every still-alive child line, then propagates the real downstream finish toward the previous tunnel
+- On orderly main Finish, the validated winner takes the admitted upstream FIFO. It honors transport Pause, hands off older bytes before Finish, and releases the borrowed main before its owner destroys it. Winner closure, worker shutdown or 30 seconds from main Finish ends the drain. Without a winner, main Finish aborts setup.
 - child-line close destroys child protocol state first, closes the next side of that child line, and only then decides whether the main line must also be closed
 - every child line holds a positive ref on the main line so child callbacks never dereference a freed main-line pointer
 

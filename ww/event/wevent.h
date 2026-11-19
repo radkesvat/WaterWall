@@ -23,6 +23,28 @@
 #define WIO_READ_UNTIL_LENGTH 0x2
 #define WIO_READ_UNTIL_DELIM  0x4
 
+#define WEVENT_FLAGS                                                                                                   \
+    unsigned destroy : 1;                                                                                              \
+    unsigned active : 1;                                                                                               \
+    unsigned pending : 1;
+
+#define WEVENT_FIELDS                                                                                                  \
+    wloop_t         *loop;                                                                                             \
+    wevent_type_e    event_type;                                                                                       \
+    uint64_t         event_id;                                                                                         \
+    wevent_cb        cb;                                                                                               \
+    void            *userdata;                                                                                         \
+    void            *privdata;                                                                                         \
+    struct wevent_s *pending_next;                                                                                     \
+    int              priority;                                                                                         \
+    WEVENT_FLAGS
+
+// sizeof(struct wevent_s)=64 on x64
+struct wevent_s
+{
+    WEVENT_FIELDS
+};
+
 ARRAY_DECL(wio_t *, io_array)
 QUEUE_DECL(wevent_t, event_queue)
 
@@ -72,7 +94,7 @@ struct wloop_s
     // ios: with fd as array.index
     struct io_array ios;
     uint32_t        nios;
-    // one loop per thread, so one readbuf per loop is OK. operates on large mode by default.
+    // Worker-owned buffer pool used by this loop's I/O handles.
     buffer_pool_t *bufpool;
     void          *iowatcher;
 #ifdef EVENT_IOCP
@@ -117,7 +139,8 @@ struct widle_s
     struct list_node quiesced_node;                                                                                    \
     generic_pool_t  *allocation_pool;                                                                                  \
     unsigned         quiesced : 1;                                                                                     \
-    unsigned         pending_reset : 1;
+    unsigned         pending_reset : 1;                                                                                \
+    unsigned         exact_deadline : 1;
 
 struct wtimer_s
 {
@@ -197,6 +220,7 @@ struct wio_s
     uint64_t last_write_hrtime;
     // read
     unsigned int read_flags;
+    uint32_t     tcp_read_min_payload; // Minimum ordinary TCP read capacity for this descriptor.
     // write
     struct write_queue write_queue;
     // wrecursive_mutex_t  write_mutex; // lock write and write_queue
@@ -224,8 +248,8 @@ struct wio_s
     wtimer_t             *heartbeat_timer;
 
 // private:
-#if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
-    int event_index[2]; // for poll,kqueue
+#ifdef EVENT_POLL
+    int event_index[2]; // for poll
 #endif
 
 #ifdef EVENT_IOCP
@@ -238,6 +262,7 @@ struct wio_s
     struct woverlapped_s *iocp_posted_tail;
     struct woverlapped_s *iocp_completed_head; // FIFO: dequeued, awaiting dispatch
     struct woverlapped_s *iocp_completed_tail;
+    struct woverlapped_s *iocp_held_recv;    // one successful receive or EOF awaiting flow-control Resume
     struct woverlapped_s *iocp_send_active;  // sole TCP send, posted or locally dispatching
     uint32_t              iocp_live_records; // records holding this wio_t alive
     uint32_t              iocp_posted_count; // records currently posted to the kernel
@@ -254,6 +279,7 @@ struct wio_s
     unsigned  iocp_pending_dispatch : 1;  // generic pending loop still holds its cursor
     unsigned  iocp_close_in_progress : 1; // wioClose still owns a stack reference
     unsigned  iocp_associated : 1;        // socket handle is already bound to this loop's IOCP
+    unsigned  iocp_read_paused : 1;
 #endif
 };
 /*
@@ -271,7 +297,6 @@ struct wio_s
 void     wioInit(wio_t *io);
 void     wioReady(wio_t *io);
 void     wioDone(wio_t *io);
-void     wioFree(wio_t *io);
 uint32_t wioSetNextID(void);
 // Return a closed, detached WIO after all callback/IOCP references have retired.
 void wioFinalizeNow(wio_t *io);

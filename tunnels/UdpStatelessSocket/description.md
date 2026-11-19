@@ -5,18 +5,22 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 # UdpStatelessSocket Node
 
+> **Deprecated: will be removed soon.** Existing configurations still work, and each instance logs a deprecation warning at startup. For new configurations, use [UdpListener](../UdpListener/description.md) for incoming UDP or [UdpConnector](../UdpConnector/description.md) for outgoing UDP.
+>
+> These nodes have different settings and are not always direct replacements: `UdpStatelessSocket` can send to arbitrary destinations through the same bound UDP socket without first receiving traffic from those destinations. Check whether your chain depends on that behavior before replacing it.
+
 ## Overview
 
 `UdpStatelessSocket` is a UDP chain-head adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
 
-It exists primarily to support components such as `WireGuardDevice`, which need one UDP socket that can both send to configured peers and accept packets from peers that contact the socket first.
+It supports UDP chain heads that send datagrams and accept inbound peer flows.
 
 ## Typical placement
 
 The supported layout starts with `UdpStatelessSocket`:
 
 ```text
-UdpStatelessSocket -> WireGuardDevice -> packet side node
+UdpStatelessSocket -> datagram consumer
 ```
 
 Head-only placement is the current design decision, not a temporary restriction. A previous node or a missing next node is rejected at startup. Tail placement and downstream peer initialization are disabled.
@@ -26,8 +30,8 @@ Head-only placement is the current design decision, not a temporary restriction.
 
 ## Minimal practical example
 
-This is a **node fragment**, not a complete config. Put it in a config's `nodes`
-array and connect the neighboring nodes shown above.
+This **node fragment** is retained as a reference for existing configurations using
+the deprecated node. It is not a complete config or a recommendation for new chains.
 
 ```json
 {
@@ -41,8 +45,9 @@ array and connect the neighboring nodes shown above.
 }
 ```
 
-Configure `wg` as your WireGuard node, including its keys, peers, and packet
-side. This fragment only selects the local UDP bind endpoint.
+In this existing configuration, `wg` refers to a `WireGuardServer` node with its
+own keys, peers, and packet side. This fragment only selects the local UDP bind
+endpoint. New WireGuard server configurations should use `UdpListener`.
 
 ## Configuration
 
@@ -153,7 +158,7 @@ The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `
 
 With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 
-The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry. WireGuard hostname peer endpoints still use separate synchronous startup resolution.
+The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry.
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
@@ -186,7 +191,7 @@ omit them unless the interface, address, and routing policy are configured.
 
 ### Notes And Caveats
 
-- `UdpStatelessSocket` is intended for UDP edge traffic, especially around `WireGuardDevice`.
+- `UdpStatelessSocket` accepts UDP edge traffic.
 - For non-owned lines, the tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
 - For packet lines, unresolved domain sends snapshot the domain and port for that datagram before resolving, because packet-line routing context is scratch metadata.
 - Received UDP peers get distinct normal lines; packet lines are not destroyed during runtime.
@@ -225,7 +230,7 @@ Received datagrams always enter from the head and are forwarded upstream toward 
 When payload is sent through `UdpStatelessSocket`:
 
 - if the line was created for an inbound peer, the datagram is sent back to that stored peer endpoint
-- otherwise, the tunnel reads the destination address from `l->routing_context.dest_ctx`
+- otherwise, the tunnel reads the destination address from `lineGetDestinationAddressContext(l)`
 - with local resolution enabled, an unresolved hostname is looked up asynchronously if no cached answer is available;
   with resolution disabled, that datagram is dropped
 - async results are cached by domain, port, and strategy for 30 minutes in a fixed 256-entry FIFO. Existing keys
@@ -246,7 +251,7 @@ count; there is no timer-driven summary. The line remains open. These warnings
 require the DNS logger's WARN level, not `verbose`. Normal cache operations do
 not produce them.
 
-This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.
+Inbound peers retain distinct return paths.
 
 #### Listener and connector role
 
@@ -255,7 +260,7 @@ Although the implementation always binds a local UDP socket, the tunnel can act 
 - it can receive packets from arbitrary peers like a listener
 - it can also send packets to a chosen peer like a connector
 
-That combination is why it is useful for `WireGuardDevice`, where the device may need to initiate contact to a peer or receive the first packet from a peer using the same stateless UDP socket.
+This adapter serves protocols that need shared-socket datagrams and distinct inbound peer lifetimes.
 
 #### Chain integration
 

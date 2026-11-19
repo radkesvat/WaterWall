@@ -37,6 +37,97 @@ bool connectionfisherclientSyncMainSource(tunnel_t *t, line_t *main_l)
                   : lineCallWithRef(main_l, tunnelPrevDownStreamResume, t);
 }
 
+static void cancelCloseDrain(close_drain_t *drain, const char *reason)
+{
+    connectionfisherclient_lstate_t *ls = container_of(drain, connectionfisherclient_lstate_t, close_drain);
+    LOGW("ConnectionFisherClient: %s with %zu undelivered upstream bytes",
+         reason,
+         bufferqueueGetLength(&ls->pending_up));
+    connectionfisherclientCloseChildLine(ls->drain_tunnel, ls->drain_line, false);
+}
+
+static void closeDrainExpired(close_drain_t *drain)
+{
+    cancelCloseDrain(drain, "close drain timed out");
+}
+
+void connectionfisherclientQuiesceDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard                          context;
+    connectionfisherclient_tstate_t *ts = tunnelGetState(t);
+    assert(currentThreadOwnsWorker(wid));
+    for (close_drain_t *drain = ts->drains[wid]; drain != NULL; drain = drain->next)
+        closeDrainCancelTimer(drain);
+}
+
+void connectionfisherclientStopDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard                          context;
+    connectionfisherclient_tstate_t *ts = tunnelGetState(t);
+    assert(currentThreadOwnsWorker(wid));
+    while (ts->drains[wid] != NULL)
+        cancelCloseDrain(ts->drains[wid], "worker stopped during close drain");
+}
+
+void connectionfisherclientSetReplyPaused(tunnel_t *t, line_t *child, bool paused)
+{
+    connectionfisherclient_lstate_t *ls = lineGetState(child, t);
+    ls->reply_paused                    = paused;
+    if (paused)
+        tunnelNextUpStreamPause(t, child);
+    else
+        tunnelNextUpStreamResume(t, child);
+}
+
+void connectionfisherclientPumpClose(tunnel_t *t, line_t *child)
+{
+    connectionfisherclient_lstate_t *ls = lineGetState(child, t);
+    if (! closeDrainIsActive(&ls->close_drain) || ls->handoff_depth != 0)
+        return;
+
+    wloop_t *loop = getWorkerLoop(lineGetWID(child));
+    lineRef(child);
+    ++ls->handoff_depth;
+    while (lineIsAlive(child) && closeDrainIsActive(&ls->close_drain))
+    {
+        if (bufferqueueGetEntryCount(&ls->pending_up) == 0)
+        {
+            connectionfisherclientCloseChildLine(t, child, false);
+            break;
+        }
+        if (closeDrainTimeRemaining(&ls->close_drain) == 0 || ! wloopNormalDispatchAllowed(loop))
+        {
+            cancelCloseDrain(&ls->close_drain, "close drain deadline or worker admission ended");
+            break;
+        }
+        if (ls->next_paused)
+        {
+            --ls->handoff_depth;
+            if (! closeDrainArm(&ls->close_drain, loop))
+                cancelCloseDrain(&ls->close_drain, "close drain timer refused");
+            break;
+        }
+        tunnelNextUpStreamPayload(t, child, bufferqueuePopFront(&ls->pending_up));
+    }
+    lineUnref(child);
+}
+
+bool connectionfisherclientForwardToChild(tunnel_t *t, line_t *child, sbuf_t *buf)
+{
+    connectionfisherclient_lstate_t *ls = lineGetState(child, t);
+    lineRef(child);
+    ++ls->handoff_depth;
+    tunnelNextUpStreamPayload(t, child, buf);
+    if (lineIsAlive(child) && ls->role == kConnectionFisherClientRoleChild)
+    {
+        --ls->handoff_depth;
+        connectionfisherclientPumpClose(t, child);
+    }
+    const bool alive = lineIsAlive(child);
+    lineUnref(child);
+    return alive;
+}
+
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l)
 {
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
@@ -52,7 +143,7 @@ bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, l
         if (child_ls->next_paused || bufferqueueGetEntryCount(&main_ls->pending_up) == 0)
             break;
         sbuf_t *buf = bufferqueuePopFront(&main_ls->pending_up);
-        tunnelNextUpStreamPayload(t, child_l, buf);
+        discard connectionfisherclientForwardToChild(t, child_l, buf);
     }
     bool alive = lineIsAlive(main_l) && lineIsAlive(child_l) && main_ls->role == kConnectionFisherClientRoleMain &&
                  main_ls->selected_child == child_l;
@@ -86,6 +177,28 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
 
     line_t **children    = main_ls->child_lines;
     uint32_t child_count = main_ls->child_count;
+    line_t  *winner      = NULL;
+    if (! send_downstream_finish && main_ls->selected_child != NULL)
+    {
+        connectionfisherclient_lstate_t *child_ls = lineGetState(main_ls->selected_child, t);
+        if (child_ls->child_handshake_complete)
+        {
+            winner = main_ls->selected_child;
+            lineRef(winner);
+            children[child_ls->child_slot] = NULL;
+            child_ls->main_line            = NULL;
+            lineUnref(main_l); // The winning child's persistent reference.
+            child_ls->pending_up = main_ls->pending_up;
+            bufferqueueInitEmpty(&main_ls->pending_up);
+            bufferstreamDestroy(&child_ls->read_stream);
+            child_ls->read_stream               = (buffer_stream_t) {0};
+            child_ls->drain_tunnel              = t;
+            child_ls->drain_line                = winner;
+            connectionfisherclient_tstate_t *ts = tunnelGetState(t);
+            ++child_ls->handoff_depth; // Block Resume reentry until all candidates are retired.
+            closeDrainBegin(&child_ls->close_drain, &ts->drains[lineGetWID(winner)], closeDrainExpired);
+        }
+    }
 
     /* Closing one child calls into the shared next-side tunnel and may
      * synchronously close another child.  Retain the whole authoritative
@@ -123,6 +236,22 @@ static void connectionfisherclientCloseMainLineInternal(tunnel_t *t, line_t *mai
         }
 
         memoryFree(children);
+    }
+
+    if (winner != NULL)
+    {
+        if (lineIsAlive(winner))
+        {
+            connectionfisherclient_lstate_t *child_ls = lineGetState(winner, t);
+            if (child_ls->reply_paused && bufferqueueGetEntryCount(&child_ls->pending_up) != 0)
+                connectionfisherclientSetReplyPaused(t, winner, false);
+            if (lineIsAlive(winner))
+            {
+                --child_ls->handoff_depth;
+                connectionfisherclientPumpClose(t, winner);
+            }
+        }
+        lineUnref(winner);
     }
 
     if (send_downstream_finish && lineIsAlive(main_l))
@@ -294,19 +423,19 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         if (lineIsEstablished(child_l))
         {
             connectionfisherclientTunnelDownStreamEst(t, child_l);
-            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l) || child_ls->main_line != main_l)
                 goto cleanup;
         }
         if (child_ls->next_paused)
         {
             connectionfisherclientTunnelDownStreamPause(t, child_l);
-            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l) || child_ls->main_line != main_l)
                 goto cleanup;
         }
         if (main_ls->prev_paused)
         {
-            tunnelNextUpStreamPause(t, child_l);
-            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+            connectionfisherclientSetReplyPaused(t, child_l, true);
+            if (! lineIsAlive(main_l) || ! lineIsAlive(child_l) || child_ls->main_line != main_l)
                 goto cleanup;
         }
     }
@@ -324,7 +453,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         }
     }
 
-    if (! lineIsAlive(main_l) || ! lineIsAlive(child_l))
+    if (! lineIsAlive(main_l) || ! lineIsAlive(child_l) || child_ls->main_line != main_l)
     {
         goto cleanup;
     }
@@ -343,7 +472,7 @@ bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l)
         {
             goto cleanup;
         }
-        if (! lineIsAlive(child_l))
+        if (! lineIsAlive(child_l) || child_ls->main_line != main_l)
             goto cleanup;
     }
     if (child_ls->child_handshake_complete)

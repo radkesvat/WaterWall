@@ -2,6 +2,7 @@
  * TCP/UDP/options, empty payloads, loss/reordering, fresh nonces, directional
  * authentication, repair intent, address rewriting, UDP-zero policy and bounds.
  * CTest: waterwall.encryption_packet_unit. No sockets or stream framing. */
+#include "EncryptionCommon/kdf.h"
 #include "EncryptionCommon/packet.h"
 #include "test_assert.h"
 
@@ -265,6 +266,29 @@ static void testAdmissionAndLimits(void)
     }
 }
 
+static void testBaseKeyVectors(void)
+{
+    static const char    password[]     = "encryption-kdf-vector";
+    static const char    salt[]         = "chain-a";
+    static const uint8_t stream_key[32] = {
+        0x08, 0x9f, 0x48, 0x75, 0xc5, 0x96, 0x45, 0x5d, 0xc0, 0x1f, 0x50, 0xdc, 0x69, 0xa7, 0xde, 0x4e,
+        0xfc, 0x20, 0x1f, 0x2c, 0x12, 0xc6, 0x4d, 0x75, 0xca, 0xaa, 0x93, 0xb4, 0xd0, 0x97, 0x5a, 0x16,
+    };
+    static const uint8_t packet_key[32] = {
+        0xa7, 0xb8, 0xf0, 0x9f, 0x94, 0xfd, 0xbc, 0xee, 0x5f, 0xfc, 0x9d, 0x12, 0x7d, 0x1e, 0xd0, 0xb2,
+        0xb1, 0x6a, 0x65, 0x85, 0x68, 0x88, 0x54, 0xc2, 0x2b, 0x74, 0xe3, 0x1c, 0x82, 0x07, 0xe4, 0x77,
+    };
+    uint8_t key[32];
+    require(encryptionDeriveBaseKey(password, sizeof(password) - 1, salt, sizeof(salt) - 1, 3, false, key) ==
+                    kWCryptoOk &&
+                memoryEqual(key, stream_key, sizeof(key)),
+            "stream base-key vector mismatch");
+    require(encryptionDeriveBaseKey(password, sizeof(password) - 1, salt, sizeof(salt) - 1, 3, true, key) ==
+                    kWCryptoOk &&
+                memoryEqual(key, packet_key, sizeof(key)),
+            "packet base-key vector mismatch");
+}
+
 int main(void)
 {
     testCaseSet("encryption_packet_test");
@@ -273,9 +297,18 @@ int main(void)
     require(globalstateInitializeSecureRandom(), "secure RNG initialization failed");
     require(frandGlobalInit(), "random generator initialization failed");
     frandInit();
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
     const uint8_t base_key[32] = {1, 2, 3, 4, 5};
-    require(encryptionPacketDeriveKeys(base_key, upload_key, download_key) &&
+    const uint8_t zero_key[32] = {0};
+    memset(upload_key, 0xff, sizeof(upload_key));
+    memset(download_key, 0xff, sizeof(download_key));
+    require(encryptionPacketDeriveKeys(base_key, upload_key, download_key) == kWCryptoInvalidState &&
+                memoryEqual(upload_key, zero_key, sizeof(upload_key)) &&
+                memoryEqual(download_key, zero_key, sizeof(download_key)),
+            "packet key derivation lost the crypto failure status or left key bytes set");
+
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
+    TEST_RUN_CASE(testBaseKeyVectors);
+    require(encryptionPacketDeriveKeys(base_key, upload_key, download_key) == kWCryptoOk &&
                 ! memoryEqual(upload_key, download_key, 32),
             "direction keys not independent");
     TEST_RUN_CASE(testRoundTrips);

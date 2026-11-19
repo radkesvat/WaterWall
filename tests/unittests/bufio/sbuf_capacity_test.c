@@ -342,58 +342,45 @@ static void testCreateRejectsUnrepresentableRequest(void)
 }
 
 /*
- * BufferPool sizes its two buffer classes through the same helper.
+ * BufferPool sizes its ordinary buffer tiers through the same helper.
  *
  * It used to round them with its own copy of the 32-bit arithmetic, which
  * wrapped the same way: a size within a cache line of UINT32_MAX became 0, and
  * bufferpoolCreate() returned a pool whose buffers were empty but whose
  * reported size satisfied every later bounds check.
  *
- * bufferpoolCreate() is nullable, so an unrepresentable size is rejected before
+ * bufferpoolCreate() is nullable, so a zero or unrepresentable size is rejected before
  * the pool or its callbacks are published. Each parameter is checked on its own.
  */
 static void requirePoolCreateRejects(uint32_t large_buffer_size, uint32_t medium_buffer_size,
-                                     uint32_t small_buffer_size, const char *which)
+                                     uint32_t small_buffer_size, const char *message)
 {
-    master_pool_t *large_master = masterpoolCreateWithCapacity(64);
-    master_pool_t *small_master = masterpoolCreateWithCapacity(64);
-    master_pool_t *medium_master = masterpoolCreateWithCapacity(64);
-    master_pool_t *splice_master = masterpoolCreateWithCapacity(64);
-    require(large_master != NULL && small_master != NULL, "failed to create buffer-pool masters");
+    master_pool_t *masters[3];
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
+        masters[i] = masterpoolCreateWithCapacity(64);
 
-    buffer_pool_t *pool     = bufferpoolCreate(large_master,
-                                           medium_master,
-                                           small_master,
-                                           1,
-                                           large_buffer_size,
-                                           medium_buffer_size,
-                                           small_buffer_size,
-                                           min((uint32_t) (large_buffer_size), (uint32_t) SPLICE_PAYLOAD_LIMIT),
-                                           large_buffer_size);
-    const bool     rejected = pool == NULL;
-    if (pool != NULL)
+    const MasterPoolItemCreateHandle  create_before  = masters[0]->create_item_handle;
+    const MasterPoolItemDestroyHandle destroy_before = masters[0]->destroy_item_handle;
+    buffer_pool_t                    *pool           = bufferpoolCreate(
+        masters[0], masters[1], masters[2], 1, large_buffer_size, medium_buffer_size, small_buffer_size, 8192, 8192);
+
+    require(pool == NULL, message);
+    for (size_t i = 0; i < ARRAY_SIZE(masters); ++i)
     {
-        bufferpoolDestroy(pool);
+        require(masters[i]->create_item_handle == create_before && masters[i]->destroy_item_handle == destroy_before,
+                "rejected buffer pool replaced the master callbacks");
+        masterpoolDestroy(masters[i]);
     }
-    masterpoolMakeEmpty(large_master);
-    masterpoolMakeEmpty(small_master);
-    masterpoolMakeEmpty(medium_master);
-    masterpoolMakeEmpty(splice_master);
-    masterpoolDestroy(large_master);
-    masterpoolDestroy(small_master);
-    masterpoolDestroy(medium_master);
-    masterpoolDestroy(splice_master);
-
-    char message[128];
-    snprintf(message, sizeof(message), "bufferpoolCreate() accepted an unrepresentable %s buffer size", which);
-    require(rejected, message);
 }
 
-static void testPoolRejectsUnrepresentableBufferSizes(void)
+static void testPoolRejectsInvalidBufferSizes(void)
 {
-    requirePoolCreateRejects(UINT32_MAX, 4096, 1024, "large");
-    requirePoolCreateRejects(8192, UINT32_MAX, 1024, "medium");
-    requirePoolCreateRejects(8192, 4096, UINT32_MAX, "small");
+    requirePoolCreateRejects(0, 4096, 1024, "pool accepted a zero-capacity large tier");
+    requirePoolCreateRejects(8192, 0, 1024, "pool accepted a zero-capacity medium tier");
+    requirePoolCreateRejects(8192, 4096, 0, "pool accepted a zero-capacity small tier");
+    requirePoolCreateRejects(UINT32_MAX, 4096, 1024, "pool accepted an unrepresentable large tier");
+    requirePoolCreateRejects(8192, UINT32_MAX, 1024, "pool accepted an unrepresentable medium tier");
+    requirePoolCreateRejects(8192, 4096, UINT32_MAX, "pool accepted an unrepresentable small tier");
 }
 
 /*
@@ -507,7 +494,7 @@ int main(void)
     testFullAllocationMustFitInSizeT();
     testCreateRejectsUnrepresentableRequest();
     testPoolRoundsRepresentableBufferSizes();
-    testPoolRejectsUnrepresentableBufferSizes();
+    testPoolRejectsInvalidBufferSizes();
     testGenericPoolItemSize();
     puts("sbuf capacity boundary tests passed");
     return 0;

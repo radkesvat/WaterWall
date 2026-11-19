@@ -46,3 +46,10 @@ typedef enum flow_affinity_direction_e
  * first closes the exact packet worker lane and discards its pending payloads;
  * existing task/cancel tokens settle before destruction. */
 tunnel_t *flowAffinityTunnelCreate(flow_affinity_direction_t direction);
+
+/* Opaque generation carried through deferred unfragmented packet delivery.
+ * Configure before publication. Fragmented tagged input is refused; callers
+ * needing reassembly must complete it before capturing a generation. */
+typedef void (*packet_affinity_tagged_fn)(tunnel_t *, line_t *, sbuf_t *, uint64_t);
+void packetAffinitySetTaggedContinuation(packet_affinity_t *affinity, packet_affinity_tagged_fn continuation);
+void packetAffinityForwardTagged(packet_affinity_t *affinity, line_t *source_line, sbuf_t *buf, uint64_t token);

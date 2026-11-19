@@ -49,7 +49,9 @@ struct enet_association_s
     bool                owned_init_entered; /* Init was sent on the line this node created */
     bool                carrier_finished;   /* the carrier's neighbour finished it, or was told it is finished */
     bool                carrier_established;
+    bool                application_established;
     bool                carrier_paused;
+    bool                application_paused;
 };
 
 static void endpointLinestateDestroy(enet_endpoint_lstate_t *ls)
@@ -135,7 +137,8 @@ static void serverPromote(enet_association_t *a)
     enet_session_t *session = a->session;
     enetSessionRetain(session);
     lineRef(service);
-    a->owned_init_entered = true;
+    const bool pending_est = a->carrier_established;
+    a->owned_init_entered  = true;
     ts->output->init_owned(t, service);
     bool attached = lineIsAlive(service) && a->application == service;
     if (attached && a->carrier_paused)
@@ -144,7 +147,8 @@ static void serverPromote(enet_association_t *a)
         ts->output->application_pause(t, service);
         attached = lineIsAlive(service) && a->application == service;
     }
-    if (attached && a->carrier_established)
+    /* An Est first received during Init or Pause already reached this service. */
+    if (attached && pending_est)
     {
         ts->output->application_est(t, service);
     }
@@ -384,8 +388,9 @@ void enetEndpointApplicationEst(tunnel_t *t, line_t *line)
     assert(ls->role == kEnetApplicationLine && ls->association != NULL);
     enet_association_t           *a  = ls->association;
     const enet_endpoint_tstate_t *ts = tunnelGetState(t);
-    if (ts->output->carrier_est != NULL && ! a->carrier_finished)
+    if (ts->output->carrier_est != NULL && ! a->carrier_finished && ! a->application_established)
     {
+        a->application_established = true;
         endpointSignal(t, a->carrier, ts->output->carrier_est);
     }
 }
@@ -397,6 +402,10 @@ void enetEndpointCarrierEst(tunnel_t *t, line_t *line)
     enet_association_t           *a  = ls->association;
     const enet_endpoint_tstate_t *ts = tunnelGetState(t);
     /* Transport readiness, not protocol readiness. A server remembers it for a service that does not exist yet. */
+    if (a->carrier_established)
+    {
+        return;
+    }
     a->carrier_established = true;
     if (a->session != NULL && a->application != NULL)
     {
@@ -413,6 +422,7 @@ void enetEndpointSetApplicationPaused(tunnel_t *t, line_t *line, bool paused)
     /* The stream's consumer is full or ready again: stop or restart datagram ingress at the UDP adapter. */
     if (! a->carrier_finished)
     {
+        a->application_paused = paused;
         endpointSignal(t, a->carrier, paused ? ts->output->carrier_pause : ts->output->carrier_resume);
     }
 }
@@ -455,6 +465,12 @@ void enetEndpointApplicationFinish(tunnel_t *t, line_t *line)
     else
     {
         enetSessionAppFinish(session);
+        /* A detached application cannot release its read hold. Admit ACKs for the remaining drain. */
+        if (enetSessionIsAlive(session) && a->application_paused && endpointAdmissionOpen(ts, a->wid))
+        {
+            a->application_paused = false;
+            endpointSignal(t, a->carrier, ts->output->carrier_resume);
+        }
     }
     enetSessionRelease(session);
 }

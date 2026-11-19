@@ -158,6 +158,7 @@ void wioReady(wio_t *io)
     io->last_read_hrtime = io->last_write_hrtime = io->loop->cur_hrtime;
 
     io->read_flags = 0;
+    io->tcp_read_min_payload = 1;
     // write_queue
     io->write_bufsize     = 0;
     io->max_write_bufsize = MAX_WRITE_BUFSIZE;
@@ -183,7 +184,7 @@ void wioReady(wio_t *io)
     io->heartbeat_timer    = NULL;
 
     // private:
-#if defined(EVENT_POLL) || defined(EVENT_KQUEUE)
+#ifdef EVENT_POLL
     io->event_index[0] = io->event_index[1] = -1;
 #endif
 #ifdef EVENT_IOCP
@@ -209,6 +210,8 @@ void wioReady(wio_t *io)
     io->iocp_pending_dispatch                         = 0;
     io->iocp_close_in_progress                        = 0;
     io->iocp_associated                               = 0;
+    io->iocp_read_paused                              = 0;
+    assert(io->iocp_held_recv == NULL);
 #endif
 
     // io_type
@@ -338,6 +341,23 @@ void wioFinalizeNow(wio_t *io)
 }
 #endif
 
+int wioCloseWithError(wio_t *io, int error)
+{
+    assert(error != 0);
+    io->error = error;
+    return wioClose(io);
+}
+
+void wioSetContext(wio_t *io, void *ctx)
+{
+    weventSetUserData(io, ctx);
+}
+
+void *wioGetContext(wio_t *io)
+{
+    return weventGetUserdata(io);
+}
+
 bool wioIsOpened(wio_t *io)
 {
     if (io == NULL)
@@ -375,14 +395,33 @@ void wioSetPeerWriteShutdownDetection(wio_t *io, bool enabled)
     io->detect_peer_write_shutdown = enabled;
 }
 
+void wioPauseTcpRead(wio_t *io)
+{
+    assert(io->io_type == WIO_TYPE_TCP);
+#ifdef EVENT_IOCP
+    /* Withdrawing interest would cancel a WSARecv that may already own bytes. */
+    io->iocp_read_paused = 1;
+#else
+    discard wioReadStop(io);
+#endif
+}
+
 void wioHandleReadEOF(wio_t *io)
 {
-    if (io->read_eof)
-        return;
+    if (! io->read_eof)
+    {
+        io->read_eof = 1;
+        if (io->detect_peer_write_shutdown && io->error == 0)
+            io->peer_write_shutdown = tcpSocketPeerHasWriteShutdown(wioGetFD(io));
+    }
 
-    io->read_eof = 1;
-    if (io->detect_peer_write_shutdown && io->error == 0)
-        io->peer_write_shutdown = tcpSocketPeerHasWriteShutdown(wioGetFD(io));
+    if (io->io_type & WIO_TYPE_SOCK_STREAM)
+    {
+        // EOF stays readable on readiness backends. An existing graceful drain owns the write interest and timeout.
+        wioReadStop(io);
+        if (! io->close || io->peer_write_shutdown || io->error != 0)
+            wioClose(io);
+    }
 }
 
 uint32_t wioGetID(wio_t *io)

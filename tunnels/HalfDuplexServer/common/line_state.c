@@ -11,6 +11,7 @@ void halfduplexserverLinestateInitialize(halfduplexserver_lstate_t *ls)
 void halfduplexserverLinestateDestroy(halfduplexserver_lstate_t *ls)
 {
     assert(ls->buffering == NULL);
+    closeDrainEnd(&ls->close_drain);
     sbuf_t *initial     = ls->startup_initial;
     ls->startup_initial = NULL;
     if (initial != NULL)

@@ -1,16 +1,32 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void halfduplexclientLinestateInitialize(halfduplexclient_lstate_t *ls, line_t *main_line)
+halfduplexclient_pair_t *halfduplexclientCreatePair(tunnel_t *t, line_t *main)
 {
-    *ls = (halfduplexclient_lstate_t) {
-        .download_line = NULL, .upload_line = NULL, .main_line = main_line, .first_packet_sent = false};
-    bufferqueueInitEmpty(&ls->pending_up);
+    halfduplexclient_pair_t *pair = memoryAllocate(sizeof(*pair));
+    *pair = (halfduplexclient_pair_t) {.tunnel = t, .main = main, .pool = lineGetBufferPool(main), .refs = 1};
+    bufferqueueInitEmpty(&pair->pending);
+    halfduplexclientSetPair(t, main, pair);
+    return pair;
 }
 
-void halfduplexclientLinestateDestroy(halfduplexclient_lstate_t *ls)
+// The association owns one reference through its last Finish notification.
+// Frames which continue across a neighbor callback hold a temporary reference.
+void halfduplexclientReleasePair(halfduplexclient_pair_t *pair)
 {
-    bufferqueueDestroy(&ls->pending_up);
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(halfduplexclient_lstate_t)));
+    assert(pair->refs != 0);
+    if (--pair->refs == 0)
+    {
+        assert(pair->ending && pair->main == NULL && pair->upload == NULL && pair->download == NULL);
+        memoryFree(pair);
+    }
+}
+
+void halfduplexclientDiscardUpload(halfduplexclient_pair_t *pair)
+{
+    if (pair->upload_intro != NULL)
+    {
+        bufferpoolReuseBuffer(pair->pool, pair->upload_intro);
+        pair->upload_intro = NULL;
+    }
+    bufferqueueDestroy(&pair->pending);
 }

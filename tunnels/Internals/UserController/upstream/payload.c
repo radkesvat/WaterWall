@@ -4,7 +4,13 @@
 
 void usercontrollerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    usercontroller_lstate_t *ls = lineGetState(l, t);
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(t, l);
+
+    if (ls->phase != kUserControllerOpen)
+    {
+        lineReuseBuffer(l, buf);
+        return;
+    }
 
     if (ls->managed)
     {

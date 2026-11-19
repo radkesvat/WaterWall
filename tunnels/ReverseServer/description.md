@@ -173,8 +173,14 @@ After pairing:
 
 - reverse-side payload is forwarded to the local side
 - local-side payload is forwarded to the reverse side
-- finish events close the peer half as well
 - pause and resume are forwarded across the pair
+
+After an orderly paired Finish, the surviving half owns queued application bytes
+that were accepted for it. The activation prefix, if still pending for that
+half, precedes body bytes, and application output waits for its Resume. The
+survivor stays with its original peer through delivery and receives one Finish.
+New connections continue to wait for a match. Receiver closure, worker shutdown
+or 30 seconds from the source Finish cancels any remainder.
 
 Buffered application bytes preserve FIFO order during activation and initial replay.
 Retained application output waits for Resume when its consumer is paused; ready
@@ -213,8 +219,8 @@ ReverseServer materializes each complete splice payload into ordinary memory in
 both directions while the half is unpaired. This covers handshake validation,
 handshake removal, waiting FIFOs and replay when pairing moves to another
 worker. Handshake completion alone does not end materialization: waiting storage
-remains ordinary until pairing completes. Initial replay and input queued behind
-startup backlog also use ordinary storage. Ready paired payloads pass through
+remains ordinary until pairing completes. Initial replay and application input queued behind older bytes or receiver Pause
+also use ordinary storage. Ready paired payloads pass through
 unchanged in both directions.
 
 The internal PipeTunnel shares ReverseServer's splice capability and transfers

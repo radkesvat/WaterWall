@@ -16,7 +16,7 @@ void vmessclientSendDueRequest(tunnel_t *t, line_t *l)
     vmessclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kVmessClientPhaseClosed || ls->closing || ls->request_sent ||
         ! firstPayloadWindowIsDue(&ls->first_payload) ||
-        (ls->kind == kVmessClientLineKindUdpCarrier && ls->carrier_paused) || ls->est_notifying ||
+        (ls->kind == kVmessClientLineKindUdpCarrier && ls->carrier_paused) ||
         ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return;
     vmessclientTransmit(t, l);
@@ -34,35 +34,21 @@ static void firstPayloadWindowNotified(void *owner, first_payload_window_event_t
     }
 }
 
-void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls)
+void vmessclientStartNext(tunnel_t *t, line_t *l, line_t *application)
 {
-    assert(ls->phase != kVmessClientPhaseClosed);
-    assert(ls->kind != kVmessClientLineKindUdpApplication);
-    if (ls->phase == kVmessClientPhaseEstablished)
-    {
-        if (ls->kind == kVmessClientLineKindDirect)
-            tunnelPrevDownStreamEst(t, l);
-        return;
-    }
-    line_t *application = ls->kind == kVmessClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
     if (application != l)
         lineRef(application);
-    ls->phase         = kVmessClientPhaseEstablished;
-    ls->est_notifying = true;
-    if (! ls->request_sent)
-    {
-        vmessclient_tstate_t *ts = tunnelGetState(t);
-        firstPayloadWindowStart(&ls->first_payload, getWorkerLoop(lineGetWID(l)), ts->first_payload_timeout_ms);
-    }
-    tunnelPrevDownStreamEst(t, application);
+    tunnelNextUpStreamInit(t, l);
     if (vmessclientAssociationAlive(t, l, application))
     {
-        ls->est_notifying = false;
-        if (! ls->request_sent)
+        vmessclient_lstate_t *ls   = lineGetState(l, t);
+        wloop_t              *loop = getWorkerLoop(lineGetWID(l));
+        if (! ls->request_sent && wloopNormalDispatchAllowed(loop))
         {
-            switch (
-                firstPayloadWindowArm(&ls->first_payload, getWorkerLoop(lineGetWID(l)), firstPayloadWindowNotified, ls))
+            vmessclient_tstate_t *ts = tunnelGetState(t);
+            firstPayloadWindowStart(&ls->first_payload, loop, ts->first_payload_timeout_ms);
+            switch (firstPayloadWindowArm(&ls->first_payload, loop, firstPayloadWindowNotified, ls))
             {
             case kFirstPayloadWindowArmDue:
                 vmessclientSendDueRequest(t, l);
@@ -78,6 +64,16 @@ void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *
     if (application != l)
         lineUnref(application);
     lineUnref(l);
+}
+
+void vmessclientOnNextEstablished(tunnel_t *t, line_t *l, vmessclient_lstate_t *ls)
+{
+    assert(ls->phase != kVmessClientPhaseClosed);
+    assert(ls->kind != kVmessClientLineKindUdpApplication);
+    if (ls->phase == kVmessClientPhaseEstablished && ls->kind == kVmessClientLineKindUdpCarrier)
+        return;
+    ls->phase = kVmessClientPhaseEstablished;
+    tunnelPrevDownStreamEst(t, ls->kind == kVmessClientLineKindUdpCarrier ? ls->application_line : l);
 }
 
 void vmessclientSetNextPaused(tunnel_t *t, line_t *l, bool paused)

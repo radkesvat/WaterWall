@@ -211,7 +211,9 @@ or change spacing on the wire; neither mode promises TCP packet boundaries.
 
 The helper borrows the same line and uses its own bounded FIFO: 8 MiB logical
 bytes, 8 MiB capacity charge, and 1,024 jobs. Reentry, Finish, and shutdown use
-StreamFragmenter's normal ordering and cleanup. The helper releases its own
+StreamFragmenter's normal ordering and cleanup. When configured, StreamFragmenter receives the final
+TLS ciphertext as a separate handoff. StreamFragmenter discards fragments still in its queue when it
+receives Finish. The helper releases its own
 pressure at its low watermarks, and combines it with the latest received pressure before resuming its source. When
 shaping and the startup wait have finished and retained work has drained, it
 destroys its line state and permanently bypasses itself. TlsClient remains active
@@ -262,9 +264,12 @@ MiB per line, with local producer pressure set at 6 MiB and cleared at 3 MiB. Th
 local pressure or the latest received Pause is active. A received Resume cannot release local pressure, and clearing
 local pressure cannot release a received Pause. Repeated received notifications still pass through when no local hold
 blocks them. Due ciphertext drains keep their existing timing and FIFO order without
-waiting for Resume; Pause does not cancel the release timer. If the cleartext side finishes, the timer is canceled and queued client ciphertext is synchronously
-released in FIFO order, including during advisory Pause. Local state and upstream `Finish` are completed before the
-callback returns.
+waiting for Resume; Pause leaves the release timer active. After a completed handshake, cleartext `Finish`
+cancels the timer and drains older ciphertext first. TlsClient then encrypts and forwards the accepted plaintext
+remainder and FIFO in record-sized steps, including during advisory Pause. It releases TLS state and forwards
+`Finish` before returning. In ordinary TLS, BoringSSL can complete the handshake while TlsClient is handing
+its final handshake flight to the transport. A cleartext `Finish` during that handoff sends the rest of the flight
+before draining accepted plaintext. An incomplete handshake cancels the retained plaintext.
 
 After the configured application-record scope is consumed, the current shaping queue first drains completely so no later
 TLS record can overtake delayed ciphertext. While that ordering barrier is active, the node retains its local shaping
@@ -275,8 +280,8 @@ encryption and decryption remain active, so shaping retirement does not permanen
 
 During this synchronous final drain, downstream Payload, Est, Pause and Resume are discarded; none of those callbacks
 is forwarded toward the finished cleartext owner. A wire-side finish
-cancels and discards queued output and is propagated only toward cleartext. Timer allocation failure drains immediately
-in order.
+cancels and discards queued output. If cleartext is still open, it receives Finish. Timer allocation failure
+drains immediately in order.
 
 Delay shaping is rejected for internal handshake-takeover users such as `RealityClient`, because raw takeover cannot
 inherit a pending delayed TLS record. Padding-only shaping remains compatible when the takeover boundary is empty.

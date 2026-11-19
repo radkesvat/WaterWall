@@ -23,10 +23,6 @@
 #include "fixtures/worker_registry_fixture.h"
 #include "wwapi.h"
 
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-#include "WireGuardDevice/structure.h"
-#endif
-
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
  * predicates correctly report "not an event worker" and the checked
@@ -378,50 +374,7 @@ static void requireWidIsHashModWorkers(const sbuf_t *buf, const char *message)
     require((uint32_t) affinityOf(buf) == workerHashOf(buf) % getWorkersCount(), message);
 }
 
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-static wid_t    wireguard_delivered_wid;
-static unsigned wireguard_delivered_count;
 
-static void receiveWireGuardInner(tunnel_t *t, line_t *line, sbuf_t *buf)
-{
-    discard t;
-    require(lineIsOnCurrentWorker(line), "decoded WireGuard packet changed line ownership");
-    wireguard_delivered_wid = lineGetWID(line);
-    ++wireguard_delivered_count;
-    sbufDestroy(buf);
-}
-
-static void requireWireGuardKeepsWorker(sbuf_t *buf)
-{
-    tunnel_t     sink   = {.fnPayloadU = receiveWireGuardInner, .fnPayloadD = receiveWireGuardInner};
-    tunnel_t     tunnel = {.next = &sink, .prev = &sink};
-    wgd_tstate_t state  = {.tunnel = &tunnel};
-    for (wid_t current_wid = 0; current_wid < getWorkersCount(); ++current_wid)
-    {
-        testWorkerBindWID(current_wid);
-        line_t line = {
-            .wid = current_wid, .alive = true, .active_tunnels_mask = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX}};
-        for (unsigned direction = 0; direction < 2; ++direction)
-        {
-            state.transport_side_is_next = direction != 0;
-            wireguard_delivered_count    = 0;
-            wireguarddeviceForwardInnerPacket(&state, &line, sbufDuplicate(buf));
-            require(wireguard_delivered_count == 1 && wireguard_delivered_wid == current_wid,
-                    "pure WireGuard decode redistributed the inner packet");
-        }
-    }
-    testWorkerBindWID(0);
-}
-
-static void requireWireGuardKeepsMalformedHere(const uint8_t *packet, uint32_t length)
-{
-    sbuf_t *buf = sbufCreate(length);
-    sbufSetLength(buf, length);
-    memoryCopy(sbufGetMutablePtr(buf), packet, length);
-    requireWireGuardKeepsWorker(buf);
-    sbufDestroy(buf);
-}
-#endif
 
 static void testIpv4SymmetryAndFragments(void)
 {
@@ -430,20 +383,10 @@ static void testIpv4SymmetryAndFragments(void)
     require(affinityOf(forward) == affinityOf(reverse), "IPv4 TCP flow was not symmetric");
     require(fullHashOf(forward) == fullHashOf(reverse), "IPv4 TCP full flow hash was not symmetric");
 
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(forward);
-    requireWireGuardKeepsWorker(reverse);
-#endif
-
     sbuf_t *udp_forward = makeIpv4Packet(0x0A000002, 5353, 0xC6336401, 53, 17, 0);
     sbuf_t *udp_reverse = makeIpv4Packet(0xC6336401, 53, 0x0A000002, 5353, 17, 0);
     require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv4 UDP flow was not symmetric");
     require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv4 UDP full flow hash was not symmetric");
-
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(udp_forward);
-    requireWireGuardKeepsWorker(udp_reverse);
-#endif
 
     sbuf_t *first_fragment = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 0x2000);
     sbuf_t *later_fragment = makeIpv4Packet(0x0A000003, 9999, 0xCB007101, 8888, 6, 185);
@@ -454,22 +397,12 @@ static void testIpv4SymmetryAndFragments(void)
     require(fullHashOf(first_fragment) == fullHashOf(later_fragment),
             "first and later IPv4 fragments of one datagram produced different full hashes");
 
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(first_fragment);
-    requireWireGuardKeepsWorker(later_fragment);
-#endif
-
     sbuf_t *fragment_forward = makeIpv4Packet(0x0A000003, 1000, 0xCB007101, 2000, 6, 1);
     sbuf_t *fragment_reverse = makeIpv4Packet(0xCB007101, 9999, 0x0A000003, 8888, 6, 1);
     require(affinityOf(fragment_forward) == affinityOf(fragment_reverse),
             "non-initial IPv4 fragments incorrectly depended on payload bytes");
     require(fullHashOf(fragment_forward) == fullHashOf(fragment_reverse),
             "non-initial IPv4 fragment full hashes incorrectly depended on payload bytes");
-
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(fragment_forward);
-    requireWireGuardKeepsWorker(fragment_reverse);
-#endif
 
     sbufDestroy(fragment_reverse);
     sbufDestroy(fragment_forward);
@@ -491,20 +424,10 @@ static void testIpv6Symmetry(void)
     require(affinityOf(tcp_forward) == affinityOf(tcp_reverse), "IPv6 TCP flow was not symmetric");
     require(fullHashOf(tcp_forward) == fullHashOf(tcp_reverse), "IPv6 TCP full flow hash was not symmetric");
 
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(tcp_forward);
-    requireWireGuardKeepsWorker(tcp_reverse);
-#endif
-
     sbuf_t *udp_forward = makeIpv6Packet(src, 5353, dst, 53, 17);
     sbuf_t *udp_reverse = makeIpv6Packet(dst, 53, src, 5353, 17);
     require(affinityOf(udp_forward) == affinityOf(udp_reverse), "IPv6 UDP flow was not symmetric");
     require(fullHashOf(udp_forward) == fullHashOf(udp_reverse), "IPv6 UDP full flow hash was not symmetric");
-
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsWorker(udp_forward);
-    requireWireGuardKeepsWorker(udp_reverse);
-#endif
 
     sbufDestroy(udp_reverse);
     sbufDestroy(udp_forward);
@@ -529,12 +452,6 @@ static void testMalformedPacketsAndSingleWorker(void)
     require(! deviceFlowAffinityHash(garbage, sizeof(garbage), &hash), "non-IP packet hashed");
     require(! deviceFlowAffinityHash(NULL, 40, &hash), "a NULL packet was hashed");
     require(hash == UINT64_C(0xA5A5A5A5A5A5A5A5), "a rejected packet modified the output hash");
-
-#ifdef DEVICE_FLOW_AFFINITY_TEST_WIREGUARD
-    requireWireGuardKeepsMalformedHere(truncated_ipv4, sizeof(truncated_ipv4));
-    requireWireGuardKeepsMalformedHere(truncated_ipv6, sizeof(truncated_ipv6));
-    requireWireGuardKeepsMalformedHere(garbage, sizeof(garbage));
-#endif
 
     // One worker: a valid packet still selects worker zero, but a malformed one
     // is rejected rather than silently claimed, and the full hashes stay varied

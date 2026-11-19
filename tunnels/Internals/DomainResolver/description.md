@@ -398,8 +398,7 @@ therefore reach the same Router:
 
 Keep the DNS rule first. It must win before the country rule can send a
 DNS-server IP directly. This Router uses only metadata and has no root `sniffing`,
-so it chooses the route during Init without waiting for payload. That lets a TCP
-DNS line establish before c-ares writes its query.
+so it chooses the route during Init without waiting for payload.
 
 `protocol: "dest_context->protocol"` lets VlessClient carry UDP and TCP DNS as well
 as the chosen application flows. The logical destination is the DNS server or
@@ -713,6 +712,11 @@ independent policy/path.
 
 ### Runtime and Failure Behavior
 
+In `direct` and `chain` modes, c-ares can submit TCP DNS query bytes once the
+selected DNS entry's `Init` returns with the DNS line alive. A downstream
+`Pause` holds writes until `Resume`. Transport `Est` is a separate notification,
+so the DNS entry can use query bytes to choose or initialize its onward route.
+
 On upstream `Init`, the node initializes its application-line state. If DNS is
 needed, it delays the next node's `Init` until it has selected an address. It
 then forwards that Init and releases retained application payload in FIFO order.
@@ -724,8 +728,15 @@ retained allocation charge per line. The first queued input pauses its source.
 This local DNS/order hold is separate from a received Pause and does not pause
 the DNS exchange itself. FIFO drain respects consumer pressure; reentrant input
 cannot overtake older bytes. Overflow or resolution failure closes only the
-already-initialized directions. Finish destroys local state first and never
-reflects a callback toward the side that sent Finish.
+already-initialized directions. Once the next Init has returned on a normal stream, source Finish hands off the
+accepted startup FIFO synchronously in order, including during advisory Pause. If the destination finishes during
+a handoff, the resolver discards the rest. The resolver releases local state before propagating Finish and sends
+no callbacks toward the finished source.
+
+The resolver records the application transport after its prepare hook, before the next node
+can change the address metadata. A normal line with no protocol on either address uses
+stream close behavior. An explicit destination protocol takes precedence over the source.
+UDP, unsupported protocol combinations and worker packet lines discard the pending FIFO on close.
 
 Failed hard-limit admission is reported through the DNS logger: `ERROR` when
 application retention or incoming DNS transport limits close a connection, and

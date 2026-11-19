@@ -280,7 +280,6 @@ after at most 32 frames; pacing uses scheduled tasks rather than blocking sleeps
 - acts as a chain head and creates the test lines itself
 - starts `connection-count` independent normal lines during tunnel startup
 - sends an upstream `Init` to the next tunnel for each generated line
-- waits for downstream `Est` before sending speed-test frames
 - sends a protocol `HELLO`, optional upload `DATA`, `END`, and expects server reports
 - optionally receives download `DATA` from the server and checks payload bytes when verification is enabled
 - prints interval sender/receiver reports and an aggregate final summary
@@ -300,9 +299,11 @@ On start, `SpeedTestClient` schedules one startup task per requested stream. Eac
 
 The tunnel owns those generated lines and destroys them after the test completes or fails.
 
-#### Establishment and HELLO
+#### Startup and HELLO
 
-After downstream `Est`, the client sends a `HELLO` frame that tells the server:
+After the next tunnel's `Init` returns on a live line, the client sends
+`HELLO` as soon as its send side is unpaused. The local warmup and measurement
+window starts with the first `HELLO` submission. The frame carries the test settings.
 
 - protocol mode
 - requested direction

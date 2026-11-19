@@ -49,7 +49,7 @@ void *__wrap_mi_malloc(size_t size)
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocateZero(sizeof(*line));
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(*line));
     require(line != NULL, "failed to allocate test line");
     memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive = true;
@@ -59,7 +59,7 @@ static line_t *testLineCreate(void)
 static void testLineDestroy(line_t *line)
 {
     lineClearUsers(line);
-    memoryFree(line);
+    memoryFreeAligned(line);
 }
 
 static void requireStringEquals(const char *actual, const char *expected, const char *message)

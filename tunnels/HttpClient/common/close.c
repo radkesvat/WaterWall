@@ -4,6 +4,8 @@
 
 bool httpclientCloseDrainAllowed(httpclient_lstate_t *ls)
 {
+    if (ls->prev_finished && ls->h2_error_goaway)
+        return false;
     if (ls->close_drain_deadline_ms == 0 || getHRTimeUs() / 1000 < ls->close_drain_deadline_ms)
         return true;
     LOGW("HttpClient: HTTP/2 upload drain timed out");
@@ -82,12 +84,12 @@ void httpclientApplicationFinish(tunnel_t *t, line_t *application)
 
 void httpclientProgressClose(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
-    if (ls->line_role != kHttpClientLineCarrier || ! ls->prev_finished || ls->startup_in_progress || ls->h2_sending ||
-        ls->pending_up_draining || ls->receive.draining || ls->close_driving)
+    if (ls->line_role != kHttpClientLineCarrier || ls->close_drain_timer == NULL || ls->startup_in_progress ||
+        ls->h2_sending || ls->pending_up_draining || ls->receive.draining || ls->close_driving)
         return;
     lineRef(l);
     ls->close_driving = true;
-    if (! httpclientCloseDrainAllowed(ls) || (ls->h2_stream_closed && ! ls->h2_end_stream_emitted))
+    if (! httpclientCloseDrainAllowed(ls) || ls->h2_stream_failed)
         goto close;
 
     httpclient_tstate_t *ts = tunnelGetState(t);
@@ -114,10 +116,17 @@ void httpclientProgressClose(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
     }
     if (! lineIsAlive(l))
         goto done;
-    if (ls->runtime_proto == kHttpClientRuntimeHttp2 && ! ls->h2_end_stream_emitted)
-        goto waiting;
     if (ls->runtime_proto == kHttpClientRuntimeHttp2)
-        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
+    {
+        if (! ls->h2_end_stream_emitted)
+            goto waiting;
+        if (ts->stay_alive)
+        {
+            /* The upload is complete. Keep the owned session reading control frames. */
+            httpclientCancelCloseDrain(ls);
+            goto waiting;
+        }
+    }
 close:
     if (lineIsAlive(l))
         httpclientCarrierClose(t, l, false);

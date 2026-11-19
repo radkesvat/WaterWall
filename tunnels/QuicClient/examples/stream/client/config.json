@@ -17,9 +17,14 @@
         "sni": "quic.example.test",
         "verify": true,
         "ca-file": "server.crt",
-        "protocol": "h3",
-        "carrier-mode": "stream"
+        "protocol": "h3"
       },
+      "next": "udp-over-tcp"
+    },
+    {
+      "name": "udp-over-tcp",
+      "type": "UdpOverTcpClient",
+      "settings": {},
       "next": "carrier"
     },
     {

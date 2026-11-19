@@ -288,6 +288,9 @@ See [Configuration](#configuration) for defaults and conditional requirements an
 - `close-drain-timeout-ms` `(integer)`
   Fixed allowance after application Finish to drain accepted HTTP/2 uploads, including pending h2c or HTTP/2 WebSocket handshakes. Default `30000`; allowed range `1..86400000`. Traffic and progress do not extend it. It does not add a drain wait to ordinary HTTP/1.1 or split mode.
 
+- `stay-alive` `(boolean)`
+  Keeps an established HTTP/2 session open after application `Finish` and successful handoff of the final `END_STREAM`. Default `false`.
+
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol selection, handshakes, and framing flow.
   Default: `false`
@@ -453,7 +456,16 @@ The first application `Finish` starts a fixed `close-drain-timeout-ms` deadline,
 
 HTTP/2 upload pressure pauses the application above **1 MiB** of pending body bytes and resumes below **256 KiB**, provided the next transport is also ready. The provider queue additionally has hard limits of **16 MiB pending payload** and **16 MiB retained allocation charge**; exceeding either closes that connection. Allocation charge remains counted until its buffer is released, even if part of that buffer has already been sent. These are queue limits, not total upload-size limits. The separate pre-handshake queue retains its **2 MiB payload / 8 MiB allocation-charge** limits.
 
-Successful HTTP/2 draining requests a bounded TCP close linger. On Linux, TcpConnector may retain the detached socket to flush writes already accepted by the adapter and discard unread response/control bytes, then wait for peer closure. HTTP state and the owned carrier line are already released. This socket phase is separate from `close-drain-timeout-ms`; handing bytes to the next tunnel does not acknowledge receipt by the remote application.
+By default, handing the final HTTP/2 frames to the next node finishes the carrier and normally leads to a full TCP close.
+The upload deadline covers local handoff. With `"stay-alive": true`, the timer stops at handoff and the HTTP/2 session stays open.
+This models the HTTP/2 session that Chrome can keep after a tab closes. `HttpClient` still answers peer `PING` frames and
+discards any remaining response body. Each later application connection gets a new session.
+Placing `MuxClient` before `HttpClient` lets its children share one HTTP/2 stream while the mux parent is open.
+
+The peer can close the retained session. A transport error, transport idle timeout, or WaterWall shutdown also releases it.
+`TcpConnector` expires after about 600 seconds of inactivity. Traffic such as `PING` refreshes that timeout.
+In plain HTTP/2 mode, WaterWall’s `HttpServer` records the request’s `END_STREAM` and forwards `Finish` to the backend when the carrier closes.
+A backend that reads until EOF can therefore wait until timeout. A backend that finishes first still triggers a carrier close after the response.
 
 ### Upgrade behavior
 

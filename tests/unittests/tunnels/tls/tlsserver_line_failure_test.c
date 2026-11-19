@@ -23,7 +23,7 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 
 // ---------------------------------------------------------------------------
-// wtimerAdd injection
+// wtimerAddDeadline injection
 // ---------------------------------------------------------------------------
 
 static bool     g_timer_fails = false;
@@ -67,16 +67,16 @@ SSL *__wrap_SSL_new(SSL_CTX *ctx)
     return g_tls_injection && g_ssl_fails ? NULL : __real_SSL_new(ctx);
 }
 
-wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t *__real_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms);
 
-wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms)
 {
     if (g_timer_fails)
     {
         return NULL;
     }
-    return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+    return __real_wtimerAddDeadline(loop, cb, timeout_ms);
 }
 
 // ---------------------------------------------------------------------------

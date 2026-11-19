@@ -278,7 +278,7 @@ Response format:
 
 ### First payload and transport establishment
 
-`Init` prepares the destination and starts the next node without emitting a request.
+`Init` prepares the destination and initializes the next node.
 The first eligible application payload may arrive before transport `Est`, during its
 callback, or after Pause. It is sent immediately with the complete request
 in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
@@ -289,7 +289,9 @@ initial request when it is the first application payload.
 
 Every direct TCP transport `Est` reaches the live application, including repeats,
 independently of protocol data and Pause. UDP carrier Est maps to its application
-once. If the request remains unsent, its first-payload deadline starts at the first Est.
+once. If the request remains unsent after the next node's `Init` returns and the line is
+still alive, the client starts its first-payload deadline. In UDP mode this is the
+TCP carrier's `Init`.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
 Paused time counts. On direct TCP, expiry sends one header-only request even after

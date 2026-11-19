@@ -28,12 +28,8 @@ WW_EXPORT void usercontrollerSetPayloadModeResolver(tunnel_t *controller, tunnel
  * passes through unmanaged at first; once the node resolves the peer to a user it
  * records it with `lineAddUser()` and calls this function to apply the limits.
  *
- * The canonical case is a `WireGuardDevice` doing database-backed peer auth. Its
- * next side is packet lines (one per worker), so it cannot place a UserController
- * after itself the way `Socks5Server`/`TrojanServer` do; instead it inserts the
- * UserController on its prev side and promotes the per-peer line here:
- *
- *     UdpStatelessSocket -> UserController -> WireGuardDevice -> TunDevice
+ * WireGuardServer attaches accounts before Init on its private PTC connection
+ * path. Its carrier and packet lines do not use this promotion API.
  *
  * Behavior (mirrors upstream `Init`):
  *   - line already managed                -> kUserAdmissionOk (idempotent; no second reservation)

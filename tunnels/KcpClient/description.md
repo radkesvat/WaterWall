@@ -108,7 +108,7 @@ There are no required tunnel-specific settings.
   Default: `8192`
 
 - `kcp-recv-window` `(number)`
-  KCP receive window in segments.
+  Local KCP receive window in segments. The available window advertised to the peer is capped at 65535 segments.
   Default: `8192`
 
 - `kcp-initial-cwnd` `(number)`
@@ -124,7 +124,7 @@ There are no required tunnel-specific settings.
   Default: `0`
 
 - `ping-interval-ms` `(number)`
-  Time without received packets before sending an internal ping.
+  Time since the last valid session packet before sending an internal ping.
   Default: `10000`
 
 - `close-drain-timeout-ms` `(integer)`
@@ -132,7 +132,7 @@ There are no required tunnel-specific settings.
   Both peers negotiate the smaller setting; increasing it requires both endpoints to allow it.
 
 - `no-recv-timeout-ms` `(number)`
-  Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
+  Time since the last valid session packet before closing the session. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
 ## Usage and troubleshooting
@@ -161,7 +161,7 @@ This node expects the next side of the chain to preserve packet boundaries. In p
 
 #### KCP transport model
 
-During application Init, the client borrows that application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. The application's source and destination protocols are preserved. Both source and destination protocols on the new transport line are set to UDP. Actual transport Est is relayed promptly to the attached application, independently of handshake readiness.
+During application Init, the client borrows the application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. The carrier clears the destination pin and resolver-DNS marker so a connector can select its configured KCP peer. Copied addresses and ports remain available for dynamic routing. Both carrier protocols are set to UDP, and the application context is preserved. The first transport Est is delivered promptly to the attached application, independently of handshake readiness.
 
 The peers establish a fresh session through HELLO, CHALLENGE, CONFIRM and READY. Independent 128-bit client/server nonces identify every KCP/FEC datagram before decoding. Handshake messages carry the close interval and exact FEC settings. The client retries its current request every 250 ms within the original `no-recv-timeout-ms` deadline. The server initializes a distinct service line only after fresh confirmation. Delayed traffic cannot reset an established session or recreate an old service. These identifiers provide no authentication or encryption.
 
@@ -275,7 +275,7 @@ On peer CLOSE, preceding inbound data is delivered before application Finish, th
 
 A peer-only responder remains until first CLOSE receipt plus D. A locally acknowledged CLOSE at A retains an ACK-capable responder until A + D, including simultaneous close. Expired local sending preserves an earlier peer-ACK obligation. Retention is at most 2D from the first closing event: with defaults, at most 30 seconds to send and 60 seconds total. ACK-only retention uses a deadline timer and input-triggered ACK flushes, with expired PUSH output filtered before FEC.
 
-`no-recv-timeout-ms` independently detects silence during ordinary operation; fixed close deadlines govern closing. Transport Finish, fatal protocol failure and process shutdown abort immediately. Worker quiescence detaches timer roots, and worker Stop drains all owned transports without waiting for graceful close. KCP acknowledgment confirms peer transport receipt, not remote application consumption or persistence. This protocol does not provide TCP half-close.
+During ordinary operation, ping and receive-idle deadlines run from the last valid session packet and are independent of the KCP update interval. Expiry takes precedence if both are due. Fixed close deadlines govern closing. Transport Finish, fatal protocol failure and process shutdown abort immediately. Worker quiescence detaches timer roots, and worker Stop drains all owned transports without waiting for graceful close. KCP acknowledgment confirms peer transport receipt, not remote application consumption or persistence. This protocol does not provide TCP half-close.
 
 #### Backpressure behavior
 
@@ -284,7 +284,10 @@ notifying the previous application stream. The application remains paused while
 either reason is active. Carrier Pause/Resume notifications, including repeats,
 are relayed only when the local KCP hold is absent. Local pressure transitions
 notify the application only while the carrier is not paused; neither reason can
-release the other's hold. Application-side Pause/Resume still maps to the carrier.
+release the other's hold. Application-side Pause/Resume controls reads on the
+carrier. After local Finish or peer CLOSE starts closing and detaches the
+application, the client releases that application's hold so the live carrier
+can receive ACKs during the drain.
 
 After admitting the complete input and settling KCP packet output, the node
 compares queued and unacknowledged KCP segments with `kcp-send-buffer-limit`.

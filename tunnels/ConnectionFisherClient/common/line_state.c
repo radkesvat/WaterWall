@@ -55,6 +55,8 @@ void connectionfisherclientLinestateDestroyChild(connectionfisherclient_lstate_t
 {
     assert(ls->role == kConnectionFisherClientRoleChild);
 
+    closeDrainEnd(&ls->close_drain);
+    bufferqueueDestroy(&ls->pending_up);
     bufferstreamDestroy(&ls->read_stream);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
 }

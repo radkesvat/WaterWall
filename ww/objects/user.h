@@ -210,6 +210,11 @@ typedef enum user_bandwidth_direction_e
     kUserBandwidthDownload = 1
 } user_bandwidth_direction_t;
 
+enum
+{
+    kUserBandwidthStreamQuantum = 16384
+};
+
 typedef enum user_delivery_decision_e
 {
     kUserDeliveryForward = 0,
@@ -251,6 +256,8 @@ typedef struct user_runtime_stat_s
     /* AuthenticationClient's oldest valid handle generation for continuous
      * membership. Runtime migration preserves it; fresh identities set it anew. */
     uint64_t               identity_generation_floor;
+    /* Continuous ownership of the same WireGuard key and range. */
+    uint64_t               wireguard_generation_floor;
     uint64_t               active_cons_out;
     user_ip_usage_t       *ip_usages;
     size_t                 ip_usage_count;
@@ -552,6 +559,9 @@ user_bandwidth_result_t  userBandwidthPreview(User *user, user_bandwidth_directi
                                               uint64_t bytes, bool datagram);
 user_delivery_decision_t userCommitDelivery(User *user, user_bandwidth_direction_t direction, uint64_t ticket,
                                             uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
+/* Recheck eligibility and charge a queued stream chunk at orderly Finish. */
+user_delivery_decision_t userCommitFinalDelivery(User *user, user_bandwidth_direction_t direction, uint64_t bytes,
+                                                 uint32_t multiplier);
 /* Caller holds both configuration and stats write locks. Settle old policy and
  * clamp temporary datagram credit before applying the current configured rates. */
 void userBandwidthReconcileLocked(User *user, uint64_t now_ms);

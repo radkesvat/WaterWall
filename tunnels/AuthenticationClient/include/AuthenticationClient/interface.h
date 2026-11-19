@@ -196,3 +196,37 @@ WW_EXPORT user_delivery_decision_t authenticationclientUserCommitDelivery(tunnel
                                                                           user_bandwidth_direction_t direction,
                                                                           uint64_t ticket, uint64_t bytes,
                                                                           bool datagram, bool more);
+
+WW_EXPORT user_delivery_decision_t authenticationclientUserCommitFinalDelivery(tunnel_t *t, const user_handle_t *handle,
+                                                                               user_bandwidth_direction_t direction,
+                                                                               uint64_t                   bytes);
+
+/* Owned, consistent authorization copy. Ranges use the account collection's
+ * canonical non-overlapping CIDR. Clear the profile on every successful copy.
+ * The continuity floor changes after key/range replacement, even if a later
+ * refresh restores the original value. Transport outages retain cache policy. */
+typedef struct authenticationclient_wireguard_authorization_s
+{
+    user_handle_t                       handle;
+    authenticationclient_user_profile_t profile;
+    ip_addr_t                           network;
+    ip_addr_t                           mask;
+    uint64_t                            generation;
+    uint64_t                            continuity;
+} authenticationclient_wireguard_authorization_t;
+WW_EXPORT authenticationclient_user_lookup_result_t
+authenticationclientCopyWireGuardAuthorization(tunnel_t *t, const uint8_t public_key[USER_WIREGUARD_PUBLICKEY_SIZE],
+                                               authenticationclient_wireguard_authorization_t *authorization);
+WW_EXPORT void authenticationclientWireGuardAuthorizationClear(
+    authenticationclient_wireguard_authorization_t *authorization);
+
+/* Constant-work, allocation-free continuity check. Unlike an exact-generation
+ * gate, unchanged full refreshes remain valid. Copies are compared under the
+ * protected installed table; no private pointer escapes and no callback runs.
+ * An eligible cached binding survives explicit control credential rejection;
+ * stopping, terminal continuity, identity/range changes and cached account
+ * ineligibility still reject. Call only for an already authenticated live binding.
+ * New-flow admission must resolve the full authorization/profile instead. */
+WW_EXPORT bool authenticationclientWireGuardAuthorizationMatches(
+    tunnel_t *t, const uint8_t public_key[USER_WIREGUARD_PUBLICKEY_SIZE], const user_handle_t *handle,
+    uint64_t continuity, const ip_addr_t *network, const ip_addr_t *mask);

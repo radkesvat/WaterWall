@@ -22,7 +22,7 @@
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocateZero(sizeof(*line));
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(*line));
     require(line != NULL, "failed to allocate test line");
     memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
     line->alive = true;
@@ -33,7 +33,7 @@ static void testLineDestroy(line_t *line)
 {
     addresscontextReset(&line->routing_context.src_ctx);
     addresscontextReset(&line->routing_context.dest_ctx);
-    memoryFree(line);
+    memoryFreeAligned(line);
 }
 
 static cJSON *parseJsonObject(const char *text)

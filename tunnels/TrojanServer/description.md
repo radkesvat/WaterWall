@@ -435,7 +435,7 @@ Operational notes:
 For Trojan TCP `CONNECT`:
 
 - the requested destination is parsed from the Trojan request
-- the destination is copied into `line->routing_context.dest_ctx`
+- the destination is copied into `lineGetDestinationAddressContext(line)`
 - the transport protocol is set to TCP
 - upstream `Init` is sent to the configured outbound path through the internal `UserController`
 - any payload bytes received after the Trojan header are forwarded upstream

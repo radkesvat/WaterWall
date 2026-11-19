@@ -41,19 +41,38 @@ bool usercontrollerResolvePayloadMode(tunnel_t *t, line_t *l, usercontroller_pay
     return true;
 }
 
-void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started_from_next)
+void usercontrollerOpenLine(tunnel_t *tunnel, line_t *line, bool from_next)
 {
-    *ls = (usercontroller_lstate_t) {
-        .handle            = userHandleEmpty(),
-        .ip_key            = {0},
-        .managed           = false,
-        .registered        = false,
-        .started_from_next = started_from_next,
-    };
-}
+    usercontroller_payload_mode_t mode;
+    if (! usercontrollerResolvePayloadMode(tunnel, line, &mode))
+    {
+        if (from_next)
+            tunnelNextUpStreamFinish(tunnel, line);
+        else
+            tunnelPrevDownStreamFinish(tunnel, line);
+        return;
+    }
 
-void usercontrollerLinestateDestroy(usercontroller_lstate_t *ls)
-{
-    usercontrollerBandwidthDestroy(ls);
-    memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
+    usercontroller_lstate_t *state = usercontrollerGetLineState(tunnel, line);
+    state->phase                   = kUserControllerOpen;
+    state->started_from_next       = from_next;
+    state->handle                  = userHandleEmpty();
+    state->payload_mode            = mode;
+    usercontrollerBandwidthInitialize(tunnel, line);
+    user_admission_result_t result = usercontrollerTunnelTryManageLine(tunnel, line);
+    if (result != kUserAdmissionOk)
+    {
+        usercontrollerLogAdmissionRejected(tunnel, line, state, result);
+        usercontrollerLinestateDestroy(tunnel, line);
+        if (from_next)
+            tunnelNextUpStreamFinish(tunnel, line);
+        else
+            tunnelPrevDownStreamFinish(tunnel, line);
+        return;
+    }
+
+    if (from_next)
+        tunnelPrevDownStreamInit(tunnel, line);
+    else
+        tunnelNextUpStreamInit(tunnel, line);
 }

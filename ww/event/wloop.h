@@ -72,39 +72,17 @@ typedef enum
 #define WEVENT_PRIORITY_SIZE            (WEVENT_HIGHEST_PRIORITY - WEVENT_LOWEST_PRIORITY + 1)
 #define WEVENT_PRIORITY_INDEX(priority) (priority - WEVENT_LOWEST_PRIORITY)
 
-#define WEVENT_FLAGS                                                                                                   \
-    unsigned destroy : 1;                                                                                              \
-    unsigned active : 1;                                                                                               \
-    unsigned pending : 1;
-
-#define WEVENT_FIELDS                                                                                                  \
-    wloop_t         *loop;                                                                                             \
-    wevent_type_e    event_type;                                                                                       \
-    uint64_t         event_id;                                                                                         \
-    wevent_cb        cb;                                                                                               \
-    void            *userdata;                                                                                         \
-    void            *privdata;                                                                                         \
-    struct wevent_s *pending_next;                                                                                     \
-    int              priority;                                                                                         \
-    WEVENT_FLAGS
-
-// sizeof(struct wevent_s)=64 on x64
-struct wevent_s
-{
-    WEVENT_FIELDS
-};
-
-#define weventSetID(ev, id)          ((wevent_t *) (ev))->event_id = id
-#define weventSetCallBack(ev, cb)    ((wevent_t *) (ev))->cb = cb
-#define weventSetPriority(ev, prio)  ((wevent_t *) (ev))->priority = prio
-#define weventSetUserData(ev, udata) ((wevent_t *) (ev))->userdata = (void *) udata
-
-#define weventGetLoop(ev)      (((wevent_t *) (ev))->loop)
-#define weventGetEventType(ev) (((wevent_t *) (ev))->event_type)
-#define weventGetId(ev)        (((wevent_t *) (ev))->event_id)
-#define weventGetCallBack(ev)  (((wevent_t *) (ev))->cb)
-#define weventGetPriority(ev)  (((wevent_t *) (ev))->priority)
-#define weventGetUserdata(ev)  (((wevent_t *) (ev))->userdata)
+/* Shared owner-thread accessors for wevent_t, wio_t, wtimer_t and widle_t handles. */
+WW_EXPORT void          weventSetID(void *event, uint64_t id);
+WW_EXPORT void          weventSetCallBack(void *event, wevent_cb callback);
+WW_EXPORT void          weventSetPriority(void *event, int priority);
+WW_EXPORT void          weventSetUserData(void *event, void *userdata);
+WW_EXPORT wloop_t      *weventGetLoop(const void *event);
+WW_EXPORT wevent_type_e weventGetEventType(const void *event);
+WW_EXPORT uint64_t      weventGetId(const void *event);
+WW_EXPORT wevent_cb     weventGetCallBack(const void *event);
+WW_EXPORT int           weventGetPriority(const void *event);
+WW_EXPORT void         *weventGetUserdata(const void *event);
 
 typedef enum
 {
@@ -259,6 +237,9 @@ WW_EXPORT void     widleDelete(widle_t *idle);
 
 // timer
 WW_EXPORT wtimer_t *wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat DEFAULT(INFINITE));
+/* A one-shot due after at least delay_ms of monotonic time, measured when armed.
+ * Reset preserves that minimum delay from the time of the reset. */
+WW_EXPORT wtimer_t *wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms);
 /*
  * minute   hour    day     week    month       cb
  * 0~59     0~23    1~31    0~6     1~12
@@ -333,8 +314,9 @@ WW_EXPORT int    wioAdd(wio_t *io, wio_cb cb, int events DEFAULT(WW_READ));
 WW_EXPORT int    wioDel(wio_t *io, int events DEFAULT(WW_RDWR));
 
 // Detach on the original owner thread, then attach on the destination owner thread.
-// Read/write interest must be stopped and pending dispatch must have finished.
-// Attempting to detach/attach a pending WIO logs with LOGF and aborts in every build.
+// Stop read/write interest, disarm WIO timers and let pending dispatch finish before detach.
+// On native Windows IOCP, transfer the socket before it is associated with a completion port.
+// A canceled handoff of a freshly accepted socket releases the detached WIO with wioFree().
 WW_EXPORT void wioDetach(/*wloop_t* loop,*/ wio_t *io);
 WW_EXPORT void wioAttach(wloop_t *loop, wio_t *io);
 // Release a Waterwall watcher for an fd owned by another subsystem.
@@ -431,24 +413,17 @@ WW_EXPORT int wioAccept(wio_t *io);
 // connect => wioAdd(io, WW_WRITE) => wconnect_cb
 WW_EXPORT int wioConnect(wio_t *io);
 
+// Buffered reads require a loop with a buffer pool.
 // wioAdd(io, WW_READ) => read => wread_cb
 WW_EXPORT int wioRead(wio_t *io);
+/** Suspend TCP producer reads for flow control. On IOCP, an already submitted
+ * receive can complete while paused. wioRead() resumes delivery in order. */
+WW_EXPORT void wioPauseTcpRead(wio_t *io);
 #define wioReadStart(io) wioRead(io)
 #define wioReadStop(io)  wioDel(io, WW_READ)
 
 // wioReadStart => wread_cb => wioReadStop
 WW_EXPORT int wioReadOnce(wio_t *io);
-// wioReadOnce => wread_cb(len)
-// WW_EXPORT int wioReadUntillLength(wio_t* io, unsigned int len);
-// wioReadOnce => wread_cb(...delim)
-// WW_EXPORT int wio_read_until_delim (wio_t* io, unsigned char delim);
-WW_EXPORT int wioReadRemain(wio_t *io);
-// @see examples/tinyhttpd.c examples/tinyproxyd.c
-// #define wio_readline(io)        wio_read_until_delim(io, '\n')
-// #define wio_readstring(io)      wio_read_until_delim(io, '\0')
-#define wioReadBytes(io, len)  wioReadUntillLength(io, len)
-#define wioReadUntill(io, len) wioReadUntillLength(io, len)
-
 // During normal operation, WIO access, writes, close and associated callbacks belong to its
 // owning event worker. Foreign producers submit through the adapter's worker-message interface;
 // serialization or target-loop admission does not transfer WIO ownership. Exclusive startup,
@@ -501,6 +476,10 @@ WW_EXPORT int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_ad
 // Owner-worker close; may invoke the close callback synchronously. No foreign-caller dispatch.
 // wioDel(io, WW_RDWR) => close => wclose_cb
 WW_EXPORT int wioClose(wio_t *io);
+// Record a terminal socket error for the close callback and discard any pending writes.
+WW_EXPORT int wioCloseWithError(wio_t *io, int error);
+// Release the watcher and its descriptor on its owner. Pending dispatch defers reclamation.
+WW_EXPORT void wioFree(wio_t *io);
 // Owner-worker request for deferred close on its loop through the cleanup-control queue.
 // This API does not authorize access to another worker's WIO.
 WW_EXPORT int wioCloseAsync(wio_t *io);
@@ -508,7 +487,8 @@ WW_EXPORT int wioCloseAsync(wio_t *io);
 //------------------high-level apis-------------------------------------------
 // wioGet -> wioSetReadBuf -> wioSetCallBackRead -> wioRead
 WW_EXPORT wio_t *wRead(wloop_t *loop, int fd, wread_cb read_cb);
-// wioGet -> wioSetCallBackWrite -> wioWrite
+// wWrite, wSend and wSendTo return the original open WIO if it still belongs to this loop.
+// A synchronous callback may retire it, so a completed write can return NULL.
 WW_EXPORT wio_t *wWrite(wloop_t *loop, int fd, sbuf_t *buf, wwrite_cb write_cb DEFAULT(NULL));
 // wioGet -> wioClose
 WW_EXPORT void wClose(wloop_t *loop, int fd);

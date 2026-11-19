@@ -3,16 +3,20 @@
 void reverseserverTunnelDownStreamPayload(tunnel_t *t, line_t *u, sbuf_t *buf)
 {
     reverseserver_lstate_t *uls = lineGetState(u, t);
-    if (uls->paired)
+    if (uls->phase == kReverseHalfPaired)
     {
-        if (! reverseserverQueuePairedPayload(t, u, buf))
-            tunnelPrevDownStreamPayload(t, uls->d, buf);
+        reverseserverForwardPairedPayload(t, u, buf);
+        return;
+    }
+    if (uls->phase != kReverseHalfWaiting)
+    {
+        lineReuseBuffer(u, buf);
         return;
     }
     if (! reverseserverRetainPayload(t, u, buf))
         return;
     reverseserver_tstate_t     *ts  = tunnelGetState(t);
     reverseserver_thread_box_t *box = &ts->threadlocal_pool[lineGetWID(u)];
-    if (atomicLoad(&box->d_count) != 0)
-        reverseserverPair(t, u, box->d_root->d);
+    if (box->reverse_links.head != NULL)
+        reverseserverPair(t, u, box->reverse_links.head->d);
 }

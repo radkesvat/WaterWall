@@ -13,7 +13,7 @@
 enum
 {
     kWireCapacity   = 8192,
-    kStreamCapacity = 1024 * 1024,
+    kStreamCapacity = 3 * 1024 * 1024,
     kChunk          = 16384
 };
 
@@ -34,8 +34,8 @@ typedef struct end_s
     unsigned              terminal_calls;
     unsigned              emitted;
     enet_session_result_t result;
-    bool                  echo;             /* send every received buffer back from inside the payload callback */
-    bool                  reply_and_finish; /* answer the next payload and finish, both from inside it */
+    bool                  echo;                /* send every received buffer back from inside the payload callback */
+    size_t                reply_before_finish; /* answer the next payload with this many bytes, then finish */
 } end_t;
 
 struct pair_s
@@ -90,11 +90,12 @@ static void endPayload(void *user, sbuf_t *payload)
     enetRequire(length > 0 && end->stream_length + length <= kStreamCapacity, "unexpected payload size");
     memcpy(end->stream + end->stream_length, sbufGetRawPtr(payload), length);
     end->stream_length += length;
-    if (end->reply_and_finish)
+    if (end->reply_before_finish != 0)
     {
-        end->reply_and_finish = false;
+        const size_t reply       = end->reply_before_finish;
+        end->reply_before_finish = 0;
         bufferpoolReuseBuffer(getWorkerBufferPool(0), payload);
-        pairSend(end->pair, end->index, kChunk);
+        pairSend(end->pair, end->index, reply);
         enetSessionAppFinish(end->session);
         return;
     }
@@ -377,6 +378,35 @@ static void testSendHoldFollowsAcknowledgements(void)
     pairClose(&pair);
 }
 
+static void testLargeApplicationWrites(void)
+{
+    static pair_t   pair;
+    enet_settings_t settings   = testSettings();
+    settings.send_buffer_limit = kStreamCapacity;
+    pairConnect(&pair, &settings, &settings);
+    pairSend(&pair, 0, kStreamCapacity);
+    pairSend(&pair, 1, kStreamCapacity);
+    enetRequire(pairAdvanceUntil(&pair, 3000, transferFinished), "a large ordinary write was refused");
+    pairRequireStream(&pair.end[0], kStreamCapacity, "the client did not receive the complete write");
+    pairRequireStream(&pair.end[1], kStreamCapacity, "the server did not receive the complete write");
+    pairClose(&pair);
+}
+
+static void testNestedWriteRetentionLimit(void)
+{
+    static pair_t   pair;
+    enet_settings_t settings   = testSettings();
+    settings.send_buffer_limit = kStreamCapacity;
+    pairConnect(&pair, &settings, &settings);
+    /* The server is still delivering input when its application replies. This buffer must wait. */
+    pair.end[1].reply_before_finish = kStreamCapacity;
+    pairSend(&pair, 0, 1);
+    pairPump(&pair);
+    enetRequire(pair.end[1].terminal_calls == 1 && pair.end[1].result == kEnetSessionCapacityFailure,
+                "a retained application write exceeded the nested queue budget");
+    pairClose(&pair);
+}
+
 static void testCarrierQueueOverflowRecovers(void)
 {
     static pair_t   pair;
@@ -473,7 +503,7 @@ static void testNestedFinishKeepsQueuedBytes(void)
     pairConnect(&pair, &settings, &settings);
     /* The server answers and finishes from inside its payload callback. Its answer is still queued when the
      * finish arrives, and it must reach ENet before the close does. */
-    pair.end[1].reply_and_finish = true;
+    pair.end[1].reply_before_finish = kChunk;
     pairSend(&pair, 0, kChunk);
     enetRequire(pairAdvanceUntil(&pair, 5000, bothTerminal), "the close did not complete");
     enetRequire(pair.end[1].result == kEnetSessionClosed && pair.end[0].result == kEnetSessionPeerClosed,
@@ -572,6 +602,8 @@ int main(void)
     enetRequire(enetDriverInstall(&memoryAllocate, &memoryFree), "ENet refused the allocator");
     TEST_RUN_CASE(testHandshakeAndTransfer);
     TEST_RUN_CASE(testNestedSendKeepsOrder);
+    TEST_RUN_CASE(testLargeApplicationWrites);
+    TEST_RUN_CASE(testNestedWriteRetentionLimit);
     TEST_RUN_CASE(testSendHoldFollowsAcknowledgements);
     TEST_RUN_CASE(testCarrierQueueOverflowRecovers);
     TEST_RUN_CASE(testHardCapEndsTheSender);

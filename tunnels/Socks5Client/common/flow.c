@@ -19,7 +19,7 @@ static void tryBypass(tunnel_t *t, line_t *l)
 bool socks5clientMaybeSendGreeting(tunnel_t *t, line_t *l)
 {
     socks5client_lstate_t *ls = lineGetState(l, t);
-    if (! ls->greeting_due || (ls->kind != kSocks5ClientLineKindDirect && ls->next_paused))
+    if (! ls->greeting_due || ls->next_paused)
         return true;
     ls->greeting_due = false;
     return socks5clientSendGreeting(t, l, ls);

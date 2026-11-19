@@ -15,6 +15,7 @@ static usercontroller_payload_mode_t expected_mode, resolved_mode;
 static unsigned                      resolver_calls, init_calls, admissions, releases;
 static unsigned                      prev_finishes, next_finishes;
 static tunnel_t                     *owner_endpoint;
+static line_t                       *initialized_line;
 static char                          oversize_diagnostics[2048];
 static size_t                        oversize_diagnostic_length;
 
@@ -74,8 +75,9 @@ static usercontroller_payload_mode_t resolve(tunnel_t *owner, line_t *line)
 static void initialized(tunnel_t *t, line_t *line)
 {
     discard                        t;
-    const usercontroller_lstate_t *ls = lineGetState(line, observed_controller);
+    const usercontroller_lstate_t *ls = usercontrollerGetLineState(observed_controller, line);
     require(ls->payload_mode == expected_mode, "neighbor Init observed no saved payload mode");
+    initialized_line = line;
     ++init_calls;
 }
 
@@ -154,7 +156,7 @@ static void testConfigurationRefusals(void)
     }
 }
 
-static void testSavedMode(bool reverse, mode_source_t source, usercontroller_payload_mode_t mode)
+static void testSavedMode(bool reverse, mode_source_t source, usercontroller_payload_mode_t mode, bool packet)
 {
     node_t      node;
     const char *setting    = source == kCreatorMode                 ? ""
@@ -174,9 +176,10 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
     tunnelBind(controller, next);
     tunnel_chain_t *chain      = tunnelchainCreate(1);
     chain->sum_line_state_size = controller->lstate_size;
+    chain->contains_packet_node = packet;
     controller->chain          = chain;
     tunnelchainFinalize(chain);
-    line_t *line = lineCreate(tunnelchainGetLinePools(chain), 0);
+    line_t *line = packet ? tunnelchainGetWorkerPacketLine(chain, 0) : lineCreate(tunnelchainGetLinePools(chain), 0);
     bool    tcp =
         source == kDestinationMode ? mode == kUserControllerPayloadStream : mode == kUserControllerPayloadDatagram;
     lineGetDestinationAddressContext(line)->proto_tcp = tcp;
@@ -189,7 +192,7 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
         tunnelDownStreamInit(controller, line);
     else
         tunnelUpStreamInit(controller, line);
-    usercontroller_lstate_t *ls = lineGetState(line, controller);
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(controller, line);
     require(init_calls == 1 && resolver_calls == (unsigned) (source == kCreatorMode) &&
                 ls->started_from_next == reverse,
             "Init direction or resolver count changed");
@@ -226,7 +229,16 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
             "late authenticated promotion failed");
     require(ls->payload_mode == mode && resolver_calls == (unsigned) (source == kCreatorMode) && admissions == 1,
             "late promotion or mutable destination changed saved framing");
-    if (reverse)
+    require(initialized_line == line, "controller forwarded Init on a different line");
+    if (packet)
+    {
+        usercontrollerTunnelOnWorkerQuiesce(controller, 0, NULL);
+        usercontrollerTunnelOnWorkerStop(controller, 0, NULL);
+        require(usercontrollerGetLineState(controller, line)->phase == kUserControllerClosed && prev_finishes == 0 &&
+                    next_finishes == 0,
+                "worker stop failed to release packet state locally");
+    }
+    else if (reverse)
         tunnelDownStreamFin(controller, line);
     else
         tunnelUpStreamFin(controller, line);
@@ -239,7 +251,8 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
         loggerSetLevelByString(logger, "OFF");
         loggerSetHandler(logger, previous_handler);
     }
-    lineDestroy(line);
+    if (! packet)
+        lineDestroy(line);
     tunnelchainDestroy(chain);
     tunnelDestroy(prev);
     tunnelDestroy(next);
@@ -316,7 +329,9 @@ int main(void)
             for (unsigned datagram = 0; datagram < 2; ++datagram)
                 testSavedMode(reverse,
                               (mode_source_t) source,
-                              datagram ? kUserControllerPayloadDatagram : kUserControllerPayloadStream);
+                              datagram ? kUserControllerPayloadDatagram : kUserControllerPayloadStream,
+                              false);
+        testSavedMode(reverse, kFixedMode, kUserControllerPayloadDatagram, true);
         for (unsigned protocols = 0; protocols < 16; ++protocols)
             if (protocols != 1 && protocols != 2)
                 testRejectedDestination(reverse, protocols);

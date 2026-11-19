@@ -42,5 +42,5 @@ void vlessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    vlessclientStartNext(t, l, l);
 }

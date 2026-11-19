@@ -16,6 +16,10 @@
 #include "test_assert.h"
 #include "wevent.h"
 
+#ifdef WATERWALL_KCP_TEST_UDP_CONNECTOR
+#include "UdpConnector/structure.h"
+#endif
+
 #define require(c, m) TEST_REQUIRE(TEST_FAILURE_EXIT, c, m)
 
 enum
@@ -31,9 +35,9 @@ typedef struct endpoint_s
     line_t        *app, *transport, *service;
     tou_session_t *client_session, *server_session;
     uint8_t        nonce[kTouNonceSize];
-    unsigned       app_finishes, service_finishes, establishments, pauses[2], resumes[2];
+    unsigned       app_finishes, service_finishes, establishments, service_establishments, pauses[2], resumes[2];
     size_t         received[2], sent[2];
-    bool           app_closed, paused[2];
+    bool           app_closed, paused[2], carrier_read_paused;
 } endpoint_t;
 typedef struct packet_s
 {
@@ -46,6 +50,13 @@ typedef struct session_ref_s
     tou_session_t *session;
     bool           client;
 } session_ref_t;
+typedef enum carrier_est_phase_e
+{
+    kEstManual,
+    kEstOnCarrierInit,
+    kEstOnServiceInit,
+    kEstOnServicePause
+} carrier_est_phase_t;
 typedef struct fixture_s
 {
     node_t          nodes[5];
@@ -77,6 +88,13 @@ typedef struct fixture_s
     bool     nested_transport_from_app_finish, require_dead_app, nested_transport_finished, transport_admission_checked;
     unsigned expired_pushes, expired_acks;
     sbuf_t  *saved_close, *saved_hello, *saved_confirm, *saved_data, *saved_ack, *saved_parity;
+    bool     enforce_read_pause, server_read_paused, finish_carrier_on_resume, check_configured_peer;
+    unsigned blocked_reads[2], received_on_resume;
+    endpoint_t         *drain_resume_endpoint;
+    carrier_est_phase_t first_carrier_est;
+    bool                repeat_est;
+    unsigned            carrier_est_relays;
+    line_t             *reverse_est_reentry_service;
 } fixture_t;
 
 static fixture_t *active;
@@ -274,8 +292,25 @@ static void appFinish(tunnel_t *t, line_t *line)
 }
 static void appEst(tunnel_t *t, line_t *line)
 {
-    require(t == active->source, "unexpected Est target");
-    ++byApp(line)->establishments;
+    require(t == active->source && lineIsAlive(line), "Est reached a retired or foreign application");
+    endpoint_t *ep = byApp(line);
+    if (++ep->establishments == 1 && active->repeat_est)
+        tunnelPrevDownStreamEst(active->wire, ep->transport);
+}
+static void serviceEst(tunnel_t *t, line_t *line)
+{
+    require(t == active->service && lineIsAlive(line), "Est reached a retired or foreign service");
+    endpoint_t *ep = byService(line);
+    if (++ep->service_establishments == 1 && active->repeat_est)
+        tunnelNextUpStreamEst(active->wire, active->carrier);
+}
+static bool notifyFirstCarrierEst(carrier_est_phase_t phase)
+{
+    if (active->first_carrier_est != phase)
+        return false;
+    active->first_carrier_est = kEstManual;
+    tunnelNextUpStreamEst(active->wire, active->carrier);
+    return true;
 }
 static void checkPayload(endpoint_t *ep, unsigned direction, line_t *line, sbuf_t *payload)
 {
@@ -335,6 +370,8 @@ static void servicePause(tunnel_t *t, line_t *line)
     endpoint_t *ep = byService(line);
     ++ep->pauses[1];
     ep->paused[1] = true;
+    if (notifyFirstCarrierEst(kEstOnServicePause))
+        require(ep->service_establishments == 1, "first carrier Est was not delivered during deferred service Pause");
     if (active->resume_during_pause)
     {
         active->resume_during_pause = false;
@@ -392,18 +429,21 @@ static void checkMetadata(line_t *copy, line_t *original, bool udp)
             "split line lost routing domain ownership or destination port");
     require(addresscontextClassifyTransport(dest) == (udp ? kAddressContextTransportUdp : kAddressContextTransportTcp),
             "split line published incorrect transport protocol");
+    require(addresscontextDestinationIsPinned(source_dest) && addresscontextIsResolverDns(source_dest),
+            "split line changed the original destination flags");
+    require(addresscontextDestinationIsPinned(dest) == ! udp && addresscontextIsResolverDns(dest) == ! udp,
+            "destination flags did not follow the logical application flow");
+    require((dest->optional_flags.detected_protocols & kAddressContextDetectedProtocolMask) ==
+                kAddressContextProtocolTls,
+            "split line lost detected-protocol metadata");
     require(copy->routing_context.local_listener_port == 34567 && copy->routing_context.peer_source_port == 45678,
             "split line lost listener/peer port context");
     require(lineGetUserAuthCount(copy) == 1 && lineHasAuthenticatedUsername(copy, "fixture-user"),
             "split line lost authenticated credentials");
     require(copy->prefer_ordinary_read_u && copy->prefer_ordinary_read_d && lineIsFallback(copy),
             "split line lost routing/read policy fields");
-    require(lineHasCloseLingerReason(copy, kLineCloseLingerPeerWriteShutdown) &&
-                ! lineHasCloseLingerReason(copy, kLineCloseLingerProtocolDrain),
-            "split line copied unrelated close-linger reasons or lost peer shutdown");
-    require(lineHasCloseLingerReason(original, kLineCloseLingerPeerWriteShutdown) &&
-                lineHasCloseLingerReason(original, kLineCloseLingerProtocolDrain),
-            "split line changed the source close-linger reasons");
+    require(lineShouldLingerOnClose(copy) && lineShouldLingerOnClose(original),
+            "split line lost the detected fallback peer write shutdown");
 }
 static void serviceInit(tunnel_t *t, line_t *line)
 {
@@ -424,7 +464,16 @@ static void serviceInit(tunnel_t *t, line_t *line)
     if (active->resume_during_init)
         tunnelNextUpStreamResume(active->wire, active->carrier);
     require(lineGetWID(line) == 0, "service line moved workers");
+    if (active->repeat_est)
+        active->reverse_est_reentry_service = line;
     tunnelPrevDownStreamEst(t, line);
+    if (active->repeat_est)
+    {
+        require(active->reverse_est_reentry_service == NULL, "service Est did not reach the carrier during Init");
+        tunnelPrevDownStreamEst(t, line);
+    }
+    if (notifyFirstCarrierEst(kEstOnServiceInit))
+        require(ep->service_establishments == 1, "first carrier Est was not delivered during service Init");
     if (active->early_service_output)
         sendBytes(ep, 1, 130001);
     if (active->pause_during_init)
@@ -436,7 +485,7 @@ static uint32_t le32(const uint8_t *bytes)
 {
     return (uint32_t) bytes[0] | (uint32_t) bytes[1] << 8 | (uint32_t) bytes[2] << 16 | (uint32_t) bytes[3] << 24;
 }
-static void deliver(packet_t packet)
+static void deliverAdmitted(packet_t packet)
 {
     if (packet.direction == 0)
     {
@@ -449,6 +498,20 @@ static void deliver(packet_t packet)
         tunnelPrevDownStreamPayload(active->wire, packet.endpoint->transport, packet.buffer);
     else
         bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), packet.buffer);
+}
+static void deliver(packet_t packet)
+{
+    line_t *carrier = packet.direction == 0 ? active->carrier : packet.endpoint ? packet.endpoint->transport : NULL;
+    bool    paused  = packet.direction == 0 ? active->server_read_paused
+                                            : packet.endpoint != NULL && packet.endpoint->carrier_read_paused;
+    if (active->enforce_read_pause && paused && carrier != NULL && lineIsAlive(carrier))
+    {
+        require(active->count_packets < kMaxPackets, "paused carrier queue exceeded its bound");
+        ++active->blocked_reads[packet.direction];
+        active->queue[active->count_packets++] = packet;
+        return;
+    }
+    deliverAdmitted(packet);
 }
 static void queueWire(unsigned direction, endpoint_t *ep, sbuf_t *packet)
 {
@@ -624,6 +687,32 @@ static void transportFinish(tunnel_t *t, line_t *line)
         active->transport_admission_checked = true;
     }
 }
+
+#ifdef WATERWALL_KCP_TEST_UDP_CONNECTOR
+static void checkConfiguredPeer(line_t *carrier)
+{
+    tunnel_t *connector = tunnelCreate(NULL, sizeof(udpconnector_tstate_t), 0);
+    require(connector != NULL, "failed to create UDP destination fixture");
+    udpconnector_tstate_t *settings     = tunnelGetState(connector);
+    settings->dest_addr_selected.status = kDvsConstant;
+    settings->dest_port_selected.status = kDvsConstant;
+    address_context_t *expected         = &settings->constant_dest_addr;
+    require(addresscontextSetIpAddressPortProtocol(expected, "127.0.0.3", 23456, IP_PROTO_UDP),
+            "invalid configured UDP peer");
+    line_t             selection = {0};
+    address_context_t *dest      = lineGetDestinationAddressContext(&selection);
+    addresscontextCopy(dest, lineGetDestinationAddressContext(carrier));
+    udpconnector_domain_resolver_lstate_t prepared = {0};
+    require(udpconnectorDomainResolverPrepare(NULL, connector, &selection, &prepared) && addresscontextIsIp(dest) &&
+                ip_addr_cmp(&dest->ip_address, &expected->ip_address) && dest->port == expected->port &&
+                ! prepared.route_destination_pinned,
+            "UdpConnector did not select the configured KCP peer");
+    addresscontextReset(dest);
+    addresscontextReset(expected);
+    tunnelDestroy(connector);
+}
+#endif
+
 static void wireInit(tunnel_t *t, line_t *line)
 {
     require(t == active->wire, "unexpected transport Init");
@@ -632,6 +721,10 @@ static void wireInit(tunnel_t *t, line_t *line)
             "client did not split its borrowed application and owned carrier");
     ep->transport = line;
     checkMetadata(line, ep->app, true);
+#ifdef WATERWALL_KCP_TEST_UDP_CONNECTOR
+    if (active->check_configured_peer)
+        checkConfiguredPeer(line);
+#endif
     lineRef(line);
     require(lineGetWID(line) == lineGetWID(ep->app), "client transport moved workers");
     if (! active->carrier || ! lineIsAlive(active->carrier))
@@ -642,32 +735,91 @@ static void wireInit(tunnel_t *t, line_t *line)
         lineRef(active->carrier);
         addresscontextCopy(lineGetSourceAddressContext(active->carrier), lineGetSourceAddressContext(line));
         addresscontextCopy(lineGetDestinationAddressContext(active->carrier), lineGetDestinationAddressContext(line));
+        addresscontextSetDestinationPinned(lineGetDestinationAddressContext(active->carrier), true);
+        addresscontextSetResolverDns(lineGetDestinationAddressContext(active->carrier), true);
         active->carrier->routing_context.local_listener_port = 34567;
         active->carrier->routing_context.peer_source_port    = 45678;
         lineCopyUsers(active->carrier, line);
         active->carrier->prefer_ordinary_read_u = active->carrier->prefer_ordinary_read_d = true;
         lineMarkFallback(active->carrier);
         lineRequestCloseLinger(active->carrier, kLineCloseLingerPeerWriteShutdown);
-        lineRequestCloseLinger(active->carrier, kLineCloseLingerProtocolDrain);
         tunnelNextUpStreamInit(t, active->carrier);
         require(active->service_inits == 0 || active->count > 1, "carrier Init eagerly initialized a service");
+        discard notifyFirstCarrierEst(kEstOnCarrierInit);
     }
     tunnelPrevDownStreamEst(t, line);
+    if (active->repeat_est)
+        tunnelPrevDownStreamEst(t, line);
 }
-static void wireIgnoreEst(tunnel_t *t, line_t *line)
+static void wireEst(tunnel_t *t, line_t *line)
 {
-    discard t;
-    discard line;
+    require(t == active->wire && line == active->carrier && lineIsAlive(line),
+            "service Est reached a retired or foreign carrier");
+    ++active->carrier_est_relays;
+    if (active->reverse_est_reentry_service != NULL)
+    {
+        line_t *service                     = active->reverse_est_reentry_service;
+        active->reverse_est_reentry_service = NULL;
+        tunnelPrevDownStreamEst(active->service, service);
+    }
 }
 static void wirePause(tunnel_t *t, line_t *line)
 {
     discard t;
-    ++active->wire_pauses[line == active->carrier ? 1 : 0];
+    bool    server = line == active->carrier;
+    ++active->wire_pauses[server];
+    if (server)
+        active->server_read_paused = true;
+    else
+        byTransport(line)->carrier_read_paused = true;
 }
+
+static void requireStateZero(line_t *line, tunnel_t *tunnel);
 static void wireResume(tunnel_t *t, line_t *line)
 {
-    discard t;
-    ++active->wire_resumes[line == active->carrier ? 1 : 0];
+    bool server = line == active->carrier;
+    ++active->wire_resumes[server];
+    if (server)
+        active->server_read_paused = false;
+    else
+        byTransport(line)->carrier_read_paused = false;
+    if (active->finish_carrier_on_resume)
+    {
+        active->finish_carrier_on_resume = false;
+        if (server)
+        {
+            tunnelNextUpStreamFinish(t, line);
+            require(lineIsAlive(line), "Resume reentry destroyed the borrowed server carrier");
+            lineDestroy(line);
+        }
+        else
+        {
+            tunnelPrevDownStreamFinish(t, line);
+            require(! lineIsAlive(line), "Resume reentry kept the owned client carrier alive");
+        }
+        return;
+    }
+    endpoint_t *closing = active->drain_resume_endpoint;
+    if (closing != NULL)
+    {
+        active->drain_resume_endpoint = NULL;
+        require(touSessionSendDeadline(server ? closing->server_session : closing->client_session) != 0,
+                "carrier resumed before the KCP close deadline was published");
+        requireStateZero(server ? closing->service : closing->app, server ? active->server : active->client);
+        require(! server || ! lineIsAlive(closing->service), "carrier resumed before owned service retirement");
+        for (size_t i = 0; i < active->count_packets; ++i)
+        {
+            packet_t packet = active->queue[i];
+            if (packet.direction == (server ? 0U : 1U) && packet.endpoint == closing)
+            {
+                --active->count_packets;
+                memmove(active->queue + i, active->queue + i + 1, (active->count_packets - i) * sizeof(packet));
+                ++active->received_on_resume;
+                deliver(packet);
+                break;
+            }
+        }
+    }
 }
 static void flushWire(void)
 {
@@ -705,9 +857,10 @@ static void pump(unsigned ms)
     for (unsigned elapsed = 0; elapsed < ms; elapsed += 10)
         advance(min(10U, ms - elapsed));
 }
-/* extra_settings holds further JSON members for both nodes, each with a leading comma, or "". */
-static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
-                              unsigned client_mtu, unsigned server_mtu, const char *extra_settings)
+/* Each settings suffix supplies JSON members with a leading comma, or is empty. */
+static void setupWithPeerSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                                  unsigned client_mtu, unsigned server_mtu, const char *client_settings,
+                                  const char *server_settings)
 {
     memoryZero(fixture, sizeof(*fixture));
     active               = fixture;
@@ -725,12 +878,18 @@ static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_clos
             settings,
             sizeof(settings),
             "{\"send-mtu\":%u,\"fec\":%s,\"fec-data-shards\":2,\"fec-parity-shards\":1,\"close-drain-timeout-ms\":%u,"
-            "\"ping-interval-ms\":100,\"no-recv-timeout-ms\":2000,\"kcp-send-buffer-limit\":2%s}",
+            "\"kcp-send-buffer-limit\":2%s}",
             i == 1 ? client_mtu : server_mtu,
             fec ? "true" : "false",
             i == 1 ? client_close : server_close,
-            extra_settings);
-        fixture->nodes[i].node_settings_json = cJSON_Parse(settings);
+            i == 1 ? client_settings : server_settings);
+        cJSON *node_settings = cJSON_Parse(settings);
+        require(node_settings != NULL, "fixture generated invalid KCP settings");
+        if (! cJSON_HasObjectItem(node_settings, "ping-interval-ms"))
+            cJSON_AddNumberToObject(node_settings, "ping-interval-ms", 100);
+        if (! cJSON_HasObjectItem(node_settings, "no-recv-timeout-ms"))
+            cJSON_AddNumberToObject(node_settings, "no-recv-timeout-ms", 2000);
+        fixture->nodes[i].node_settings_json = node_settings;
     }
     fixture->source  = tunnelCreate(&fixture->nodes[0], 0, 0);
     fixture->client  = fixture->nodes[1].createHandle(&fixture->nodes[1]);
@@ -746,13 +905,14 @@ static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_clos
     fixture->source->fnResumeD  = appResume;
     fixture->wire->fnInitU      = wireInit;
     fixture->wire->fnFinU       = transportFinish;
-    fixture->wire->fnEstD       = wireIgnoreEst;
+    fixture->wire->fnEstD       = wireEst;
     fixture->wire->fnFinD       = carrierFinish;
     fixture->wire->fnPayloadU   = wireUp;
     fixture->wire->fnPayloadD   = wireDown;
     fixture->wire->fnPauseU = fixture->wire->fnPauseD = wirePause;
     fixture->wire->fnResumeU = fixture->wire->fnResumeD = wireResume;
     fixture->service->fnInitU                           = serviceInit;
+    fixture->service->fnEstU                            = serviceEst;
     fixture->service->fnPayloadU                        = servicePayload;
     fixture->service->fnFinU                            = serviceFinish;
     fixture->service->fnPauseU                          = servicePause;
@@ -768,6 +928,11 @@ static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_clos
         tunnels[i]->onIndex(tunnels[i], (uint16_t) i, &offset);
     }
     tunnelchainFinalize(fixture->chain);
+}
+static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                              unsigned client_mtu, unsigned server_mtu, const char *settings)
+{
+    setupWithPeerSettings(fixture, fec, client_close, server_close, client_mtu, server_mtu, settings, settings);
 }
 static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
                           unsigned client_mtu, unsigned server_mtu)
@@ -790,13 +955,15 @@ static endpoint_t *openApp(void)
     addresscontextDomainSetByString(lineGetDestinationAddressContext(ep->app), "session.fixture");
     addresscontextSetPort(lineGetDestinationAddressContext(ep->app), 12345);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(ep->app), IP_PROTO_TCP);
+    addresscontextSetDestinationPinned(lineGetDestinationAddressContext(ep->app), true);
+    addresscontextSetResolverDns(lineGetDestinationAddressContext(ep->app), true);
+    lineGetDestinationAddressContext(ep->app)->optional_flags.detected_protocols |= kAddressContextProtocolTls;
     ep->app->routing_context.local_listener_port = 34567;
     ep->app->routing_context.peer_source_port    = 45678;
     lineAddAuthenticatedCredentials(ep->app, "fixture-user", "fixture-password");
     ep->app->prefer_ordinary_read_u = ep->app->prefer_ordinary_read_d = true;
     lineMarkFallback(ep->app);
     lineRequestCloseLinger(ep->app, kLineCloseLingerPeerWriteShutdown);
-    lineRequestCloseLinger(ep->app, kLineCloseLingerProtocolDrain);
     tunnelNextUpStreamInit(active->source, ep->app);
     refreshSessions();
     return ep;
@@ -887,6 +1054,151 @@ static void teardown(void)
         memoryFree(active->nodes[i].type);
     }
     active = NULL;
+}
+
+static void applicationReadPressure(endpoint_t *ep, bool server, bool paused)
+{
+    if (server)
+    {
+        if (paused)
+            tunnelPrevDownStreamPause(active->service, ep->service);
+        else
+            tunnelPrevDownStreamResume(active->service, ep->service);
+    }
+    else if (paused)
+        tunnelNextUpStreamPause(active->source, ep->app);
+    else
+        tunnelNextUpStreamResume(active->source, ep->app);
+}
+
+static void caseConfiguredPeer(void)
+{
+    testCaseSet("pinned resolver flow uses configured KCP UDP peer");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    fixture.check_configured_peer = true;
+    established(openApp());
+    teardown();
+}
+
+static void caseSharedCarrierReadHolds(bool terminal)
+{
+    testCaseSet(terminal ? "shared read hold released on session-local termination"
+                         : "shared read holds survive repeat Pause, Resume and retirement");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    endpoint_t *a = openApp();
+    established(a);
+    endpoint_t *b = openApp();
+    established(b);
+    fixture.enforce_read_pause = true;
+    applicationReadPressure(a, true, true);
+    applicationReadPressure(a, true, true);
+    applicationReadPressure(b, true, true);
+    require(fixture.wire_pauses[1] == 3 && fixture.server_read_paused,
+            "shared carrier did not relay repeated service Pause");
+    if (terminal)
+    {
+        applicationReadPressure(b, true, false);
+        require(fixture.wire_resumes[1] == 0 && fixture.server_read_paused,
+                "sibling Resume cleared the remaining service hold");
+        touSessionAbort(a->server_session, kTouProtocolFailure);
+        require(fixture.wire_resumes[1] == 1 && ! fixture.server_read_paused && ! lineIsAlive(a->service) &&
+                    lineIsAlive(b->service) && lineIsAlive(fixture.carrier),
+                "session-local termination stranded the surviving sibling's carrier");
+        sendBytes(b, 0, 12001);
+        pump(100);
+        require(b->received[0] == 12001, "surviving service could not receive after terminal hold release");
+    }
+    else
+    {
+        applicationReadPressure(a, true, false);
+        applicationReadPressure(a, true, false);
+        require(fixture.wire_resumes[1] == 0 && fixture.server_read_paused,
+                "repeat Resume cleared the sibling's read hold");
+        applicationReadPressure(a, true, true);
+        closeService(a);
+        require(fixture.wire_resumes[1] == 0 && fixture.server_read_paused,
+                "service retirement cleared the sibling's read hold");
+        fixture.finish_carrier_on_resume = true;
+        closeService(b);
+        require(fixture.wire_resumes[1] == 1 && ! fixture.finish_carrier_on_resume && ! lineIsAlive(fixture.carrier) &&
+                    ! touSessionIsAlive(a->server_session) && ! touSessionIsAlive(b->server_session),
+                "final shared hold did not safely resume and synchronously finish the carrier");
+    }
+    teardown();
+}
+
+static void caseCloseReleasesReadHold(bool server, bool peer_first)
+{
+    testCaseSet(peer_first ? (server ? "admitted peer CLOSE releases server read hold"
+                                     : "admitted peer CLOSE releases client read hold")
+                           : (server ? "service Finish resumes carrier for ACKs during drain"
+                                     : "application Finish resumes carrier for ACKs during drain"));
+    fixture_t fixture;
+    setup(&fixture, false, 1200, 1200, 1500);
+    endpoint_t *ep = openApp();
+    established(ep);
+    fixture.enforce_read_pause = true;
+    applicationReadPressure(ep, server, true);
+    const unsigned output = peer_first ? ! server : server;
+    tou_session_t *sender = output ? ep->server_session : ep->client_session;
+    if (peer_first)
+    {
+        if (output)
+            closeService(ep);
+        else
+            closeApp(ep);
+        pump(30);
+        require(fixture.blocked_reads[output] > 0 && fixture.saved_close != NULL &&
+                    lineIsAlive(server ? ep->service : ep->app),
+                "carrier did not hold the peer CLOSE before explicit admitted delivery");
+        fixture.drain_resume_endpoint = ep;
+        deliverAdmitted((packet_t) {copyPacket(fixture.saved_close), ep, output});
+    }
+    else
+    {
+        enum
+        {
+            kFlightBytes = 130001,
+            kSendWindow  = 8
+        };
+        ikcp_wndsize(touSessionKcp(sender), kSendWindow, 0);
+        sendBytes(ep, output, kFlightBytes);
+        pump(50);
+        require(ikcp_waitsnd(touSessionKcp(sender)) > kSendWindow && fixture.blocked_reads[! output] > 0 &&
+                    ep->received[output] < kFlightBytes,
+                "paused carrier did not hold ACKs with more than one send window queued");
+        fixture.drain_resume_endpoint = ep;
+        if (server)
+            closeService(ep);
+        else
+            closeApp(ep);
+        pump(600);
+        require(ep->received[output] == kFlightBytes, "closing behind a read hold lost or stalled accepted bytes");
+    }
+    pump(100);
+    require(fixture.wire_resumes[server] == 1 && fixture.drain_resume_endpoint == NULL &&
+                fixture.received_on_resume == 1 && touSessionCloseConfirmed(sender) &&
+                (output ? ep->app_finishes : ep->service_finishes) == 1,
+            "retirement did not resume exactly once, reenter input and confirm CLOSE before the deadline");
+    teardown();
+}
+
+static void caseClientReadHoldResumeFinish(void)
+{
+    testCaseSet("client drain Resume synchronously finishes the owned carrier");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    endpoint_t *ep = openApp();
+    established(ep);
+    applicationReadPressure(ep, false, true);
+    fixture.finish_carrier_on_resume = true;
+    closeApp(ep);
+    require(fixture.wire_resumes[0] == 1 && ! fixture.finish_carrier_on_resume && ! lineIsAlive(ep->transport) &&
+                ! touSessionIsAlive(ep->client_session) && ep->app_finishes == 0,
+            "Resume reentry failed to abort the owned carrier without reflecting Finish");
+    teardown();
 }
 
 static void caseTransferClose(bool fec, unsigned direction, unsigned loss)
@@ -1469,6 +1781,62 @@ static void caseSharedCarrierPressureReentry(void)
     teardown();
 }
 
+static void caseAssociationReadiness(carrier_est_phase_t phase)
+{
+    testCaseSet(phase == kEstOnCarrierInit   ? "KCP readiness before service Init maps once per association"
+                : phase == kEstOnServiceInit ? "KCP transport Est reentry during service Init maps once"
+                                             : "KCP transport Est reentry during deferred carrier Pause maps once");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    fixture.first_carrier_est = phase;
+    fixture.repeat_est        = true;
+
+    endpoint_t *first = openApp();
+    require(first->establishments == 1 && first->service == NULL,
+            "client did not map repeated and nested carrier Est once before protocol readiness");
+    if (phase == kEstOnServicePause)
+        carrierPressure(first, true, true);
+    established(first);
+    require(fixture.first_carrier_est == kEstManual && first->service_establishments == 1 &&
+                fixture.carrier_est_relays == 1,
+            "first service did not map readiness once in each direction");
+
+    endpoint_t *second = openApp();
+    require(second->establishments == 1 && second->service == NULL, "second application did not receive its own Est");
+    established(second);
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        tunnelNextUpStreamEst(fixture.wire, fixture.carrier);
+        tunnelPrevDownStreamEst(fixture.service, first->service);
+        tunnelPrevDownStreamEst(fixture.service, second->service);
+    }
+    require(first->service_establishments == 1 && second->service_establishments == 1 &&
+                fixture.carrier_est_relays == 2,
+            "shared carrier repeated, missed, or crossed a per-association readiness mapping");
+    teardown();
+}
+
+static void caseServiceRetiredDuringInitReadiness(void)
+{
+    testCaseSet("KCP skips remembered readiness after a service retires during Init");
+    fixture_t fixture;
+    setup(&fixture, false, 1000, 1000, 1500);
+    fixture.first_carrier_est    = kEstOnCarrierInit;
+    fixture.early_service_finish = true;
+    endpoint_t *retired          = openApp();
+    pump(100);
+    require(retired->service != NULL && ! lineIsAlive(retired->service) && retired->service_establishments == 0,
+            "retired service received pending carrier Est after Init");
+
+    fixture.early_service_finish = false;
+    endpoint_t *surviving        = openApp();
+    established(surviving);
+    tunnelNextUpStreamEst(fixture.wire, fixture.carrier);
+    require(retired->service_establishments == 0 && surviving->service_establishments == 1,
+            "readiness reentry reached a retired service or repeated its sibling's callback");
+    teardown();
+}
+
 static void caseServerPressureReentry(bool fec, unsigned action)
 {
     testCaseSet(action == kServicePressureFinishOnPause    ? "server Pause synchronously closes owned service"
@@ -1787,6 +2155,165 @@ static void caseDeferredCombinedPressure(bool fec)
 #include "receive_cases.h"
 #include "session_extra_cases.h"
 
+static void caseKeepaliveTimer(bool fec)
+{
+    testCaseSet("worker timer sends keepalives and expires idle KCP before its long update interval");
+    fixture_t fixture;
+    setupWithSettings(
+        &fixture, fec, 1000, 1000, 1500, 1500, ",\"kcp-interval-ms\":5000,\"no-recv-timeout-ms\":1000");
+    endpoint_t *ep = openApp();
+    established(ep);
+    sbuf_t *ignored = touControlCreate(getCurrentWorkerBufferPool(),
+                                       kTouReady,
+                                       touSessionClientNonce(ep->client_session),
+                                       touSessionServerNonce(ep->client_session),
+                                       touSessionSettings(ep->client_session));
+    require(ignored != NULL, "keepalive fixture did not create a duplicate READY");
+
+    /* Let both wakeups become due. Deliver ignored input just before the
+     * worker loop can dispatch its timers. */
+    clock_us += 100000;
+    wloopUpdateTime(getWorkerLoop(0));
+    deliver((packet_t) {copyPacket(ignored), ep, 1});
+    discard wloopProcessEvents(getWorkerLoop(0), 0);
+    sbuf_t *client_ping = extraFindRecord(ep, 0, 81, kTouFramePing);
+    sbuf_t *server_ping = extraFindRecord(ep, 1, 81, kTouFramePing);
+    require(client_ping && server_ping, "due KCP keepalive waited for regular update or ignored input delayed it");
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), client_ping);
+
+    /* Lose the first ping in each direction. Inspect both timer-driven retries
+     * before delivering either one, so incoming traffic cannot trigger the flush. */
+    extraDiscardQueuedWire();
+    const uint32_t now          = (uint32_t) (clock_us / 1000);
+    const uint32_t client_retry = ikcp_check(touSessionKcp(ep->client_session), now) - now;
+    const uint32_t server_retry = ikcp_check(touSessionKcp(ep->server_session), now) - now;
+    const uint32_t retry_delay  = max(client_retry, server_retry);
+    require(retry_delay > 0 && retry_delay < 900, "fixture needs a retry deadline before receive expiry");
+    clock_us += (uint64_t) retry_delay * 1000;
+    wloopUpdateTime(getWorkerLoop(0));
+    discard wloopProcessEvents(getWorkerLoop(0), 0);
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        sbuf_t *retry = extraFindRecord(ep, direction, 81, kTouFramePing);
+        require(retry != NULL, "worker timer did not retransmit the lost ping at the KCP retry deadline");
+        bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), retry);
+    }
+    flushWire();
+    for (unsigned period = 0; period < 3; ++period)
+    {
+        const unsigned client_emitted = fixture.emitted[0];
+        const unsigned server_emitted = fixture.emitted[1];
+        pump(1000);
+        require(touSessionIsReady(ep->client_session) && touSessionIsReady(ep->server_session) &&
+                    fixture.emitted[0] > client_emitted && fixture.emitted[1] > server_emitted,
+                "healthy idle pair did not exchange keepalives across an entire idle interval");
+    }
+
+    /* Set the client's last valid receive to this exact clock tick with a
+     * captured peer packet, then cut off all further peer traffic. */
+    extraDiscardQueuedWire();
+    fixture.drop_kind      = fec ? kTouFec : kTouKcp;
+    fixture.drop_direction = 1;
+    fixture.drop_remaining = 100;
+    deliver((packet_t) {server_ping, ep, 1});
+    advance(999);
+    deliver((packet_t) {ignored, ep, 1});
+    require(touSessionIsReady(ep->client_session), "client expired before its receive deadline");
+    advance(1);
+    require(! touSessionIsAlive(ep->client_session) && ep->app_finishes == 1,
+            "receive-idle timer failed to expire at equality after only ignored traffic");
+    teardown();
+}
+
+static uint16_t segmentReceiveWindow(const uint8_t *segment)
+{
+    return (uint16_t) (segment[6] | (uint16_t) segment[7] << 8);
+}
+
+static void caseSaturatedReceiveWindow(bool fec)
+{
+    for (unsigned window = UINT16_MAX; window <= UINT16_MAX + 1U; ++window)
+    {
+        testCaseSet("large KCP receive window saturates its wire field and transfers beyond the first flight");
+        fixture_t fixture;
+        char      settings[128];
+        snprintf(settings,
+                 sizeof(settings),
+                 ",\"no-recv-timeout-ms\":2000,\"kcp-recv-window\":%u,\"kcp-send-window\":32",
+                 window);
+        setupWithSettings(&fixture, fec, 1000, 1000, 1500, 1500, settings);
+        endpoint_t *ep = openApp();
+        established(ep);
+        ikcpcb *receiver = touSessionKcp(ep->server_session);
+        require(receiver->rcv_wnd == window && receiver->nrcv_que == 0, "configured local receive window changed");
+        sendBytes(ep, 0, 70001);
+        pump(500);
+        require(fixture.saved_ack != NULL && fixture.saved_ack_direction == 1,
+                "receiver did not acknowledge the first flight");
+        size_t         ack_size = 0;
+        const uint8_t *ack      = extraKcpBody(fixture.saved_ack, &ack_size);
+        require(ack != NULL && ack_size >= 24 && ack[4] == 82 && segmentReceiveWindow(ack) == UINT16_MAX,
+                "empty receive queue did not advertise a saturated 16-bit window");
+        require(ep->received[0] == 70001 && ikcp_waitsnd(touSessionKcp(ep->client_session)) == 0,
+                "saturated window failed to transmit and acknowledge every ordered byte");
+        teardown();
+    }
+}
+
+typedef struct receive_window_sample_s
+{
+    unsigned count;
+    uint16_t window;
+    uint8_t  command;
+} receive_window_sample_t;
+
+static int captureReceiveWindow(const char *buffer, int length, ikcpcb *kcp, void *user)
+{
+    discard                  kcp;
+    receive_window_sample_t *sample = user;
+    const uint8_t           *bytes  = (const uint8_t *) buffer;
+    for (int offset = 0; offset < length;)
+    {
+        require(length - offset >= 24, "window test got an incomplete KCP segment");
+        const uint8_t *segment = bytes + offset;
+        const uint32_t body    = le32(segment + 20);
+        require(body <= (uint32_t) (length - offset - 24), "window test got an incomplete KCP segment body");
+        ++sample->count;
+        sample->window  = segmentReceiveWindow(segment);
+        sample->command = segment[4];
+        offset += 24 + (int) body;
+    }
+    return 0;
+}
+
+static void caseFullReceiveWindow(void)
+{
+    testCaseSet("a genuinely full KCP receive queue advertises zero and reports freed space");
+    receive_window_sample_t sample = {0};
+    ikcpcb                 *kcp    = ikcp_create(0, &sample);
+    ikcp_setoutput(kcp, captureReceiveWindow);
+    ikcp_update(kcp, 1);
+
+    uint8_t push[25] = {[4] = 81, [6] = 128, [20] = 1};
+    for (uint32_t sequence = 0; sequence < kcp->rcv_wnd; ++sequence)
+    {
+        receiveWrite32(push + 12, sequence);
+        require(ikcp_input(kcp, (const char *) push, sizeof(push)) == 0, "KCP refused in-window PUSH");
+    }
+    require(kcp->nrcv_que == kcp->rcv_wnd, "window test did not fill the actual receive queue");
+    ikcp_flush(kcp);
+    require(sample.count > 0 && sample.command == 82 && sample.window == 0,
+            "full receive queue did not advertise zero in its ACK");
+
+    char byte;
+    require(ikcp_recv(kcp, &byte, sizeof(byte)) == 1, "KCP did not free one segment's receive capacity");
+    sample.count = 0;
+    ikcp_flush(kcp);
+    require(sample.count > 0 && sample.command == 84 && sample.window == 1,
+            "reopened receive queue did not advertise its newly available segment");
+    ikcp_release(kcp);
+}
+
 static void caseWirePrimitives(void)
 {
     testCaseSet("golden envelope/settings and checked deadline fixtures");
@@ -1865,6 +2392,8 @@ int kcpSessionCases(const char *selection)
             caseLargeFlight(fec != 0, false);
             caseLargeFlight(fec != 0, true);
             caseZeroWindowReopen(fec != 0);
+            caseKeepaliveTimer(fec != 0);
+            caseSaturatedReceiveWindow(fec != 0);
             caseFinishBeforeReady(fec != 0);
             caseEarlyOutput(fec != 0);
             caseReadyAbort(fec != 0);
@@ -1878,14 +2407,28 @@ int kcpSessionCases(const char *selection)
             caseOuterRejection(fec != 0);
         }
         caseClientTerminalReentry();
+        caseConfiguredPeer();
+        caseSharedCarrierReadHolds(false);
+        caseSharedCarrierReadHolds(true);
+        caseClientReadHoldResumeFinish();
+        for (unsigned server = 0; server < 2; ++server)
+        {
+            caseCloseReleasesReadHold(server != 0, false);
+            caseCloseReleasesReadHold(server != 0, true);
+        }
         caseCarrierStopReentry();
         caseAdvisorySignals();
         caseSharedCarrierPressure();
         caseSharedCarrierPressureReentry();
+        caseAssociationReadiness(kEstOnCarrierInit);
+        caseAssociationReadiness(kEstOnServiceInit);
+        caseAssociationReadiness(kEstOnServicePause);
+        caseServiceRetiredDuringInitReadiness();
         caseCapacity();
         kcpExtraCases();
         kcpClientSettingsGeometryCases();
         kcpServerSettingsGeometryCases();
+        caseFullReceiveWindow();
         caseWirePrimitives();
     }
     else

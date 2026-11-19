@@ -77,7 +77,8 @@ typedef struct tlsclient_lstate_s
     bool plaintext_write_in_progress;
     /* Plaintext awaiting TLS readiness or older reentrant output. The active
      * head remains charged and owned here across wire callbacks. */
-    sbuf_t *pending_plaintext;
+    sbuf_t         *pending_plaintext;
+    buffer_budget_t direct_budget; // accounting for the one synchronous input outside the FIFO limit
 } tlsclient_lstate_t;
 
 enum
@@ -141,6 +142,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l);
+bool tlsclientDrainFinalPlaintext(tunnel_t *t, line_t *l);
 bool tlsclientUpdateSourcePressure(tunnel_t *t, line_t *l);
 
 void tlsclientTunnelDownStreamEst(tunnel_t *t, line_t *l);

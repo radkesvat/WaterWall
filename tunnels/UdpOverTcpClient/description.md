@@ -117,6 +117,11 @@ Each payload callback on the datagram-facing side represents one UDP datagram. T
 UDP payloads; the source protocol metadata does not change their framing. Mixed listeners must route TCP
 traffic through a separate path before the client.
 
+During Init, the client sets the destination protocol to TCP before forwarding
+to the stream path. It preserves the source protocol and destination address and
+port; subsequent connectors or proxies select their destination through their
+normal settings.
+
 #### Packet size limits
 
 The maximum outbound UDP datagram size is `65535 - 20 - 8 - 2 = 65505` bytes.

@@ -21,7 +21,9 @@ static bool connectionfisherclientLoadTries(connectionfisherclient_tstate_t *ts,
 
 tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(connectionfisherclient_tstate_t), sizeof(connectionfisherclient_lstate_t));
+    tunnel_t *t = tunnelCreate(node,
+                               sizeof(connectionfisherclient_tstate_t) + getWorkersCount() * sizeof(close_drain_t *),
+                               sizeof(connectionfisherclient_lstate_t));
     if (! t)
     {
         return NULL;
@@ -29,16 +31,18 @@ tunnel_t *connectionfisherclientTunnelCreate(node_t *node)
 
     connectionfisherclient_tstate_t *ts = tunnelGetState(t);
 
-    t->fnInitU    = &connectionfisherclientTunnelUpStreamInit;
-    t->fnFinU     = &connectionfisherclientTunnelUpStreamFinish;
-    t->fnPayloadU = &connectionfisherclientTunnelUpStreamPayload;
-    t->fnPauseU   = &connectionfisherclientTunnelUpStreamPause;
-    t->fnResumeU  = &connectionfisherclientTunnelUpStreamResume;
-    t->fnEstD     = &connectionfisherclientTunnelDownStreamEst;
-    t->fnFinD     = &connectionfisherclientTunnelDownStreamFinish;
-    t->fnPayloadD = &connectionfisherclientTunnelDownStreamPayload;
-    t->fnPauseD   = &connectionfisherclientTunnelDownStreamPause;
-    t->fnResumeD  = &connectionfisherclientTunnelDownStreamResume;
+    t->fnInitU         = &connectionfisherclientTunnelUpStreamInit;
+    t->fnFinU          = &connectionfisherclientTunnelUpStreamFinish;
+    t->fnPayloadU      = &connectionfisherclientTunnelUpStreamPayload;
+    t->fnPauseU        = &connectionfisherclientTunnelUpStreamPause;
+    t->fnResumeU       = &connectionfisherclientTunnelUpStreamResume;
+    t->fnEstD          = &connectionfisherclientTunnelDownStreamEst;
+    t->fnFinD          = &connectionfisherclientTunnelDownStreamFinish;
+    t->fnPayloadD      = &connectionfisherclientTunnelDownStreamPayload;
+    t->fnPauseD        = &connectionfisherclientTunnelDownStreamPause;
+    t->fnResumeD       = &connectionfisherclientTunnelDownStreamResume;
+    t->onWorkerQuiesce = &connectionfisherclientQuiesceDrains;
+    t->onWorkerStop    = &connectionfisherclientStopDrains;
 
     if (! connectionfisherclientLoadTries(ts, node->node_settings_json))
     {

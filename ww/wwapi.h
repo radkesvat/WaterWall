@@ -13,7 +13,7 @@
 #include "base/wsysinfo.h"
 
 #include "event/udp_send.h"
-#include "event/wevent.h"
+#include "event/wloop.h"
 
 #include "bufio/buffer_budget.h"
 #include "bufio/buffer_pool.h"

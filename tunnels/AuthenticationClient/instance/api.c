@@ -102,10 +102,8 @@ static const char *syncPhase(const authenticationclient_status_t *s)
         return "stopped";
     if (s->continuity_error)
         return "continuity_error";
-    if (! s->connected)
-        return "connecting";
     if (! s->authenticated)
-        return "authenticating";
+        return s->connected || s->auth_in_flight ? "authenticating" : "connecting";
     if (s->push_in_flight)
         return "pushing";
     if (s->pull_in_flight || s->traversal_active)

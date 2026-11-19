@@ -17,7 +17,7 @@ static bool quicCheckFieldStrings(const cJSON *object, const char *name)
     return true;
 }
 
-static bool quicCheckSettingsStrings(const cJSON *settings)
+static bool quicCheckSettingsFields(const cJSON *settings)
 {
     /* Both roles recognize this vocabulary. Unknown settings keep their normal
      * policy, while malformed recognized keys cannot alias a consumed field. */
@@ -42,6 +42,12 @@ static bool quicCheckSettingsStrings(const cJSON *settings)
         {
             return false;
         }
+    }
+    if (cJSON_GetObjectItemCaseSensitive(settings, "carrier-mode") != NULL)
+    {
+        LOGF("JSON Error: QUIC settings->carrier-mode was removed. Remove this setting and use UdpOverTcpClient and "
+             "UdpOverTcpServer for a TCP carrier.");
+        return false;
     }
     return true;
 }
@@ -93,13 +99,13 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
     {
         for (const cJSON *field = node->node_json->child; field != NULL; field = field->next)
         {
-            if (field->string != NULL && strcmp(field->string, "settings") == 0 && ! quicCheckSettingsStrings(field))
+            if (field->string != NULL && strcmp(field->string, "settings") == 0 && ! quicCheckSettingsFields(field))
             {
                 return false;
             }
         }
     }
-    if (! quicCheckSettingsStrings(json))
+    if (! quicCheckSettingsFields(json))
     {
         return false;
     }
@@ -108,22 +114,20 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
         LOGF("JSON Error: QUIC settings must be an object");
         return false;
     }
-    *settings                   = (quic_node_settings_t) {.engine = {.verify                 = true,
-                                                                     .protocol               = "h3",
-                                                                     .handshake_timeout_ms   = 10000,
-                                                                     .idle_timeout_ms        = 60000,
-                                                                     .close_drain_timeout_ms = 30000,
-                                                                     .max_packet_size        = 1350,
-                                                                     .max_buffered_bytes     = 2097152,
-                                                                     .max_buffered_buffers   = 1024,
-                                                                     .receive_window_bytes   = 1048576,
-                                                                     .allocate               = memoryAllocate,
-                                                                     .deallocate             = memoryFree,
-                                                                     .fatal                  = quicFatalAllocation}};
-    ww_quic_settings_t *engine  = &settings->engine;
-    const char         *carrier = "datagram";
+    *settings                  = (quic_node_settings_t) {.engine = {.verify                 = true,
+                                                                    .protocol               = "h3",
+                                                                    .handshake_timeout_ms   = 10000,
+                                                                    .idle_timeout_ms        = 60000,
+                                                                    .close_drain_timeout_ms = 30000,
+                                                                    .max_packet_size        = 1350,
+                                                                    .max_buffered_bytes     = 2097152,
+                                                                    .max_buffered_buffers   = 1024,
+                                                                    .receive_window_bytes   = 1048576,
+                                                                    .allocate               = memoryAllocate,
+                                                                    .deallocate             = memoryFree,
+                                                                    .fatal                  = quicFatalAllocation}};
+    ww_quic_settings_t *engine = &settings->engine;
     if (! quicReadString(json, "protocol", &engine->protocol, false) ||
-        ! quicReadString(json, "carrier-mode", &carrier, false) ||
         ! quicReadBoolean(json, "verbose", &settings->verbose) ||
         ! quicReadInteger(json, "handshake-timeout-ms", 1, WW_QUIC_MAX_TIMEOUT_MS, &engine->handshake_timeout_ms) ||
         ! quicReadInteger(json, "idle-timeout-ms", 1, WW_QUIC_MAX_TIMEOUT_MS, &engine->idle_timeout_ms) ||
@@ -136,11 +140,6 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
     {
         return false;
     }
-    if (strcmp(carrier, "datagram") != 0 && strcmp(carrier, "stream") != 0)
-    {
-        LOGF("JSON Error: QUIC settings->carrier-mode must be datagram or stream");
-        return false;
-    }
     if (engine->receive_window_bytes > engine->max_buffered_bytes)
     {
         LOGF("JSON Error: QUIC receive-window-bytes must fit max-buffered-bytes");
@@ -151,7 +150,6 @@ bool quicReadCommonSettings(const node_t *node, quic_node_settings_t *settings)
         LOGF("JSON Error: QUIC max-buffered-buffers descriptors must fit max-buffered-bytes");
         return false;
     }
-    settings->stream_carrier = strcmp(carrier, "stream") == 0;
     return true;
 }
 
@@ -175,7 +173,6 @@ bool quicConfigureTunnel(tunnel_t *t, const quic_node_settings_t *settings, cons
                                             .max_buffers            = engine->max_buffered_buffers,
                                             .close_drain_timeout_ms = engine->close_drain_timeout_ms,
                                             .client                 = engine->is_client,
-                                            .stream_carrier         = settings->stream_carrier,
                                             .verbose                = settings->verbose};
     atomic_init(&state->stopping, false);
     return true;

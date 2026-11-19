@@ -25,6 +25,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   endforeach()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND WATERWALL_ENABLE_INTEGRATION_TEST_NETNS AND
+   TARGET HalfDuplexServer AND TARGET TcpListener AND TARGET TcpConnector)
+  if(TARGET HalfDuplexClient)
+    add_waterwall_isolated_test(waterwall.halfduplex_tcp_delayed_upload
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_splice_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" true delayed-upload)
+    set_tests_properties(waterwall.halfduplex_tcp_delayed_upload PROPERTIES TIMEOUT 45)
+    add_waterwall_test_labels(waterwall.halfduplex_tcp_delayed_upload "integration" "tunnels" "halfduplex")
+  endif()
+  foreach(upload_workers IN ITEMS 1 2)
+    set(upload_close_case waterwall.halfduplex_tcp_upload_close_workers_${upload_workers})
+    add_waterwall_isolated_test(${upload_close_case}
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_splice_integration.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" true upload-close --workers ${upload_workers})
+    set_tests_properties(${upload_close_case} PROPERTIES TIMEOUT 45)
+    add_waterwall_test_labels(${upload_close_case} "integration" "tunnels" "halfduplex")
+  endforeach()
+  add_waterwall_isolated_test(waterwall.halfduplex_tcp_upload_expiry
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/halfduplex_splice_integration.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" false upload-expiry --workers 2)
+  set_tests_properties(waterwall.halfduplex_tcp_upload_expiry PROPERTIES TIMEOUT 60)
+  add_waterwall_test_labels(waterwall.halfduplex_tcp_upload_expiry "integration" "tunnels" "halfduplex")
+endif()
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
    TARGET HalfDuplexClient AND TARGET HalfDuplexServer AND TARGET TlsClient AND TARGET TlsServer AND
    TARGET TcpListener AND TARGET TcpConnector AND TARGET UdpListener AND TARGET UdpConnector AND

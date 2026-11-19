@@ -11,11 +11,13 @@ client: TcpListener:1080 -> QuicClient -> UdpConnector:4433
 server: UdpListener:4433 -> QuicServer -> TcpConnector:9000
 ```
 
-The `stream` pair instead uses `TcpConnector`/`TcpListener` and sets
-`carrier-mode=stream` on both QUIC nodes. Its four-byte outer datagram length is
-private framing over a byte stream. The `datagram` pair emits ordinary QUIC
-datagrams with no outer envelope. Adapter selection and carrier mode are user
-configuration; no automatic detection or downgrade occurs.
+The `stream` pair carries QUIC datagrams over TCP. The UdpOverTcp pair frames the
+datagrams for the TCP connection and reconstructs them at the other end.
+
+```text
+client: TcpListener:1080 -> QuicClient -> UdpOverTcpClient -> TcpConnector:4433
+server: TcpListener:4433 -> UdpOverTcpServer -> QuicServer -> TcpConnector:9000
+```
 
 Create a local test certificate with an ASCII DNS name before starting either
 pair. From this directory:

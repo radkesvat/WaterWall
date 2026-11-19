@@ -11,6 +11,6 @@ void tcplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l)
     {
         // LOGD("TcpListener: Pausing read on line FD: %x", wioGetFD(lstate->io));
         lstate->read_paused = true;
-        wioReadStop(lstate->io);
+        wioPauseTcpRead(lstate->io);
     }
 }

@@ -2,7 +2,17 @@
 
 #include "ReverseClient/reverseclient_activation.h"
 #include "ReverseClient/reverseclient_handshake.h"
+#include "close_drain.h"
 #include "wwapi.h"
+
+typedef enum reverseserver_phase_e
+{
+    kReverseHalfClosed,
+    kReverseHalfOpening,
+    kReverseHalfWaiting,
+    kReverseHalfPaired,
+    kReverseHalfDraining
+} reverseserver_phase_t;
 
 typedef struct reverseserver_lstate_s
 {
@@ -12,23 +22,31 @@ typedef struct reverseserver_lstate_s
     line_t                        *d;
     buffer_queue_t                 pending;
     buffer_budget_t                pending_budget;
+    sbuf_t                        *activation;
+    close_drain_t                  close_drain;
+    tunnel_t                      *drain_tunnel;
+    unsigned                       handoff_depth;
     uint64_t                       replay_admitted;
     uint32_t                       replay_admitted_buffers;
     uint32_t                       handshake_read;
-    bool                           paired;
-    bool                           handshaked;
+    reverseserver_phase_t          phase;
     bool                           handshake_mismatch;
     bool                           replaying;
     bool                           output_paused;
     bool                           source_paused;
 } reverseserver_lstate_t;
 
+typedef struct reverseserver_waitlist_s
+{
+    reverseserver_lstate_t *head;
+    atomic_uint             count; /* Other workers read the count as a matching hint. */
+} reverseserver_waitlist_t;
+
 typedef struct reverseserver_thread_box_s
 {
-    reverseserver_lstate_t *u_root;
-    reverseserver_lstate_t *d_root;
-    atomic_uint             u_count;
-    atomic_uint             d_count;
+    reverseserver_waitlist_t users;
+    reverseserver_waitlist_t reverse_links;
+    close_drain_t           *drains;
 } reverseserver_thread_box_t;
 
 typedef struct reverseserver_tstate_s
@@ -42,9 +60,9 @@ typedef struct reverseserver_tstate_s
 
 enum
 {
-    kTunnelStateSize = sizeof(reverseserver_tstate_t),
-    kLineStateSize   = sizeof(reverseserver_lstate_t),
-    kReverseServerPendingBytes   = 2 * 1024 * 1024,
+    kTunnelStateSize               = sizeof(reverseserver_tstate_t),
+    kLineStateSize                 = sizeof(reverseserver_lstate_t),
+    kReverseServerPendingBytes     = 2 * 1024 * 1024,
     kReverseServerReplayDeliveries = 1024
 };
 
@@ -68,15 +86,19 @@ void reverseserverTunnelDownStreamResume(tunnel_t *t, line_t *u);
 void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, line_t *d);
 void reverseserverLinestateDestroy(reverseserver_lstate_t *ls);
 
-void reverseserverAddConnectionU(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
-void reverseserverRemoveConnectionU(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
-void reverseserverAddConnectionD(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
-void reverseserverRemoveConnectionD(reverseserver_thread_box_t *box, reverseserver_lstate_t *con);
+void reverseserverEnterWaiting(reverseserver_waitlist_t *list, reverseserver_lstate_t *half);
+void reverseserverLeaveWaiting(reverseserver_waitlist_t *list, reverseserver_lstate_t *half,
+                               reverseserver_phase_t next);
 
 void reverseserverPair(tunnel_t *t, line_t *u, line_t *d);
+void reverseserverSetOutputPaused(tunnel_t *t, line_t *line, bool paused);
 void reverseserverDrainPair(tunnel_t *t, line_t *u);
-bool reverseserverQueuePairedPayload(tunnel_t *t, line_t *line, sbuf_t *buf);
+void reverseserverForwardPairedPayload(tunnel_t *t, line_t *line, sbuf_t *buf);
 bool reverseserverRetainPayload(tunnel_t *t, line_t *line, sbuf_t *buf);
 bool reverseserverReconcileSource(tunnel_t *t, line_t *line);
 void reverseserverCloseLine(tunnel_t *t, line_t *line);
+void reverseserverFinishHalf(tunnel_t *t, line_t *line);
+void reverseserverPumpClose(tunnel_t *t, line_t *line);
+void reverseserverQuiesceDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void reverseserverStopDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void reverseserverNotifyWaitingPeers(tunnel_t *t, wid_t user_wid);

@@ -2,7 +2,7 @@
  * Covers: line state index through 255, distinct dense slots, large offsets and complete line geometry.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: testLargeOffsets, testDenseSlots, testSizeLimits
+ * Cases: large offsets, dense slots, size limits, and final release of owned source and destination domains.
  * Checks: Assertion labels include: unexpected aligned line-state size; 19th line-state offset wrapped
  * below 64 KiB; indexed line-state total is incorrect; indexed and accumulated line-state totals differ
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
@@ -65,6 +65,47 @@ static void testLargeOffsets(void)
     }
 }
 
+#ifdef WW_TEST_LINE_DOMAIN_RELEASE
+static const char  constant_domain[] = "borrowed.example";
+static const char *pending_domain_frees[2];
+
+void __real_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr)
+{
+    require(ptr != constant_domain, "line teardown freed a constant domain");
+    for (size_t i = 0; i < ARRAY_SIZE(pending_domain_frees); ++i)
+        if (ptr == pending_domain_frees[i])
+            pending_domain_frees[i] = NULL;
+    __real_memoryFree(ptr);
+}
+
+static void testLineDomainRelease(generic_pool_t **pools, bool owns_source, bool owns_dest)
+{
+    line_t            *line       = lineCreateForWorker(0, pools, 0);
+    address_context_t *contexts[] = {lineGetSourceAddressContext(line), lineGetDestinationAddressContext(line)};
+    const bool         owned[]    = {owns_source, owns_dest};
+    for (size_t i = 0; i < ARRAY_SIZE(contexts); ++i)
+    {
+        if (owned[i])
+        {
+            addresscontextDomainSetByString(contexts[i], "owned.example");
+            pending_domain_frees[i] = contexts[i]->domain;
+        }
+        else
+            addresscontextDomainSetConstMem(contexts[i], constant_domain, sizeof(constant_domain) - 1);
+    }
+
+    lineRef(line);
+    lineDestroy(line);
+    for (size_t i = 0; i < ARRAY_SIZE(owned); ++i)
+        require((pending_domain_frees[i] != NULL) == owned[i], "line released a domain before the final reference");
+    lineUnref(line);
+    require(! pending_domain_frees[0], "final line release leaked its source domain");
+    require(! pending_domain_frees[1], "final line release leaked its destination domain");
+}
+#endif
+
 static void testDenseSlots(void)
 {
     static const uint32_t size_pattern[] = {0, 1, 31, 32, 33, 63, 64, 65, 96, 97};
@@ -109,6 +150,12 @@ static void testDenseSlots(void)
     require(master != NULL, "failed to create dense master pool");
     generic_pool_t *pools[] = {genericpoolCreateWithDefaultCacheAlignedAllocatorAndCapacity(master, item_size, 2)};
     require(pools[0] != NULL, "failed to create dense line pool");
+
+#ifdef WW_TEST_LINE_DOMAIN_RELEASE
+    testLineDomainRelease(pools, true, true);
+    testLineDomainRelease(pools, true, false);
+    testLineDomainRelease(pools, false, true);
+#endif
 
     // This fixture creates and owns normal lines. Exercise recycling as well as first allocation.
     for (unsigned int iteration = 0; iteration < 3; ++iteration)
@@ -157,7 +204,7 @@ static void testDenseSlots(void)
         line->prefer_ordinary_read_u = true;
         line->prefer_ordinary_read_d = true;
         line->fallback_mode              = true;
-        line->close_linger_reasons       = kLineCloseLingerProtocolDrain | kLineCloseLingerPeerWriteShutdown;
+        line->close_linger_reasons       = kLineCloseLingerPeerWriteShutdown;
         lineDestroy(line);
         require(masterpoolGetCheckedOut(master) == 0, "dense line was not returned to its pool");
     }

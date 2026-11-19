@@ -1,0 +1,59 @@
+{
+  "name": "wireguard-connection-server",
+  "nodes": [
+    {
+      "name": "udp",
+      "type": "UdpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 51820
+      },
+      "next": "vpn"
+    },
+    {
+      "name": "vpn",
+      "type": "WireGuardServer",
+      "settings": {
+        "privatekey": "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+        "mode": "connection",
+        "auth-client-node-name": "accounts"
+      },
+      "next": "inner"
+    },
+    {
+      "name": "inner",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    },
+    {
+      "name": "accounts",
+      "type": "AuthenticationClient",
+      "settings": {
+        "name": "edge",
+        "secret": "example-control-secret",
+        "pull-interval-ms": 1000
+      },
+      "next": "database"
+    },
+    {
+      "name": "database",
+      "type": "AuthenticationServer",
+      "settings": {
+        "db-path": "users.json",
+        "auth-clients": [
+          {
+            "name": "edge",
+            "secret": "example-control-secret",
+            "allow-user-pull": true,
+            "allow-stats-push": true,
+            "allow-user-write": false
+          }
+        ],
+        "file-save-rate-ms": 60000
+      }
+    }
+  ]
+}

@@ -26,14 +26,13 @@ void socks5serverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             discard socks5serverQueueControl(t, l, buf, true);
             return;
         }
-        if ((ls->phase == kSocks5ServerPhaseTcpEstablished || ls->phase == kSocks5ServerPhaseConnectWaitEst) &&
-            ! ls->next_initializing && ! ls->control_draining && bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
-            bufferstreamIsEmpty(&ls->in_stream))
+        if (ls->phase == kSocks5ServerPhaseTcpEstablished && ! ls->control_draining &&
+            bufferqueueGetEntryCount(&ls->pending_up) == 0 && bufferstreamIsEmpty(&ls->in_stream))
         {
             tunnelNextUpStreamPayload(t, l, buf);
             return;
         }
-        if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase == kSocks5ServerPhaseConnectStarting || ls->phase == kSocks5ServerPhaseTcpEstablished)
         {
             if (socks5serverQueueControl(t, l, buf, true))
                 discard socks5serverDrainControl(t, l);

@@ -157,9 +157,9 @@ processing to that worker when necessary; each original transport keeps its
 correct return path. The server owns the reconstructed application line and
 borrows the incoming transport lines.
 
-The application line inherits member zero's source address context, including
-its IP and port, before the next node is initialized. Worker handoff preserves
-that context so downstream source-IP routing and limiting see the same values.
+The application line inherits member zero's source address context, observed
+peer source port and local listener port before the next node is initialized.
+Worker handoff preserves those values for routing and PROXY headers.
 
 After every member is present, the server initializes exactly one application
 line through `next` and sends READY. Setup requires no application payload,

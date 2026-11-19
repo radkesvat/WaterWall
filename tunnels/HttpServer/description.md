@@ -425,7 +425,9 @@ closes the connection. Its `large-send-buffer` / `large-recv-buffer` settings af
 After `Finish` from the next tunnel, `HttpServer` keeps its HTTP/2 state and borrowed carrier line available while
 accepted response bytes wait for flow-control credit. It still processes HTTP/2 control frames such as
 WINDOW_UPDATE, but discards later request-body data, including body events already decoded into its local queue.
-It sends no more callbacks toward the finished next tunnel. Once response DATA and `END_STREAM` have been handed
+If the service paused carrier reads, including before an h2c upgrade, HttpServer arms the close deadline and
+resumes the carrier so it can read WINDOW_UPDATE. It sends no more callbacks toward the finished next tunnel.
+Once response DATA and `END_STREAM` have been handed
 to the previous tunnel, it releases HTTP state and finishes that direction. Handing bytes to the transport is not
 confirmation that the client received them.
 
@@ -442,16 +444,9 @@ direction. It never sends another callback toward the finished backend. Completi
 cancellation cancel the timer; process shutdown also aborts the wait instead of waiting for the deadline.
 The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
 response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
-This deadline bounds retained HTTP response work, not the lifetime of the physical TCP socket: bytes already handed
-to the transport follow that adapter's close/write-flush policy. Expiry does not request successful-response linger.
+The deadline covers HTTP response work up to handoff or expiry. In either case HttpServer sends Finish
+to the live carrier. A TCP adapter normally flushes accepted writes and closes the socket fully.
 
-On Linux, successful response completion requests `TcpListener`'s socket-only linger. The Waterwall line is destroyed immediately;
-the detached socket may spend up to 60 seconds flushing its accepted writes, then shuts down its write direction
-and reads/discards remaining peer input for at most 5 seconds of inactivity or 30 seconds total. These limits are
-hardcoded and the latter phase starts after write completion. Reading remaining input avoids a TCP reset caused by
-closing with unread input. Transport errors, peer closure or process shutdown can end this earlier. Other platforms
-use the ordinary adapter close path. The normal `TcpListener` settings `initial-idle-timeout-ms` (60000 by default)
-and `active-idle-timeout-ms` (600000 by default) are separate from these linger limits.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 
 Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.

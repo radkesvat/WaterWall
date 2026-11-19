@@ -198,7 +198,7 @@ Packet mode with synthetic IPv4 packets:
 
 - acts as a chain end and receives the synthetic test flow from the previous node
 - initializes per-line state during upstream `Init`
-- immediately reports downstream `Est` so the chain head can begin sending requests
+- immediately reports downstream `Est`
 - verifies the fixed `11`-chunk request sequence coming from upstream by default
 - sends the fixed `11`-chunk response sequence back downstream by default
 - aborts the process on any size, order, byte-pattern, or lifecycle mismatch
@@ -285,7 +285,8 @@ On upstream `Init`, `TesterServer`:
 - initializes its per-line state immediately
 - sends downstream `Est` toward the previous tunnel
 
-That downstream `Est` is the signal `TesterClient` uses to start transmitting request chunks.
+Downstream `Est` reports readiness on normal lines. In packet mode, it starts request sending for
+`TesterClient` when `packet-start-immediately=false`.
 
 #### Request verification
 

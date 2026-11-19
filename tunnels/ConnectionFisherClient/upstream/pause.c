@@ -11,7 +11,7 @@ void connectionfisherclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
 
     if (ls->role == kConnectionFisherClientRoleMain && ls->selected_child != NULL)
     {
-        discard lineCallWithRef(ls->selected_child, tunnelNextUpStreamPause, t);
+        connectionfisherclientSetReplyPaused(t, ls->selected_child, true);
         return;
     }
 

@@ -1,0 +1,11 @@
+{
+  "users": [
+    {
+      "id": 2001,
+      "name": "wireguard-user",
+      "password": "wireguard-user-secret",
+      "wireguard-allowed-ips": "10.90.0.1/32",
+      "enabled": true
+    }
+  ]
+}

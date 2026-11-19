@@ -1355,8 +1355,8 @@ enet_protocol_send_acknowledgements (ENetHost * host, ENetPeer * peer)
     host -> bufferCount = buffer - host -> buffers;
 }
 
-/* Rebuild the timeout origin after an acknowledgement or command removal. Retransmissions can be
- * waiting in either outgoing queue, and a send timestamp of zero is valid. */
+/* Rebuild the timeout origin from each outstanding command's first transmission.
+ * Retransmissions can be waiting in either outgoing queue, and a timestamp of zero is valid. */
 static void
 enet_protocol_find_earliest_timeout (ENetPeer * peer, ENetList * queue)
 {
@@ -1373,8 +1373,8 @@ enet_protocol_find_earliest_timeout (ENetPeer * peer, ENetList * queue)
          continue;
 
        if (! (peer -> flags & ENET_PEER_FLAG_TIMEOUT_STARTED) ||
-           ENET_TIME_LESS (outgoingCommand -> sentTime, peer -> earliestTimeout))
-         peer -> earliestTimeout = outgoingCommand -> sentTime;
+           ENET_TIME_LESS (outgoingCommand -> firstSentTime, peer -> earliestTimeout))
+         peer -> earliestTimeout = outgoingCommand -> firstSentTime;
 
        peer -> flags |= ENET_PEER_FLAG_TIMEOUT_STARTED;
     }
@@ -1557,6 +1557,7 @@ enet_protocol_check_outgoing_commands (ENetHost * host, ENetPeer * peer, ENetLis
           {
              enet_uint32 roundTripTime = ENET_MIN (peer -> roundTripTime, ENET_PEER_MAXIMUM_TIMEOUT);
 
+             outgoingCommand -> firstSentTime = host -> serviceTime;
              /* Bound the operands before multiplying or adding. */
              outgoingCommand -> roundTripTimeout = peer -> roundTripTimeVariance > (ENET_PEER_MAXIMUM_TIMEOUT - roundTripTime) / 4 ?
                                                     ENET_PEER_MAXIMUM_TIMEOUT : ENET_MAX (roundTripTime + 4 * peer -> roundTripTimeVariance, 1);

@@ -76,7 +76,11 @@ void __wrap_nodemanagerStopWorkerResources(wid_t wid, const ww_lifecycle_context
     for (unsigned i = 0; i < 2; ++i)
     {
         interface_route_context_t *route = ((ptc_tstate_t *) tunnelGetState(fixtures[i].ptc))->routes_v4[wid];
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+        CHECK(route != NULL && probes[wid].undelivered_udp[i] == 0);
+#else
         CHECK(route != NULL && probes[wid].undelivered_udp[i] == (i == 0 ? 1U : 0U));
+#endif
         const uint8_t     index      = netif_get_index(&route->netif);
         const uint32_t    generation = route->netif.ww_generation;
         ww_lwip_engine_t *engine     = route->engine;
@@ -94,6 +98,105 @@ void __wrap_workerMessagesDestroyDetached(worker_message_queue_t *queue)
 {
     __real_workerMessagesDestroyDetached(queue);
 }
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+static atomic_ullong scope_epoch = 1;
+static atomic_bool   scope_retiring, scope_complete;
+static uint64_t      sourceEpoch(void *context, const ip_addr_t *source)
+{
+    discard context;
+    return IP_IS_V4(source) ? atomic_load(&scope_epoch) : 0;
+}
+static void scopeRetired(void *context, bool success)
+{
+    discard context;
+    CHECK(success && currentThreadOwnsWorker(0));
+    atomic_store(&scope_epoch, 2);
+    atomic_store(&scope_complete, true);
+}
+
+static bool                  hold_scope_output;
+static WorkerMessageCallback held_scope_output;
+static void                 *held_scope_args[3];
+static unsigned              scope_outputs;
+
+worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t, WorkerMessageCallback,
+                                                                             WorkerMessageCleanupCallback, void *,
+                                                                             void *, void *);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t, WorkerMessageCallback,
+                                                                             WorkerMessageCleanupCallback, void *,
+                                                                             void *, void *);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback run,
+                                                                             WorkerMessageCleanupCallback cancel,
+                                                                             void *a, void *b, void *c)
+{
+    if (! hold_scope_output)
+        return __real_sendWorkerMessageForceQueueWithCleanup(wid, run, cancel, a, b, c);
+    CHECK(wid == 0 && currentThreadOwnsWorker(wid) && held_scope_output == NULL && cancel != NULL);
+    held_scope_output  = run;
+    held_scope_args[0] = a;
+    held_scope_args[1] = b;
+    held_scope_args[2] = c;
+    return kWorkerMessageSubmitAccepted;
+}
+
+static void scopeOutput(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    CHECK(wwLwipEngineCurrent() == NULL && lineIsOnCurrentWorker(line) && sbufGetLength(buf) == 20);
+    ++scope_outputs;
+    lineReuseBuffer(line, buf);
+}
+
+static void checkScopedOutput(void)
+{
+    /* Worker 1 waits at setup's rendezvous, so these provider transitions cannot
+     * disturb ordinary traffic. Hold only the netif output's real continuation. */
+    static const struct
+    {
+        unsigned fixture;
+        uint64_t capture, execute;
+        bool     queued, emitted;
+    } cases[]       = {{0, 1, 1, true, true},
+                       {0, 1, 0, true, false},
+                       {0, 1, 2, true, false},
+                       {0, 0, 0, false, false},
+                       {1, 0, 0, true, true}};
+    uint8_t raw[20] = {0x45, 0, 0, 20, 0, 0, 0, 0, 64, 1};
+    PUT_BE32(raw + 12, UINT32_C(0xCB007102));
+    PUT_BE32(raw + 16, UINT32_C(0x0A000002));
+    struct pbuf p = {.payload = raw, .tot_len = sizeof(raw), .len = sizeof(raw)};
+
+    for (unsigned i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        fixture_t               *f        = &fixtures[cases[i].fixture];
+        TunnelFlowRoutinePayload original = f->prev->fnPayloadD;
+        f->prev->fnPayloadD               = scopeOutput;
+        scope_outputs                     = 0;
+        atomic_store(&scope_epoch, cases[i].capture);
+        ww_lwip_engine_t *engine = wwLwipRuntimeGet(0), *previous;
+        CHECK(engine != NULL && wwLwipEngineEnter(engine, &previous));
+        interface_route_context_t *route = ptcFindOrCreateRouteContextV4(f->ptc, 0);
+        CHECK(route != NULL);
+        hold_scope_output  = true;
+        const err_t result = ptcNetifOutput(&route->netif, &p, NULL);
+        hold_scope_output  = false;
+        wwLwipEngineLeave(engine, previous);
+        CHECK(result == (cases[i].queued ? ERR_OK : ERR_IF));
+        CHECK((held_scope_output != NULL) == cases[i].queued && scope_outputs == 0);
+        atomic_store(&scope_epoch, cases[i].execute);
+        if (held_scope_output != NULL)
+        {
+            WorkerMessageCallback run = held_scope_output;
+            held_scope_output         = NULL;
+            run(getWorker(0), held_scope_args[0], held_scope_args[1], held_scope_args[2]);
+        }
+        CHECK(scope_outputs == (unsigned) cases[i].emitted);
+        f->prev->fnPayloadD = original;
+    }
+    atomic_store(&scope_epoch, 1);
+}
+#endif
+
 static void rendezvous(void)
 {
     int r = pthread_barrier_wait(&barrier);
@@ -382,6 +485,32 @@ static void finishTimer(wtimer_t *timer)
 {
     wid_t    wid = getLoopWorkerWID(weventGetLoop(timer));
     probe_t *p   = &probes[wid];
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+    if (atomic_load(&scope_retiring))
+    {
+        if (! atomic_load(&scope_complete))
+        {
+            CHECK(wtimerReset(timer, 10));
+            return;
+        }
+        ptc_tstate_t              *state = tunnelGetState(fixtures[0].ptc);
+        interface_route_context_t *route = state->routes_v4[wid];
+        CHECK(ownedLineCount(fixtures[0].ptc, wid) == 0);
+        CHECK(ptc_udp_flow_map_t_size(&route->udp_flows) == 0 && routeChildCount(route) == 0);
+        CHECK(state->drain_count == 0);
+        CHECK(p->finish == 1);
+        line_t *line  = tunnelchainGetWorkerPacketLine(fixtures[0].chain, wid);
+        sbuf_t *stale = packet(line, 17, fake_address, 0, 0, "world", 5);
+        selectSourcePort(stale, wid);
+        const unsigned before = p->init;
+        packetAffinityForwardTagged(state->input_affinity, line, stale, 1);
+        CHECK(p->init == before && ownedLineCount(fixtures[0].ptc, wid) == 0);
+        p->undelivered_udp[0] = 0;
+        CHECK((wid == 0 ? workerInstallApplicationQuiesceRequest(getWorker(wid), wwLifecycleProcessShutdown())
+                        : workerRequestQuiesceResult(getWorker(wid))) != kWorkerQuiesceRequestUnavailable);
+        return;
+    }
+#endif
     CHECK(p->tcp == 2 && p->udp == 2 && p->init == 4);
     CHECK(p->requested_alignment_copies[0] > 0 && p->requested_alignment_copies[1] > 0);
     for (unsigned fixture = 0; fixture < 2; ++fixture)
@@ -407,6 +536,18 @@ static void finishTimer(wtimer_t *timer)
         CHECK(wtimerReset(timer, 10));
         return;
     }
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+    if (wid == 0 && atomic_load(&finished[1]))
+    {
+        atomic_store(&scope_epoch, 0);
+        atomic_store(&scope_retiring, true);
+        ip_addr_t network, mask;
+        CHECK(ipaddr_aton("10.0.0.2", &network) && ipaddr_aton("255.255.255.255", &mask));
+        ptcRetireSourceRange(fixtures[0].ptc, &network, &mask, 0, scopeRetired, NULL);
+    }
+    CHECK(wtimerReset(timer, 10));
+    return;
+#endif
     CHECK((wid == 0 ? workerInstallApplicationQuiesceRequest(getWorker(wid), wwLifecycleProcessShutdown())
                     : workerRequestQuiesceResult(getWorker(wid))) != kWorkerQuiesceRequestUnavailable);
 }
@@ -509,9 +650,14 @@ static void setup(void *worker_ptr, void *a, void *b, void *c)
     (void) a;
     (void) b;
     (void) c;
-    wid_t         wid         = ((worker_t *) worker_ptr)->wid;
-    line_t       *line        = tunnelchainGetWorkerPacketLine(fixtures[0].chain, wid);
-    ptc_tstate_t *ts          = tunnelGetState(fixtures[0].ptc);
+    wid_t         wid  = ((worker_t *) worker_ptr)->wid;
+    line_t       *line = tunnelchainGetWorkerPacketLine(fixtures[0].chain, wid);
+    ptc_tstate_t *ts   = tunnelGetState(fixtures[0].ptc);
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+    if (wid == 0)
+        checkScopedOutput();
+    rendezvous();
+#endif
     probes[wid].byte_reserved = ptcDrainBudgetReserve(ts, kPtcMaxDrainBytesTotal / 2 + 1);
     rendezvous();
     CHECK(probes[0].byte_reserved != probes[1].byte_reserved);
@@ -592,6 +738,10 @@ int main(void)
         nodes[i].node_settings_json = cJSON_Parse("{\"fake-dns\":{\"cache-size\":2,\"ttl\":0}}");
         f->ptc                      = ptcTunnelCreate(&nodes[i]);
         CHECK(f->ptc);
+#ifdef PTC_SOURCE_SCOPE_FIXTURE
+        if (i == 0)
+            ptcSetSourceEpochProvider(f->ptc, NULL, sourceEpoch);
+#endif
         if (i == 1)
             f->ptc->fnPayloadU = shiftedRequestedInput;
         cJSON_Delete(nodes[i].node_settings_json);

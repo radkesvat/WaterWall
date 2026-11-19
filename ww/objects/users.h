@@ -542,6 +542,10 @@ user_delivery_decision_t usersCommitDeliveryByIdentifier(users_t *users, uint64_
                                                          user_bandwidth_direction_t direction, uint64_t ticket,
                                                          uint64_t bytes, bool datagram, bool more, uint32_t multiplier);
 
+user_delivery_decision_t usersCommitFinalDeliveryByIdentifier(users_t *users, uint64_t id,
+                                                              user_bandwidth_direction_t direction, uint64_t bytes,
+                                                              uint32_t multiplier);
+
 /* Null input or {"users":null} imports no records. A `users` member takes
  * precedence over other container fields; a single user or name-keyed map is
  * accepted only without that member.

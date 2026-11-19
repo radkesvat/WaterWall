@@ -17,8 +17,7 @@
         "sni": "quic.example.test",
         "verify": true,
         "ca-file": "server.crt",
-        "protocol": "h3",
-        "carrier-mode": "datagram"
+        "protocol": "h3"
       },
       "next": "carrier"
     },

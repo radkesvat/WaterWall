@@ -172,7 +172,7 @@ struct tunnel_s
      * Optional pre-indexing hook for a tunnel whose runtime orientation or
      * private topology depends on solved adjacent layer domains. See the
      * TunnelSolvedTopologyFn contract above. Tunnels that only need to consume
-     * the final solution may do so in onIndex instead. (as of writing this only WireGuardDevice used this)
+     * the final solution may do so in onIndex instead.
      *
      * This pointer occupies historical alignment padding: state[] remains at
      * the same cache-line-aligned offset, preserving the external tunnel ABI.

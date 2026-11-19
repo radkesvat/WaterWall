@@ -43,8 +43,10 @@ typedef struct fixture_s
     unsigned        service_inits, service_finishes, service_ests, service_pauses, service_resumes;
     unsigned        transport_finishes, carrier_finishes, carrier_ests;
     unsigned        wire_pauses[2], wire_resumes[2]; /* 0 = on the transport, 1 = on the carrier */
-    bool            hold_wire;                       /* datagrams wait in the queue */
-    bool            drop_wire;                       /* datagrams are lost */
+    bool            wire_read_paused[2];
+    bool            carrier_est_during_service_init;
+    bool            hold_wire; /* datagrams wait in the queue */
+    bool            drop_wire; /* datagrams are lost */
 } fixture_t;
 
 static fixture_t *active;
@@ -132,11 +134,13 @@ static void flushWire(void)
         active->count_packets = 0;
         for (size_t i = 0; i < count; ++i)
         {
-            if (batch[i].direction == 0 && active->carrier != NULL && lineIsAlive(active->carrier))
+            if (batch[i].direction == 0 && ! active->wire_read_paused[1] && active->carrier != NULL &&
+                lineIsAlive(active->carrier))
             {
                 tunnelNextUpStreamPayload(active->wire, active->carrier, batch[i].buffer);
             }
-            else if (batch[i].direction == 1 && active->transport != NULL && lineIsAlive(active->transport))
+            else if (batch[i].direction == 1 && ! active->wire_read_paused[0] && active->transport != NULL &&
+                     lineIsAlive(active->transport))
             {
                 tunnelPrevDownStreamPayload(active->wire, active->transport, batch[i].buffer);
             }
@@ -159,6 +163,12 @@ static void wireInit(tunnel_t *t, line_t *line)
     enetRequire(addresscontextClassifyTransport(lineGetDestinationAddressContext(active->app)) ==
                     kAddressContextTransportTcp,
                 "the application line is not marked as a stream");
+    const address_context_t *app_dest     = lineGetDestinationAddressContext(active->app);
+    const address_context_t *carrier_dest = lineGetDestinationAddressContext(line);
+    enetRequire(addresscontextDestinationIsPinned(app_dest) && addresscontextIsResolverDns(app_dest),
+                "the application lost its endpoint-specific routing flags");
+    enetRequire(! addresscontextDestinationIsPinned(carrier_dest) && ! addresscontextIsResolverDns(carrier_dest),
+                "the carrier inherited the application's endpoint-specific routing flags");
     enetRequire(line->routing_context.local_listener_port == 34567 && line->routing_context.peer_source_port == 45678,
                 "the client's carrier lost the routing context");
     active->transport = line;
@@ -172,7 +182,7 @@ static void wireInit(tunnel_t *t, line_t *line)
     active->carrier->routing_context.peer_source_port    = 45678;
     tunnelNextUpStreamInit(t, active->carrier);
     enetRequire(active->service_inits == 0, "the server created a service line before the native handshake");
-    if (lineIsAlive(active->carrier))
+    if (lineIsAlive(active->carrier) && ! active->carrier_est_during_service_init)
     {
         tunnelNextUpStreamEst(t, active->carrier);
     }
@@ -215,14 +225,19 @@ static void carrierEst(tunnel_t *t, line_t *line)
 
 static void wirePause(tunnel_t *t, line_t *line)
 {
-    discard t;
-    active->wire_pauses[line == active->carrier ? 1 : 0] += 1;
+    discard        t;
+    const unsigned side = line == active->carrier ? 1 : 0;
+    active->wire_pauses[side] += 1;
+    active->wire_read_paused[side] = true;
 }
 
 static void wireResume(tunnel_t *t, line_t *line)
 {
-    discard t;
-    active->wire_resumes[line == active->carrier ? 1 : 0] += 1;
+    discard        t;
+    const unsigned side = line == active->carrier ? 1 : 0;
+    active->wire_resumes[side] += 1;
+    active->wire_read_paused[side] = false;
+    flushWire(); /* A resumed carrier can enter the association before Resume returns. */
 }
 
 /* Fixture service: stands where TcpConnector would be. */
@@ -239,6 +254,10 @@ static void serviceInit(tunnel_t *t, line_t *line)
     active->service_line = line;
     lineRef(line);
     active->service_inits += 1;
+    if (active->carrier_est_during_service_init)
+    {
+        tunnelNextUpStreamEst(active->wire, active->carrier);
+    }
     tunnelPrevDownStreamEst(t, line);
 }
 
@@ -341,6 +360,8 @@ static void openApp(void)
     addresscontextDomainSetByString(lineGetDestinationAddressContext(active->app), "pair.fixture");
     addresscontextSetPort(lineGetDestinationAddressContext(active->app), 12345);
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(active->app), IP_PROTO_TCP);
+    addresscontextSetDestinationPinned(lineGetDestinationAddressContext(active->app), true);
+    addresscontextSetResolverDns(lineGetDestinationAddressContext(active->app), true);
     active->app->routing_context.local_listener_port = 34567;
     active->app->routing_context.peer_source_port    = 45678;
     tunnelNextUpStreamInit(active->source, active->app);
@@ -488,7 +509,7 @@ static void caseTransferAndOwnership(void)
 {
     static fixture_t fixture;
     openPair(&fixture, kDefaultSettings);
-    enetRequire(fixture.app_ests >= 1, "the carrier's Est was not relayed to the application");
+    enetRequire(fixture.app_ests == 1, "the carrier's Est was not relayed once to the application");
     enetRequire(fixture.service_ests == 1, "the carrier's Est was not relayed to the new service line");
     enetRequire(fixture.carrier_ests == 1, "the service line's Est was not relayed to the carrier");
     for (int i = 0; i < 12; ++i)
@@ -504,6 +525,57 @@ static void caseTransferAndOwnership(void)
     TEST_EQUAL_SIZE(TEST_FAILURE_EXIT, fixture.received[1], 6 * (size_t) kChunk, "the application received less");
     enetRequire(fixture.app_finishes == 0 && fixture.service_finishes == 0, "a line was finished during transfer");
     teardown();
+}
+
+static void caseRepeatedEst(void)
+{
+    static fixture_t fixture;
+    setup(&fixture, kDefaultSettings);
+    fixture.carrier_est_during_service_init = true;
+    openApp();
+    enetRequire(pumpUntil(500, serviceOpened), "the service did not open");
+    tunnelPrevDownStreamEst(fixture.wire, fixture.transport);
+    tunnelNextUpStreamEst(fixture.wire, fixture.carrier);
+    tunnelPrevDownStreamEst(fixture.service, fixture.service_line);
+    enetRequire(fixture.app_ests == 1 && fixture.service_ests == 1 && fixture.carrier_ests == 1,
+                "repeated or reentrant transport readiness notified an association twice");
+    teardown();
+}
+
+static void caseFinishWithReadHold(void)
+{
+    static fixture_t fixture;
+    for (unsigned side = 0; side < 2; ++side)
+    {
+        openPair(&fixture, kDefaultSettings);
+        if (side == 0)
+        {
+            tunnelNextUpStreamPause(fixture.source, fixture.app);
+        }
+        else
+        {
+            tunnelPrevDownStreamPause(fixture.service, fixture.service_line);
+        }
+        enetRequire(fixture.wire_read_paused[side], "the application did not pause its carrier");
+
+        /* Hold the first reliable window on the wire. Finishing must open reads for the ACKs of both windows. */
+        fixture.hold_wire = true;
+        sendBytes(side, 5U * kChunk);
+        fixture.hold_wire = false;
+        if (side == 0)
+        {
+            tunnelNextUpStreamFinish(fixture.source, fixture.app);
+            lineDestroy(fixture.app);
+        }
+        else
+        {
+            tunnelPrevDownStreamFinish(fixture.service, fixture.service_line);
+        }
+        enetRequire(fixture.wire_resumes[side] == 1, "application Finish stranded its carrier read hold");
+        enetRequire(pumpUntil(500, allFinished), "the healthy peer did not complete the graceful close");
+        enetRequire(fixture.received[side] == fixture.sent[side], "a paused close lost accepted stream bytes");
+        teardown();
+    }
 }
 
 static void caseApplicationFinish(void)
@@ -647,6 +719,37 @@ static void caseWorkerStop(void)
     teardown();
 }
 
+static void caseIgnoredInputKeepsServiceDeadline(void)
+{
+    static fixture_t fixture;
+    openPair(&fixture, kDefaultSettings);
+    fixture.hold_wire = true;
+    sendBytes(0, 1);
+    sendBytes(1, 1);
+    const size_t initial_packets = fixture.count_packets;
+
+    /* The 10 ms protocol timer must still run between application and carrier callbacks that do no work. */
+    for (unsigned elapsed = 0; elapsed < 2010 && ! allFinished(); elapsed += 5)
+    {
+        if (lineIsAlive(fixture.app))
+        {
+            sendBytes(0, 0);
+        }
+        if (lineIsAlive(fixture.carrier))
+        {
+            const size_t size   = elapsed % 10 == 0 ? 0 : 4097;
+            sbuf_t      *packet = bufferpoolGetBestFit(lineGetBufferPool(fixture.carrier), size, 0);
+            sbufSetLength(packet, size);
+            tunnelNextUpStreamPayload(fixture.wire, fixture.carrier, packet);
+        }
+        advance(5);
+    }
+    enetRequire(fixture.count_packets > initial_packets, "ignored input prevented retransmission");
+    enetRequire(fixture.app_finishes == 1 && fixture.service_finishes == 1,
+                "ignored input postponed the unanswered-command timeout");
+    teardown();
+}
+
 /* Worker stop while the native handshake is in flight: the client waits for an answer to its connect request, and
  * the server has answered a carrier that has no service line yet. */
 static void caseWorkerStopDuringHandshake(void)
@@ -713,6 +816,8 @@ int main(void)
         enetRuntimeStart();
         timers_at_start = wloopNTimers(getWorkerLoop(0));
         TEST_RUN_CASE(caseTransferAndOwnership);
+        TEST_RUN_CASE(caseRepeatedEst);
+        TEST_RUN_CASE(caseFinishWithReadHold);
         TEST_RUN_CASE(caseApplicationFinish);
         TEST_RUN_CASE(caseServiceFinish);
         TEST_RUN_CASE(caseCarrierFinish);
@@ -720,6 +825,7 @@ int main(void)
         TEST_RUN_CASE(caseAdmissionDeadline);
         TEST_RUN_CASE(caseWorkerStop);
         TEST_RUN_CASE(caseWorkerStopDuringHandshake);
+        TEST_RUN_CASE(caseIgnoredInputKeepsServiceDeadline);
         TEST_RUN_CASE(caseConstructorErrors);
         enetRequire(wloopNTimers(getWorkerLoop(0)) == timers_at_start, "a session timer survived the fixtures");
         enetRuntimeStop();

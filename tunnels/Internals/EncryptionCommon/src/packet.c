@@ -52,18 +52,20 @@ static void packetSetLengthAndChecksums(uint8_t *packet, const ipv4_packet_view_
         PUT_BE16(packet + view->transport_offset + 6, 0);
 }
 
-bool encryptionPacketDeriveKeys(const uint8_t base_key[32], uint8_t upload_key[32], uint8_t download_key[32])
+wcrypto_status_t encryptionPacketDeriveKeys(const uint8_t base_key[32], uint8_t upload_key[32],
+                                            uint8_t download_key[32])
 {
     static const unsigned char upload_label[]   = "WaterWall packet encryption client to server";
     static const unsigned char download_label[] = "WaterWall packet encryption server to client";
-    if (wCryptoBlake2s(upload_key, 32, base_key, 32, upload_label, sizeof(upload_label) - 1) != kWCryptoOk ||
-        wCryptoBlake2s(download_key, 32, base_key, 32, download_label, sizeof(download_label) - 1) != kWCryptoOk)
+    wcrypto_status_t status = wCryptoBlake2s(upload_key, 32, base_key, 32, upload_label, sizeof(upload_label) - 1);
+    if (status == kWCryptoOk)
+        status = wCryptoBlake2s(download_key, 32, base_key, 32, download_label, sizeof(download_label) - 1);
+    if (status != kWCryptoOk)
     {
         wCryptoZero(upload_key, 32);
         wCryptoZero(download_key, 32);
-        return false;
     }
-    return true;
+    return status;
 }
 
 encryption_packet_result_t encryptionEncodePacket(const uint8_t key[32], sbuf_t **buf)

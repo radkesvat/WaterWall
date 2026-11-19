@@ -220,9 +220,10 @@ static bool realityserverTunnelstateInitialize(realityserver_tstate_t *ts, node_
         goto cleanup;
     }
 
-    if (! realityV2DeriveRootKey(password, salt, ts->kdf_iterations, ts->root_key))
+    const wcrypto_status_t key_status = realityV2DeriveRootKey(password, salt, ts->kdf_iterations, ts->root_key);
+    if (key_status != kWCryptoOk)
     {
-        LOGF("RealityServer: failed to derive key from password");
+        LOGF("RealityServer: failed to derive root key: %s", wCryptoStatusString(key_status));
         goto cleanup;
     }
 

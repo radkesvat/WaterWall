@@ -145,7 +145,7 @@ Accepted values:
 | Value | Meaning |
 | --- | --- |
 | `1` through `65535` | Encode this constant port as the WaterWall 2-byte port header. |
-| `"src_context->port"` | Encode `line->routing_context.src_ctx.port` as the WaterWall 2-byte port header. |
+| `"src_context->port"` | Encode `lineGetSourceAddressContext(line)->port` as the WaterWall 2-byte port header. |
 | `"line->src_ctx->port"` | Compatibility alias for `"src_context->port"`. |
 | `"src_context->protocol"` | Snapshot `src_ctx.protocol` during `Init` and encode TCP or UDP in a 1-byte header. |
 | `"line->src_ctx->protocol"` | Alias for `"src_context->protocol"`. |
@@ -380,7 +380,7 @@ subsequent connector changes to the routing context cannot change the header.
 If the selected protocol is unset, ambiguous, or unsupported, the client closes
 the line without initializing `next`.
 
-For PROXY protocol modes, `HeaderClient` emits an IPv4 TCP PROXY header. The source IP comes from `line->routing_context.src_ctx`. The destination IP comes from `settings.frontend-ipv4`; `dest_ctx` is not used for the PROXY destination because `TcpConnector` may rewrite `dest_ctx` to the backend it dials before the first payload is sent.
+For PROXY protocol modes, `HeaderClient` emits an IPv4 TCP PROXY header. The source IP comes from `lineGetSourceAddressContext(line)`. The destination IP comes from `settings.frontend-ipv4`; `dest_ctx` is not used for the PROXY destination because `TcpConnector` may rewrite `dest_ctx` to the backend it dials before the first payload is sent.
 
 The selected ports are:
 

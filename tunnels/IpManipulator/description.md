@@ -55,7 +55,7 @@ This is a packet tunnel created with `packettunnelCreate()`, so normal stream-st
 `IpManipulator` belongs in raw-packet chains, for example between packet-oriented nodes such as:
 
 - `TunDevice`
-- `WireGuardDevice`
+- `WireGuardServer`
 - `RawSocket`
 - other layer-3 packet tunnels
 

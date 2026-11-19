@@ -928,14 +928,14 @@ static char *ikcp_encode_seg(char *ptr, const IKCPSEG *seg)
 	return ptr;
 }
 
-static int ikcp_wnd_unused(const ikcpcb *kcp)
+static IUINT32 ikcp_wnd_unused(const ikcpcb *kcp)
 {
-	if (kcp->nrcv_que < kcp->rcv_wnd) {
-		return kcp->rcv_wnd - kcp->nrcv_que;
-	}
-	return 0;
+    if (kcp->nrcv_que < kcp->rcv_wnd)
+    {
+        return _imin_(kcp->rcv_wnd - kcp->nrcv_que, UINT16_MAX);
+    }
+    return 0;
 }
-
 
 //---------------------------------------------------------------------
 // ikcp_flush

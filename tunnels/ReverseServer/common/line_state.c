@@ -4,14 +4,7 @@
 
 void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, line_t *d)
 {
-
-    *ls = (reverseserver_lstate_t) {
-        .next       = NULL,
-        .u          = u,
-        .d          = d,
-        .paired     = false,
-        .handshaked = false,
-    };
+    *ls = (reverseserver_lstate_t) {.u = u, .d = d, .phase = kReverseHalfOpening};
     bufferbudgetInit(&ls->pending_budget,
                      (buffer_budget_cost_t) {.bytes = kReverseServerPendingBytes, .charge = 8U * 1024U * 1024U});
     bufferqueueInitEmpty(&ls->pending);
@@ -20,6 +13,9 @@ void reverseserverLinestateInitialize(reverseserver_lstate_t *ls, line_t *u, lin
 
 void reverseserverLinestateDestroy(reverseserver_lstate_t *ls)
 {
+    closeDrainEnd(&ls->close_drain);
+    if (ls->activation != NULL)
+        lineReuseBuffer(ls->d, ls->activation);
     bufferqueueDestroy(&ls->pending);
     bufferbudgetAssertEmpty(&ls->pending_budget);
 

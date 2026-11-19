@@ -83,8 +83,11 @@ The authenticated TLS 1.3 handoff requires a coordinated client/server upgrade f
 
 Pause and Resume are advisory and repeatable. RealityServer forwards them to the selected live branch:
 `destination` before authorization and protected `next` afterward. The handoff cutoff and Finish guards
-suppress callbacks toward a retired branch. Ready records do not wait for Resume. The node stays active:
-authorized traffic needs record cryptography and sequencing, while visitor traffic needs destination routing
+suppress callbacks toward a retired branch. Ready records do not wait for Resume. After sending the TLS 1.3
+handoff ACK, RealityServer releases any frontend read Pause left by the cover branch so the frontend can
+deliver CONFIRM. A Pause from protected `next` during reentrant initialization continues to hold frontend
+reads. The node stays active in both modes.
+Authorized traffic needs record cryptography and sequencing, while visitor traffic needs destination routing
 and branch cleanup, so neither mode can use permanent bypass.
 
 Destination handshake envelopes are tracked incrementally in bounded parser/tracker state; the complete pre-key destination flight is never retained or replayed. Unprotected TLS 1.2 records can be tracked before the cipher profile is known. The selected profile is installed when both hellos are ready, including when ClientHello arrives after an already captured ServerHello. Invalid pre-profile TLS 1.2 tracking falls back to Visitor if TLS 1.2 is selected; it does not reject a TLS 1.3 negotiation.

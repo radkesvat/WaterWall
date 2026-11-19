@@ -2013,6 +2013,21 @@ static void testBandwidthConcurrentAndFinalQuota(void)
                 user.stats.traffic.u == 2,
             "exhausted quota charged another candidate");
     userDestroy(&user);
+    require(userCreate(&user, "close-flush"), "unpaced final stream handoff fixture");
+    user.limit.bandwidth.u = 10;
+    user.limit.traffic.u   = 2;
+    require(userCommitDelivery(&user, kUserBandwidthUpload, 0, 1, false, false, 500) == kUserDeliveryForward &&
+                userBandwidthRegister(&user, kUserBandwidthUpload, 2),
+            "exhaust the bandwidth bucket and preserve fractional quota carry");
+    userBandwidthSetEligible(&user, kUserBandwidthUpload, 2, true);
+    require(userBandwidthPreview(&user, kUserBandwidthUpload, 0, 3, false).decision == kUserDeliveryWait &&
+                userCommitFinalDelivery(&user, kUserBandwidthUpload, 3, 500) == kUserDeliveryForwardClose &&
+                user.stats.traffic.u == 2 && user.stats.traffic.d == 0 &&
+                userCommitFinalDelivery(&user, kUserBandwidthUpload, 1, 500) == kUserDeliveryReject &&
+                user.stats.traffic.u == 2,
+            "final stream handoff must bypass pacing and fair turns, charge its multiplier and stop at quota");
+    userBandwidthCancel(&user, kUserBandwidthUpload, 2);
+    userDestroy(&user);
     require(userCreate(&user, "extreme-rate"), "extreme-rate fixture");
     user.limit.bandwidth.u           = UINT64_MAX;
     user_bandwidth_result_t preview  = userBandwidthPreview(&user, kUserBandwidthUpload, 0, UINT64_MAX, false);

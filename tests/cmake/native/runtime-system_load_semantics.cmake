@@ -313,6 +313,10 @@
   waterwall_add_native_executable(line_state_index_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/line_state_index_test.c)
   target_link_libraries(line_state_index_test PRIVATE ww_test_support)
   target_link_libraries(line_state_index_test PRIVATE ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(line_state_index_test PRIVATE WW_TEST_LINE_DOMAIN_RELEASE=1)
+    target_link_options(line_state_index_test PRIVATE "-Wl,--wrap=memoryFree")
+  endif()
   add_dependencies(waterwall_unit_tests line_state_index_test)
 
   add_waterwall_unit_test(waterwall.line_state_index_unit line_state_index_test "unit;net;line;chain")

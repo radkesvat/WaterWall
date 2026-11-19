@@ -65,7 +65,7 @@ typedef enum socks5server_phase_e
     kSocks5ServerPhaseWaitMethod,
     kSocks5ServerPhaseWaitAuth,
     kSocks5ServerPhaseWaitRequest,
-    kSocks5ServerPhaseConnectWaitEst,
+    kSocks5ServerPhaseConnectStarting,
     kSocks5ServerPhaseTcpEstablished,
     kSocks5ServerPhaseUdpControl,
     kSocks5ServerPhaseClosing
@@ -111,8 +111,7 @@ typedef struct socks5server_lstate_s
     udplistener_dynamic_endpoint_handle_t dynamic_handle;
     socks5server_phase_t                  phase;
     socks5server_line_kind_t              kind;
-    // CONNECT reply and deferred application FIFO are independent of transport Est.
-    bool transport_est_forwarded : 1;
+
     bool control_draining : 1;
     bool input_draining : 1;
     bool next_initialized : 1;

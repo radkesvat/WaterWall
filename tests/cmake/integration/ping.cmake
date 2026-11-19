@@ -43,14 +43,14 @@ add_waterwall_expected_failure_integration_test(
   "only chain-head placement is supported"
 )
 add_waterwall_expected_failure_integration_test(
-  waterwall.wireguard_transport_direction_removed
-  wireguard_transport_direction_removed
-  "transport-direction is no longer supported"
+  waterwall.wireguard_server_missing_mode
+  wireguard_server_missing_mode
+  "WireGuardServer: invalid mode"
 )
 add_waterwall_expected_failure_integration_test(
-  waterwall.wireguard_ambiguous_layers
-  wireguard_ambiguous_layers
-  "chain layers must resolve exactly one L3 packet side and one L4 transport side"
+  waterwall.wireguard_client_multiple_peers
+  wireguard_client_multiple_peers
+  "WireGuardClient: requires privatekey"
 )
 add_waterwall_privileged_probe_integration_test(waterwall.ping_direct_real_adapters_roundtrip ping_direct_real_adapters_roundtrip 15)
 add_waterwall_test_labels(waterwall.ping_direct_real_adapters_roundtrip "ping")

@@ -119,6 +119,7 @@ typedef struct httpclient_tstate_s
     httpclient_split_placement_t   split_direction_placement;
     httpclient_split_placement_t   split_token_placement;
     bool                           enable_upgrade;
+    bool                           stay_alive;
     bool                           websocket_enabled;
     bool                           split_cache_bypass;
     bool                           verbose;
@@ -170,7 +171,8 @@ typedef struct httpclient_lstate_s
     bool h2_sending : 1;
     bool close_driving : 1;
     bool h2_end_stream_emitted : 1;
-    bool h2_stream_closed : 1;
+    bool h2_stream_failed : 1;
+    bool h2_error_goaway : 1;
     bool h2_source_paused : 1;
     bool next_paused : 1;
     bool application_read_paused : 1;

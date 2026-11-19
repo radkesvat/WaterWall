@@ -128,6 +128,7 @@ typedef struct speedtestclient_lstate_s
     speedtestclient_stats_t remote_receiver;
     bool                    est_received;
     bool                    hello_sent;
+    bool                    hello_sending;
     bool                    ack_received;
     bool                    send_paused;
     bool                    send_scheduled;
@@ -137,6 +138,8 @@ typedef struct speedtestclient_lstate_s
     bool                    remote_sender_report_received;
     bool                    remote_receiver_report_received;
     bool                    upstream_init_sent;
+    /* A synchronous Resume may update pressure while next Init is still running. */
+    bool                    init_in_progress;
     bool                    line_complete;
 } speedtestclient_lstate_t;
 
@@ -178,8 +181,9 @@ bool    speedtestclientVerifyPattern(const uint8_t *ptr, uint32_t len, uint32_t 
 void    speedtestclientSendTask(tunnel_t *t, line_t *l);
 void    speedtestclientReportTask(tunnel_t *t, line_t *l);
 void    speedtestclientWatchdogTask(tunnel_t *t, line_t *l);
-void    speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls);
-void    speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls);
+/* Both helpers return false after a refusal has closed the owned line. */
+bool    speedtestclientScheduleSend(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls);
+bool    speedtestclientScheduleReport(tunnel_t *t, line_t *l, speedtestclient_lstate_t *ls);
 void    speedtestclientProcessIncoming(tunnel_t *t, line_t *l, sbuf_t *buf);
 void    speedtestclientMaybeComplete(tunnel_t *t, line_t *l);
 void    speedtestclientFailLine(tunnel_t *t, line_t *l, const char *reason);

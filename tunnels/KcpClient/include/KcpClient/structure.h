@@ -62,6 +62,8 @@ struct kcpclient_session_s
     bool                 next_init_entered;
     bool                 transport_finished;
     bool                 carrier_paused;
+    bool                 application_read_hold;
+    bool                 application_est_delivered;
 };
 
 enum
@@ -136,6 +138,7 @@ void kcpclientTunnelDownStreamResume(tunnel_t *t, line_t *l);
 void kcpclientLinestateDestroy(kcpclient_lstate_t *ls);
 bool kcpclientSessionCreate(tunnel_t *t, line_t *application);
 void kcpclientDetachApplication(kcpclient_session_t *session, bool notify);
+void kcpclientReleaseReadHold(void *user);
 void kcpclientSignalApplication(kcpclient_session_t *session, LineTaskFnNoBuf signal);
 void kcpclientSetCarrierPaused(kcpclient_session_t *session, bool paused);
 void kcpclientTunnelUpStreamPause(tunnel_t *t, line_t *l);

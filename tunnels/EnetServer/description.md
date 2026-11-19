@@ -34,7 +34,9 @@ order.
 - Every carrier line holds at most one ENet connection. The stream line toward
   `next` is created when ENet has accepted the connection, not when the first
   datagram arrives. It carries the carrier's source and destination addresses
-  and is marked as a stream.
+  and is marked as a stream. If the carrier reports readiness before the service
+  line exists, the service receives that `Est` after its `Init`. Each side receives
+  the other side's transport readiness once per association.
 - The remote side is `EnetClient`, or any ENet 1.3 application that uses the
   library defaults (no checksum, no compression) and exchanges reliable packets
   on channel 0.
@@ -63,7 +65,7 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 | `name` | Required node name, unique within the configuration. |
 | `type` | Exactly `"EnetServer"`. |
 | `next` | Required name of the node that receives the streams. |
-| `settings` | Optional object. Every setting has a default. |
+| `settings` | Omit this field or supply a JSON object. An empty object selects all defaults. |
 
 ### Settings
 
@@ -132,10 +134,11 @@ up native compatibility.
   four times as much, and one stream that `ConnectionStripeServer` joined from
   eight ENet connections carried 76 to 83 Mbit/s on the same path.
 - **A dead peer is found through missing acknowledgements.** An idle connection
-  sends a ping after `ping-interval-ms`. A peer that stops answering is detected
-  on the first protocol service pass at or after `T` from the first unanswered
-  command, where `T` is `no-recv-timeout-ms`. Active protocol work is serviced
-  every 10 ms, subject to event-loop scheduling delay. On an idle connection,
+  sends a ping after `ping-interval-ms`. Each unanswered reliable command has
+  a deadline of `no-recv-timeout-ms` from its first transmission. The first
+  service pass at or after the oldest such deadline closes the connection, even
+  if ENet retried the command or received ACKs for later commands. Active work
+  is serviced every 10 ms, subject to event-loop scheduling delay. On an idle connection,
   allow the ping interval before that unanswered-command timer starts.
   Timeout and ping settings above 12 hours are rejected; the separate
   `close-drain-timeout-ms` setting retains its documented range.
@@ -160,6 +163,10 @@ up native compatibility.
 - When the next node pauses the upstream direction, `EnetServer` pauses the
   previous node, which stops datagram intake. That also stops acknowledgements:
   a pause longer than the liveness timeout can end the connection.
+- An immediately processed stream write can exceed 2 MiB and follows the
+  ordinary send limits. Input that must wait for startup or a running callback
+  shares a queue capped at 2 MiB of payload and 8 MiB of buffer allocation
+  charge. Exceeding either queue limit closes the connection.
 - At `receive-buffer-limit` ENet stops admitting new queued messages. Refused
   reliable data is not acknowledged, so the peer can send it again later.
   To make room for loss recovery, the driver doubles the threshold for a datagram
@@ -177,8 +184,8 @@ up native compatibility.
 - When the next node finishes the stream, `EnetServer` accepts no more bytes,
   lets ENet deliver every byte it already accepted, and then disconnects
   natively. The previous node receives Finish on the carrier only after that.
-  Bytes that arrive from the peer after the next node's Finish are discarded: a
-  Finish closes both directions of the stream.
+  If the stream paused carrier reads, Finish releases the hold so acknowledgements
+  can arrive during the drain. The node discards incoming stream bytes after Finish.
 - `close-drain-timeout-ms` after that Finish the node stops waiting, sends one
   disconnect and closes. It logs a warning with the number of unacknowledged
   bytes. A close that finished earlier is not proof of delivery either: ENet

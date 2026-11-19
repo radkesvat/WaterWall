@@ -43,6 +43,9 @@
 #include <errno.h>
 #include <poll.h>
 #include <stdio.h>
+#if defined(OS_LINUX) && defined(EVENT_EPOLL)
+#include <sys/epoll.h>
+#endif
 
 /*
  * Fake worker table for the stubbed GSTATE below. Without it the identity
@@ -287,6 +290,27 @@ static wio_t *createSocketPairIO(wloop_t *loop, int *peer_fd)
 }
 
 #if defined(OS_LINUX) && defined(EVENT_EPOLL)
+static int fail_upgrade_fd = -1;
+
+int __real_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);
+int __wrap_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+    if (op == EPOLL_CTL_MOD && fd == fail_upgrade_fd)
+    {
+        errno = ENOSPC;
+        return -1;
+    }
+    return __real_epoll_ctl(epfd, op, fd, event);
+}
+
+static void registrationWriteReady(wio_t *io)
+{
+    unsigned int *callbacks = weventGetUserdata(io);
+    require((wioGetREvents(io) & WW_WRITE) != 0, "upgraded registration did not receive write readiness");
+    ++*callbacks;
+    require(wioDel(io, WW_WRITE) == 0, "failed to remove upgraded write interest");
+}
 static void registrationReadReady(wio_t *io)
 {
     unsigned int *callbacks = weventGetUserdata(io);
@@ -329,6 +353,19 @@ static void testRejectedRegistrationPreservesLoopAccounting(env_t *env)
     require(accepted->active && accepted->events == WW_READ && loop->nios == initial_ios + 1 &&
                 loop->nactives == initial_actives + 1,
             "successful registration did not publish exactly one active watcher");
+    wevent_cb read_callback = weventGetCallBack(accepted);
+    fail_upgrade_fd         = wioGetFD(accepted);
+    require(wioAdd(accepted, registrationWriteReady, WW_RDWR) == -ENOSPC, "failed upgrade reported success");
+    require(wioGetEvents(accepted) == WW_READ && weventGetCallBack(accepted) == read_callback &&
+                loop->nios == initial_ios + 1,
+            "failed upgrade changed the callback, existing interest or active count");
+    fail_upgrade_fd = -1;
+    require(wioAdd(accepted, registrationWriteReady, WW_RDWR) == 0 && wioGetEvents(accepted) == WW_RDWR,
+            "upgrade did not register the missing write interest");
+    require(wloopProcessEvents(loop, 1000) >= 0 && callbacks == 1 && wioGetEvents(accepted) == WW_READ,
+            "upgrade did not deliver write readiness while retaining read interest");
+    require(wioAdd(accepted, registrationReadReady, WW_READ) == 0, "failed to restore read callback");
+    callbacks = 0;
     require(write(peer_fd, "r", 1) == 1, "failed to make the accepted descriptor readable");
     require(wloopProcessEvents(loop, 1000) >= 0 && callbacks == 1,
             "valid readiness did not dispatch after a failed registration");

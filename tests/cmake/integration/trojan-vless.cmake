@@ -11,6 +11,10 @@ add_waterwall_integration_test(waterwall.trojan_sha224_dest_protocol_tcp_loopbac
 add_waterwall_integration_test(waterwall.trojan_dest_context_domain_resolve_tcp_loopback trojan_dest_context_domain_resolve_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_password_udp_loopback trojan_password_udp_loopback)
 add_waterwall_integration_test(waterwall.trojan_dest_protocol_udp_loopback trojan_dest_protocol_udp_loopback)
+if(TARGET TesterClient AND TARGET TesterServer AND TARGET TrojanClient AND TARGET TrojanServer)
+  add_waterwall_integration_test_with_timeout(
+    waterwall.tester_client_trojan_udp_direct tester_client_trojan_udp_direct 10)
+endif()
 if(TARGET TrojanClient AND TARGET TrojanServer AND TARGET UdpListener AND
    TARGET UdpConnector AND TARGET TcpListener AND TARGET TcpConnector AND
    TARGET TlsClient AND TARGET TlsServer)

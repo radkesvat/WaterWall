@@ -9,6 +9,7 @@ void vlessclientLinestateDestroy(vlessclient_lstate_t *ls);
 void vlessclientTunnelstateDestroy(vlessclient_tstate_t *ts);
 bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l);
 void vlessclientStartUdpCarrier(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
+void vlessclientStartNext(tunnel_t *t, line_t *l, line_t *application);
 void vlessclientOnNextEstablished(tunnel_t *t, line_t *l, vlessclient_lstate_t *ls);
 void vlessclientCloseLine(tunnel_t *t, line_t *l, vlessclient_close_origin_t origin);
 

@@ -9,6 +9,11 @@
 #include "ConnectionStripeServer/interface.h"
 #include "fixtures/protocols/splice_source.h"
 
+enum
+{
+    kStripeWorkerFirstPeerPort = 53000
+};
+
 static const uint64_t     stripe_worker_seed = UINT64_C(0xd45701a59960ab23);
 static _Thread_local bool force_stripe_worker_seed;
 
@@ -69,6 +74,10 @@ static void stripeWorkerApplicationInit(tunnel_t *t, line_t *line)
             "Stripe lane-zero migration lost the source IP before application Init");
     require(source->port == sw.expected_source.port && source->proto_tcp == sw.expected_source.proto_tcp,
             "Stripe lane-zero migration lost the source port or protocol");
+    const routing_context_t *route = lineGetRoutingContext(line);
+    require(route->local_listener_port == sw.expected_source.port &&
+                route->peer_source_port == kStripeWorkerFirstPeerPort,
+            "Stripe lane-zero migration lost the observed listener or peer port");
     sw.application = line;
     atomicAddExplicit(&sw.inits, 1, memory_order_release);
 }
@@ -128,6 +137,9 @@ static void stripeWorkerCreateLane(worker_t *worker, void *arg1, void *arg2, voi
         require(addresscontextSetIpAddressPortProtocol(
                     lineGetSourceAddressContext(line), "198.51.100.22", 32000, IPPROTO_TCP),
                 "Stripe alternate source address setup failed");
+    routing_context_t *route   = lineGetRoutingContext(line);
+    route->local_listener_port = route->src_ctx.port;
+    route->peer_source_port    = (uint16_t) (kStripeWorkerFirstPeerPort + index);
     tunnelUpStreamInit(sw.wrapper, line);
     uint8_t intro[kStripeJoinSize + kStripeHeaderSize + 5] = {0};
     intro[0]                                               = kStripeJoin;

@@ -1,51 +1,32 @@
-# Explicit native registrations; included in dependency order by unittests/CMakeLists.txt.
-if(TARGET WireGuardDevice)
-  waterwall_add_native_executable(wireguarddevice_layer_resolution_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_layer_resolution_test.c)
-  target_include_directories(wireguarddevice_layer_resolution_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
-  )
-  target_link_libraries(wireguarddevice_layer_resolution_test PRIVATE WireGuardDevice ww)
-  add_dependencies(waterwall_unit_tests wireguarddevice_layer_resolution_test)
-
-  add_waterwall_unit_test(
-    waterwall.wireguarddevice_layer_resolution_unit
-    wireguarddevice_layer_resolution_test
-    "unit;tunnels;wireguard;layer;topology"
-  )
-
-  waterwall_add_native_executable(wireguarddevice_transport_buffer_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_transport_buffer_test.c)
-  target_include_directories(wireguarddevice_transport_buffer_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/include/WireGuardDevice
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
-  )
-  target_link_libraries(wireguarddevice_transport_buffer_test PRIVATE WireGuardDevice ww)
-  add_dependencies(waterwall_unit_tests wireguarddevice_transport_buffer_test)
-
-  add_waterwall_unit_test(
-    waterwall.wireguarddevice_transport_buffer_unit
-    wireguarddevice_transport_buffer_test
-    "unit;tunnels;wireguard;transport;buffer;security"
-  )
+# Explicit native registrations.
+if(TARGET WireGuardCommon)
+  waterwall_add_native_executable(wireguard_transport_buffer_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_transport_buffer_test.c)
+  target_link_libraries(wireguard_transport_buffer_test PRIVATE WireGuardCommon ww)
+  add_dependencies(waterwall_unit_tests wireguard_transport_buffer_test)
+  add_waterwall_unit_test(waterwall.wireguard_transport_buffer_unit wireguard_transport_buffer_test "unit;tunnels;wireguard;transport;buffer;security")
 endif()
 
-if(LINUX AND TARGET WireGuardDevice)
-  waterwall_add_native_executable(wireguarddevice_controller_mode_test SUPPORT SOURCES
-    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguarddevice_controller_mode_test.c)
-  target_include_directories(wireguarddevice_controller_mode_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice)
-  target_link_libraries(wireguarddevice_controller_mode_test PRIVATE WireGuardDevice UserController AuthenticationClient ww)
-  target_link_options(wireguarddevice_controller_mode_test PRIVATE
-    "-Wl,--wrap=nodemanagerGetConfigNodeByName")
-  add_dependencies(waterwall_unit_tests wireguarddevice_controller_mode_test)
-  add_waterwall_unit_test(waterwall.wireguarddevice_controller_mode_unit wireguarddevice_controller_mode_test
-    "unit;tunnels;wireguard;usercontroller;framing;line")
-
+if(LINUX AND TARGET WireGuardServer)
+  waterwall_add_native_executable(wireguard_server_endpoint_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_server_endpoint_test.c)
+  target_link_libraries(wireguard_server_endpoint_test PRIVATE ww_test_support WireGuardCommon AuthenticationClient UserController PacketsToConnection)
+  target_include_directories(wireguard_server_endpoint_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_options(wireguard_server_endpoint_test PRIVATE
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  add_dependencies(waterwall_unit_tests wireguard_server_endpoint_test)
+  add_waterwall_unit_test(waterwall.wireguard_server_endpoint_unit wireguard_server_endpoint_test
+    "unit;tunnels;wireguard;endpoint;security")
+endif()
+if(LINUX AND TARGET WireGuardCommon)
   waterwall_add_native_executable(wireguard_crypto_failure_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/wireguard_crypto_failure_test.c
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/common/wireguard.c)
-  target_link_libraries(wireguard_crypto_failure_test PRIVATE ww_test_support)
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/wireguard.c)
+  target_link_libraries(wireguard_crypto_failure_test PRIVATE ww_test_support WireGuardCommon)
   target_include_directories(wireguard_crypto_failure_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice/include/WireGuardDevice
-    ${CMAKE_SOURCE_DIR}/tunnels/WireGuardDevice
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/include
   )
   target_link_libraries(wireguard_crypto_failure_test PRIVATE ww)
   target_link_options(wireguard_crypto_failure_test PRIVATE
@@ -57,6 +38,7 @@ if(LINUX AND TARGET WireGuardDevice)
     "-Wl,--wrap=wCryptoBlake2s"
     "-Wl,--wrap=wCryptoX25519"
     "-Wl,--wrap=wCryptoChaCha20Poly1305Encrypt"
+    "-Wl,--wrap=wwBase64Decode"
   )
   add_dependencies(waterwall_unit_tests wireguard_crypto_failure_test)
 
@@ -182,3 +164,98 @@ if(LINUX AND TARGET EncryptionCommon)
   endforeach()
 endif()
 
+
+if(LINUX AND TARGET WireGuardClient)
+  waterwall_add_native_executable(wireguard_client_carrier_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_client_carrier_test.c)
+  target_link_libraries(wireguard_client_carrier_test PRIVATE ww_test_support WireGuardCommon)
+  target_include_directories(wireguard_client_carrier_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardClient/include)
+  target_link_options(wireguard_client_carrier_test PRIVATE
+    "-Wl,--wrap=wireguardCommonReceiveOnCarrier"
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  add_dependencies(waterwall_unit_tests wireguard_client_carrier_test)
+  add_waterwall_unit_test(waterwall.wireguard_client_carrier_unit wireguard_client_carrier_test
+    "unit;tunnels;wireguard;carrier;lifetime")
+endif()
+
+if(LINUX AND TARGET WireGuardCommon)
+  # Keep the controlled-clock call sites outside the production Release IPO
+  # archive, so --wrap=getTickMS observes the real protocol implementation.
+  waterwall_add_native_executable(wireguard_protocol_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_protocol_test.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/wireguard.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/helpers.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/device_loop.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/input.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/output.c
+    ${CMAKE_SOURCE_DIR}/tunnels/Internals/WireGuardCommon/src/settings.c)
+  target_link_libraries(wireguard_protocol_test PRIVATE ww_test_support WireGuardCommon)
+  set_target_properties(wireguard_protocol_test PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF
+    INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  target_link_options(wireguard_protocol_test PRIVATE
+    "-Wl,--wrap=getTickMS" "-Wl,--wrap=isSystemUnderLoad"
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  add_dependencies(waterwall_unit_tests wireguard_protocol_test)
+  add_waterwall_unit_test(waterwall.wireguard_protocol_unit wireguard_protocol_test "unit;tunnels;wireguard;protocol;security")
+endif()
+
+if(LINUX AND TARGET WireGuardServer)
+  waterwall_add_native_executable(wireguard_user_binding_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_user_binding_test.c)
+  target_link_libraries(wireguard_user_binding_test PRIVATE ww_test_support WireGuardCommon AuthenticationClient UserController PacketsToConnection)
+  target_include_directories(wireguard_user_binding_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_options(wireguard_user_binding_test PRIVATE
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  target_link_options(wireguard_user_binding_test PRIVATE "-Wl,--wrap=getTickMS" "-Wl,--wrap=nodemanagerGetConfigNodeByName"
+    "-Wl,--wrap=authenticationclientRecoverControlLine" "-Wl,--wrap=authenticationclientResumeSync")
+  add_dependencies(waterwall_unit_tests wireguard_user_binding_test)
+  add_waterwall_unit_test(waterwall.wireguard_user_binding_unit wireguard_user_binding_test
+    "unit;tunnels;wireguard;authentication;usercontroller;ip;identity")
+
+  waterwall_add_native_executable(wireguard_server_lifecycle_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_server_lifecycle_test.c
+    ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+  target_link_libraries(wireguard_server_lifecycle_test PRIVATE ptc_engine_test ww_lwip_engine_test WireGuardCommon AuthenticationClient UserController)
+  target_include_directories(wireguard_server_lifecycle_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_options(wireguard_server_lifecycle_test PRIVATE
+    "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
+    "-Wl,--wrap=tunnelDestroy"
+    "-Wl,--wrap=tunnelOwnedChildDestroy"
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  add_dependencies(waterwall_unit_tests wireguard_server_lifecycle_test)
+  add_waterwall_unit_test(waterwall.wireguard_server_lifecycle_unit wireguard_server_lifecycle_test
+    "unit;tunnels;wireguard;lifecycle;shutdown;failure;workers")
+endif()
+
+if(LINUX AND TARGET WireGuardServer)
+  waterwall_add_native_executable(wireguard_server_retirement_test SUPPORT SOURCES
+    ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_server_retirement_test.c)
+  target_link_libraries(wireguard_server_retirement_test PRIVATE ww_test_support ptc_engine_test ww_lwip_engine_test WireGuardCommon AuthenticationClient UserController)
+  target_include_directories(wireguard_server_retirement_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_options(wireguard_server_retirement_test PRIVATE
+    "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup" "-Wl,--wrap=ptcRetireSourceRange" "-Wl,--wrap=tunnelDestroy" "-Wl,--wrap=tunnelOwnedChildDestroy"
+    "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
+    "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
+    "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
+    "-Wl,--wrap=bufferpoolGetMediumBuffer" "-Wl,--wrap=bufferpoolGetSmallBuffer"
+    "-Wl,--wrap=bufferpoolReuseBuffer" "-Wl,--wrap=sbufDestroy")
+  add_dependencies(waterwall_unit_tests wireguard_server_retirement_test)
+  add_waterwall_unit_test(waterwall.wireguard_server_retirement_unit wireguard_server_retirement_test
+    "unit;tunnels;wireguard;retirement;workers;authentication")
+endif()

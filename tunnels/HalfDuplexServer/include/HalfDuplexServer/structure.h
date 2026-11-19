@@ -1,19 +1,22 @@
 #pragma once
 
+#include "close_drain.h"
 #include "wwapi.h"
 
 enum
 {
-    kHLFDCmdUpload                  = 127,
-    kHLFDCmdDownload                = 128,
-    kHLFDCommandOffset              = 0,
-    kHLFDPairIdOffset               = 1,
-    kHLFDPairIdSize                 = 16,
-    kHLFDIntroSize                  = kHLFDPairIdOffset + kHLFDPairIdSize,
-    kHmapCap                        = 16 * 4,
-    kMaxBuffering                   = (65535 * 2),
-    kHalfDuplexServerStartupBytes   = 2 * 1024 * 1024,
-    kHalfDuplexServerStartupCharge  = 2 * 1024 * 1024,
+    kHLFDCmdUpload                   = 127,
+    kHLFDCmdDownload                 = 128,
+    kHLFDCommandOffset               = 0,
+    kHLFDPairIdOffset                = 1,
+    kHLFDPairIdSize                  = 16,
+    kHLFDIntroSize                   = kHLFDPairIdOffset + kHLFDPairIdSize,
+    kHmapCap                         = 16 * 4,
+    kMaxBuffering                    = (65535 * 2),
+    kHalfDuplexServerStartupBytes    = 2 * 1024 * 1024,
+    kHalfDuplexServerStartupCharge   = 2 * 1024 * 1024,
+    kHalfDuplexServerDetachedUploads = 64,
+    kHalfDuplexServerDetachedCharge  = 8 * 1024 * 1024,
 };
 
 typedef struct halfduplex_pair_id_s
@@ -49,18 +52,23 @@ enum connection_status
     kCsUploadInTable,
     kCsUploadDirect,
     kCsDownloadInTable,
-    kCsDownloadDirect
+    kCsDownloadDirect,
+    kCsDownloadFinishPending,
+    kCsUploadDetached
 };
 
 typedef struct halfduplexserver_tstate_s
 {
-    node_t     *pair_node;
-    tunnel_t   *owner;
-    tunnel_t   *wrapper;
-    wmutex_t    pending_line_maps_mutex;
-    hmap_cons_t upload_line_map;
-    hmap_cons_t download_line_map;
-    bool        pending_line_maps_mutex_initialized;
+    node_t        *pair_node;
+    tunnel_t      *owner;
+    tunnel_t      *wrapper;
+    wmutex_t       pending_line_maps_mutex;
+    hmap_cons_t    upload_line_map;
+    hmap_cons_t    download_line_map;
+    bool           pending_line_maps_mutex_initialized;
+    size_t         detached_count;
+    size_t         detached_charge;
+    close_drain_t *drains[];
 } halfduplexserver_tstate_t;
 
 typedef struct halfduplexserver_lstate_s
@@ -86,7 +94,17 @@ typedef struct halfduplexserver_lstate_s
     bool            startup_dispatching;
     bool            next_paused;
     bool            source_paused;
+    unsigned        handoff_depth;
+    close_drain_t   close_drain;
 } halfduplexserver_lstate_t;
+
+typedef struct halfduplexserver_detached_upload_s
+{
+    halfduplexserver_lstate_t entry;
+    tunnel_t                 *owner;
+    wid_t                     worker;
+    size_t                    charge;
+} halfduplexserver_detached_upload_t;
 
 typedef enum halfduplexserver_pending_result_e
 {
@@ -156,3 +174,12 @@ static inline uint64_t halfduplexserverWaitingLimit(line_t *line)
 bool halfduplexserverPairAlive(tunnel_t *t, line_t *main, line_t *upload, line_t *download);
 void halfduplexserverReplayStartup(tunnel_t *t, line_t *main);
 void halfduplexserverAbortPair(tunnel_t *t, line_t *main);
+void halfduplexserverAbortDirectTransportPair(tunnel_t *t, line_t *line, bool is_download);
+void halfduplexserverDiscardWaitingUpload(tunnel_t *t, line_t *line);
+void halfduplexserverDetachWaitingUpload(tunnel_t *t, line_t *line);
+void halfduplexserverBeginServiceClose(tunnel_t *t, line_t *main, uint64_t deadline_ms);
+void halfduplexserverCloseService(tunnel_t *t, line_t *main, bool send_finish, const char *reason);
+void halfduplexserverPumpClose(tunnel_t *t, line_t *main);
+void halfduplexserverSendServicePayload(tunnel_t *t, line_t *main, sbuf_t *buf);
+void halfduplexserverQuiesceDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void halfduplexserverStopDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);

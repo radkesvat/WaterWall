@@ -1,5 +1,6 @@
 #include "structure.h"
 
+#include "EncryptionCommon/kdf.h"
 #include "loggers/network_logger.h"
 
 static uint32_t normalizeAlgorithm(dynamic_value_t algorithm_dv)
@@ -88,52 +89,6 @@ static uint32_t parseAlgorithmFromSettings(const cJSON *settings, bool packet_mo
     return packet_mode ? kEncryptionAlgorithmXChaCha20Poly1305 : kEncryptionAlgorithmChaCha20Poly1305;
 }
 
-static bool deriveKeyFromPassword(const char *password, const char *salt, uint32_t iterations, bool packet_mode,
-                                  uint8_t out_key[32])
-{
-    size_t password_len = stringLength(password);
-    size_t salt_len     = stringLength(salt);
-
-    assert(password_len > 0 && iterations > 0);
-    sha256_hash_t packet_password_key = {0};
-    if (packet_mode &&
-        wCryptoSHA256(&packet_password_key, (const unsigned char *) password, password_len) != kWCryptoOk)
-        return false;
-    const unsigned char *iteration_key     = packet_mode ? packet_password_key.bytes : (const unsigned char *) password;
-    const size_t         iteration_key_len = packet_mode ? sizeof(packet_password_key.bytes) : password_len;
-
-    if (wCryptoBlake2s(
-            out_key, 32, (const unsigned char *) salt, salt_len, (const unsigned char *) password, password_len) !=
-        kWCryptoOk)
-    {
-        wCryptoZero(out_key, 32);
-        wCryptoZero(&packet_password_key, sizeof(packet_password_key));
-        return false;
-    }
-
-    for (uint32_t i = 1; i < iterations; i++)
-    {
-        uint8_t  iter_block[36] = {0};
-        uint32_t iter_be        = htobe32(i);
-
-        memoryCopy(iter_block, out_key, 32);
-        memoryCopy(iter_block + 32, &iter_be, sizeof(iter_be));
-
-        if (wCryptoBlake2s(out_key, 32, iteration_key, iteration_key_len, iter_block, sizeof(iter_block)) != kWCryptoOk)
-        {
-            wCryptoZero(iter_block, sizeof(iter_block));
-            wCryptoZero(out_key, 32);
-            wCryptoZero(&packet_password_key, sizeof(packet_password_key));
-            return false;
-        }
-
-        wCryptoZero(iter_block, sizeof(iter_block));
-    }
-
-    wCryptoZero(&packet_password_key, sizeof(packet_password_key));
-    return true;
-}
-
 static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts, const cJSON *settings)
 {
     char    *password       = NULL;
@@ -174,7 +129,8 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
         goto cleanup;
     }
 
-    if (stringLength(password) == 0)
+    const size_t password_len = stringLength(password);
+    if (password_len == 0)
     {
         LOGF("EncryptionServer: 'password' must not be empty");
         goto cleanup;
@@ -186,6 +142,20 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
     if (kdf_iterations <= 0 || kdf_iterations > 1000000)
     {
         LOGF("EncryptionServer: 'kdf-iterations' must be in range [1, 1000000]");
+        goto cleanup;
+    }
+
+    const size_t salt_len = stringLength(salt);
+    if (salt_len > WCRYPTO_BLAKE2S_MAX_KEY_SIZE)
+    {
+        LOGF("EncryptionServer: 'salt' must be at most %d bytes", WCRYPTO_BLAKE2S_MAX_KEY_SIZE);
+        goto cleanup;
+    }
+    if (! ts->packet_mode && kdf_iterations > 1 && password_len > WCRYPTO_BLAKE2S_MAX_KEY_SIZE)
+    {
+        LOGF("EncryptionServer: 'password' must be at most %d bytes in stream mode when 'kdf-iterations' is greater "
+             "than 1",
+             WCRYPTO_BLAKE2S_MAX_KEY_SIZE);
         goto cleanup;
     }
 
@@ -211,9 +181,11 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
     ts->kdf_iterations    = (uint32_t) kdf_iterations;
     ts->max_frame_payload = (uint32_t) max_frame_size;
 
-    if (! deriveKeyFromPassword(password, salt, ts->kdf_iterations, ts->packet_mode, ts->key))
+    const wcrypto_status_t key_status =
+        encryptionDeriveBaseKey(password, password_len, salt, salt_len, ts->kdf_iterations, ts->packet_mode, ts->key);
+    if (key_status != kWCryptoOk)
     {
-        LOGF("EncryptionServer: failed to derive key from password");
+        LOGF("EncryptionServer: failed to derive base key: %s", wCryptoStatusString(key_status));
         goto cleanup;
     }
 
@@ -221,11 +193,11 @@ static bool encryptionserverTunnelstateInitialize(encryptionserver_tstate_t *ts,
     {
         uint8_t base_key[32];
         memoryCopy(base_key, ts->key, sizeof(base_key));
-        const bool derived = encryptionPacketDeriveKeys(base_key, ts->key, ts->packet_download_key);
+        const wcrypto_status_t status = encryptionPacketDeriveKeys(base_key, ts->key, ts->packet_download_key);
         wCryptoZero(base_key, sizeof(base_key));
-        if (! derived)
+        if (status != kWCryptoOk)
         {
-            LOGF("EncryptionServer: failed to derive packet direction keys");
+            LOGF("EncryptionServer: failed to derive packet direction keys: %s", wCryptoStatusString(status));
             goto cleanup;
         }
         atomicLogRateLimiterInitialize(&ts->packet_drop_log_limiter);

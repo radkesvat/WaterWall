@@ -14,6 +14,7 @@
 #include "KcpClient/interface.h"
 #include "KcpServer/interface.h"
 #include "test_assert.h"
+#include "wevent.h"
 #include "wwapi.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)

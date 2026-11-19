@@ -1,41 +1,6 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void usercontrollerTunnelUpStreamInit(tunnel_t *t, line_t *l)
+void usercontrollerTunnelUpStreamInit(tunnel_t *tunnel, line_t *line)
 {
-    usercontroller_lstate_t      *ls = lineGetState(l, t);
-    usercontroller_payload_mode_t mode;
-
-    // Resolve before acquiring line state or admitting a user. On failure there
-    // are no local resources and the uninitialized next side must not be called.
-    if (! usercontrollerResolvePayloadMode(t, l, &mode))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    // Forward origin: the line was initiated from the prev side (this upstream Init), so upstream
-    // payload is the user's upload.
-    usercontrollerLinestateInitialize(ls, false);
-    ls->payload_mode = mode;
-    usercontrollerBandwidthInitialize(t, l);
-
-    // Admit the line at start if it already carries an authenticated user. Anonymous/no-auth lines
-    // return kUserAdmissionOk and simply pass through unmanaged; nodes that authenticate later promote
-    // the line on demand with usercontrollerTunnelTryManageLine().
-    user_admission_result_t result = usercontrollerTunnelTryManageLine(t, l);
-
-    if (result != kUserAdmissionOk)
-    {
-        usercontrollerLogAdmissionRejected(t, l, ls, result);
-
-        // The upstream side was never opened, so we only finish the prev/downstream side that
-        // initiated us. This is the natural "upstream is unavailable" close (close prev only).
-        usercontrollerLinestateDestroy(ls);
-        tunnelPrevDownStreamFinish(t, l);
-        return;
-    }
-
-    tunnelNextUpStreamInit(t, l);
+    usercontrollerOpenLine(tunnel, line, false);
 }

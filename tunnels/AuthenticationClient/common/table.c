@@ -200,9 +200,17 @@ static authenticationclient_failure_t installStaging(tunnel_t *t, uint64_t gener
         authenticationclientDestroyUsers(baseline);
         return kAuthenticationClientFailureSyncLimit;
     }
+    if (ts->users_generation == UINT64_MAX)
+    {
+        LOGF("AuthenticationClient: installed account generation exhausted");
+        abortProgramNow(1);
+    }
     users_t *old = ts->users, *old_baseline = ts->sync_baseline_users;
     for (size_t i = 0; i < usersCount(stage->users); ++i)
+    {
         usersGetAt(stage->users, i)->runtime.identity_generation_floor = ts->users_generation + 1;
+        usersGetAt(stage->users, i)->runtime.wireguard_generation_floor = ts->users_generation + 1;
+    }
     /* All fallible work is complete. Migration cannot refuse initialized tables. */
     if (! usersMigrateRuntimeStateByIdentifier(stage->users, old))
     {

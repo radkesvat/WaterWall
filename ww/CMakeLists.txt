@@ -124,6 +124,7 @@ add_library(ww STATIC
     objects/users_runtime.c
     
     # Event handling
+    event/event_accessors.c
     event/wevent.c
     event/wloop.c
     event/nio.c
@@ -1719,6 +1720,7 @@ if(BUILD_TESTING)
         # The select registration test compiles an alternate event stack directly.
         # Keep both its sources and the production Linux backend separate so the
         # archive linker can select one backend without extracting duplicate symbols.
+        event/event_accessors.c
         event/epoll.c
         event/nio.c
         event/udp_send.c

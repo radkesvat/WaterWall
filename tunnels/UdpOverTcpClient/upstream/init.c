@@ -8,5 +8,6 @@ void udpovertcpclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     udpovertcpclientLinestateInitialize(ls, lineGetBufferPool(l), tunnelGetChain(t)->supports_splice);
 
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     tunnelNextUpStreamInit(t, l);
 }

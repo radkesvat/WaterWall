@@ -75,6 +75,9 @@ _Static_assert(offsetof(woverlapped_t, ovlp) == 0,
 // queue, recording its byte count and error (0 on success).
 void wioIocpOnDequeued(woverlapped_t *record, DWORD bytes, int error);
 
+// Requeue a successful receive completion for normal loop dispatch after Resume.
+int wioIocpRequeueReceive(woverlapped_t *record);
+
 // Retire every already-dequeued completion for a closed/inactive io without
 // invoking user callbacks. May finalize a deferred wio_t once its last record is
 // released; the caller must not touch io afterwards.

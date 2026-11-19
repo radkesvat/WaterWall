@@ -1,0 +1,40 @@
+{
+  "name": "wireguard-packet-server",
+  "nodes": [
+    {
+      "name": "udp",
+      "type": "UdpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 51820
+      },
+      "next": "vpn"
+    },
+    {
+      "name": "vpn",
+      "type": "WireGuardServer",
+      "settings": {
+        "privatekey": "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+        "mode": "packet",
+        "peers": [
+          {
+            "publickey": "lOJxqZ1QQqyACY38LcAckO2CitX+sdc1laPmDZOhrRg=",
+            "allowedips": "10.50.0.4/30"
+          }
+        ]
+      },
+      "next": "inner"
+    },
+    {
+      "name": "inner",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "ww-server",
+        "device-ip": "10.50.0.1/24",
+        "device-mtu": 1380,
+        "gso": false,
+        "route-table": "off"
+      }
+    }
+  ]
+}

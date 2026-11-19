@@ -80,6 +80,18 @@ struct local_idle_item_s
 local_idle_table_t *localIdleTableCreate(wloop_t *loop);
 
 /**
+ * @brief Create a worker-local idle table on first use, such as when the first connection arrives.
+ *
+ * Shutdown can close timer admission during the call. Check the result before
+ * publishing work that depends on the table's deadlines. For startup code
+ * that guarantees timer admission is open, use localIdleTableCreate().
+ *
+ * @param loop Event loop owned by the calling worker.
+ * @return The new table, or NULL if the loop has closed timer admission.
+ */
+local_idle_table_t *localIdleTableTryCreate(wloop_t *loop);
+
+/**
  * @brief Destroy a worker-local idle table.
  *
  * Must be called on the table owner worker. Active items are released without

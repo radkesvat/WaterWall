@@ -56,6 +56,7 @@
         "method": "POST",
         "http-version": "2",
         "verbose": true,
+        "stay-alive": true,
         "close-drain-timeout-ms": 1000
       },
       "next": "timed-carrier"

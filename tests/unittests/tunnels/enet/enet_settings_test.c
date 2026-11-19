@@ -91,6 +91,11 @@ static void testInheritedMtu(void)
 static void testRanges(void)
 {
     static const char *invalid[] = {
+        "null",
+        "[]",
+        "\"invalid settings\"",
+        "42",
+        "false",
         "{\"no-recv-timeout-ms\":0}",
         "{\"no-recv-timeout-ms\":43200001}",
         "{\"ping-interval-ms\":0}",

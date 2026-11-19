@@ -45,7 +45,8 @@ struct domainresolver_socket_s
     int                         family;
     bool                        owned_prepared;
     bool                        tcp;
-    bool                        established;
+    bool                        transport_established;
+    bool                        write_admitted;
     bool                        send_paused;
     bool                        read_paused;
     bool                        failed;
@@ -162,7 +163,7 @@ static domainresolver_socket_t *dnsTransportSocket(domainresolver_transport_t *t
 
 static bool dnsTransportCanWrite(const domainresolver_socket_t *socket)
 {
-    return (socket->write_interest || socket->write_blocked) && socket->established && ! socket->send_paused &&
+    return (socket->write_interest || socket->write_blocked) && socket->write_admitted && ! socket->send_paused &&
            ! socket->failed;
 }
 
@@ -295,8 +296,7 @@ static int dnsTransportSetOption(ares_socket_t handle, ares_socket_opt_t option,
     discard value;
     discard length;
     discard userdata;
-    /* No kernel socket belongs to this adapter. In particular TCP Fast Open
-     * must remain disabled: establishment is reported by the selected egress. */
+    /* These virtual sockets have no kernel socket options, including TCP Fast Open. */
     dnsTransportSetError(ENOSYS);
     return -1;
 }
@@ -322,7 +322,6 @@ static int dnsTransportConnect(ares_socket_t handle, const struct sockaddr *addr
      * metadata and must never be used to authenticate the DNS peer. */
     line_t *line                = lineCreate(tunnelchainGetLinePools(tunnelGetChain(transport->owner)), transport->wid);
     socket->line                = line;
-    socket->established         = ! socket->tcp;
     domainresolver_lstate_t *ls = lineGetState(line, transport->owner);
     ls->dns_transport           = socket;
     addresscontextFromSockAddrWithProtocol(
@@ -358,7 +357,10 @@ static int dnsTransportConnect(ares_socket_t handle, const struct sockaddr *addr
         dnsTransportSetError(ECONNREFUSED);
         return -1;
     }
-    if (! socket->established)
+    /* The live egress can take payload now. For a pending TCP connect, the
+     * subsequent c-ares WRITE interest lets us report virtual writability. */
+    socket->write_admitted = true;
+    if (socket->tcp && ! socket->transport_established)
     {
         dnsTransportSetError(EINPROGRESS);
         return -1;
@@ -378,7 +380,7 @@ static ares_ssize_t dnsTransportSend(ares_socket_t handle, const void *data, siz
         dnsTransportSetError(ECONNREFUSED);
         return -1;
     }
-    if (! socket->established || socket->send_paused)
+    if (! socket->write_admitted || socket->send_paused)
     {
         /* c-ares 1.34.8 clears UDP WRITE interest after a would-block flush.
          * Retain that pending send independently until capacity can retry it. */
@@ -578,8 +580,7 @@ void domainresolverTransportEst(tunnel_t *owner, line_t *line)
     domainresolver_socket_t *socket = dnsTransportLine(owner, line);
     if (socket == NULL || socket->line != line)
         return;
-    socket->established = true;
-    asyncdnsWakeTransport(&socket->transport->resolver);
+    socket->transport_established = true;
 }
 
 void domainresolverTransportFinish(tunnel_t *owner, line_t *line)
@@ -587,7 +588,7 @@ void domainresolverTransportFinish(tunnel_t *owner, line_t *line)
     domainresolver_socket_t *socket = dnsTransportLine(owner, line);
     if (socket != NULL && socket->line == line)
     {
-        socket->eof = socket->tcp && socket->established;
+        socket->eof = socket->tcp && socket->transport_established;
         dnsTransportFail(socket, false);
     }
 }

@@ -78,7 +78,7 @@ VMess server. The node target `example.com:443` is the service requested from it
 | `port` | Required | Integer 1..65535, `dest_context->port`, or `line->dest_ctx->port`. |
 | `protocol` / `proto` | `tcp` | `tcp`/`connect`, `udp`/`udp-associate`, `dest_context->protocol`, or `line->dest_ctx->protocol`. |
 | `dns-behaviour` | Local resolution disabled | Local lookup, address selection and DNS transport; see DNS behaviour below. |
-| `first-payload-timeout-ms` | `400` | Integer 0..4294967295; zero sends an idle request without deliberate waiting after transport Est. |
+| `first-payload-timeout-ms` | `400` | Integer 0..4294967295. Zero sends an idle request as soon as the next `Init` has returned on a live line and flow control permits. |
 | `security` | `aes-128-gcm` | `aes-128-gcm`, `chacha20-poly1305`, `auto`, `none`, or `zero`. |
 | `chunk-masking` | Mode-dependent | Boolean; true except for `zero`. |
 | `global-padding` | Mode-dependent | Boolean; true for encrypted modes, false for `none` and `zero`. |
@@ -266,16 +266,17 @@ combinations are `1,5,13,17,21,29` for encrypted modes, `1,5` for TCP NONE,
 
 ### Request timing and response handling
 
-Init prepares the destination and starts the transport without emitting a VMess
-request. The first eligible payload sends immediately, including before Est,
+`Init` prepares the destination and initializes the next node. The first
+eligible payload sends immediately, including before Est,
 during an Est callback or after advisory Pause. Fresh timestamp, request key/IV,
 response marker, AuthID randomness, nonce and padding are generated when the first
 request is committed. The request and first encoded body record share one ordinary
 buffer. Larger TCP input is split in order into records of at most 16 KiB.
 
 Every direct TCP Est is forwarded promptly, including repeats. UDP carrier Est maps
-to the application once. The first Est starts the original idle deadline if no
-request has been sent; repeats never reset it. On expiry, TCP emits one header-only
+to the application once. If the request remains unsent after the next node's
+`Init` returns and the line is still alive, the client starts its idle deadline.
+In UDP mode this is the TCP carrier's `Init`. On expiry, TCP emits one header-only
 request even during advisory Pause. An idle UDP carrier defers that emission while
 the exact carrier is paused and emits on Resume. An eligible payload still sends
 immediately. Empty TCP input does not start a request. One ordinary output does not

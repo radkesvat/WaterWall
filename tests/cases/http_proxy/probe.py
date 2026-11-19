@@ -515,7 +515,11 @@ def run():
         with socket.socket() as reserved:
             reserved.bind(("127.0.0.1", 0))
             port = reserved.getsockname()[1]
-            assert once((f"CONNECT 127.0.0.1:{port} HTTP/1.1\r\nHost: a\r\n\r\n").encode())[0] in (502, 504)
+            wire = connect()
+            with wire.sock:
+                wire.sock.sendall((f"CONNECT 127.0.0.1:{port} HTTP/1.1\r\nHost: a\r\n\r\n").encode())
+                assert wire.response(head=True)[0] == 200
+                assert not wire.buf and wire.sock.recv(1) == b"", "refused dial left data after CONNECT success"
             # Requested transport is unavailable: only the configured Router branch can reach the sentinel.
             data = (f"GET http://127.0.0.1:{port}/routed HTTP/1.1\r\nHost: a\r\n\r\n").encode()
             assert once(data, 29082)[2] == b"/routed"

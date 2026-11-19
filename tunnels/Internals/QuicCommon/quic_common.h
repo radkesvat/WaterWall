@@ -24,7 +24,6 @@ typedef struct quic_tstate
     uint32_t             max_buffers;
     uint32_t             close_drain_timeout_ms;
     bool                 client;
-    bool                 stream_carrier;
     bool                 verbose;
     atomic_bool          stopping;
 } quic_tstate_t;
@@ -37,7 +36,6 @@ typedef struct quic_lstate
 typedef struct quic_node_settings
 {
     ww_quic_settings_t engine;
-    bool               stream_carrier;
     bool               verbose;
 } quic_node_settings_t;
 
@@ -60,8 +58,8 @@ void quicSubmitCarrier(tunnel_t *t, line_t *l, sbuf_t *buffer);
  * destroyed; neither helper reflects Finish toward its caller. */
 void quicFinishApplication(tunnel_t *t, line_t *l);
 void quicFinishCarrier(tunnel_t *t, line_t *l);
-void quicRelayUp(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
-void quicRelayDown(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal);
+void quicRelayEst(tunnel_t *t, line_t *l);
+void quicSetApplicationPaused(tunnel_t *t, line_t *l, bool paused);
 void quicSetCarrierPaused(tunnel_t *t, line_t *l, bool paused);
 
 void quicCloseAdmission(tunnel_t *t);

@@ -193,7 +193,7 @@ static bool stageOuter(void *user, const uint8_t *packet, size_t length)
 static bool beginOutputBatch(tou_session_t *s)
 {
     assert(tou_packet_queue_t_is_empty(&s->output) && s->output_bytes == 0);
-    /* One driver batch performs update plus an optional explicit ACK flush.
+    /* One driver batch performs update plus an optional explicit flush.
      * Each call can emit at most the existing flight plus one send-window of
      * queued PUSHes, ackcount ACKs and two probes. Every datagram contains at
      * least one such segment. FEC completes at most ceil(packet_count/data)
@@ -673,6 +673,12 @@ static void reconcilePressure(tou_session_t *s)
     }
 }
 
+static uint64_t nextKcpUpdate(const tou_session_t *s, uint64_t now)
+{
+    const IUINT32 current = (IUINT32) now;
+    return touDeadline(now, ikcp_check(s->kcp, current) - current);
+}
+
 static void armTimer(tou_session_t *s, uint64_t now)
 {
     if (s->timer == NULL || s->dead || s->quiesced || ! s->started)
@@ -690,8 +696,13 @@ static void armTimer(tou_session_t *s, uint64_t now)
     }
     else
     {
-        const IINT32 delay = (IINT32) (ikcp_check(s->kcp, (IUINT32) now) - (IUINT32) now);
-        next               = touDeadline(now, delay > 0 ? (uint32_t) delay : 1U);
+        next = nextKcpUpdate(s, now);
+        if (! s->closing)
+        {
+            next = min(next, touDeadline(s->last_recv, s->config.no_recv_timeout_ms));
+            if (! s->ping_sent)
+                next = min(next, touDeadline(s->last_recv, s->config.ping_interval_ms));
+        }
     }
     if (s->closing && ! s->send_settled)
     {
@@ -763,9 +774,20 @@ static void drive(tou_session_t *s)
             stageHandshake(s);
             s->retry_at = touDeadline(now, kTouHandshakeRetryMs);
         }
-        /* Sending can settle with pending ACKs just before periodic updates stop. */
+        if (s->started && s->ready && ! s->closing && ! s->ping_sent &&
+            now >= touDeadline(s->last_recv, s->config.ping_interval_ms))
+        {
+            const uint8_t ping = kTouFramePing;
+            sendRecord(s, (const char *) &ping, 1);
+            s->ping_sent = true;
+            s->dirty     = true;
+            s->flush     = true;
+        }
+        /* Input can reach the driver just before timer dispatch. Run due work
+         * here as well so an ignored packet cannot keep resetting its wakeup. */
         const bool flush_retained_acks = s->send_settled && s->kcp->ackcount != 0;
-        if (s->started && s->ready && (s->dirty || flush_retained_acks))
+        if (s->started && s->ready &&
+            (s->dirty || flush_retained_acks || (! s->send_settled && now >= nextKcpUpdate(s, now))))
         {
             assert(tou_packet_queue_t_is_empty(&s->output));
             if (! beginOutputBatch(s))
@@ -773,9 +795,13 @@ static void drive(tou_session_t *s)
                 touSessionAbort(s, kTouCapacityFailure);
                 break;
             }
-            s->dirty = false;
-            ikcp_update(s->kcp, (IUINT32) now);
-            if (s->flush || flush_retained_acks)
+            const IUINT32 current = (IUINT32) now;
+            s->dirty              = false;
+            ikcp_update(s->kcp, current);
+            /* ikcp_update handles periodic flushes. If ikcp_check still returns
+             * the current tick, an outstanding segment is due for retransmission. */
+            if (s->flush || flush_retained_acks ||
+                (! s->send_settled && s->kcp->nsnd_buf != 0 && ikcp_check(s->kcp, current) == current))
             {
                 s->flush = false;
                 ikcp_flush(s->kcp);
@@ -867,8 +893,9 @@ void touSessionInput(tou_session_t *s, sbuf_t *packet)
     queueWork(s, packet, true);
 }
 
-void touSessionAppFinish(tou_session_t *s)
+void touSessionAppFinish(tou_session_t *s, void (*before_drain)(void *user))
 {
+    assert(before_drain != NULL);
     touSessionRetain(s);
     if (s->quiesced)
     {
@@ -878,6 +905,7 @@ void touSessionAppFinish(tou_session_t *s)
     {
         s->local_finish = true;
         beginClose(s, sessionNow(s));
+        before_drain(s->user);
         drive(s);
     }
     touSessionRelease(s);
@@ -913,12 +941,6 @@ void touSessionTick(tou_session_t *s, uint64_t now)
     s->current_now = now;
     if (! s->dead && ! s->quiesced && s->started)
     {
-        if (! s->closing && s->ready && now >= touDeadline(s->last_recv, s->config.ping_interval_ms) && ! s->ping_sent)
-        {
-            const uint8_t ping = kTouFramePing;
-            sendRecord(s, (const char *) &ping, 1);
-            s->ping_sent = true;
-        }
         s->dirty = ! s->send_settled;
         drive(s);
     }

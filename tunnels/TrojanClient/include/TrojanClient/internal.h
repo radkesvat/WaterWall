@@ -9,6 +9,7 @@ void trojanclientLinestateDestroy(trojanclient_lstate_t *ls);
 void trojanclientTunnelstateDestroy(trojanclient_tstate_t *ts);
 bool trojanclientApplyTargetContext(tunnel_t *t, line_t *l);
 void trojanclientStartUdpCarrier(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls);
+void trojanclientStartNext(tunnel_t *t, line_t *l, line_t *application);
 void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls);
 void trojanclientCloseLine(tunnel_t *t, line_t *l, trojanclient_close_origin_t origin);
 

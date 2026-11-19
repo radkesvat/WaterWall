@@ -394,6 +394,13 @@ connection through its line owner.
 
 This prevents unlimited buffering when the remote side is slow or the connection is not ready yet.
 
+On `Finish`, TcpConnector hands accepted writes to WIO and normally closes the
+socket fully, including while reads are paused. On a fallback connection, clean
+EOF triggers a peer socket check on supported Linux systems. Only a confirmed
+peer write shutdown marks the line for bounded socket linger before Finish
+propagates. A TCP adapter receiving Finish on that marked line can detach its
+socket, flush writes, shut down its write side and briefly read and discard peer input.
+
 #### Connection establishment timeout
 
 Each outbound TCP connection attempt has a `60-second` deadline, matching NGINX's default `proxy_connect_timeout`.

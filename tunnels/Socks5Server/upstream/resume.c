@@ -7,7 +7,7 @@ void socks5serverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     if (ls->kind == kSocks5ServerLineKindControlTcp)
     {
         ls->pending_read_pause = false;
-        if (ls->phase != kSocks5ServerPhaseConnectWaitEst && ls->phase != kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase != kSocks5ServerPhaseConnectStarting && ls->phase != kSocks5ServerPhaseTcpEstablished)
             return;
         tunnelNextUpStreamResume(t, l);
         return;

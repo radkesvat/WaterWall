@@ -194,3 +194,7 @@ add_waterwall_probe_integration_test(
 )
 add_waterwall_integration_test(waterwall.router_connector_rule_target_tcp_loopback router_connector_rule_target_tcp_loopback)
 add_waterwall_integration_test(waterwall.router_domainresolver_connector_rule_target_tcp_loopback router_domainresolver_connector_rule_target_tcp_loopback)
+if(TARGET TesterClient AND TARGET TesterServer AND TARGET Router)
+  add_waterwall_integration_test_with_timeout(
+    waterwall.tester_client_router_sniffing_direct tester_client_router_sniffing_direct 10)
+endif()

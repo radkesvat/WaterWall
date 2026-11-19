@@ -91,6 +91,11 @@ void ptcUdpReceived(void *arg, struct udp_pcb *upcb, struct pbuf *p, const ip_ad
         ls->udp_peer_port  = port;
 
         addresscontextSetIpPortProtocol(lineGetSourceAddressContext(line), addr, port, IP_PROTO_UDP);
+        ptc_tstate_t *scope_state = tunnelGetState(t);
+        ls->source_epoch          = scope_state->source_epoch != NULL
+                                        ? scope_state->source_epoch(scope_state->source_epoch_context,
+                                                           &lineGetSourceAddressContext(line)->ip_address)
+                                        : 0;
         local_ip = upcb->local_ip;
         if (! ptcFakeDnsApplyMappedDestination(
                 t, lineGetDestinationAddressContext(line), &local_ip, upcb->local_port, IP_PROTO_UDP))

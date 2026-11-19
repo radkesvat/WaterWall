@@ -1,12 +1,11 @@
 #include "structure.h"
 
-void halfduplexclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
+void halfduplexclientTunnelDownStreamEst(tunnel_t *t, line_t *child)
 {
-    halfduplexclient_lstate_t *child = lineGetState(l, t);
-    line_t                    *main  = child->main_line;
-    if (main == NULL)
-        return;
-    halfduplexclient_lstate_t *ls = lineGetState(main, t);
-    ls->est_seen                  = true;
-    discard halfduplexclientNotifyEstablished(t, main);
+    halfduplexclient_pair_t *pair = halfduplexclientGetPair(t, child);
+    if (pair != NULL && pair->main != NULL && ! pair->ending)
+    {
+        pair->est_seen = true;
+        halfduplexclientNotifyEstablished(pair);
+    }
 }

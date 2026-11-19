@@ -863,8 +863,8 @@ bool tlsserverArmHandshakeDeadline(tunnel_t *t, line_t *l, tlsserver_lstate_t *l
 
     tlsserverDisarmHandshakeDeadline(ls);
 
-    wtimer_t *timer =
-        wtimerAdd(getWorkerLoop(lineGetWID(l)), tlsserverHandshakeDeadlineTimerCallback, ts->handshake_timeout_ms, 1);
+    wtimer_t *timer = wtimerAddDeadline(
+        getWorkerLoop(lineGetWID(l)), tlsserverHandshakeDeadlineTimerCallback, ts->handshake_timeout_ms);
 
     if (timer == NULL)
     {

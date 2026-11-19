@@ -5,7 +5,7 @@
  * Checks: Exact framing/payload bytes, settings and windows, one request stream, WebSocket/h2c
  *         settings, nested-payload FIFO order, custom-upgrade bypass, flow-control resumption,
  *         readiness/provider limits, reentrant Finish, retained uploads, fixed deadlines,
- *         timer refusal/quiescence, pressure, cancellation and exact line ownership.
+ *         timer refusal/quiescence, stay-alive teardown, pressure, cancellation and exact line ownership.
  * Limits: No TLS record, network-packet, browser traffic timing, or multi-stream equivalence claims.
  * CTest: waterwall.httpclient_wire_profile_unit
  */
@@ -922,6 +922,7 @@ static void setupBlockedUpload(fixture_t *f)
 static void requireCarrierClosed(fixture_t *f, unsigned next_finish)
 {
     twfRequire(! lineIsAlive(f->carrier), "HttpClient retained its owned carrier after terminal close");
+    twfRequire(! lineShouldLingerOnClose(f->carrier), "HttpClient requested TCP linger on an ordinary carrier");
     twfRequireLineStateZeroed(f->carrier, f->http, "carrier close retained protocol state");
     twfRequireEqualU32(twfLineRefCount(f->carrier), 1, "carrier close leaked a line reference");
     twfRequireEqualU32(f->trace.next_finish, next_finish, "carrier close used the wrong Finish direction/count");
@@ -968,7 +969,6 @@ static void caseHttp2FinishDrainsAfterApplicationDies(void)
     peerConsume(&f);
     twfRequire(f.received_body == kLargeBody && f.end_streams == 1,
                "draining lost accepted bytes or failed to emit exactly one END_STREAM");
-    twfRequire(lineShouldLingerOnClose(f.carrier), "completed upload did not request TCP close linger");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1000,8 +1000,7 @@ static void caseHttp2DrainDeadline(bool progress)
         }
     }
     advanceClock(&f, deadline * 1000 + 1000);
-    twfRequire(f.end_streams == 0 && ! lineShouldLingerOnClose(f.carrier),
-               "timed-out upload falsely completed or requested successful-drain linger");
+    twfRequire(f.end_streams == 0, "timed-out upload emitted END_STREAM");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1019,7 +1018,6 @@ static void caseHttp2DeadlineDuringSynchronousOutput(void)
     finishApplication(&f);
     twfRequire(f.wire_length == 9 + kH2BodyLimit && f.writes == 1,
                "final drain emitted another HTTP/2 frame after its fixed deadline");
-    twfRequire(! lineShouldLingerOnClose(f.carrier), "expired synchronous output requested successful-drain linger");
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1131,6 +1129,92 @@ static void caseHttp2FinishBeforeWebSocketReady(void)
                    ls->close_drain_timer != NULL,
                "application Finish discarded an upload waiting for WebSocket readiness");
     advanceClock(&f, ls->close_drain_deadline_ms * 1000 + 1000);
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void setupDetachedHttp2(fixture_t *f)
+{
+    setup(f, "{\"host\":\"unit.test\",\"http-version\":2,\"stay-alive\":true}");
+    createPeer(f);
+    finishApplication(f);
+    peerConsume(f);
+    twfRequire(lineIsAlive(f->carrier) && f->trace.next_finish == 0 && f->end_streams == 1,
+               "stay-alive did not retain the carrier after the request END_STREAM");
+    httpclient_lstate_t *ls = lineGetState(f->carrier, f->http);
+    twfRequire(ls->application_line == NULL && ls->session != NULL && ls->close_drain_timer == NULL &&
+                   ls->close_drain_deadline_ms == 0 && wloopNTimers(f->env.loop) == 0,
+               "retained HTTP/2 session kept the application or its upload deadline");
+}
+
+static void caseHttp2StayAliveShutdown(void)
+{
+    twfSetCase("HttpClient worker stop releases a detached session after both directions ended");
+    fixture_t f;
+    setupDetachedHttp2(&f);
+    peerStartResponse(&f, true);
+    twfRequire(lineIsAlive(f.carrier), "clean response END_STREAM prematurely closed the session");
+    f.http->onQuiesceRequest(f.http, NULL);
+    wloopCloseNormalAdmission(f.env.loop);
+    wloopQuiesceNormalWork(f.env.loop);
+    f.http->onWorkerQuiesce(f.http, 0, NULL);
+    f.http->onWorkerStop(f.http, 0, NULL);
+    requireCarrierClosed(&f, 1);
+    twfRequire(f.trace.prev_finish == 0, "worker stop notified a detached application");
+    teardown(&f);
+}
+
+static void caseHttp2StayAliveReset(uint32_t error_code)
+{
+    twfSetCase("HttpClient releases the detached session on peer reset after local END_STREAM");
+    fixture_t f;
+    setupDetachedHttp2(&f);
+    peerStartResponse(&f, false);
+    twfRequire(nghttp2_submit_rst_stream(f.peer, NGHTTP2_FLAG_NONE, 1, error_code) == 0,
+               "peer reset submission failed");
+    peerPump(&f);
+    requireCarrierClosed(&f, 1);
+    twfRequire(f.trace.prev_finish == 0, "peer reset notified a detached application");
+    teardown(&f);
+}
+
+static void caseStayAliveHttp1Fallback(void)
+{
+    twfSetCase("HttpClient stay-alive still finishes an HTTP/1.1 carrier after h2c is declined");
+    fixture_t f;
+    setup(&f, "{\"host\":\"unit.test\",\"http-version\":\"both\",\"upgrade\":true,\"stay-alive\":true}");
+    finishApplication(&f);
+    const uint8_t response[] = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+    feedWire(&f, response, sizeof(response) - 1);
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2StayAliveInvalidPing(void)
+{
+    twfSetCase("HttpClient releases a detached HTTP/2 session on connection error");
+    fixture_t f;
+    setupDetachedHttp2(&f);
+    /* PING must have exactly eight payload bytes. nghttp2 reports the error through GOAWAY. */
+    const uint8_t bad_ping[] = {0, 0, 0, NGHTTP2_PING, 0, 0, 0, 0, 0};
+    feedWire(&f, bad_ping, sizeof(bad_ping));
+    requireCarrierClosed(&f, 1);
+    teardown(&f);
+}
+
+static void caseHttp2StayAlivePeerGoAway(uint32_t error_code)
+{
+    twfSetCase("HttpClient keeps an accepted stream on graceful GOAWAY and closes on connection error");
+    fixture_t f;
+    setupDetachedHttp2(&f);
+    twfRequire(nghttp2_submit_goaway(f.peer, NGHTTP2_FLAG_NONE, 1, error_code, NULL, 0) == 0,
+               "peer GOAWAY submission failed");
+    peerPump(&f);
+    if (error_code == NGHTTP2_NO_ERROR)
+    {
+        twfRequire(lineIsAlive(f.carrier), "graceful GOAWAY dropped a response on an accepted stream");
+        peerStartResponse(&f, true);
+    }
     requireCarrierClosed(&f, 1);
     teardown(&f);
 }
@@ -1264,6 +1348,13 @@ int main(void)
     caseHttp2ShutdownCancelsDrain(false);
     caseHttp2ShutdownCancelsDrain(true);
     caseHttp2FinishBeforeWebSocketReady();
+    caseHttp2StayAliveShutdown();
+    caseHttp2StayAliveReset(NGHTTP2_CANCEL);
+    caseHttp2StayAliveReset(NGHTTP2_NO_ERROR);
+    caseHttp2StayAliveInvalidPing();
+    caseHttp2StayAlivePeerGoAway(NGHTTP2_NO_ERROR);
+    caseHttp2StayAlivePeerGoAway(NGHTTP2_INTERNAL_ERROR);
+    caseStayAliveHttp1Fallback();
     caseHttp2PressureCombinesTransportPause();
     caseHttp2QueueHardLimit(false);
     caseHttp2QueueHardLimit(true);

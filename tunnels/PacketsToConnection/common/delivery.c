@@ -4,6 +4,15 @@
 
 bool ptcEnsureNextInit(tunnel_t *t, line_t *l, ptc_lstate_t *ls)
 {
+    ptc_tstate_t *state = tunnelGetState(t);
+    if (state->source_epoch != NULL &&
+        UNLIKELY(ls->source_epoch == 0 ||
+                 state->source_epoch(state->source_epoch_context, &lineGetSourceAddressContext(l)->ip_address) !=
+                     ls->source_epoch))
+    {
+        ptcCloseLineForStop(t, l);
+        return false;
+    }
     if (ls->next_init_sent)
     {
         return true;

@@ -7,18 +7,6 @@ if(TARGET WaterWall::Quiche)
   add_waterwall_unit_test(waterwall.quic_web_transport_headers_unit quic_web_transport_headers_test "unit;quic;build")
 endif()
 
-# Compile the production C carrier directly: no socket, WW runtime or C++ engine
-# is needed to exercise its fragmentation/admission/ownership boundary.
-if(TARGET QuicCommon)
-  waterwall_add_native_executable(quic_carrier_test SUPPORT
-    SOURCES
-      ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/quic/quic_carrier_test.c
-      ${CMAKE_SOURCE_DIR}/tunnels/Internals/QuicCommon/carrier.c
-    INCLUDES ${CMAKE_SOURCE_DIR}/tunnels/Internals/QuicCommon)
-  set_target_properties(quic_carrier_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
-  add_waterwall_unit_test(waterwall.quic_carrier_unit quic_carrier_test "unit;tunnels;quic;framing;ownership")
-endif()
-
 if(TARGET QuicClient OR TARGET QuicServer)
   set(quic_node_test_libraries QuicCommon ww)
   if(TARGET QuicClient)
@@ -27,6 +15,9 @@ if(TARGET QuicClient OR TARGET QuicServer)
   if(TARGET QuicServer)
     list(APPEND quic_node_test_libraries QuicServer)
   endif()
+  if(TARGET QuicClient AND TARGET UdpConnector)
+    list(APPEND quic_node_test_libraries UdpConnector)
+  endif()
   waterwall_add_native_executable(quic_node_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/quic/quic_node_test.c
     INCLUDES ${CMAKE_SOURCE_DIR}/tunnels/Internals/QuicCommon
@@ -34,6 +25,7 @@ if(TARGET QuicClient OR TARGET QuicServer)
     DEFINITIONS
       QUIC_TEST_HAS_CLIENT=$<BOOL:$<TARGET_EXISTS:QuicClient>>
       QUIC_TEST_HAS_SERVER=$<BOOL:$<TARGET_EXISTS:QuicServer>>
+      QUIC_TEST_HAS_UDP_CONNECTOR=$<AND:$<TARGET_EXISTS:QuicClient>,$<TARGET_EXISTS:UdpConnector>>
       QUIC_TEST_CERT="${CMAKE_SOURCE_DIR}/tests/speedtests/_shared/server.crt"
       QUIC_TEST_KEY="${CMAKE_SOURCE_DIR}/tests/speedtests/_shared/server.key")
   target_link_options(quic_node_test PRIVATE

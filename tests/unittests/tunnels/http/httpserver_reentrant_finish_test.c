@@ -83,6 +83,10 @@ typedef struct httpserver_fixture_s
     tunnel_t        *next;
     line_t          *line;
     nghttp2_session *peer;
+    uint32_t         carrier_credit_queued;
+    unsigned         carrier_resumes;
+    bool             carrier_paused;
+    bool             carrier_closes_on_resume;
 } httpserver_fixture_t;
 
 static void finishServerFromPrevOnFirstPayload(tunnel_t *prev, line_t *line, sbuf_t *buf)
@@ -432,13 +436,15 @@ static void fixtureRequireCompleteResponse(httpserver_fixture_t *fixture)
     twfRequireEqualU32(end_streams, 1, "response did not emit exactly one END_STREAM");
 }
 
-static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish)
+static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish, bool fallback_peer_half_closed)
 {
     twfSetCase(queued_before_finish ? "HttpServer queued DATA after reentrant service Finish"
                                     : "HttpServer later DATA after service Finish");
     httpserver_fixture_t fixture;
     fixtureSetup(&fixture);
     fixtureQueueBlockedResponse(&fixture);
+    if (fallback_peer_half_closed)
+        lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     uint8_t captured[kHttp2BodySize + 4096];
     fixture.trace.capture          = captured;
     fixture.trace.capture_capacity = sizeof(captured);
@@ -459,6 +465,8 @@ static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish
     fixtureIncreaseResponseWindow(&fixture, 65535);
 
     fixtureRequireCompleteResponse(&fixture);
+    twfRequire(lineShouldLingerOnClose(fixture.line) == fallback_peer_half_closed,
+               "HttpServer changed the carrier's TCP linger decision");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "completed response did not close the carrier exactly once");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "completed response reflected Finish toward the service");
     twfRequireLineStateZeroed(fixture.line, fixture.http, "completed deferred response retained HTTP/2 state");
@@ -477,6 +485,98 @@ static void fixtureRequireDrainClosed(httpserver_fixture_t *fixture, uint32_t in
     twfRequire(wloopNTimers(fixture->env.loop) == 0, "drain failure retained its timer");
     fixtureAdvanceTo(fixture, now_us + UINT64_C(1000000));
     twfRequireEqualU32(fixture->trace.prev_finish, 1, "drain failure notified the carrier again after cleanup");
+}
+
+static void pauseCarrier(tunnel_t *prev, line_t *line)
+{
+    discard               line;
+    httpserver_fixture_t *fixture = container_of(twfTrace(prev), httpserver_fixture_t, trace);
+    fixture->carrier_paused       = true;
+}
+
+static void offerCarrierCredit(httpserver_fixture_t *fixture, uint32_t bytes)
+{
+    if (fixture->carrier_paused)
+        fixture->carrier_credit_queued += bytes;
+    else
+        fixtureIncreaseResponseWindow(fixture, bytes);
+}
+
+static void resumeCarrier(tunnel_t *prev, line_t *line)
+{
+    httpserver_fixture_t *fixture = container_of(twfTrace(prev), httpserver_fixture_t, trace);
+    twfRequire(fixture->carrier_paused, "carrier received a redundant Resume");
+    fixture->carrier_paused = false;
+    ++fixture->carrier_resumes;
+    if (fixture->carrier_closes_on_resume)
+    {
+        httpserverTunnelUpStreamFinish(fixture->http, line);
+        return;
+    }
+    uint32_t credit                = fixture->carrier_credit_queued;
+    fixture->carrier_credit_queued = 0;
+    if (credit != 0)
+    {
+        fixtureFeedData(fixture, 1);
+        offerCarrierCredit(fixture, credit);
+    }
+}
+
+enum carrier_resume_case
+{
+    kCarrierReleasesCredit,
+    kCarrierClosesOnResume,
+    kCarrierAlreadyResumed,
+    kCarrierWithholdsCredit,
+};
+
+static void caseHttp2FinishReleasesCarrier(enum carrier_resume_case mode)
+{
+    twfSetCase("HttpServer service Finish retires carrier Pause while waiting for credit");
+    httpserver_fixture_t fixture;
+    fixtureSetup(&fixture);
+    fixture.prev->fnPauseD  = pauseCarrier;
+    fixture.prev->fnResumeD = resumeCarrier;
+    /* Hold reads even before protocol detection, as during h2c startup. */
+    httpserverTunnelDownStreamPause(fixture.http, fixture.line);
+    fixtureQueueBlockedResponse(&fixture);
+    uint8_t captured[kHttp2BodySize + 4096];
+    fixture.trace.capture            = captured;
+    fixture.trace.capture_capacity   = sizeof(captured);
+    fixture.carrier_closes_on_resume = mode == kCarrierClosesOnResume;
+    const uint32_t initial_refc      = twfLineRefCount(fixture.line);
+
+    if (mode == kCarrierAlreadyResumed)
+        httpserverTunnelDownStreamResume(fixture.http, fixture.line);
+    if (mode == kCarrierReleasesCredit || mode == kCarrierClosesOnResume)
+        offerCarrierCredit(&fixture, 65535);
+    httpserverTunnelDownStreamFinish(fixture.http, fixture.line);
+    twfRequire(fixture.carrier_resumes == 1 && ! fixture.carrier_paused, "service Finish left carrier reads paused");
+
+    if (mode == kCarrierWithholdsCredit)
+    {
+        httpserver_lstate_t *ls = lineGetState(fixture.line, fixture.http);
+        twfRequire(ls->close_drain_timer != NULL && fixture.trace.prev_finish == 0,
+                   "carrier Resume ended a response without credit");
+        fixtureAdvanceTo(&fixture, ls->close_drain_deadline_ms * 1000 + 1000);
+        fixtureRequireDrainClosed(&fixture, initial_refc);
+    }
+    else if (mode == kCarrierClosesOnResume)
+    {
+        twfRequireEqualText(fixture.trace.seq, "", "carrier loss during Resume reflected a callback");
+    }
+    else
+    {
+        if (mode == kCarrierAlreadyResumed)
+            offerCarrierCredit(&fixture, 65535);
+        fixtureRequireCompleteResponse(&fixture);
+        twfRequireEqualU32(fixture.trace.prev_finish, 1, "complete response did not finish the carrier");
+    }
+    twfRequire(fixture.trace.next_payload == 0 && fixture.trace.next_finish == 0,
+               "carrier Resume called the finished service");
+    twfRequireLineStateZeroed(fixture.line, fixture.http, "carrier Resume retained HTTP/2 state");
+    twfRequireEqualU32(twfLineRefCount(fixture.line), initial_refc, "carrier Resume leaked a reference");
+    fixtureTeardown(&fixture);
 }
 
 static void caseHttp2DrainDeadlineWithoutInput(void)
@@ -639,8 +739,13 @@ int main(void)
     caseFinishDuringFirstFinalChunkStopsRemainingOutput();
     caseHttp2FinishDuringActiveProvider(false);
     caseHttp2FinishDuringActiveProvider(true);
-    caseHttp2DiscardsRequestAfterServiceFinish(true);
-    caseHttp2DiscardsRequestAfterServiceFinish(false);
+    caseHttp2DiscardsRequestAfterServiceFinish(true, false);
+    caseHttp2DiscardsRequestAfterServiceFinish(false, false);
+    caseHttp2DiscardsRequestAfterServiceFinish(false, true);
+    caseHttp2FinishReleasesCarrier(kCarrierReleasesCredit);
+    caseHttp2FinishReleasesCarrier(kCarrierClosesOnResume);
+    caseHttp2FinishReleasesCarrier(kCarrierAlreadyResumed);
+    caseHttp2FinishReleasesCarrier(kCarrierWithholdsCredit);
     caseHttp2CarrierFinishWhileResponseBlocked();
     caseHttp2ResetWhileResponseBlocked();
     caseHttp2DrainDeadlineWithoutInput();

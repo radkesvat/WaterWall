@@ -139,7 +139,7 @@ and the [client/server configuration files](examples/tls-kcp) for setup and exec
 - Uses the first payload to introduce and pair the two half-connections.
 - Sends all later upstream payload only on the upload connection.
 - Receives downstream payload back from the download connection and forwards it to the previous node.
-- Closes both half-connections when the original line closes.
+- Drains accepted upload bytes when the original line finishes, then waits for download completion.
 
 This tunnel is useful when the transport path or remote layout wants separate flows for upload and download instead of one bidirectional connection.
 
@@ -154,7 +154,7 @@ When a new line arrives from the previous node, `HalfDuplexClient` creates:
 
 Both are initialized through their selected branch entries on the same worker.
 
-The original local line remains the main line. Its line state keeps references to the two transport-side half-connections.
+The original local line remains the main line. All three lines point to one client-owned pair. The pair holds the pending upload and its pairing intro while the application is active and during close.
 
 #### Pairing handshake
 
@@ -194,8 +194,8 @@ Init waits only until both adjacent child Init calls have admitted their identit
 there is no pairing-handshake gate. Valid payload after that Init can proceed before
 Est. An Est callback can safely submit the first payload or close the pair.
 
-Only temporary Init/intro ordering input is retained, with a 2 MiB logical-byte / 8 MiB queue-charge
-inclusive bound. First-intro publication precedes callbacks, and input nested during
+The temporary upload FIFO holds input behind Init, intro ordering, or child Pause,
+with inclusive limits of 2 MiB logical bytes and 8 MiB queue charge. First-intro publication precedes callbacks, and input nested during
 the download intro follows the older upload intro with the same pair ID. An admitted
 input can finish through Pause. A later release of Init backlog respects aggregate
 child pressure; one child Resume cannot clear another child's outstanding Pause.
@@ -212,12 +212,17 @@ responsibilities, even when this node sits in the middle of the configured chain
 Once both intros have been submitted, upload Finish retires only the upload line;
 the main and download lines remain available for the response. Download or main
 Finish closes the remaining association. Transport loss before upload intro
-submission aborts setup.
+submission aborts setup while the application is active.
 
-Before any outward Finish, all pair links and local state are detached. The client
-synchronously closes both owned children, retaining exact lines across callbacks;
-received Finish is never reflected toward its sender. The borrowed main line is
-finished through its owner. No detached child waits on a cancelable close task.
+When the application finishes after both child Inits, the client detaches the
+borrowed main line. If upload data remains, the client publishes any pending
+intros with their shared pair ID and drains admitted bytes in order, observing
+each transport's Pause. It releases the application's download read hold, then
+finishes upload and keeps download available for peer completion. An early
+download Finish after publication of its intro leaves the upload drain running.
+The entire close uses one 30-second deadline measured from application Finish.
+Worker shutdown or transport failure settles any affected child and its retained
+buffers. Received Finish is never reflected toward its sender.
 
 ### Splice and setup storage
 
@@ -228,7 +233,7 @@ headroom is reused in place; insufficient headroom uses a new buffer. Splice
 input is fully materialized, preserving its resident prefix and private-pipe
 body in order. The download intro is ordinary too. Later upstream and
 downstream deliveries preserve their original ordinary or splice representation.
-The temporary Init/intro FIFO can retain splice wrappers without materializing
+The temporary upload FIFO can retain splice wrappers without materializing
 them; its inclusive 2 MiB logical-byte and 8 MiB queue-charge limits do not cap
 every ready delivery. Allocated outputs retain onward padding.
 

@@ -1,0 +1,41 @@
+{
+  "name": "wireguard-client",
+  "nodes": [
+    {
+      "name": "tun",
+      "type": "TunDevice",
+      "settings": {
+        "device-name": "ww-client",
+        "device-ip": "10.50.0.5/24",
+        "device-mtu": 1380,
+        "gso": false,
+        "route-table": "off"
+      },
+      "next": "vpn"
+    },
+    {
+      "name": "vpn",
+      "type": "WireGuardClient",
+      "settings": {
+        "privatekey": "OifMN24K7a2acdnkULTG5pAypdiSdqmTAHlbjlRi+tk=",
+        "peers": [
+          {
+            "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
+            "endpoint": "127.0.0.1:51820",
+            "allowedips": "0.0.0.0/0",
+            "persistentkeepalive": 25
+          }
+        ]
+      },
+      "next": "udp"
+    },
+    {
+      "name": "udp",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port"
+      }
+    }
+  ]
+}

@@ -44,5 +44,5 @@ void trojanclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    trojanclientStartNext(t, l, l);
 }

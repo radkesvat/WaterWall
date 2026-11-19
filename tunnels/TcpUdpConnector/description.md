@@ -193,13 +193,13 @@ See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) f
 
 ### Protocol Selection
 
-During upstream `Init`, `TcpUdpConnector` first checks `line->routing_context.dest_ctx`.
+During upstream `Init`, `TcpUdpConnector` first checks `lineGetDestinationAddressContext(line)`.
 
 - exact TCP destination protocol selects `TcpConnector`
 - exact UDP destination protocol selects `UdpConnector`
 - unsupported or ambiguous destination protocol flags are rejected
 
-If the destination context has no protocol flags, `TcpUdpConnector` falls back to `line->routing_context.src_ctx`. This
+If the destination context has no protocol flags, `TcpUdpConnector` falls back to `lineGetSourceAddressContext(line)`. This
 keeps simple TCP-in-to-TCP-out and UDP-in-to-UDP-out chains usable with constant outbound destinations.
 
 The selected child connector is stored in this node's line state. Later upstream callbacks use the stored child instead

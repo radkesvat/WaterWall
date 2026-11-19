@@ -84,8 +84,11 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "StreamToPackets/interface.h"
 #endif
 
-#ifdef INCLUDE_WIREGUARD_DEVICE
-#include "WireGuardDevice/interface.h"
+#ifdef INCLUDE_WIREGUARD_CLIENT
+#include "WireGuardClient/interface.h"
+#endif
+#ifdef INCLUDE_WIREGUARD_SERVER
+#include "WireGuardServer/interface.h"
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
@@ -292,6 +295,14 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "HttpClient/interface.h"
 #endif
 
+#ifdef INCLUDE_RTMP_CLIENT
+#include "RtmpClient/interface.h"
+#endif
+
+#ifdef INCLUDE_RTMP_SERVER
+#include "RtmpServer/interface.h"
+#endif
+
 #ifdef INCLUDE_SOCKS5_CLIENT
 #include "Socks5Client/interface.h"
 #endif
@@ -489,8 +500,11 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
     USING(StreamToPackets);
 #endif
 
-#ifdef INCLUDE_WIREGUARD_DEVICE
-    USING(WireGuardDevice);
+#ifdef INCLUDE_WIREGUARD_CLIENT
+    USING(WireGuardClient);
+#endif
+#ifdef INCLUDE_WIREGUARD_SERVER
+    USING(WireGuardServer);
 #endif
 
 #ifdef INCLUDE_LAYER3_IP_ROUTING_TABLE
@@ -695,6 +709,14 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_HTTP_CLIENT
     USING(HttpClient);
+#endif
+
+#ifdef INCLUDE_RTMP_CLIENT
+    USING(RtmpClient);
+#endif
+
+#ifdef INCLUDE_RTMP_SERVER
+    USING(RtmpServer);
 #endif
 
 #ifdef INCLUDE_SOCKS5_CLIENT

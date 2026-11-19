@@ -250,12 +250,21 @@ ordinary middle-node transparency rule does not remove this producer control.
 
 #### Finish behavior
 
-If either half-connection closes after pairing:
+If an upload with a complete validated intro finishes before download arrives,
+the server retains its pair ID and accepted body for up to 30 seconds from
+upload Finish. The pairing group holds at most 64 such uploads and 8 MiB of
+retained allocation charge. A matching download on another worker moves to the
+record's owner through PipeTunnel. Entries with incomplete intros are discarded.
 
-- the main line is finished and destroyed
-- the other half-connection is scheduled to close
-
-If a half-connection closes before pairing completes, it is removed from the waiting map and cleaned up.
+After pairing, upload Finish detaches that transport. The service receives the
+initial body and admitted startup FIFO in order as its Pause permits, then
+receives one Finish. If the download sends Finish during the service's Finish
+callback, it cancels the pending download notification. Otherwise the server
+finishes the download after settling the owned service line.
+The original 30-second deadline includes any time spent
+waiting for a download match. Service closure or worker shutdown settles the
+remaining drain. An early download failure while both transports are still
+attached aborts the pair.
 
 If the next side closes the reconstructed main line, `HalfDuplexServer` finishes the download line immediately and schedules the upload line to close.
 
@@ -305,8 +314,9 @@ Replay waits for next-side permission. A Resume during Init only records that
 permission; source Resume follows older startup output and is withheld while next
 is paused. The barrier ends immediately before the final tail handoff, allowing
 later reentrant data to follow all older bytes. Ready forwarding remains queue-free
-and preserves ordinary/splice wrappers. Every close path releases main-owned
-startup data and its budget before notifying adjacent sides.
+and preserves ordinary/splice wrappers. Orderly upload Finish keeps the
+startup buffers on the owned service line until handoff or cancellation. Budget
+cost is released as each entry is handed off or recycled.
 
 ### Node Metadata
 
