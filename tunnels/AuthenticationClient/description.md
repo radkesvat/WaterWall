@@ -115,8 +115,8 @@ strings, `null`, or values outside the range are rejected at startup; they are n
 The existing meaning of an explicitly configured `0` is preserved for each interval. Duplicate recognized settings are rejected,
 and `verbose` accepts only a JSON Boolean.
 
-`ping-interval-ms` sends authenticated `Ping` requests and also retries `Authenticate` while the transport is connected
-but not authenticated.
+On an initialized control line with writes permitted, `ping-interval-ms` sends `Ping` after authentication.
+Before authentication, it retries `Authenticate` if no such request is outstanding.
 
 `pull-interval-ms` enables periodic full `GetUsersPage` traversals. A value of `0` disables timer-driven pulls, but
 authentication and every matching usage ACK still request a refresh. A failed refresh retries independently while
@@ -134,7 +134,9 @@ coalesces into one later traversal; installation preserves that explicit demand.
 `reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline. Credential rejection has a minimum one-second delay and participates in exponential backoff, even when the configured reconnect interval is zero.
 
 `request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
-time using an independent worker-0 deadline timer, even with ping/pull/push disabled. A value of `0` disables it.
+time using an independent worker-0 deadline timer, even with ping/pull/push disabled. The deadline starts at
+request submission. For `Authenticate`, it includes time queued downstream during connection setup or a transport
+handshake. A value of `0` disables the timeout.
 
 `max-pending-requests` is a request-admission ceiling. A full table retains desired pulls, pushes and catch-up work
 until a matching response frees capacity; it does not repeatedly build batches, warn or arm a short retry timer.
@@ -296,9 +298,12 @@ APIServer exposes the registered read-only `status` operation on worker 0. Its r
 Unknown or duplicate fields, non-Boolean options, malformed JSON and trailing input return a bounded operation error.
 
 Basic status includes `traffic_multiplier` as the configured exact decimal JSON number, even without accounting sampling.
-It separates `can_authenticate` and `blocking_reason` from transport `connected`/`authenticated` and
-`sync_phase`. A valid cache can admit new traffic during an outage; explicit credential rejection can block admission
-while `users_loaded` remains true. Blocking precedence is stopping, not started, continuity error, credential rejection,
+It reports `can_authenticate` and `blocking_reason` separately from `connected`, `authenticated` and
+`sync_phase`. The `connected` flag reflects downstream transport `Est`. A validated `Session` can set
+`authenticated` while `connected` is still false. `sync_phase` can report `authenticating` while
+`Authenticate` is in flight before `Est`. A valid cache can admit new traffic during an outage.
+Explicit credential rejection can block admission while `users_loaded` remains true.
+Blocking precedence is stopping, not started, continuity error, credential rejection,
 unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
 limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts retained obligations,
 while `orphan_debt_count` counts retained obligations for authoritatively absent IDs. An otherwise idle client with only
@@ -350,9 +355,8 @@ The client keeps the control line open while the downstream transport stays aliv
 schedules reconnect. The next connection starts with a new `Authenticate` request; the old token is not reused by the
 client, even though the server may keep the old session record until its idle timeout expires.
 
-While disconnected or not yet authenticated, new protocol requests are not sent. The local users table remains available
-to callers as a cache, but server synchronization resumes only after reconnect, transport `Est`, and successful
-authentication.
+The local users table remains available as a cache under the admission policy. Server synchronization on a
+new control line begins after the client validates its `Session` response.
 
 ### Wire Protocol
 
@@ -408,8 +412,8 @@ Worker 0 then:
 3. Initializes this tunnel's per-line state before calling the next tunnel.
 4. Sends `tunnelNextUpStreamInit()`.
 
-When the next side establishes the transport and sends downstream `Est`, the client marks the control line connected and
-sends `Authenticate` with a zero session token.
+When the next tunnel's `Init` returns with the owned control line alive, the client can submit `Authenticate` with a zero
+session token. If the next tunnel paused writes, submission waits for `Resume`.
 
 `Authenticate` accepts `name`, `secret`, and an optional `epoch` for resumption. A Session response contains 128 bytes:
 a 64-byte token followed by a 64-byte accounting epoch, both hexadecimal OS-secure random values. The client stores
@@ -708,8 +712,9 @@ and recreation of the same durable ID establish a new generation floor. Old hand
 the recreated account or release its connection/IP reservations; old shaping tickets still release client-owned costs.
 
 `authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
-callers queue work to worker 0. Desired jobs coalesce while disconnected, paused or blocked by another synchronization
-operation. A pull cannot replace the baseline during an unresolved push, and a push cannot overtake an active pull.
+callers queue work to worker 0. Desired jobs coalesce while an authenticated session is unavailable, writes are
+paused or another synchronization operation blocks them. A pull cannot replace the baseline during an unresolved
+push, and a push cannot overtake an active pull.
 After authentication or a usage ACK, a refresh is requested. A retained uncertain batch replays before this pull.
 A failed non-accounting refresh permits new reports from the existing baseline between retry attempts; a later successful
 refresh reconciles those acknowledged totals before normal cadence resumes. A due failed-refresh retry takes a turn
@@ -721,7 +726,7 @@ not block lookup. Live capacity is reserved separately by the atomic runtime adm
 
 All protocol timers live on worker 0, the same worker as the owned control line:
 
-`ping_timer` sends `Ping` while authenticated and retries `Authenticate` while connected but unauthenticated.
+`ping_timer` submits eligible `Ping` or `Authenticate` requests on the initialized control line.
 
 `sync_timer` drives both user-table pull and stats push using the shortest enabled pull/push interval. Each tick checks
 the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetUsersPage` when revisions

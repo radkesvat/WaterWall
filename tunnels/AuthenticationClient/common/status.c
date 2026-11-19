@@ -248,9 +248,9 @@ authenticationclient_state_t authenticationclientStateLocked(const authenticatio
     return ts->continuity_error ? kAuthenticationClientStateContinuityError
            : ts->authenticated
                ? (ts->users_loaded ? kAuthenticationClientStateReady : kAuthenticationClientStateAuthenticating)
-           : ts->connected                 ? kAuthenticationClientStateAuthenticating
-           : ts->started && ! ts->stopping ? kAuthenticationClientStateConnecting
-                                           : kAuthenticationClientStateStopped;
+           : ts->connected || ts->auth_in_flight ? kAuthenticationClientStateAuthenticating
+           : ts->started && ! ts->stopping       ? kAuthenticationClientStateConnecting
+                                                 : kAuthenticationClientStateStopped;
 }
 
 void authenticationclientStatusSnapshot(tunnel_t *t, bool include_accounting, size_t working_allowance,

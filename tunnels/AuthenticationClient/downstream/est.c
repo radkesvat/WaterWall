@@ -12,15 +12,13 @@ void authenticationclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
     }
 
     mutexLock(&ts->control_mutex);
-    if (LIKELY(ts->control_line == l))
+    if (ts->control_line == l && ! ts->connected)
     {
         ts->connected = true;
         if (ts->verbose)
         {
-            LOGD("AuthenticationClient: downstream transport established; sending Authenticate");
+            LOGD("AuthenticationClient: downstream transport established");
         }
     }
     mutexUnlock(&ts->control_mutex);
-
-    discard authenticationclientSendAuthenticate(t);
 }

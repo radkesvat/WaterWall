@@ -31,6 +31,8 @@ static tunnel_t                  *client, *server, *transport;
 static line_t                    *observed_line;
 static bool                       capture, fragment, raw, inject, finish_output, finish_input, flood;
 static bool                       client_nested, client_flood;
+static bool                       suppress_est, pause_on_init, dispatching_init;
+static unsigned                   authenticate_requests;
 static bool                       pad_next_users_response;
 static uint8_t                   *captured;
 static size_t                     captured_length;
@@ -94,13 +96,22 @@ static void finish(tunnel_t *t, line_t *l)
     tunnelDownStreamFin(client, l);
 }
 
+static void init(tunnel_t *t, line_t *l)
+{
+    dispatching_init = true;
+    if (pause_on_init)
+        tunnelPrevDownStreamPause(t, l);
+    tunnelNextUpStreamInit(t, l);
+    dispatching_init = false;
+}
+
 static void established(tunnel_t *t, line_t *l)
 {
-    discard t;
     require(observed_line == NULL, "unexpected extra control line");
     observed_line = l;
     lineRef(l); /* Retain allocation for terminal state/ownership checks. */
-    tunnelDownStreamEst(client, l);
+    if (! suppress_est)
+        tunnelPrevDownStreamEst(t, l);
 }
 
 static void output(tunnel_t *t, line_t *l, sbuf_t *b)
@@ -250,6 +261,10 @@ static void output(tunnel_t *t, line_t *l, sbuf_t *b)
 
 static void input(tunnel_t *t, line_t *l, sbuf_t *b)
 {
+    require(! dispatching_init, "control request escaped before the next Init returned");
+    if (sbufGetLength(b) >= 77 &&
+        ((const uint8_t *) sbufGetRawPtr(b))[68] == kAuthenticationClientRequestTypeAuthenticate)
+        ++authenticate_requests;
     if (finish_input && sbufGetLength(b) >= 77 &&
         ((const uint8_t *) sbufGetRawPtr(b))[68] == kAuthenticationClientRequestTypeGetAllUsers)
     {
@@ -279,6 +294,8 @@ static void setup(uint32_t medium)
 {
     capture = fragment = raw = inject = finish_output = finish_input = flood = false;
     client_nested = client_flood = false;
+    suppress_est = pause_on_init = dispatching_init = false;
+    authenticate_requests                           = 0;
     pad_next_users_response      = false;
     response_padding             = 0;
     captured                     = NULL;
@@ -319,12 +336,15 @@ static void setup(uint32_t medium)
     transport = tunnelCreate(NULL, 0, 0);
     require(client != NULL && transport != NULL, "tunnel creation failed");
     server                = authTestPeerCreate(client->lstate_size);
+    transport->fnInitU    = init;
     transport->fnPayloadU = input;
     transport->fnPayloadD = output;
     transport->fnEstD     = established;
     transport->fnFinD     = finish;
     client->fnFinD        = authenticationclientTunnelDownStreamFinish;
     client->fnEstD        = authenticationclientTunnelDownStreamEst;
+    client->fnPauseD      = authenticationclientTunnelDownStreamPause;
+    client->fnResumeD     = authenticationclientTunnelDownStreamResume;
     client->fnPayloadD    = authenticationclientTunnelDownStreamPayload;
     tunnelBind(client, transport);
     tunnelBind(transport, server);
@@ -353,7 +373,7 @@ static void setup(uint32_t medium)
 static void start(void)
 {
     authenticationclientOpenControlLine(client);
-    require(observed_line != NULL, "control line was not established");
+    require(observed_line != NULL, "control line did not reach the server");
 }
 
 static void teardown(void)
@@ -400,6 +420,29 @@ static void teardown(void)
     GSTATE.flag_initialized    = false;
     GSTATE.workers             = NULL;
     GSTATE.masterpool_messages = NULL;
+}
+
+static void testEarlyAuthentication(bool paused)
+{
+    setup(64 * 1024);
+    suppress_est  = true;
+    pause_on_init = paused;
+    start();
+    if (paused)
+    {
+        require(authenticate_requests == 0 && state()->pending_count == 0 && state()->request_timer == NULL,
+                "Authenticate escaped an Init-time Pause");
+        tunnelPrevDownStreamResume(transport, observed_line);
+    }
+    require(authenticate_requests == 1 && ! state()->connected && ! lineIsEstablished(observed_line) &&
+                state()->authenticated && authenticationclientIsReady(client),
+            "control session did not authenticate and synchronize before Est");
+    require(authenticationclientSendPing(client) && state()->pending_count == 0, "authenticated Ping waited for Est");
+    tunnelPrevDownStreamEst(transport, observed_line);
+    tunnelPrevDownStreamEst(transport, observed_line);
+    require(authenticate_requests == 1 && state()->connected && lineIsEstablished(observed_line),
+            "late or repeated Est restarted authentication");
+    teardown();
 }
 
 static void testMaximumResponse(uint32_t medium, bool fragmented)
@@ -673,6 +716,8 @@ int main(void)
     testCaseSet("authentication ingress framing and retention");
     require(createNetworkLogger(NULL, false) != NULL, "logger initialization failed");
     require(userTestRuntimeInitialize(), "random/crypto initialization failed");
+    testEarlyAuthentication(false);
+    testEarlyAuthentication(true);
     testMaximumResponse(32 * 1024, false);
     testMaximumResponse(64 * 1024, false);
     testMaximumResponse(32 * 1024, true);

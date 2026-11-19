@@ -146,6 +146,7 @@ typedef struct authenticationclient_tstate_s
     bool                                     started;
     bool                                     stopping;
     bool                                     connected;
+    bool                                     write_admitted;
     bool                                     authenticated;
     bool                                     auth_rejected;
     bool                                     write_paused;

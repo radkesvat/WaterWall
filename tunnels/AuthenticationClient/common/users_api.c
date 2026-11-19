@@ -613,7 +613,7 @@ static authenticationclient_first_usage_push_result_t authenticationclientReques
     {
         result = kAuthenticationClientFirstUsagePushPending;
     }
-    else if (LIKELY(ts->authenticated && ts->connected && ! ts->stopping && ! ts->write_paused &&
+    else if (LIKELY(ts->authenticated && ts->write_admitted && ! ts->stopping && ! ts->write_paused &&
                     ts->control_line != NULL))
     {
         ts->first_usage_push_requested = true;

@@ -168,12 +168,12 @@ bool authenticationclientSendRequest(tunnel_t *t, uint8_t request_type, const ui
     {
         if (ts->verbose)
         {
-            LOGD("AuthenticationClient: not sending %s request; started=%s stopping=%s connected=%s "
+            LOGD("AuthenticationClient: not sending %s request; started=%s stopping=%s write-admitted=%s "
                  "authenticated=%s write-paused=%s control-line=%s",
                  authenticationclientRequestTypeName(request_type),
                  boolToTrueFalse(ts->started),
                  boolToTrueFalse(ts->stopping),
-                 boolToTrueFalse(ts->connected),
+                 boolToTrueFalse(ts->write_admitted),
                  boolToTrueFalse(ts->authenticated),
                  boolToTrueFalse(ts->write_paused),
                  ts->control_line != NULL ? "present" : "none");
