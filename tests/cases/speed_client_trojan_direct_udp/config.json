@@ -1,0 +1,46 @@
+{
+  "name": "speed-client-trojan-direct-udp",
+  "nodes": [
+    {
+      "name": "speedtest-client",
+      "type": "SpeedTestClient",
+      "settings": {
+        "mode": "udp",
+        "direction": "bidirectional",
+        "duration-ms": 250,
+        "warmup-ms": 20,
+        "timeout-ms": 3000,
+        "payload-size": 1024,
+        "target-megabits-per-sec": 8,
+        "verify-payload": true,
+        "terminate-on-complete": true
+      },
+      "next": "trojan-client"
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "settings": {
+        "password": "speedtest-local",
+        "protocol": "udp",
+        "target-address": "127.0.0.1",
+        "port": 443,
+        "first-payload-timeout-ms": 60000
+      },
+      "next": "trojan-server"
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "settings": {
+        "password": "speedtest-local"
+      },
+      "next": "speedtest-server"
+    },
+    {
+      "name": "speedtest-server",
+      "type": "SpeedTestServer",
+      "settings": {}
+    }
+  ]
+}

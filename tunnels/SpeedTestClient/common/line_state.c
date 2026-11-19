@@ -4,18 +4,13 @@
 
 void speedtestclientLinestateInitialize(speedtestclient_lstate_t *ls, tunnel_t *t, line_t *l, uint32_t stream_id)
 {
-    speedtestclient_tstate_t *state  = tunnelGetState(t);
-    const uint64_t            now_ms = speedtestclientNowMs();
+    speedtestclient_tstate_t *state = tunnelGetState(t);
 
     *ls = (speedtestclient_lstate_t) {
         .recv_stream                     = splicestreamCreate(lineGetBufferPool(l), kSpeedTestClientFrameHeaderSize),
         .stream_id                       = stream_id,
         .expected_reports                = (state->upload ? 1U : 0U) + (state->download ? 1U : 0U),
         .received_reports                = 0,
-        .start_ms                        = now_ms,
-        .measure_start_ms                = now_ms + state->warmup_ms,
-        .measure_end_ms                  = now_ms + state->warmup_ms + state->duration_ms,
-        .last_report_ms                  = now_ms + state->warmup_ms,
         .sender_last_report_bytes        = 0,
         .receiver_last_report_bytes      = 0,
         .next_send_sequence              = 0,

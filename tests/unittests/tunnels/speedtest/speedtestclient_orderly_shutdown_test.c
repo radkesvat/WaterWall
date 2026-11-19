@@ -309,34 +309,140 @@ static void caseAcceptedQueuedTimerAdmissionClosureUsesCleanup(void)
     fixtureTeardown(&fixture);
 }
 
-static void caseEstStopsAfterSendAdmissionClosesLine(void)
+static void startOneStream(speedtestclient_fixture_t *fixture)
 {
-    twfSetCase("SpeedTestClient Est stops after send admission closes the line");
+    speedtestclient_tstate_t *state = tunnelGetState(fixture->speed);
+    state->connection_count         = 1;
+    state->timeout_ms               = 60000;
+    ww_startup_context_t startup    = {0};
+    wwStartupContextBegin(&startup);
+    speedtestclientTunnelOnStart(fixture->speed);
+    twfRequire(wwStartupSucceeded(wwStartupContextEnd(&startup)), "startup timer was not admitted");
+
+    const uint64_t deadline = speedtestclientNowMs() + 1000;
+    while (fixture->trace.next_init == 0 && speedtestclientNowMs() < deadline)
+    {
+        twfRequire(wloopProcessEvents(fixture->env.loops[0], 10) >= 0, "startup event dispatch failed");
+    }
+    twfRequireEqualU32(fixture->trace.next_init, 1, "startup timer did not emit Init");
+    tosPumpWorker(&fixture->env, 0);
+}
+
+static void caseStartupStopsAfterSendAdmissionClosesLine(void)
+{
+    twfSetCase("SpeedTestClient startup stops after send admission closes the line");
     tosResetProcessApi(true);
     speedtestclient_fixture_t fixture;
     fixtureSetup(&fixture);
 
     speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
-    state->connection_count         = 1;
     state->upload                   = true;
     state->report_interval_ms       = 1000;
-    line_t *line                    = publishLine(&fixture, 0, true);
 
-    const wid_t previous_wid = tosSetCurrentWorker(0);
-    lineRef(line);
     fail_next_line_task = true;
-    speedtestclientTunnelDownStreamEst(fixture.speed, line);
+    startOneStream(&fixture);
 
-    twfRequire(! lineIsAlive(line), "send admission refusal did not close the owned speed-test line");
     twfRequire(state->owned_lines[0] == NULL, "send admission refusal left the owned line published");
+    twfRequireEqualU32(fixture.trace.next_init, 1, "startup did not publish Init before scheduling send progress");
     twfRequireEqualU32(fixture.trace.next_finish, 1, "send admission refusal did not emit one upstream Finish");
     twfRequireEqualU32(
-        (uint32_t) fixture.env.loops[0]->ntimers, 0, "Est scheduled a report after send refusal destroyed the line");
-    lineUnref(line);
-    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "Est retained the closed speed-test line");
-    discard tosSetCurrentWorker(previous_wid);
+        wloopNTimers(fixture.env.loops[0]), 0, "startup armed a timer after send refusal destroyed the line");
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "startup retained the closed speed-test line");
     tosRequireNoProcessApiCall();
 
+    fixtureTeardown(&fixture);
+}
+
+static void finishDuringInit(tunnel_t *t, line_t *line)
+{
+    twfNextInit(t, line);
+    tunnelPrevDownStreamFinish(t, line);
+}
+
+static void caseFinishDuringInitSkipsHello(void)
+{
+    twfSetCase("SpeedTestClient Finish during Init skips HELLO and watchdog");
+    tosResetProcessApi(true);
+    speedtestclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    state->upload                   = true;
+    state->duration_ms              = 1000;
+    fixture.speed->fnFinD           = speedtestclientTunnelDownStreamFinish;
+    fixture.next->fnInitU           = finishDuringInit;
+
+    send_task_submissions = 0;
+    startOneStream(&fixture);
+
+    twfRequire(state->owned_lines[0] == NULL, "Finish during Init left the owned line published");
+    twfRequireEqualU32(fixture.trace.next_init, 1, "startup did not reach the closing next node");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "startup reflected Finish back to the closing next node");
+    twfRequireEqualU32(send_task_submissions, 0, "startup scheduled HELLO after the line closed");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loops[0]), 0, "startup armed a watchdog after the line closed");
+    twfRequireEqualU32(masterpoolGetCheckedOut(fixture.line_master), 0, "startup retained the closed speed-test line");
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void pauseDuringInit(tunnel_t *t, line_t *line)
+{
+    twfNextInit(t, line);
+    tunnelPrevDownStreamEst(t, line);
+    tunnelPrevDownStreamResume(t, line);
+    tunnelPrevDownStreamPause(t, line);
+    twfRequireEqualU32(send_task_submissions, 0, "reentrant Resume scheduled HELLO before Init returned");
+}
+
+static void casePauseDuringInitDefersHelloAndMeasurement(void)
+{
+    twfSetCase("SpeedTestClient Pause during Init defers HELLO and measurement");
+    tosResetProcessApi(true);
+    speedtestclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    state->mode                     = kSpeedTestClientModeTcp;
+    state->download                 = true;
+    state->warmup_ms                = 30;
+    state->duration_ms              = 1000;
+    state->report_interval_ms       = 60000;
+    state->payload_size             = 256;
+    fixture.speed->fnEstD           = speedtestclientTunnelDownStreamEst;
+    fixture.speed->fnPauseD         = speedtestclientTunnelDownStreamPause;
+    fixture.speed->fnResumeD        = speedtestclientTunnelDownStreamResume;
+    fixture.next->fnInitU           = pauseDuringInit;
+    uint8_t hello[kSpeedTestClientFrameHeaderSize + kSpeedTestClientHelloSize];
+    fixture.trace.capture          = hello;
+    fixture.trace.capture_capacity = sizeof(hello);
+
+    send_task_submissions   = 0;
+    report_task_submissions = 0;
+    startOneStream(&fixture);
+
+    line_t *line = state->owned_lines[0];
+    twfRequire(line != NULL, "paused Init did not keep the stream alive");
+    speedtestclient_lstate_t *ls = lineGetState(line, fixture.speed);
+    twfRequire(ls->send_paused && ! ls->hello_sent && ls->start_ms == 0,
+               "paused startup started the measurement window before HELLO");
+    twfRequireEqualU32(send_task_submissions, 0, "startup scheduled HELLO while paused");
+    twfRequireEqualU32(report_task_submissions, 0, "startup scheduled an interval report before HELLO");
+
+    tunnelPrevDownStreamResume(fixture.next, line);
+    tosPumpWorker(&fixture.env, 0);
+
+    speedtestclient_frame_t frame;
+    twfRequire(speedtestclientReadHeader(hello, fixture.trace.capture_len, &frame) &&
+                   frame.type == kSpeedTestClientFrameHello,
+               "Resume did not send HELLO as the first frame");
+    twfRequire(ls->hello_sent && ls->start_ms == frame.timestamp_us / 1000U, "HELLO did not set the startup clock");
+    twfRequire(ls->measure_start_ms == ls->start_ms + state->warmup_ms &&
+                   ls->measure_end_ms == ls->measure_start_ms + state->duration_ms,
+               "startup pressure truncated warmup or measurement");
+    twfRequireEqualU32(send_task_submissions, 1, "Resume did not schedule exactly one startup send");
+    twfRequireEqualU32(report_task_submissions, 1, "first HELLO did not schedule reporting");
+
+    workerMessagesCleanupPending(&fixture.env.workers[0]);
+    drainWorker(&fixture, 0);
     fixtureTeardown(&fixture);
 }
 
@@ -348,9 +454,12 @@ static void repeatEstDuringHello(tunnel_t *t, line_t *line, sbuf_t *buf)
                "unacknowledged UDP session sent a frame other than HELLO");
     twfNextPayload(t, line, buf);
 
+    /* A transport node may already have marked the exact line. */
+    lineMarkEstablished(line);
+    tunnelPrevDownStreamEst(t, line);
     tunnelPrevDownStreamEst(t, line);
     twfRequireEqualU32(send_task_submissions, 1, "reentrant Est queued an extra send during HELLO");
-    twfRequireEqualU32(report_task_submissions, 1, "reentrant Est queued another progress report");
+    twfRequireEqualU32(report_task_submissions, 0, "reentrant Est queued a progress report during HELLO");
 }
 
 static void caseRepeatedEstPreservesUdpRetrySchedule(void)
@@ -361,7 +470,6 @@ static void caseRepeatedEstPreservesUdpRetrySchedule(void)
     fixtureSetup(&fixture);
 
     speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
-    state->connection_count         = 1;
     state->mode                     = kSpeedTestClientModeUdp;
     state->upload                   = true;
     state->duration_ms              = 1000;
@@ -369,24 +477,17 @@ static void caseRepeatedEstPreservesUdpRetrySchedule(void)
     state->report_interval_ms       = 120000;
     fixture.speed->fnEstD           = speedtestclientTunnelDownStreamEst;
     fixture.next->fnPayloadU        = repeatEstDuringHello;
-    line_t *line                    = publishLine(&fixture, 0, true);
-
-    send_task_submissions   = 0;
-    retry_task_submissions  = 0;
-    report_task_submissions = 0;
-    hold_udp_retry_timer    = true;
-    /* Another transport node may have marked this exact line first. */
-    lineMarkEstablished(line);
-    tunnelPrevDownStreamEst(fixture.next, line);
-    tunnelPrevDownStreamEst(fixture.next, line);
-    twfRequireEqualU32(send_task_submissions, 1, "repeated Est scheduled duplicate initial sends");
-    twfRequireEqualU32(report_task_submissions, 1, "repeated Est scheduled duplicate initial reports");
-
-    tosPumpWorker(&fixture.env, 0);
-    twfRequireEqualU32(fixture.trace.next_payload, 1, "repeated Est sent HELLO before its retry deadline");
+    send_task_submissions           = 0;
+    retry_task_submissions          = 0;
+    report_task_submissions         = 0;
+    hold_udp_retry_timer            = true;
+    startOneStream(&fixture);
+    line_t *line = state->owned_lines[0];
+    twfRequire(line != NULL, "UDP startup closed the line");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "startup without Est did not send the first HELLO");
     twfRequireEqualU32(retry_task_submissions, 1, "first HELLO armed more than one retry");
     twfRequireEqualU32(retry_delay_ms, 250, "Est changed the UDP handshake retry interval");
-    twfRequireEqualU32(fixture.env.loops[0]->ntimers, 2, "expected one retry timer and one progress report timer");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loops[0]), 3, "expected watchdog, retry, and progress report timers");
 
     /* Further notifications must preserve the pending retry and report. */
     tunnelPrevDownStreamEst(fixture.next, line);
@@ -395,7 +496,7 @@ static void caseRepeatedEstPreservesUdpRetrySchedule(void)
     twfRequireEqualU32(send_task_submissions, 1, "repeated Est queued another immediate send");
     twfRequireEqualU32(retry_task_submissions, 1, "repeated Est restarted the pending retry");
     twfRequireEqualU32(report_task_submissions, 1, "repeated Est restarted progress reporting");
-    twfRequireEqualU32(fixture.env.loops[0]->ntimers, 2, "repeated Est created an extra timer root");
+    twfRequireEqualU32(wloopNTimers(fixture.env.loops[0]), 3, "repeated Est created an extra timer root");
 
     workerMessagesCleanupPending(&fixture.env.workers[0]);
     hold_udp_retry_timer = false;
@@ -454,6 +555,7 @@ static void casePacingCounterBeyondMultiplyRange(uint64_t rate, bool saturated_d
     ls->est_received                = true;
     ls->start_ms                    = speedtestclientNowMs() - 1000;
     ls->measure_start_ms            = ls->start_ms;
+    ls->measure_end_ms              = ls->start_ms + state->duration_ms;
     ls->paced_bytes                 = UINT64_MAX / 8000000ULL + 1;
     delayed_line_task_submissions   = 0;
     retry_task_submissions          = 0;
@@ -726,7 +828,9 @@ int main(void)
     caseWorkerStopDrainsOnlyItsPublishedSlots();
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
-    caseEstStopsAfterSendAdmissionClosesLine();
+    caseStartupStopsAfterSendAdmissionClosesLine();
+    caseFinishDuringInitSkipsHello();
+    casePauseDuringInitDefersHelloAndMeasurement();
     caseRepeatedEstPreservesUdpRetrySchedule();
     caseReportRejectionClosesOwnedLine();
     caseAcceptedReportCancellationLeavesOwnerDrainSafe();

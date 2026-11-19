@@ -217,7 +217,7 @@ after at most 32 frames; pacing uses scheduled tasks rather than blocking sleeps
 
 - acts as a chain end for a `SpeedTestClient` flow
 - initializes per-line state during upstream `Init`
-- immediately sends downstream `Est` so the client can start the test
+- immediately sends downstream `Est` to report readiness of the server endpoint
 - accepts the client's `HELLO` and replies with `ACK`
 - checks upload frame structure, with optional payload-pattern verification
 - optionally sends download `DATA` frames to the client
@@ -234,7 +234,7 @@ On upstream `Init`, `SpeedTestServer`:
 - creates a splice-aware stream buffer for TCP-mode framing
 - sends downstream `Est` to the previous tunnel
 
-The downstream `Est` is the signal used by `SpeedTestClient` to begin its HELLO and data schedule.
+The speed-test exchange begins when the server receives the client's `HELLO`.
 
 #### HELLO and ACK
 
