@@ -309,6 +309,34 @@ static void caseAckBatchRetention(bool fec)
     teardown();
 }
 
+static void caseAckBatchDuplicateCloseDuringDrain(bool fec, unsigned ack_batch)
+{
+    testCaseSet("duplicate CLOSE is acknowledged while reverse data is still in flight");
+    char extra[40];
+    snprintf(extra, sizeof(extra), ",\"kcp-ack-batch\":%u", ack_batch);
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, 5, 5, 1500, 1500, extra);
+    endpoint_t *ep = openApp();
+    established(ep);
+    advance(1);
+    sendBytes(ep, 1, 1);
+
+    fixture.drop_close_ack = true;
+    closeApp(ep);
+    flushDirection(0);
+    flushDirection(1);
+    require(fixture.dropped_close_ack && fixture.saved_close && ! touSessionCloseConfirmed(ep->client_session),
+            "fixture did not lose the first CLOSE acknowledgment");
+    require(touSessionKcp(ep->server_session)->nsnd_buf == 1 && ep->service_finishes == 1,
+            "receiver must still have one reverse data segment to drain after CLOSE");
+
+    /* Deliver the network duplicate at the same instant, before any KCP timer can flush it. */
+    deliver((packet_t) {copyPacket(fixture.saved_close), ep, 0});
+    flushDirection(1);
+    require(touSessionCloseConfirmed(ep->client_session), "duplicate CLOSE during drain got no immediate ACK");
+    teardown();
+}
+
 static void kcpExtraCases(void)
 {
     for (unsigned fec = 0; fec < 2; ++fec)
@@ -317,6 +345,8 @@ static void kcpExtraCases(void)
         caseAckBatchFirstClose(fec != 0, 32, false);
         caseAckBatchFirstClose(fec != 0, 32, true);
         caseAckBatchRetention(fec != 0);
+        caseAckBatchDuplicateCloseDuringDrain(fec != 0, 0);
+        caseAckBatchDuplicateCloseDuringDrain(fec != 0, 32);
         for (unsigned direction = 0; direction < 2; ++direction)
             caseAckBatch(fec != 0, direction);
     }

@@ -232,7 +232,7 @@ static uint32_t readLE32(const uint8_t *p)
     return p[0] | ((uint32_t) p[1] << 8U) | ((uint32_t) p[2] << 16U) | ((uint32_t) p[3] << 24U);
 }
 
-static bool validKcp(const uint8_t *packet, size_t size)
+static bool validKcp(const uint8_t *packet, size_t size, bool *has_ping)
 {
     if (size < 24)
     {
@@ -249,6 +249,11 @@ static bool validKcp(const uint8_t *packet, size_t size)
         {
             return false;
         }
+        /* Only PUSH carries a payload. A PING is one byte with no following fragments. */
+        if (length == 1 && packet[5] == 0 && packet[24] == kTouFramePing)
+        {
+            *has_ping = true;
+        }
         packet += 24 + length;
         size -= 24 + length;
     }
@@ -257,8 +262,24 @@ static bool validKcp(const uint8_t *packet, size_t size)
 
 static bool inputKcp(void *user, const uint8_t *packet, size_t size)
 {
-    tou_session_t *s = user;
-    return validKcp(packet, size) && ikcp_input(s->kcp, (const char *) packet, (long) size) >= 0;
+    tou_session_t *s        = user;
+    bool           has_ping = false;
+    if (! validKcp(packet, size, &has_ping))
+    {
+        return false;
+    }
+    const IUINT32 previous_ack_count = s->kcp->ackcount;
+    if (ikcp_input(s->kcp, (const char *) packet, (long) size) < 0)
+    {
+        return false;
+    }
+    /* A retransmitted PING queues another ACK without delivering another record. */
+    if (has_ping && s->kcp->ackcount > previous_ack_count)
+    {
+        s->dirty = true;
+        s->flush = true;
+    }
+    return true;
 }
 
 static int outputKcp(const char *data, int length, ikcpcb *kcp, void *user)
@@ -493,9 +514,8 @@ static void processWire(tou_session_t *s, sbuf_t *buffer, uint64_t now)
         s->last_recv = now;
         s->ping_sent = false;
         s->dirty     = true;
-        /* kcp-ack-batch: 1 flushes after every valid input, N > 1 once N ACKs are pending, and 0
-         * leaves ACKs to the interval update. ACK-only retention has no interval update, so every
-         * input flushes there. */
+        /* Ordinary input follows kcp-ack-batch. ACK-only retention has no interval update,
+         * so every valid input flushes there, including window probes. */
         const int ack_batch = s->config.kcp_ack_batch;
         if (ack_batch == 1 || (s->closing && s->send_settled) ||
             (ack_batch > 1 && s->kcp->ackcount >= (IUINT32) ack_batch))
@@ -783,11 +803,12 @@ static void drive(tou_session_t *s)
             s->dirty     = true;
             s->flush     = true;
         }
+        /* Duplicate CLOSEs queue ACKs even while reverse data is still draining. */
+        const bool flush_close_acks = (s->peer_closed || s->send_settled) && s->kcp->ackcount != 0;
         /* Input can reach the driver just before timer dispatch. Run due work
          * here as well so an ignored packet cannot keep resetting its wakeup. */
-        const bool flush_retained_acks = s->send_settled && s->kcp->ackcount != 0;
         if (s->started && s->ready &&
-            (s->dirty || flush_retained_acks || (! s->send_settled && now >= nextKcpUpdate(s, now))))
+            (s->dirty || flush_close_acks || (! s->send_settled && now >= nextKcpUpdate(s, now))))
         {
             assert(tou_packet_queue_t_is_empty(&s->output));
             if (! beginOutputBatch(s))
@@ -800,7 +821,7 @@ static void drive(tou_session_t *s)
             ikcp_update(s->kcp, current);
             /* ikcp_update handles periodic flushes. If ikcp_check still returns
              * the current tick, an outstanding segment is due for retransmission. */
-            if (s->flush || flush_retained_acks ||
+            if (s->flush || flush_close_acks ||
                 (! s->send_settled && s->kcp->nsnd_buf != 0 && ikcp_check(s->kcp, current) == current))
             {
                 s->flush = false;

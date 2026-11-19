@@ -2159,8 +2159,7 @@ static void caseKeepaliveTimer(bool fec)
 {
     testCaseSet("worker timer sends keepalives and expires idle KCP before its long update interval");
     fixture_t fixture;
-    setupWithSettings(
-        &fixture, fec, 1000, 1000, 1500, 1500, ",\"kcp-interval-ms\":5000,\"no-recv-timeout-ms\":1000");
+    setupWithSettings(&fixture, fec, 1000, 1000, 1500, 1500, ",\"kcp-interval-ms\":5000,\"no-recv-timeout-ms\":1000");
     endpoint_t *ep = openApp();
     established(ep);
     sbuf_t *ignored = touControlCreate(getCurrentWorkerBufferPool(),
@@ -2222,6 +2221,53 @@ static void caseKeepaliveTimer(bool fec)
     advance(1);
     require(! touSessionIsAlive(ep->client_session) && ep->app_finishes == 1,
             "receive-idle timer failed to expire at equality after only ignored traffic");
+    teardown();
+}
+
+static void caseAckBatchKeepalive(bool fec, unsigned ack_batch)
+{
+    testCaseSet("batched receiver acknowledges a keepalive and its retry before its periodic update");
+    fixture_t fixture;
+    char      server_settings[128];
+    snprintf(server_settings,
+             sizeof(server_settings),
+             ",\"ping-interval-ms\":10000,\"no-recv-timeout-ms\":30000,\"kcp-interval-ms\":1000,\"kcp-ack-batch\":%u",
+             ack_batch);
+    setupWithPeerSettings(&fixture,
+                          fec,
+                          1000,
+                          1000,
+                          1500,
+                          1500,
+                          ",\"ping-interval-ms\":100,\"no-recv-timeout-ms\":400,\"kcp-interval-ms\":10",
+                          server_settings);
+    endpoint_t *ep = openApp();
+    established(ep);
+
+    advance(100);
+    const ikcpcb *client = touSessionKcp(ep->client_session);
+    sbuf_t       *ack    = extraFindRecord(ep, 1, 82, -1);
+    require(client->nsnd_buf == 1 && ack != NULL, "first keepalive did not get an immediate ACK");
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), ack);
+    extraDiscardQueuedWire(); /* Lose the reply, including any FEC repair shard. */
+
+    const struct IKCPSEG *ping        = iqueue_entry(client->snd_buf.next, struct IKCPSEG, node);
+    const IUINT32         now         = (IUINT32) (clock_us / 1000);
+    const IUINT32         retry_delay = ping->resendts - now;
+    require(ping->len == 1 && (uint8_t) ping->data[0] == kTouFramePing && retry_delay > 0 && retry_delay < 300 &&
+                ikcp_check(touSessionKcp(ep->server_session), now) - now > retry_delay,
+            "fixture needs a PING retry before the receive deadline and the server update");
+    advance(retry_delay);
+    require(client->xmit == 1, "the client did not retransmit its unacknowledged PING");
+    flushDirection(1);
+    require(ikcp_waitsnd(client) == 0, "duplicate PING waited for the server's periodic ACK flush");
+
+    pump(1200);
+    require(touSessionIsReady(ep->client_session) && touSessionIsReady(ep->server_session),
+            "the idle pair expired with keepalives crossing the wire");
+    sendBytes(ep, 0, 1);
+    pump(20);
+    require(ep->received[0] == 1, "the application could not transfer data after the idle period");
     teardown();
 }
 
@@ -2393,6 +2439,8 @@ int kcpSessionCases(const char *selection)
             caseLargeFlight(fec != 0, true);
             caseZeroWindowReopen(fec != 0);
             caseKeepaliveTimer(fec != 0);
+            caseAckBatchKeepalive(fec != 0, 0);
+            caseAckBatchKeepalive(fec != 0, 32);
             caseSaturatedReceiveWindow(fec != 0);
             caseFinishBeforeReady(fec != 0);
             caseEarlyOutput(fec != 0);

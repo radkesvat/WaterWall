@@ -93,9 +93,10 @@ There are no required tunnel-specific settings.
   KCP fast-resend threshold.
   Default: `2`
 
-- `kcp-ack-batch` `(number)`
-  When received data flushes its ACKs. `1` flushes after every valid input datagram, so each data datagram gets an ACK datagram of its own. A larger `N` flushes once `N` ACKs are pending, and `0` leaves ACKs to the `kcp-interval-ms` update. Pending ACKs always leave by the next update, packed into as few datagrams as the KCP MTU allows. Range: `0..kcp-recv-window`.
-  Larger values send far fewer datagrams on bulk transfers and save CPU on both peers. They delay an ACK by up to one interval, which adds to the measured RTT, and they slow fast resend, since KCP counts one duplicate acknowledgement per received datagram. Above `1`, input that carries only ACKs no longer flushes either, so new data it allows waits for the next update. Each peer applies its own value. While a closing session only retains ACKs, every input still flushes.
+- `kcp-ack-batch` `(integer)`
+  Each peer chooses its own threshold in the range `0..kcp-recv-window`. `1` flushes after every valid input datagram. A larger value flushes when that many ACKs are pending. `0` leaves ordinary data ACKs for the next `kcp-interval-ms` update.
+  Batching packs ACKs into fewer datagrams and can save CPU on bulk transfers. An ACK can wait up to one update interval, which increases measured RTT. Fast retransmit can also take longer because KCP counts duplicate acknowledgments once per received datagram. With batching enabled, ACK-only input can leave newly unblocked data waiting for the next update.
+  The receiver immediately acknowledges a keepalive PING, including a retransmission. On the first peer CLOSE, it retires the application and immediately sends the ACK. It also acknowledges duplicate CLOSE packets immediately while outgoing data drains. During ACK-only retention, every valid input triggers a flush.
   Default: `1`
 
 - `kcp-no-congestion-control` `(boolean)`
