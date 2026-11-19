@@ -253,18 +253,22 @@ If there are not enough tokens for that packet or datagram chunk, it drops that 
 - per-line state is created only during upstream `Init`
 - downstream `Init` is forbidden and terminates the process through `abortProgramNow(1)`; downstream payload remains supported after upstream initialization
 - `SpeedLimit` must not intervene between `Bridge` and `ReverseClient`; those nodes must be directly adjacent when connected in that topology
-- in `pause` mode, drain timers are cancelled during line-state destruction
-- `Finish` clears any queued payload owned by this tunnel before forwarding the Waterwall finish callback
 - `required_padding_left` is `0`, because this tunnel does not prepend protocol bytes
+
+In stream `pause` mode, orderly `Finish` cancels pacing and hands queued bytes to
+the surviving neighbor in FIFO order before returning. The final handoff can burst
+through the configured rate and an outstanding consumer Pause. If the receiver
+closes during a handoff, the node releases the remainder and sends nothing further.
+After `UdpOverTcpClient` this rule applies to the framed TCP stream. After
+`UdpOverTcpServer` the output is UDP and queued datagrams are released at close.
 
 ### Splice support and bounded retention
 
 Each direction has a separate FIFO bounded by 16 MiB of logical payload, 32 MiB of
-retained buffer capacity charge, and 1,024 buffers. Empty buffers still count toward
-the charge and entry limits. Admission refusal closes the affected TCP connection
+retained buffer capacity charge. Empty buffers still consume charge. Admission refusal closes the affected TCP connection
 and releases both queues; accepted TCP bytes are never silently dropped.
 
-A consumer Pause stops the corresponding timer drain. The queued data stays owned
+During normal operation, a consumer Pause stops the corresponding timer drain. The queued data stays owned
 by this node, without repeated timer polling while paused. Resume rearms the drain,
 but the source remains paused until both the local queue hold and external pressure
 have cleared. If creating or rearming the drain timer is refused, both queues are

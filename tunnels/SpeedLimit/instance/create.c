@@ -184,15 +184,17 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
 {
     const int workers_count = getWorkersCount();
 
-    tunnel_t *t = tunnelCreate(node,
-                               sizeof(speedlimit_tstate_t) + ((uint32_t) workers_count * sizeof(speedlimit_bucket_t)),
-                               sizeof(speedlimit_lstate_t));
+    tunnel_t *t = tunnelCreate(
+        node, sizeof(speedlimit_tstate_t) + ((uint32_t) workers_count * sizeof(speedlimit_bucket_t)), kLineStateSize);
     if (! t)
     {
         return NULL;
     }
 
     t->onWorkerQuiesce = speedlimitTunnelWorkerQuiesce;
+    t->onWorkerStop    = speedlimitTunnelWorkerStop;
+    t->fnEstU          = &speedlimitTunnelUpStreamEst;
+    t->fnEstD          = &speedlimitTunnelDownStreamEst;
     t->fnInitU         = &speedlimitTunnelUpStreamInit;
     t->fnFinU          = &speedlimitTunnelUpStreamFinish;
     t->fnPayloadU      = &speedlimitTunnelUpStreamPayload;

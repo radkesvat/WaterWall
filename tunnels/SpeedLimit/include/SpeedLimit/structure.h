@@ -43,31 +43,41 @@ typedef struct speedlimit_direction_s
     bool                 upstream;
 } speedlimit_direction_t;
 
+typedef enum speedlimit_close_phase_e
+{
+    kSpeedLimitClosed,
+    kSpeedLimitOpen,
+    kSpeedLimitFlushing,
+    kSpeedLimitClosingBoth
+} speedlimit_close_phase_t;
+
 struct speedlimit_lstate_s
 {
-    tunnel_t              *tunnel;
-    line_t                *line;
-    traffic_shaper_t       up;
-    traffic_shaper_t       down;
-    speedlimit_direction_t up_context;
-    speedlimit_direction_t down_context;
-    buffer_budget_t        up_budget;
-    buffer_budget_t        down_budget;
-    speedlimit_bucket_t    line_bucket;
-    speedlimit_lstate_t   *active_prev;
-    speedlimit_lstate_t   *active_next;
+    tunnel_t                *tunnel;
+    line_t                  *line;
+    speedlimit_close_phase_t close_phase;
+    bool                     flush_on_finish;
+    traffic_shaper_t         up;
+    traffic_shaper_t         down;
+    speedlimit_direction_t   up_context;
+    speedlimit_direction_t   down_context;
+    buffer_budget_t          up_budget;
+    buffer_budget_t          down_budget;
+    speedlimit_bucket_t      line_bucket;
+    speedlimit_lstate_t     *active_prev;
+    speedlimit_lstate_t     *active_next;
 };
 
 enum
 {
-    kTunnelStateSize           = sizeof(speedlimit_tstate_t),
-    kLineStateSize             = sizeof(speedlimit_lstate_t),
-    kSpeedLimitQueueCap        = 4,
-    kSpeedLimitMaxQueueBytes   = 16U * 1024U * 1024U,
-    kSpeedLimitMaxQueueCharge  = 32U * 1024U * 1024U,
-    kSpeedLimitImmediateMs     = 1,
-    kSpeedLimitDefaultTickMs   = 10,
-    kSpeedLimitUnitsPerByte    = 1000
+    kTunnelStateSize          = sizeof(speedlimit_tstate_t),
+    kLineStateSize            = sizeof(speedlimit_lstate_t),
+    kSpeedLimitQueueCap       = 4,
+    kSpeedLimitMaxQueueBytes  = 16U * 1024U * 1024U,
+    kSpeedLimitMaxQueueCharge = 32U * 1024U * 1024U,
+    kSpeedLimitImmediateMs    = 1,
+    kSpeedLimitDefaultTickMs  = 10,
+    kSpeedLimitUnitsPerByte   = 1000
 };
 
 enum speedlimit_limit_mode_e
@@ -87,6 +97,8 @@ WW_EXPORT tunnel_t    *speedlimitTunnelCreate(node_t *node);
 WW_EXPORT api_result_t speedlimitTunnelApi(tunnel_t *instance, sbuf_t *message);
 
 void speedlimitTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void speedlimitTunnelUpStreamEst(tunnel_t *t, line_t *l);
+void speedlimitTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void speedlimitTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void speedlimitTunnelUpStreamPause(tunnel_t *t, line_t *l);
@@ -101,6 +113,7 @@ void                              speedlimitLogDrop(tunnel_t *t, line_t *line, s
 void                              speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t *l);
 void                              speedlimitLinestateDestroy(speedlimit_lstate_t *ls);
 extern const traffic_shaper_ops_t speedlimitShaperOps;
+void speedlimitTunnelWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void speedlimitTunnelWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l);
@@ -120,3 +133,5 @@ void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *ls, sbuf_t *detached
 
 void speedlimitUpstreamDrainTimerCallback(wtimer_t *timer);
 void speedlimitDownstreamDrainTimerCallback(wtimer_t *timer);
+
+void speedlimitFinish(tunnel_t *tunnel, line_t *line, bool upstream);

@@ -16,9 +16,9 @@
 
 enum
 {
-    kPadding         = 256,
-    kExpectedBytes   = 16U * 1024U * 1024U,
-    kExpectedCharge  = 32U * 1024U * 1024U
+    kPadding        = 256,
+    kExpectedBytes  = 16U * 1024U * 1024U,
+    kExpectedCharge = 32U * 1024U * 1024U
 };
 
 static twf_worker_env_t env;
@@ -30,11 +30,12 @@ static uint8_t          received[65536];
 static size_t           received_length, materialized;
 static unsigned         payloads, pauses, resumes, finishes;
 static bool upstream, measuring, expect_splice, expect_ordinary, pause_output, close_output, close_resume, inject_input;
+static bool finish_source_on_payload, inside_payload, nested_finish;
+static size_t  bytes_at_finish;
 static sbuf_t *expected_identity;
 static bool    independent_sources;
 
 static char admission_log[4096];
-
 static void captureAdmissionLog(int level, const char *bytes, int length)
 {
     discard      level;
@@ -133,6 +134,8 @@ static void resumeConsumer(void)
 
 static void finish(tunnel_t *t, line_t *l)
 {
+    bytes_at_finish = received_length;
+    nested_finish   = inside_payload;
     ++finishes;
     if (t == prev)
         lineDestroy(l);
@@ -141,7 +144,7 @@ static void finish(tunnel_t *t, line_t *l)
 static void init(tunnel_t *t, line_t *l)
 {
     discard t;
-    discard l;
+    twfRequire(l == line, "SpeedLimit must forward Init on the original line");
 }
 
 static void closeFrom(tunnel_t *t, line_t *l)
@@ -171,6 +174,8 @@ static void resumeSource(tunnel_t *t, line_t *l)
 
 static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
+    const bool previous = inside_payload;
+    inside_payload      = true;
     twfRequire(t == (upstream ? next : prev), "limiter changed callback direction");
     twfRequire(! expected_identity || buf == expected_identity, "whole-buffer forwarding replaced input");
     if (expect_splice)
@@ -196,11 +201,20 @@ static void receive(tunnel_t *t, line_t *l, sbuf_t *buf)
         pauseConsumer();
     if (close_output)
         closeFrom(t, l);
+    if (finish_source_on_payload)
+    {
+        finish_source_on_payload = false;
+        closeFrom(upstream ? prev : next, l);
+    }
+    inside_payload = previous;
 }
 
-static void setup(bool up, const char *work_mode, const char *limit_mode)
+static void setupWithProtocols(bool up, const char *work_mode, const char *limit_mode, uint8_t source,
+                               uint8_t destination)
 {
-    upstream        = up;
+    finish_source_on_payload = inside_payload = nested_finish = false;
+    bytes_at_finish                                           = 0;
+    upstream                                                  = up;
     received_length = materialized = 0;
     payloads = pauses = resumes = finishes = 0;
     measuring = expect_splice = expect_ordinary = pause_output = close_output = close_resume = inject_input = false;
@@ -228,7 +242,16 @@ static void setup(bool up, const char *work_mode, const char *limit_mode)
     twfLinePoolSetup(&lines, node->lstate_size, 4);
     line = twfLinePoolCreateLine(&lines);
     lineRef(line);
+    if (source != 0)
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), source);
+    if (destination != 0)
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), destination);
     node->fnInitU(node, line);
+}
+
+static void setup(bool up, const char *work_mode, const char *limit_mode)
+{
+    setupWithProtocols(up, work_mode, limit_mode, 0, 0);
 }
 
 static void tokens(uint32_t bytes)
@@ -644,16 +667,126 @@ static void testQuiesce(bool up)
     teardown();
 }
 
+static void testFinishDrain(bool up, bool receiver_closes)
+{
+    /* UdpOverTcpClient frames datagrams for TCP but preserves the UDP source. */
+    setupWithProtocols(up, "pause", "per-line", IP_PROTO_UDP, IP_PROTO_TCP);
+    tokens(0);
+    pauseConsumer();
+    submit(input("AB", 2, WW_HAVE_SPLICE, 1));
+    submit(ordinary("CDEFGH", 6));
+    unsigned pauses_before = pauses;
+    pause_output           = true;
+    close_output           = receiver_closes;
+    closeFrom(up ? prev : next, line);
+    size_t expected = receiver_closes ? 2 : 8;
+    twfRequire(received_length == expected && memoryCompare(received, "ABCDEFGH", expected) == 0,
+               "Finish did not synchronously deliver the accepted bytes in order to the live receiver");
+    twfRequire(! lineIsAlive(line) && pauses == pauses_before && resumes == 0 &&
+                   finishes == (receiver_closes ? 0U : 1U),
+               "Finish reflected a callback to the retired source or receiver");
+    if (! receiver_closes)
+        twfRequire(bytes_at_finish == 8 && ! nested_finish, "Finish overtook the synchronous final delivery");
+    teardown();
+}
+
+static void testSourceFinishDuringPayload(bool up)
+{
+    setup(up, "pause", "per-line");
+    tokens(0);
+    submit(ordinary("ABCD", 4));
+    tokens(1);
+    finish_source_on_payload = true;
+    tick();
+    twfRequire(! lineIsAlive(line) && received_length == 4 && memoryCompare(received, "ABCD", 4) == 0 &&
+                   finishes == 1 && bytes_at_finish == 4 && nested_finish,
+               "nested source Finish must hand off the retained suffix before finishing the original line");
+    teardown();
+}
+
+static void closeSourceDuringFailure(tunnel_t *t, line_t *l)
+{
+    twfRequire(t == next && l == line && lineIsAlive(line), "unexpected first terminal callback");
+    ++finishes;
+    node->fnPauseU(node, l);
+    node->fnResumeU(node, l);
+    node->fnPayloadU(node, l, ordinary("X", 1));
+    /* Here the previous node borrows the line, so the owner can still be live
+     * after the nested Finish. The pending notification must be consumed. */
+    node->fnFinU(node, l);
+}
+
+static void testReentrantClose(void)
+{
+    setup(true, "pause", "per-line");
+    next->fnFinU = closeSourceDuringFailure;
+    speedlimitCloseLineOnDrainFailure(state(), NULL);
+    twfRequire(lineIsAlive(line) && finishes == 1 && payloads == 0 && pauses == 0 && resumes == 0,
+               "terminal close forwarded data or reflected Finish");
+    twfRequireLineStateZeroed(line, node, "nested close kept the borrowed state active");
+    lineDestroy(line);
+    teardown();
+}
+
+static void testDatagramFinish(void)
+{
+    /* UdpOverTcpServer decodes TCP-framed input to datagrams. */
+    setupWithProtocols(true, "pause", "per-line", IP_PROTO_TCP, IP_PROTO_UDP);
+    tokens(0);
+    pauseConsumer();
+    submit(ordinary("ABCDEFGH", 8));
+    closeFrom(prev, line);
+    twfRequire(finishes == 1 && received_length == 0, "UDP Finish acquired stream drain semantics");
+    teardown();
+}
+
+static void packetInit(tunnel_t *t, line_t *packet)
+{
+    discard t;
+    twfRequire(tunnelchainIsWorkerPacketLine(node->chain, packet), "packet Init opened a companion");
+}
+
+static void testWorkerPacketStop(void)
+{
+    setup(true, "pause", "per-line");
+    tunnel_chain_t *chain       = tunnelchainCreate(1);
+    chain->sum_line_state_size  = node->lstate_size;
+    chain->sum_padding_left     = kPadding;
+    chain->contains_packet_node = true;
+    tunnelchainFinalize(chain);
+    node->chain    = chain;
+    line_t *packet = tunnelchainGetWorkerPacketLine(chain, 0);
+    next->fnInitU  = packetInit;
+    node->fnInitU(node, packet);
+    node->fnPauseD(node, packet);
+    node->fnPayloadU(node, packet, ordinary("queued", 6));
+    speedlimit_lstate_t *packet_state = lineGetState(packet, node);
+    twfRequire(trafficshaperPending(&packet_state->up) == 1, "packet output was not retained");
+    speedlimitTunnelWorkerQuiesce(node, 0, NULL);
+    speedlimitTunnelWorkerStop(node, 0, NULL);
+    twfRequireLineStateZeroed(packet, node, "worker stop must release the packet state");
+    twfRequire(lineIsAlive(packet) && finishes == 0, "worker stop must preserve the packet and borrowed normal lines");
+    tunnelchainDestroy(chain);
+    node->chain = NULL;
+    teardown();
+}
+
 int main(void)
 {
     logger_t *logger = createInternalLogger(NULL, false);
     twfRequire(logger != NULL, "could not create admission diagnostic logger");
     loggerSetHandler(logger, captureAdmissionLog);
+    testReentrantClose();
+    testDatagramFinish();
+    testWorkerPacketStop();
     testSharedRateArithmetic();
     testRateSettings();
     testRetryRounding();
     for (unsigned up = 0; up < 2; ++up)
     {
+        testFinishDrain(up, false);
+        testFinishDrain(up, true);
+        testSourceFinishDuringPayload(up);
         testQuiesce(up);
         testResetRefusal(up, false);
         testResetRefusal(up, true);
