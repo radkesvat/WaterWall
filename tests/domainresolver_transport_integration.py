@@ -538,7 +538,17 @@ def main():
             vpn_echo.listen()
             DnsFixture.start(serve_echo, vpn_echo, vpn_sources)
         endpoint = f"[{dns_host}]:{DNS}" if ":" in dns_host else f"{dns_host}:{DNS}"
-        nodes = embedded_config(consumer, mode, endpoint) if embedded else config("direct" if mode == "isolation" else mode, endpoint)
+        if mode == "router-payload-first":
+            nodes = embedded_config("router", "chain", endpoint)
+            router = next(entry for entry in nodes if entry["type"] == "Router")
+            dns_out = next(entry for entry in nodes if entry["name"] == "dns-out")
+            # The shared Router defers its DNS route until the first query arrives.
+            router["settings"]["rules"].insert(0, {"protocol": "http1", "target": "app-out"})
+            dns_out["settings"]["source-ip"] = DIRECT_SOURCE
+        elif embedded:
+            nodes = embedded_config(consumer, mode, endpoint)
+        else:
+            nodes = config("direct" if mode == "isolation" else mode, endpoint)
         if mode == "isolation":
             second = DnsFixture(stack, HOST, DNS + 4, answer="127.0.0.2")
             echo2 = stack.enter_context(socket.socket())
@@ -593,6 +603,10 @@ def main():
                 return 0
             roundtrip(process, "udp.test")
             roundtrip(process, "tcp.test")
+            if mode == "router-payload-first":
+                for network in ("udp", "tcp"):
+                    assert fixture.sources.get(("tcp.test", network)) == {DIRECT_SOURCE}, (
+                        f"tcp.test/{network} bypassed the Router's DNS route: {fixture.sources}")
             if embedded and consumer == "combined":
                 udp_application(process, "tcp-application.test")
                 selected_dns = native if mode == "native" else fixture
@@ -622,10 +636,15 @@ def main():
             for name in ("absent.test", "timeout.test", "malformed.test"):
                 with request(process, name) as peer:
                     try:
-                        reply = peer.recv(10)
-                    except ConnectionResetError:
-                        reply = b""
-                    assert len(reply) < 2 or reply[:2] != b"\x05\x00", f"failed DNS escaped for {name}"
+                        # CONNECT can succeed before an asynchronous DNS failure.
+                        reply = exact(peer, 10, eof_returns_none=True)
+                        if reply is not None:
+                            assert reply[0] == 5, f"unexpected CONNECT reply for {name}: {reply!r}"
+                            if reply[1] == 0:
+                                peer.sendall(b"unresolved target must not be delivered")
+                        assert peer.recv(1) == b"", f"unresolved destination carried application data for {name}"
+                    except (ConnectionResetError, BrokenPipeError):
+                        pass
             assert expected.counts["udp"] > 0 and expected.counts["tcp"] > 0, expected.counts
             if mode.startswith("http-pinned"):
                 assert proxy_headers, "TCP fallback bypassed its configured HTTP proxy"

@@ -398,8 +398,7 @@ therefore reach the same Router:
 
 Keep the DNS rule first. It must win before the country rule can send a
 DNS-server IP directly. This Router uses only metadata and has no root `sniffing`,
-so it chooses the route during Init without waiting for payload. That lets a TCP
-DNS line establish before c-ares writes its query.
+so it chooses the route during Init without waiting for payload.
 
 `protocol: "dest_context->protocol"` lets VlessClient carry UDP and TCP DNS as well
 as the chosen application flows. The logical destination is the DNS server or
@@ -712,6 +711,11 @@ independent policy/path.
 ## Implementation details
 
 ### Runtime and Failure Behavior
+
+In `direct` and `chain` modes, c-ares can submit TCP DNS query bytes once the
+selected DNS entry's `Init` returns with the DNS line alive. A downstream
+`Pause` holds writes until `Resume`. Transport `Est` is a separate notification,
+so the DNS entry can use query bytes to choose or initialize its onward route.
 
 On upstream `Init`, the node initializes its application-line state. If DNS is
 needed, it delays the next node's `Init` until it has selected an address. It

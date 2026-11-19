@@ -1,6 +1,6 @@
 /*
  * Covers: c-ares virtual socket transport, with real owner-worker pools and a
- * synchronous fake egress. Checks pending TCP establishment, copied/short writes,
+ * synchronous fake egress. Checks TCP writes before Est, copied/short writes,
  * independent receive/send pressure, input bounds, stale handles, Finish,
  * default UDP/TCP connection reuse, explicit idle retirement, and synchronous
  * DNS responses deferred until the enclosing c-ares call returns.
@@ -261,6 +261,48 @@ static void testUdpResume(tunnel_t *next, const asyncdns_options_t *options)
     domainresolverTransportDestroy(transport);
 }
 
+static void testEarlyTcpQuery(tunnel_t *next, const asyncdns_options_t *options, bool pause_on_init)
+{
+    twfSetCase(pause_on_init ? "c-ares TCP sends on Resume before Est" : "c-ares TCP resolves before Est");
+    asyncdns_options_t tcp_options        = *options;
+    tcp_options.flags_set                 = true;
+    tcp_options.flags                     = ARES_FLAG_USEVC | ARES_FLAG_STAYOPEN;
+    domainresolver_transport_t *transport = domainresolverTransportCreate(resolver, next, 0, &tcp_options);
+    twfRequire(transport != NULL, "failed to create early TCP channel");
+    const unsigned initial_writes  = writes;
+    const unsigned initial_results = results;
+    init_establishes               = false;
+    init_pauses                    = pause_on_init;
+    submitting                     = true;
+    twfRequire(asyncdnsResolve(&transport->resolver, "early-tcp.test", NULL, SOCK_STREAM, resolved, NULL) ==
+                   ARES_SUCCESS,
+               "early TCP lookup submission failed");
+    submitting  = false;
+    init_pauses = false;
+    twfRequire(observed_line != NULL && lineGetDestinationAddressContext(observed_line)->proto_tcp &&
+                   writes == initial_writes && results == initial_results,
+               "early TCP query did not defer writing to the event loop");
+    if (pause_on_init)
+    {
+        dnsTransportProcess(transport);
+        twfRequire(writes == initial_writes && results == initial_results, "TCP query escaped an Init-time Pause");
+        domainresolverTransportResume(resolver, observed_line);
+    }
+    for (unsigned i = 0; i < 8 && results == initial_results; ++i)
+        twfRequire(wloopProcessEvents(transport->resolver.loop, 5) >= 0, "TCP DNS event-loop dispatch failed");
+    twfRequire(writes > initial_writes && results == initial_results + 1, "TCP DNS query waited for Est");
+
+    const unsigned completed_writes = writes;
+    domainresolverTransportEst(resolver, observed_line);
+    domainresolverTransportEst(resolver, observed_line);
+    dnsTransportProcess(transport);
+    twfRequire(writes == completed_writes && results == initial_results + 1, "late or repeated Est resent TCP DNS");
+    domainresolverTransportQuiesce(transport);
+    releaseObserved();
+    domainresolverTransportDestroy(transport);
+    init_establishes = true;
+}
+
 static void testWakeDeadline(tunnel_t *next, const asyncdns_options_t *options)
 {
     twfSetCase("custom DNS readiness preserves its first deadline");
@@ -320,8 +362,8 @@ static void testPendingTcpQuiesce(tunnel_t *next, const asyncdns_options_t *opti
                    ARES_SUCCESS,
                "pending TCP lookup submission failed");
     twfRequire(observed_line != NULL && transport->socket_count == 1 && transport->sockets->tcp &&
-                   ! transport->sockets->established && writes == initial_writes,
-               "fixture did not leave a real DNS TCP connection awaiting Est");
+                   ares_queue_active_queries(transport->resolver.channel) != 0 && writes == initial_writes,
+               "fixture did not leave a real DNS TCP query pending");
     domainresolverTransportQuiesce(transport);
     twfRequire(cancellations == initial_cancellations + 1 && finishes == initial_finishes + 1 &&
                    transport->sockets == NULL && transport->resolver.channel == NULL &&
@@ -671,9 +713,9 @@ static void testLimitLogging(tunnel_t *next, const asyncdns_options_t *options)
 int main(int argc, char **argv)
 {
     const char *selected = argc == 2 ? argv[1] : NULL;
-    twfRequire(argc <= 2 &&
-                   (selected == NULL || strcmp(selected, "udp-resume") == 0 || strcmp(selected, "wake-deadline") == 0 ||
-                    strcmp(selected, "pending-tcp") == 0 || strcmp(selected, "connection-reuse") == 0),
+    twfRequire(argc <= 2 && (selected == NULL || strcmp(selected, "udp-resume") == 0 ||
+                             strcmp(selected, "wake-deadline") == 0 || strcmp(selected, "pending-tcp") == 0 ||
+                             strcmp(selected, "connection-reuse") == 0 || strcmp(selected, "early-tcp") == 0),
                "unknown transport test case");
     twfSetCase("DomainResolver virtual socket semantics and callback deferral");
     twf_worker_env_t env;
@@ -711,20 +753,17 @@ int main(int argc, char **argv)
     ares_socket_t handle = dnsTransportOpen(AF_INET, SOCK_STREAM, 0, transport);
     twfRequire(handle != ARES_SOCKET_BAD, "virtual TCP socket creation failed");
     twfRequire(dnsTransportConnect(handle, &peer.sa, sizeof(peer.sin), 0, transport) == -1 && errno == EINPROGRESS,
-               "pending TCP establishment was reported as writable");
+               "virtual TCP connect reported establishment before Est");
     char data[20000];
     memorySet(data, 'A', sizeof(data));
-    twfRequire(dnsTransportSend(handle, data, sizeof(data), 0, NULL, 0, transport) == -1 && errno == EWOULDBLOCK &&
-                   writes == 0,
-               "send escaped before TCP Est");
-    domainresolverTransportEst(resolver, observed_line);
     domainresolverTransportPayload(resolver, observed_line, makeInput(observed_line, 0, 0));
     char empty_probe;
     twfRequire(dnsTransportReceive(handle, &empty_probe, 1, 0, NULL, NULL, transport) == -1 && errno == EWOULDBLOCK &&
                    bufferqueueGetEntryCount(&dnsTransportSocket(transport, handle)->input) == 0,
                "empty TCP payload became EOF or retained an input entry");
-    twfRequire(dnsTransportSend(handle, data, sizeof(data), 0, NULL, 0, transport) == kDnsTransportTcpWriteChunk,
-               "TCP short write did not preserve bounded chunking");
+    twfRequire(dnsTransportSend(handle, data, sizeof(data), 0, NULL, 0, transport) == kDnsTransportTcpWriteChunk &&
+                   writes == 1,
+               "pre-Est TCP write did not preserve bounded chunking");
     data[0] = 'B';
     twfRequire(sbufGetRawPtr(retained_write)[0] == 'A', "adapter retained borrowed c-ares write memory");
     lineReuseBuffer(observed_line, retained_write);
@@ -756,16 +795,28 @@ int main(int argc, char **argv)
                "TCP receive reordered a partial suffix");
     twfRequire(dnsTransportReceive(handle, received, 8, 0, NULL, NULL, transport) == 3 && received[0] == 'Y',
                "TCP receive lost the next entry");
+    domainresolverTransportEst(resolver, observed_line);
     domainresolverTransportFinish(resolver, observed_line);
     twfRequire(dnsTransportReceive(handle, received, 8, 0, NULL, NULL, transport) == 0,
                "TCP Finish did not become EOF");
     releaseObserved();
     twfRequire(dnsTransportClose(handle, transport) == 0 && finishes == 0, "received Finish reflected toward sender");
 
+    ares_socket_t refused = dnsTransportOpen(AF_INET, SOCK_STREAM, 0, transport);
+    twfRequire(refused != ARES_SOCKET_BAD &&
+                   dnsTransportConnect(refused, &peer.sa, sizeof(peer.sin), 0, transport) == -1 && errno == EINPROGRESS,
+               "refusal fixture did not start a live pending TCP connection");
+    domainresolverTransportFinish(resolver, observed_line);
+    twfRequire(dnsTransportReceive(refused, received, 8, 0, NULL, NULL, transport) == -1 && errno == ECONNREFUSED,
+               "TCP Finish before Est did not report connection refusal");
+    releaseObserved();
+    twfRequire(dnsTransportClose(refused, transport) == 0 && finishes == 0, "pre-Est Finish reflected toward sender");
+
     init_finishes        = true;
     ares_socket_t closed = dnsTransportOpen(AF_INET, SOCK_STREAM, 0, transport);
-    twfRequire(closed != handle && dnsTransportConnect(closed, &peer.sa, sizeof(peer.sin), 0, transport) == -1,
-               "synchronous Finish during Init survived");
+    twfRequire(closed != refused && dnsTransportConnect(closed, &peer.sa, sizeof(peer.sin), 0, transport) == -1 &&
+                   errno == ECONNREFUSED,
+               "synchronous Finish during Init did not refuse the TCP connection");
     releaseObserved();
     dnsTransportClose(closed, transport);
     init_finishes = false;
@@ -801,6 +852,11 @@ int main(int argc, char **argv)
     domainresolverTransportDestroy(transport);
     if (selected == NULL || strcmp(selected, "udp-resume") == 0)
         testUdpResume(next, &options);
+    if (selected == NULL || strcmp(selected, "early-tcp") == 0)
+    {
+        testEarlyTcpQuery(next, &options, false);
+        testEarlyTcpQuery(next, &options, true);
+    }
     if (selected == NULL || strcmp(selected, "wake-deadline") == 0)
         testWakeDeadline(next, &options);
     if (selected == NULL || strcmp(selected, "pending-tcp") == 0)
