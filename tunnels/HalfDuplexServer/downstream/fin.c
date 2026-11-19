@@ -43,9 +43,9 @@ void halfduplexserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     assert(ls_download_line->download_line);
     assert(ls_download_line->state == kCsDownloadDirect);
 
-    ls_upload_line->download_line = NULL;
+    ls_upload_line->download_line   = NULL;
     ls_upload_line->download_tunnel = NULL;
-    ls_upload_line->main_line     = NULL;
+    ls_upload_line->main_line       = NULL;
 
     /* Destroy every state slot needed by this close before the first
      * cross-line callback. The retained allocations remain inspectable for

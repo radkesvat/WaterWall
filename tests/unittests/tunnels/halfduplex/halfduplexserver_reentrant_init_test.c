@@ -1007,7 +1007,7 @@ static void caseSpliceFragments(void)
             fixture.prev->fnPayloadD = protocolDirect;
             if (fixture.peer_prev != NULL)
                 fixture.peer_prev->fnPayloadD = protocolDirect;
-            expected_direct          = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
+            expected_direct = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
             halfduplexserverTunnelUpStreamPayload(protocolIngress(&fixture, up), up, expected_direct);
             expected_direct = halfduplexTestBytes(fixture.env.pool, "later", 5, true, 2);
             halfduplexserverTunnelDownStreamPayload(fixture.halfduplex, fixture.main_line, expected_direct);
@@ -1187,8 +1187,8 @@ static void orderSetup(halfduplexserver_protocol_fixture_t *f, unsigned mode, un
         f->peer_prev->fnPauseD  = orderPause;
         f->peer_prev->fnResumeD = orderResume;
     }
-    order.upload        = protocolCreateTransport(f);
-    order.download      = protocolCreateTransport(f);
+    order.upload   = protocolCreateTransport(f);
+    order.download = protocolCreateTransport(f);
 }
 static void orderPair(halfduplexserver_protocol_fixture_t *f, bool download_first, bool empty, bool fragmented)
 {

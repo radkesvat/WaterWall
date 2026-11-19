@@ -33,12 +33,12 @@ void halfduplexserverAbortDirectTransportPair(tunnel_t *t, line_t *current_line,
         sibling_ls->main_line                 = NULL;
         if (current_is_download)
         {
-            sibling_ls->download_line = NULL;
+            sibling_ls->download_line   = NULL;
             sibling_ls->download_tunnel = NULL;
         }
         else
         {
-            sibling_ls->upload_line = NULL;
+            sibling_ls->upload_line   = NULL;
             sibling_ls->upload_tunnel = NULL;
         }
     }

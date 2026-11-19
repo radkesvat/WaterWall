@@ -64,12 +64,12 @@ static bool extractPairIdAndSetupConnection(line_t *l, halfduplexserver_lstate_t
 
     if (*is_upload)
     {
-        ls->upload_line = l;
+        ls->upload_line   = l;
         ls->upload_tunnel = ls->ingress_tunnel;
     }
     else
     {
-        ls->download_line = l;
+        ls->download_line   = l;
         ls->download_tunnel = ls->ingress_tunnel;
     }
 
@@ -155,9 +155,9 @@ static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, lin
     halfduplexserver_lstate_t *ls_mainline = lineGetState(main_line, t);
     halfduplexserverLinestateInitialize(ls_mainline);
 
-    ls_mainline->upload_line   = upload_line;
-    ls_mainline->download_line = download_line;
-    ls_mainline->main_line     = main_line;
+    ls_mainline->upload_line     = upload_line;
+    ls_mainline->download_line   = download_line;
+    ls_mainline->main_line       = main_line;
     ls_mainline->upload_tunnel   = upload_ls->ingress_tunnel;
     ls_mainline->download_tunnel = download_ls->ingress_tunnel;
     upload_ls->download_tunnel   = download_ls->ingress_tunnel;
@@ -401,7 +401,7 @@ void halfduplexserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     tunnel_t                  *owner = halfduplexserverOwner(t);
     halfduplexserver_tstate_t *ts    = tunnelGetState(owner);
-    halfduplexserver_lstate_t *ls = lineGetState(l, t);
+    halfduplexserver_lstate_t *ls    = lineGetState(l, t);
 
     // Only setup parses or retains bytes. Direct paths preserve the wrapper;
     // download-only input is discarded without materialization.
