@@ -115,12 +115,12 @@ void socks5serverCloseControlLine(tunnel_t *t, line_t *l, socks5server_close_ori
         return;
     }
 
-    bool has_peer   = socks5serverControlHasUpstreamPeer(ls);
-    bool pre_est    = ls->phase == kSocks5ServerPhaseConnectWaitEst;
-    bool close_next = origin != kSocks5ServerCloseFromNext && has_peer;
-    bool close_prev = origin != kSocks5ServerCloseFromPrev;
-    bool send_reply = ls->phase != kSocks5ServerPhaseClosing && close_prev && reply_code >= 0 &&
-                      ! ls->connect_reply_sent && (pre_est || ! has_peer);
+    bool has_peer         = socks5serverControlHasUpstreamPeer(ls);
+    bool connect_starting = ls->phase == kSocks5ServerPhaseConnectStarting;
+    bool close_next       = origin != kSocks5ServerCloseFromNext && has_peer;
+    bool close_prev       = origin != kSocks5ServerCloseFromPrev;
+    bool send_reply       = ls->phase != kSocks5ServerPhaseClosing && close_prev && reply_code >= 0 &&
+                      ! ls->connect_reply_sent && (connect_starting || ! has_peer);
 
     socks5serverMarkControlFinishedSide(ls, origin);
 

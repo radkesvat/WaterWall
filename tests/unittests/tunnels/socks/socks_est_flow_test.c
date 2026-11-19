@@ -182,7 +182,6 @@ static void upstreamData(tunnel_t *t, line_t *l, sbuf_t *buf)
 #ifndef SOCKS_EST_SERVER
     if (length >= 3 && p[0] == 5)
     {
-        twfRequire(est_count != 0, "SOCKS greeting preceded transport Est");
         if (length <= 4)
             ++greeting_count;
         else
@@ -265,6 +264,7 @@ static void initializeNext(tunnel_t *t, line_t *l)
     tunnelDownStreamEst(node, l);
     if (lineIsAlive(l))
     {
+        twfRequire(reply_count == 0 && down_len == 0, "CONNECT reply or backend body escaped next Init");
         twfRequire(tunnelIsActiveForLine(node, l), "SOCKS server retired inside next Init");
         repeatedSignals();
     }
@@ -374,6 +374,7 @@ static void run(bool close_now, bool udp)
     twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
     addresscontextSetIpPort(&ts->target_addr, &ip, 80);
     tunnelUpStreamInit(node, application);
+    twfRequire(greeting_count == 1 && est_count == 0, "SOCKS greeting did not start after Init without Est");
     line_t *control = transport;
     if (transport_pause_first)
         tunnelDownStreamPause(node, control);
@@ -394,7 +395,7 @@ static void run(bool close_now, bool udp)
         goto client_done;
     }
     twfRequire(source_pauses == 1 && source_resumes == 0, "protocol wait lost its combined source pressure");
-    twfRequire(up_len == 0 && greeting_count == 0, "application escaped before negotiation");
+    twfRequire(up_len == 0 && greeting_count == 1, "application escaped before negotiation");
     if (! udp)
         tunnelDownStreamPause(node, control);
     tunnelDownStreamEst(node, control);
@@ -499,7 +500,7 @@ static void pendingBoundary(bool entries)
     socksLstate *ls = lineGetState(application, node);
 #ifdef SOCKS_EST_SERVER
     socks5serverLinestateInitialize(ls, node, application, kSocks5ServerLineKindControlTcp);
-    ls->phase             = kSocks5ServerPhaseConnectWaitEst;
+    ls->phase                 = kSocks5ServerPhaseConnectStarting;
     ls->next_initializing = true;
     const uint32_t byte_limit = 1024U * 1024U;
 #else
@@ -570,6 +571,7 @@ typedef enum borrowed_finish_point_e
     kBorrowedInit,
     kBorrowedCommandReply,
 #else
+    kBorrowedNextInit,
     kBorrowedGreeting,
     kBorrowedPause,
     kBorrowedResume,
@@ -604,11 +606,21 @@ static void borrowedFinish(borrowed_finish_point_t point)
     ls->phase                                             = kSocks5ServerPhaseTcpEstablished;
     ls->next_initialized = ls->connect_reply_sent = true;
 #else
-    socks5clientLinestateInitialize(ls, node, application, kSocks5ClientLineKindDirect);
-    ls->phase = kSocks5ClientPhaseEstablished;
     ip_addr_t ip;
     twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
-    addresscontextSetIpPort(&ls->target_addr, &ip, 80);
+    if (point == kBorrowedNextInit || point == kBorrowedGreeting)
+    {
+        socksTstate *ts        = tunnelGetState(node);
+        ts->target_addr_source = ts->target_port_source = kDvsConstant;
+        ts->protocol                                    = kSocks5ClientProtocolTcp;
+        addresscontextSetIpPort(&ts->target_addr, &ip, 80);
+    }
+    else
+    {
+        socks5clientLinestateInitialize(ls, node, application, kSocks5ClientLineKindDirect);
+        ls->phase = kSocks5ClientPhaseEstablished;
+        addresscontextSetIpPort(&ls->target_addr, &ip, 80);
+    }
 #endif
     bool continued = false;
     switch (point)
@@ -666,18 +678,23 @@ static void borrowedFinish(borrowed_finish_point_t point)
         continued = socks5serverControlDrainInput(node, application, ls);
         break;
     case kBorrowedCommandReply:
-        ls->phase                   = kSocks5ServerPhaseConnectWaitEst;
-        ls->connect_reply_sent      = false;
-        ls->transport_est_forwarded = true;
-        prev->fnPayloadD            = finishBorrowedPayload;
+        ls->phase              = kSocks5ServerPhaseConnectStarting;
+        ls->connect_reply_sent = false;
+        prev->fnPayloadD       = finishBorrowedPayload;
         bufferqueuePushBack(&ls->pending_up, bytes(application, "A", 1));
         continued = socks5serverDrainControl(node, application);
         break;
 #else
-    case kBorrowedGreeting:
-        ls->phase        = kSocks5ClientPhaseIdle;
+    case kBorrowedNextInit:
+        next->fnInitU    = finishBorrowed;
         next->fnPayloadU = finishBorrowedPayload;
-        tunnelDownStreamEst(node, application);
+        tunnelUpStreamInit(node, application);
+        twfRequire(borrowed_payloads == 0, "Init close allowed a SOCKS greeting");
+        break;
+    case kBorrowedGreeting:
+        next->fnPayloadU = finishBorrowedPayload;
+        tunnelUpStreamInit(node, application);
+        twfRequire(borrowed_payloads == 1, "SOCKS greeting was not sent from Init");
         break;
     case kBorrowedPause:
         ls->phase      = kSocks5ClientPhaseWaitCommand;

@@ -16,7 +16,7 @@ void socks5serverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase == kSocks5ServerPhaseConnectStarting || ls->phase == kSocks5ServerPhaseTcpEstablished)
         {
             if (LIKELY(socks5serverQueueControl(t, l, buf, false)))
                 discard socks5serverDrainControl(t, l);

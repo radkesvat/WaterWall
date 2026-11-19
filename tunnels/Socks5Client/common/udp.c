@@ -105,9 +105,8 @@ bool socks5clientStartUdpRelayLine(tunnel_t *t, line_t *control_l, socks5client_
     return application_alive && *control_alive_out;
 }
 
-bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, bool *line_alive_out)
+void socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate_t *ls)
 {
-    *line_alive_out = true;
     lineRef(l);
 
     line_t                *control_l  = createInternalLine(t, l, kSocks5ClientLineKindUdpControl);
@@ -121,23 +120,25 @@ bool socks5clientStartUdpAssociation(tunnel_t *t, line_t *l, socks5client_lstate
 
     if (! lineCallWithRef(control_l, tunnelNextUpStreamInit, t))
     {
-        if (lineIsAlive(l))
+        if (lineIsAlive(l) && socks5clientHasLineState(t, l))
         {
-            ls->control_line = NULL;
+            socks5clientLinestateDestroy(ls);
+            tunnelPrevDownStreamFinish(t, l);
         }
-        *line_alive_out = lineIsAlive(l);
         lineUnref(l);
-        return false;
+        return;
     }
 
-    *line_alive_out = lineIsAlive(l);
-    if (! *line_alive_out)
+    if (lineIsAlive(l) && socks5clientHasLineState(t, l))
+    {
+        control_ls->greeting_due = true;
+        discard socks5clientMaybeSendGreeting(t, control_l);
+    }
+    else
     {
         socks5clientCloseOwnedLine(t, control_l);
     }
     lineUnref(l);
-
-    return true;
 }
 
 bool socks5clientForwardUdpApplicationPayload(tunnel_t *t, line_t *l, socks5client_lstate_t *ls, sbuf_t *buf)

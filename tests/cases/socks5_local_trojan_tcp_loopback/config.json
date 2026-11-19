@@ -1,0 +1,93 @@
+{
+  "name": "socks5-local-trojan-tcp-loopback",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "trojan-client"
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "settings": {
+        "password": "local-trojan-test-password",
+        "address": "127.0.0.1",
+        "port": 24937,
+        "protocol": "tcp"
+      },
+      "next": "socks5-client"
+    },
+    {
+      "name": "socks5-client",
+      "type": "Socks5Client",
+      "settings": {
+        "address": "local.test",
+        "port": 24938,
+        "protocol": "tcp"
+      },
+      "next": "proxy-connector"
+    },
+    {
+      "name": "proxy-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24936,
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24936,
+        "nodelay": true
+      },
+      "next": "socks5-server"
+    },
+    {
+      "name": "socks5-server",
+      "type": "Socks5Server",
+      "settings": {
+        "no-auth": true
+      },
+      "next": "trojan-server"
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "settings": {
+        "users": ["local-trojan-test-password"],
+        "connect": true,
+        "udp": false
+      },
+      "next": "target-connector"
+    },
+    {
+      "name": "target-connector",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    },
+    {
+      "name": "target-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 24937,
+        "nodelay": true
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer"
+    }
+  ]
+}

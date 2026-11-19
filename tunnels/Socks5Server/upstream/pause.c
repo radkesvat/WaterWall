@@ -11,7 +11,7 @@ void socks5serverTunnelUpStreamPause(tunnel_t *t, line_t *l)
             ls->pending_read_pause = true;
             return;
         }
-        if (ls->phase != kSocks5ServerPhaseConnectWaitEst && ls->phase != kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase != kSocks5ServerPhaseConnectStarting && ls->phase != kSocks5ServerPhaseTcpEstablished)
             return;
         ls->pending_read_pause = false;
         tunnelNextUpStreamPause(t, l);

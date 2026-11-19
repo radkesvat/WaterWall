@@ -200,14 +200,13 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
 
                 socks5serverApplyDestinationContext(l, &target, false);
                 addresscontextReset(&target);
-                ls->phase             = kSocks5ServerPhaseConnectWaitEst;
+                ls->phase             = kSocks5ServerPhaseConnectStarting;
                 ls->next_initializing = true;
                 ls->next_initialized  = true;
                 if (! lineCallWithRef(l, tunnelNextUpStreamInit, t) || ! socks5serverHasControlState(t, l))
                 {
                     return false;
                 }
-                ls->next_initializing = false;
                 if (ls->pending_read_pause)
                 {
                     ls->pending_read_pause = false;
@@ -215,7 +214,8 @@ static bool socks5serverParseControlInput(tunnel_t *t, line_t *l, socks5server_l
                         ! socks5serverHasControlState(t, l))
                         return false;
                 }
-                return socks5serverDrainControl(t, l);
+                ls->next_initializing = false;
+                return true;
             }
 
             if (head[1] == kSocks5CommandUdpAssoc)
@@ -272,7 +272,7 @@ bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t
             return false;
         if (ls->phase == kSocks5ServerPhaseUdpControl)
             break;
-        if (ls->phase == kSocks5ServerPhaseConnectWaitEst || ls->phase == kSocks5ServerPhaseTcpEstablished)
+        if (ls->phase == kSocks5ServerPhaseConnectStarting)
         {
             ls->input_draining = false;
             return socks5serverDrainControl(t, l);

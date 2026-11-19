@@ -125,6 +125,18 @@ However:
 
 ## Usage and troubleshooting
 
+### Chaining to a protocol server
+
+TCP `CONNECT` can feed a protocol server directly in the same WaterWall chain.
+
+```text
+TcpListener -> Socks5Server -> TrojanServer -> TcpConnector
+```
+
+Set `next` to the protocol server instance. With `TrojanServer`, `VlessServer`, or `VmessServer`, the client sends that
+server's protocol header through the SOCKS stream. The protocol server can use its header to select the final outbound
+destination.
+
 ### Complete SOCKS5 TCP/UDP Topology Example
 
 ```json
@@ -242,8 +254,13 @@ For `CONNECT`:
 - the requested destination is copied into `lineGetDestinationAddressContext(line)`
 - the transport protocol is set to TCP
 - upstream `Init` is sent to the next tunnel
-- authenticated upstream payload can proceed after adjacent Init, including before Est
-- downstream Est is forwarded immediately; the SOCKS5 success reply then precedes backend response bytes
+- once next `Init` returns on a live control line, the SOCKS5 success reply is sent once before any backend response bytes
+- a next-side `Finish` before the reply takes the SOCKS5 failure path. After success, next-side `Finish` closes the stream
+- after success, ready payload drains in FIFO order, including bytes received during `Init`
+- downstream `Est` is forwarded immediately, including repeats
+
+CONNECT success reports stream admission by WaterWall. The next tunnel may still be dialing a socket or waiting for
+protocol bytes that determine the final destination.
 
 For `UDP ASSOCIATE`:
 
@@ -329,7 +346,7 @@ The implementation follows normal Waterwall finish ordering:
 This tunnel is written to fit normal Waterwall chain rules:
 
 - TCP-only service normally starts at `TcpListener`; service with UDP support normally starts at `TcpUdpListener`
-- the next node still performs the real outbound transport work
+- the next node receives the requested destination and can select or open the outbound path
 - line state is created during `Init`
 - finishes destroy local state before propagating the real Waterwall close
 - in authenticated mode, `Socks5Server` creates and inserts its own internal `UserController` between itself and the

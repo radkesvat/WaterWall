@@ -237,14 +237,16 @@ through `abortProgramNow(1)`. Downstream `Est` and payload callbacks remain supp
 - if `address` and/or `port` use `dest_context`, the incoming line destination is used as the SOCKS target source
 - if `protocol` uses `dest_context->protocol`, the incoming destination protocol is read before any configured
   address/port rewrite
-- `DownStreamEst` forwards transport readiness immediately, then starts SOCKS5 method negotiation once; repeated
-  notifications continue through TCP lines without repeating the greeting.
+- after next `Init` returns with the line still live, the client submits the SOCKS5 method greeting once. A connecting
+  `TcpConnector` queues it until the connection succeeds. On the owned TCP control line for UDP, write pressure can
+  defer the greeting.
+- `DownStreamEst` forwards transport readiness immediately, independently of negotiation. Direct TCP forwards repeated
+  notifications and the UDP control line maps readiness once to its application.
 - `DownStreamPayload` consumes method, auth, and command replies from the proxy.
 - `UpStreamPayload` is buffered until the SOCKS5 command succeeds.
-- a successful TCP proxy reply releases the bounded application FIFO in order without waiting for Resume;
-  Est has already been forwarded
+- a successful TCP proxy reply releases the bounded application FIFO in order without waiting for Resume
 - TCP source pressure combines the pending/draining application FIFO with the latest next-side Pause/Resume;
-  Resume reaches the source only after both holds clear, while duplicate transport notifications pass through
+  Resume reaches the source only after both holds clear, while duplicate pressure notifications pass through
   when no local hold remains
 - after successful TCP negotiation, all retained input/output has drained and both source-pressure holds are released,
   the client destroys its line state and permanently bypasses itself; later callbacks pass directly between neighbors

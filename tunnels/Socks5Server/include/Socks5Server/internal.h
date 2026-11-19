@@ -38,7 +38,6 @@ static inline bool socks5serverHasControlState(tunnel_t *t, line_t *l)
 void socks5serverTunnelstateDestroy(socks5server_tstate_t *ts);
 bool socks5serverResolveDynamicProvider(tunnel_t *t);
 bool socks5serverControlDrainInput(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
-void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls);
 void socks5serverCloseControlLineFromUpstream(tunnel_t *t, line_t *l);
 void socks5serverCloseControlLineFromDownstream(tunnel_t *t, line_t *l);
 void socks5serverCloseControlLineBidirectional(tunnel_t *t, line_t *l);
