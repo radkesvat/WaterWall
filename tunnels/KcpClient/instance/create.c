@@ -45,7 +45,6 @@ static bool kcpclientParseSettings(kcpclient_tstate_t *ts, node_t *node)
     getIntFromJsonObjectOrDefault(&parity_shards, settings, "fec-parity-shards", parity_shards);
     getIntFromJsonObjectOrDefault(&ts->kcp_interval_ms, settings, "kcp-interval-ms", ts->kcp_interval_ms);
     getIntFromJsonObjectOrDefault(&ts->kcp_resend, settings, "kcp-resend", ts->kcp_resend);
-    getIntFromJsonObjectOrDefault(&ts->kcp_ack_batch, settings, "kcp-ack-batch", ts->kcp_ack_batch);
     getIntFromJsonObjectOrDefault(&ts->kcp_send_window, settings, "kcp-send-window", ts->kcp_send_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_recv_window, settings, "kcp-recv-window", ts->kcp_recv_window);
     getIntFromJsonObjectOrDefault(&ts->kcp_rx_minrto_ms, settings, "kcp-rx-minrto-ms", ts->kcp_rx_minrto_ms);
@@ -77,11 +76,13 @@ static bool kcpclientParseSettings(kcpclient_tstate_t *ts, node_t *node)
         return false;
     }
 
-    if (ts->kcp_ack_batch < 0 || ts->kcp_ack_batch > ts->kcp_recv_window)
+    int64_t ack_batch = ts->kcp_ack_batch;
+    if (jsonGetObjectIntegerInRange(settings, "kcp-ack-batch", 0, ts->kcp_recv_window, &ack_batch) == kJsonValueInvalid)
     {
-        LOGF("JSON Error: KcpClient->settings->kcp-ack-batch (int field) : expected 0..kcp-recv-window");
+        LOGF("JSON Error: KcpClient->settings->kcp-ack-batch must be an integer in 0..kcp-recv-window");
         return false;
     }
+    ts->kcp_ack_batch = (int) ack_batch;
 
     if (ts->kcp_initial_cwnd < 1 || ts->kcp_initial_cwnd > ts->kcp_send_window)
     {

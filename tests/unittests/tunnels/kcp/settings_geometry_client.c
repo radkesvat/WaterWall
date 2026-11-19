@@ -67,14 +67,20 @@ void kcpClientSettingsGeometryCases(void)
     }
     static const char *invalid_ack_batch[] = {
         "{\"kcp-ack-batch\":-1}",
+        "{\"kcp-ack-batch\":-0.5}",
+        "{\"kcp-ack-batch\":32.5}",
         "{\"kcp-ack-batch\":8193}",
+        "{\"kcp-ack-batch\":4294967296}",
+        "{\"kcp-ack-batch\":null}",
+        "{\"kcp-ack-batch\":true}",
+        "{\"kcp-ack-batch\":\"32\"}",
         "{\"kcp-recv-window\":64,\"kcp-ack-batch\":65}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(invalid_ack_batch); ++i)
     {
         node_t    node;
         tunnel_t *tunnel = settingsCreate(&node, invalid_ack_batch[i]);
-        settingsRequire(tunnel == NULL, "kcp-ack-batch outside 0..kcp-recv-window accepted");
+        settingsRequire(tunnel == NULL, "invalid kcp-ack-batch accepted");
         settingsDestroy(&node, tunnel);
     }
     static const char *valid_ack_batch[] = {
