@@ -4,7 +4,7 @@
 
 `HttpProxyServer` accepts HTTP/1.0 and HTTP/1.1 forward-proxy requests and CONNECT tunnels. It is a platform-independent L4 middle node.
 
-Listener address and port belong to `TcpListener`. Ordinary requests require an absolute `http://` URI; the proxy forwards origin-form HTTP/1.1 and regenerates Host from that URI. A conflicting valid incoming Host never changes the destination. HTTPS uses CONNECT with an explicit port from 1 through 65535. CONNECT success is sent only after outbound establishment, before destination data; subsequent bytes are opaque.
+Listener address and port belong to `TcpListener`. Ordinary requests require an absolute `http://` URI; the proxy forwards origin-form HTTP/1.1 and regenerates Host from that URI. A conflicting valid incoming Host never changes the destination. HTTPS uses CONNECT with an explicit port from 1 through 65535. CONNECT success follows initialization of the live outbound child and precedes tunnel data in both directions. The outbound transport may still be connecting.
 
 `HttpClient` and `HttpServer` carry WaterWall traffic inside HTTP framing. They do not provide this forward-proxy interface. Mixed SOCKS/HTTP ports, outbound HTTP proxy negotiation, TLS interception, Upgrade/WebSocket, and HTTP/2 or HTTP/3 proxy interfaces are unsupported. Valid extension methods such as PROPFIND are forwarded; TRACE receives 405. Authenticated `OPTIONS *` and OPTIONS with Max-Forwards zero receive a local empty response and close; forwarded OPTIONS decrements Max-Forwards.
 
@@ -145,6 +145,18 @@ The fallback branch chooses its destination; the failed request's authority is n
 There is no intentional delay. The connect deadline still runs from child Init to Est, and the idle deadline applies to raw relay; HTTP header deadlines end at handoff. Early replies do not manufacture Est. Failure after selection closes without an HTTP error or another branch attempt. Accepted replies drain before child EOF closes the client, subject to receiver Pause. Client Finish discards local retention immediately. Worker shutdown drains fallback children through the same inventory as protected children.
 
 Existing `P`/`D` logical and allocation bounds remain unchanged. The temporary immutable first-header snapshot is bounded by `max-header-bytes + 1`; it is wiped on commitment or refusal. Once selected, its replay bytes enter the existing working/output budget before branch Init. Bodies and tails are not copied into a separate transcript. Ready fallback relay can preserve splice buffers under the same conditions as CONNECT below.
+
+### CONNECT stream handoff
+
+After validating the request and accepting it under the configured authentication policy, the proxy initializes an outbound child for the requested authority. When child `Init` returns on the live association, the proxy queues one `200 Connection Established`. It reconciles startup pressure before handing off the response. The response handoff precedes opaque tunnel bytes in either direction, including bytes received during `Init`.
+
+Before the response handoff, the proxy returns `502` if the child closes or `504` if the connect or idle deadline expires. After handoff, those events close the raw stream. The first genuine child `Est` still clears the connect deadline. The proxy maps that notification to the client line independently of the HTTP reply.
+
+```text
+TcpListener -> HttpProxyServer -> TrojanServer -> TcpConnector
+```
+
+In this chain, the client can send the Trojan protocol header through the CONNECT stream after receiving `200`. `TrojanServer` can select its outbound destination from that header.
 
 ### Streaming, reuse, and routing
 
