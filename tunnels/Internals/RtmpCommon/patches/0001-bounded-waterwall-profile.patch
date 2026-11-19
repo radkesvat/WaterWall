@@ -1,0 +1,1343 @@
+diff --git a/libflv/include/amf0.h b/libflv/include/amf0.h
+index 93061c3..3df896e 100644
+--- a/libflv/include/amf0.h
++++ b/libflv/include/amf0.h
+@@ -62,6 +62,7 @@ struct amf_object_item_t
+ 	void* value;
+ 	size_t size;
+ };
++const uint8_t* amf_read_items_strict(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count);
+ const uint8_t* amf_read_items(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count);
+ 
+ #ifdef __cplusplus
+diff --git a/libflv/source/amf0.c b/libflv/source/amf0.c
+index 9c12f9b..bbc3d38 100644
+--- a/libflv/source/amf0.c
++++ b/libflv/source/amf0.c
+@@ -122,6 +122,7 @@ uint8_t* AMFWriteDouble(uint8_t* ptr, const uint8_t* end, double value)
+ 	else
+ 	{
+ 		memcpy(ptr, &value, 8);
++		ptr += 8;
+ 	}
+ 	return ptr;
+ }
+@@ -190,7 +191,7 @@ uint8_t* AMFWriteNamedString(uint8_t* ptr, const uint8_t* end, const char* name,
+ 
+ static const uint8_t* AMFReadInt16(const uint8_t* ptr, const uint8_t* end, uint32_t* value)
+ {
+-	if (!ptr || ptr + 2 > end)
++	if (!ptr || (size_t)(end - ptr) < 2)
+ 		return NULL;
+ 
+ 	if (value)
+@@ -202,7 +203,7 @@ static const uint8_t* AMFReadInt16(const uint8_t* ptr, const uint8_t* end, uint3
+ 
+ static const uint8_t* AMFReadInt32(const uint8_t* ptr, const uint8_t* end, uint32_t* value)
+ {
+-	if (!ptr || ptr + 4 > end)
++	if (!ptr || (size_t)(end - ptr) < 4)
+ 		return NULL;
+ 
+ 	if (value)
+@@ -226,7 +227,7 @@ const uint8_t* AMFReadUndefined(const uint8_t* ptr, const uint8_t* end)
+ 
+ const uint8_t* AMFReadBoolean(const uint8_t* ptr, const uint8_t* end, uint8_t* value)
+ {
+-	if (!ptr || ptr + 1 > end)
++	if (!ptr || (size_t)(end - ptr) < 1)
+ 		return NULL;
+ 
+ 	if (value)
+@@ -239,7 +240,7 @@ const uint8_t* AMFReadBoolean(const uint8_t* ptr, const uint8_t* end, uint8_t* v
+ const uint8_t* AMFReadDouble(const uint8_t* ptr, const uint8_t* end, double* value)
+ {
+ 	uint8_t* p = (uint8_t*)value;
+-	if (!ptr || ptr + 8 > end)
++	if (!ptr || (size_t)(end - ptr) < 8)
+ 		return NULL;
+ 
+ 	if (value)
+@@ -271,7 +272,7 @@ const uint8_t* AMFReadString(const uint8_t* ptr, const uint8_t* end, int isLongS
+ 	else
+ 		ptr = AMFReadInt32(ptr, end, &len);
+ 
+-	if (!ptr || ptr + len > end)
++	if (!ptr || (size_t)(end - ptr) < len)
+ 		return NULL;
+ 
+ 	if (string && length > len)
+@@ -299,12 +300,15 @@ const uint8_t* AMFReadDate(const uint8_t* ptr, const uint8_t* end, double *milli
+     return ptr;
+ }
+ 
+-static const uint8_t* amf_read_object(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n);
+-static const uint8_t* amf_read_ecma_array(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n);
+-static const uint8_t* amf_read_strict_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n);
++static const uint8_t* amf_read_object(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict);
++static const uint8_t* amf_read_ecma_array(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict);
++static const uint8_t* amf_read_strict_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict);
+ 
+-static const uint8_t* amf_read_item(const uint8_t* data, const uint8_t* end, enum AMFDataType type, struct amf_object_item_t* item)
++static const uint8_t* amf_read_item(const uint8_t* data, const uint8_t* end, enum AMFDataType type, struct amf_object_item_t* item, unsigned depth, int strict)
+ {
++	if (depth > 16)
++		return NULL;
++
+ 	switch (type)
+ 	{
+ 	case AMF_BOOLEAN:
+@@ -314,6 +318,13 @@ static const uint8_t* amf_read_item(const uint8_t* data, const uint8_t* end, enu
+ 		return AMFReadDouble(data, end, (double*)(item ? item->value : NULL));
+ 
+ 	case AMF_STRING:
++		if (strict && item && item->value)
++		{
++			uint32_t len;
++			const uint8_t* value = AMFReadInt16(data, end, &len);
++			if (!value || (size_t)(end - value) < len || len >= item->size || memchr(value, 0, len))
++				return NULL;
++		}
+ 		return AMFReadString(data, end, 0, (char*)(item ? item->value : NULL), item ? item->size : 0);
+ 
+ 	case AMF_LONG_STRING:
+@@ -323,7 +334,7 @@ static const uint8_t* amf_read_item(const uint8_t* data, const uint8_t* end, enu
+         return AMFReadDate(data, end, (double*)(item ? item->value : NULL), (int16_t*)(item ? (char*)item->value + 8 : NULL));
+ 
+ 	case AMF_OBJECT:
+-		return amf_read_object(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0);
++		return amf_read_object(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0, depth + 1, strict);
+ 
+ 	case AMF_NULL:
+ 		return data;
+@@ -332,13 +343,12 @@ static const uint8_t* amf_read_item(const uint8_t* data, const uint8_t* end, enu
+ 		return data;
+ 
+ 	case AMF_ECMA_ARRAY:
+-		return amf_read_ecma_array(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0);
++		return amf_read_ecma_array(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0, depth + 1, strict);
+ 
+ 	case AMF_STRICT_ARRAY:
+-		return amf_read_strict_array(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0);
++		return amf_read_strict_array(data, end, (struct amf_object_item_t*)(item ? item->value : NULL), item ? item->size : 0, depth + 1, strict);
+ 
+ 	default:
+-		assert(0);
+ 		return NULL;
+ 	}
+ }
+@@ -349,64 +359,74 @@ static inline int amf_read_item_type_check(uint8_t type0, uint8_t itemtype)
+     return (type0 == itemtype || (AMF_OBJECT == itemtype && (AMF_ECMA_ARRAY == type0 || AMF_NULL == type0))) ? 1 : 0;
+ }
+ 
+-static const uint8_t* amf_read_strict_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n)
++static const uint8_t* amf_read_strict_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict)
+ {
+ 	uint8_t type;
+ 	uint32_t i, count;
+-	if (!ptr || ptr + 4 > end)
++	if (!ptr || (size_t)(end - ptr) < 4)
+ 		return NULL;
+ 
+ 	ptr = AMFReadInt32(ptr, end, &count); // U32 array-count
+ 	for (i = 0; i < count && ptr && ptr < end; i++)
+ 	{
+ 		type = *ptr++;
+-		ptr = amf_read_item(ptr, end, type, (i < n && amf_read_item_type_check(type, items[i].type)) ? &items[i] : NULL);
++		ptr = amf_read_item(ptr, end, type, (i < n && amf_read_item_type_check(type, items[i].type)) ? &items[i] : NULL, depth, strict);
+ 	}
+ 
+-	return ptr;
++	return strict && i != count ? NULL : ptr;
+ }
+ 
+-static const uint8_t* amf_read_ecma_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n)
++static const uint8_t* amf_read_ecma_array(const uint8_t* ptr, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict)
+ {
+-	if (!ptr || ptr + 4 > end)
++	if (!ptr || (size_t)(end - ptr) < 4)
+ 		return NULL;
+ 	ptr += 4; // U32 associative-count
+-	return amf_read_object(ptr, end, items, n);
++	return amf_read_object(ptr, end, items, n, depth, strict);
+ }
+ 
+-static const uint8_t* amf_read_object(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n)
++static const uint8_t* amf_read_object(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t n, unsigned depth, int strict)
+ {
+ 	uint8_t type;
+ 	uint32_t len;
+ 	size_t i;
++	uint32_t seen = 0;
+ 
+-	while (data && data + 2 <= end)
++	while (data && end - data >= 2)
+ 	{
+ 		len = *data++ << 8;
+ 		len |= *data++;
+ 		if (0 == len)
+-			break; // last item
++			return data < end && AMF_OBJECT_END == *data ? data + 1 : NULL;
+ 
+-		if (data + len + 1 > end)
++		if ((size_t)(end - data) <= len)
+ 			return NULL; // invalid
+ 
+ 		for (i = 0; i < n; i++)
+ 		{
+-			if (strlen(items[i].name) == len && 0 == memcmp(items[i].name, data, len) && amf_read_item_type_check(data[len], items[i].type))
+-				break;
++			if (strlen(items[i].name) == len && 0 == memcmp(items[i].name, data, len))
++			{
++				if (strict)
++				{
++					if (i >= 32 || (seen & (UINT32_C(1) << i)) || !amf_read_item_type_check(data[len], items[i].type))
++						return NULL;
++					seen |= UINT32_C(1) << i;
++				}
++				if (amf_read_item_type_check(data[len], items[i].type))
++					break;
++			}
+ 		}
+ 
+ 		data += len; // skip name string
+ 		type = *data++; // value type
+-		data = amf_read_item(data, end, type, i < n ? &items[i] : NULL);
++		data = amf_read_item(data, end, type, i < n ? &items[i] : NULL, depth, strict);
+ 	}
+ 
+-	if (data && data < end && AMF_OBJECT_END == *data)
++	if (!strict && data && data < end && AMF_OBJECT_END == *data)
+ 		return data + 1;
+ 	return NULL; // invalid object
+ }
+ 
+-const uint8_t* amf_read_items(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count)
++static const uint8_t* amf_read_items_impl(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count, int strict)
+ {
+ 	size_t i;
+ 	uint8_t type;
+@@ -416,10 +436,20 @@ const uint8_t* amf_read_items(const uint8_t* data, const uint8_t* end, struct am
+ 		if (!amf_read_item_type_check(type, items[i].type))
+ 			return NULL;
+ 
+-		data = amf_read_item(data, end, type, &items[i]);
++		data = amf_read_item(data, end, type, &items[i], 0, strict);
+ 	}
+ 
+-	return data;
++	return strict && i != count ? NULL : data;
++}
++
++const uint8_t* amf_read_items(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count)
++{
++	return amf_read_items_impl(data, end, items, count, 0);
++}
++
++const uint8_t* amf_read_items_strict(const uint8_t* data, const uint8_t* end, struct amf_object_item_t* items, size_t count)
++{
++	return amf_read_items_impl(data, end, items, count, 1);
+ }
+ 
+ #if defined(_DEBUG) || defined(DEBUG)
+diff --git a/librtmp/include/rtmp-internal.h b/librtmp/include/rtmp-internal.h
+index 7e49743..3d1dd7d 100644
+--- a/librtmp/include/rtmp-internal.h
++++ b/librtmp/include/rtmp-internal.h
+@@ -5,6 +5,8 @@
+ #include "rtmp-netconnection.h"
+ #include "rtmp-netstream.h"
+ 
++struct ww_rtmp_engine;
++
+ #define N_CHUNK_STREAM	8 // maximum chunk stream count
+ #define N_STREAM_NAME	256
+ 
+@@ -83,6 +85,7 @@ struct rtmp_parser_t
+ {
+ 	uint8_t buffer[MAX_CHUNK_HEADER];
+ 	uint32_t basic_bytes; // basic header length
++	uint32_t chunk_remaining;
+ 	uint32_t bytes;
+ 
+ 	enum rtmp_parser_state_t state;
+@@ -99,6 +102,7 @@ struct rtmp_chunk_write_header_t
+ 
+ struct rtmp_t
+ {
++	struct ww_rtmp_engine* profile;
+ 	uint32_t in_chunk_size; // read from network
+ 	uint32_t out_chunk_size; // write to network
+ 
+diff --git a/librtmp/include/rtmp-netconnection.h b/librtmp/include/rtmp-netconnection.h
+index a2675b0..6241d85 100644
+--- a/librtmp/include/rtmp-netconnection.h
++++ b/librtmp/include/rtmp-netconnection.h
+@@ -75,7 +75,7 @@ uint8_t* rtmp_netconnection_connect(uint8_t* out, size_t bytes, double transacti
+ uint8_t* rtmp_netconnection_create_stream(uint8_t* out, size_t bytes, double transactionId);
+ uint8_t* rtmp_netconnection_get_stream_length(uint8_t* out, size_t bytes, double transactionId, const char* stream_name);
+ 
+-uint8_t* rtmp_netconnection_connect_reply(uint8_t* out, size_t bytes, double transactionId, const char* fmsver, double capabilities, const char* code, const char* level, const char* description, double encoding);
++uint8_t* rtmp_netconnection_connect_reply(uint8_t* out, size_t bytes, double transactionId, const char* fmsver, double capabilities, const char* code, const char* level, const char* description, double encoding, double caps_ex);
+ uint8_t* rtmp_netconnection_create_stream_reply(uint8_t* out, size_t bytes, double transactionId, double stream_id);
+ uint8_t* rtmp_netconnection_get_stream_length_reply(uint8_t* out, size_t bytes, double transactionId, double duration);
+ 
+diff --git a/librtmp/include/rtmp-util.h b/librtmp/include/rtmp-util.h
+index 1c80e0c..d339657 100644
+--- a/librtmp/include/rtmp-util.h
++++ b/librtmp/include/rtmp-util.h
+@@ -36,7 +36,7 @@ static inline void be_read_uint24(const uint8_t* ptr, uint32_t* val)
+ 
+ static inline void be_read_uint32(const uint8_t* ptr, uint32_t* val)
+ {
+-	*val = (ptr[0] << 24) | (ptr[1] << 16) | (ptr[2] << 8) | ptr[3];
++	*val = ((uint32_t)ptr[0] << 24) | (ptr[1] << 16) | (ptr[2] << 8) | ptr[3];
+ }
+ 
+ static inline void le_write_uint32(uint8_t* ptr, uint32_t val)
+@@ -49,7 +49,7 @@ static inline void le_write_uint32(uint8_t* ptr, uint32_t val)
+ 
+ static inline void le_read_uint32(const uint8_t* ptr, uint32_t* val)
+ {
+-	*val = ptr[0] | (ptr[1] << 8) | (ptr[2] << 16) | (ptr[3] << 24);
++	*val = ptr[0] | (ptr[1] << 8) | (ptr[2] << 16) | ((uint32_t)ptr[3] << 24);
+ }
+ 
+ #endif /* !_rtmp_util_h_ */
+diff --git a/librtmp/source/rtmp-chunk-read.c b/librtmp/source/rtmp-chunk-read.c
+index b400c4d..3254629 100644
+--- a/librtmp/source/rtmp-chunk-read.c
++++ b/librtmp/source/rtmp-chunk-read.c
+@@ -1,5 +1,7 @@
+ #include "rtmp-internal.h"
+ #include "rtmp-msgtypeid.h"
++#include "ww-rtmp-profile.h"
++#include "wmem.h"
+ #include <stdlib.h>
+ #include <string.h>
+ #include <assert.h>
+@@ -48,12 +50,14 @@ static struct rtmp_packet_t* rtmp_packet_parse(struct rtmp_t* rtmp, const uint8_
+ 	
+ 	// chunk base header
+ 	buffer += rtmp_chunk_basic_header_read(buffer, &fmt, &cid);
++	if (rtmp->profile && cid != RTMP_CHANNEL_PROTOCOL && cid != RTMP_CHANNEL_INVOKE && cid != RTMP_CHANNEL_DATA)
++		return NULL;
+ 
+ 	// load previous header
+ 	packet = rtmp_packet_find(rtmp, cid);
+ 	if (NULL == packet)
+ 	{
+-		if (RTMP_CHUNK_TYPE_0 != fmt && RTMP_CHUNK_TYPE_1 != fmt)
++		if (RTMP_CHUNK_TYPE_0 != fmt && (rtmp->profile || RTMP_CHUNK_TYPE_1 != fmt))
+ 			return NULL; // don't know stream length
+ 
+ 		packet = rtmp_packet_create(rtmp, cid);
+@@ -61,6 +65,10 @@ static struct rtmp_packet_t* rtmp_packet_parse(struct rtmp_t* rtmp, const uint8_
+ 			return NULL;
+ 	}
+ 
++	// A continuation has no new message header. Abort is required to abandon a partial message.
++	if (rtmp->profile && packet->bytes && fmt != RTMP_CHUNK_TYPE_3)
++		return NULL;
++
+ 	// chunk message header
+ 	packet->header.cid = cid;
+ 	packet->header.fmt = fmt;
+@@ -72,7 +80,16 @@ static struct rtmp_packet_t* rtmp_packet_parse(struct rtmp_t* rtmp, const uint8_
+ static int rtmp_packet_alloc(struct rtmp_t* rtmp, struct rtmp_packet_t* packet)
+ {
+ 	void* p;
+-	(void)rtmp;
++	size_t capacity = packet->header.length;
++	if (rtmp->profile)
++	{
++		if (!ww_rtmp_profile_admit(rtmp, &packet->header))
++			return -EINVAL;
++	}
++	else
++	{
++		capacity += 1024;
++	}
+ 
+ 	// 24-bytes length
+ 	assert(0 == packet->bytes);
+@@ -80,11 +97,9 @@ static int rtmp_packet_alloc(struct rtmp_t* rtmp, struct rtmp_packet_t* packet)
+ 	// fixed SMS (Chinacache Smart Media Server) packet->header.length = 0
+ 	if (0 == packet->capacity || packet->capacity < packet->header.length)
+ 	{
+-		p = realloc(packet->payload, packet->header.length + 1024);
+-		if (NULL == p)
+-			return -ENOMEM;
++		p = memoryReAllocate(packet->payload, capacity);
+ 		packet->payload = p;
+-		packet->capacity = packet->header.length + 1024;
++		packet->capacity = capacity;
+ 	}
+ 
+ 	return 0;
+@@ -101,7 +116,7 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 	struct rtmp_parser_t* parser = &rtmp->parser;
+ 	struct rtmp_chunk_header_t header;
+ 
+-	while (offset < bytes)
++	while (offset < bytes || (rtmp->profile && parser->state != RTMP_PARSE_INIT && parser->state != RTMP_PARSE_PAYLOAD))
+ 	{
+ 		switch (parser->state)
+ 		{
+@@ -132,6 +147,10 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 			{
+ 				parser->state = RTMP_PARSE_MESSAGE_HEADER;
+ 			}
++			else if (rtmp->profile)
++			{
++				return 0;
++			}
+ 			break;
+ 
+ 		case RTMP_PARSE_MESSAGE_HEADER:
+@@ -148,10 +167,14 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 				parser->pkt = rtmp_packet_parse(rtmp, parser->buffer);
+ 				parser->state = RTMP_PARSE_EXTENDED_TIMESTAMP;
+ 			}
++			else if (rtmp->profile)
++			{
++				return 0;
++			}
+ 			break;
+ 
+ 		case RTMP_PARSE_EXTENDED_TIMESTAMP:
+-			if (NULL == parser->pkt) return -ENOMEM;
++			if (NULL == parser->pkt) return -EINVAL;
+ 
+ 			assert(parser->pkt->header.timestamp <= 0xFFFFFF);
+ 			size = s_header_size[parser->pkt->header.fmt] + parser->basic_bytes;
+@@ -174,6 +197,7 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 					rtmp_chunk_extended_timestamp_read(parser->buffer + s_header_size[parser->buffer[0] >> 6] + parser->basic_bytes, &extended_timestamp);
+ 					if (RTMP_CHUNK_TYPE_3 == parser->pkt->header.fmt && extended_timestamp != parser->pkt->delta) 
+ 					{
++						if (rtmp->profile) return -EINVAL;
+ 						extended_timestamp = parser->pkt->delta; // use previous delta
+ 
+ 						// fix code offset -= 4 on offset < 4;
+@@ -193,10 +217,11 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 					else
+ 						parser->pkt->clock += parser->pkt->delta;
+ 
+-					if (0 != rtmp_packet_alloc(rtmp, parser->pkt))
+-						return -ENOMEM;
++					r = rtmp_packet_alloc(rtmp, parser->pkt);
++					if (r != 0) return r;
+ 				}
+ 				parser->state = RTMP_PARSE_PAYLOAD;
++				parser->chunk_remaining = rtmp->in_chunk_size;
+ 
+ 				// rewind extended_timestamp_buffer
+ 				if (invalid_extended_timestamp)
+@@ -204,6 +229,10 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 					r = rtmp_chunk_read(rtmp, extended_timestamp_buffer, 4);
+ 					if (0 != r) return r;
+ 				}	
++				}
++			else if (rtmp->profile)
++			{
++				return 0;
+ 			}
+ 			break;
+ 
+@@ -218,10 +247,11 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 			}
+ 			//assert(parser->pkt->bytes <= parser->pkt->header.length);
+ 			//assert(parser->pkt->capacity >= parser->pkt->header.length);
+-			size = MIN(rtmp->in_chunk_size - (parser->pkt->bytes % rtmp->in_chunk_size), parser->pkt->header.length - parser->pkt->bytes);
++			size = MIN(parser->chunk_remaining, parser->pkt->header.length - parser->pkt->bytes);
+ 			size = MIN(size, bytes - offset);
+ 			if(size > 0) memcpy(parser->pkt->payload + parser->pkt->bytes, data + offset, size);
+ 			parser->pkt->bytes += size;
++			parser->chunk_remaining -= (uint32_t)size;
+ 			offset += size;
+ 
+ 			if (parser->pkt->bytes >= parser->pkt->header.length)
+@@ -235,7 +265,7 @@ int rtmp_chunk_read(struct rtmp_t* rtmp, const uint8_t* data, size_t bytes)
+ 				r = rtmp_handler(rtmp, &header, parser->pkt->payload);
+ 				if(0 != r) return r;
+ 			}
+-			else if (0 == (parser->pkt->bytes % rtmp->in_chunk_size))
++			else if (parser->chunk_remaining == 0)
+ 			{
+ 				// next chunk
+ 				parser->state = RTMP_PARSE_INIT;
+diff --git a/librtmp/source/rtmp-chunk-write.c b/librtmp/source/rtmp-chunk-write.c
+index f65d37f..2b46479 100644
+--- a/librtmp/source/rtmp-chunk-write.c
++++ b/librtmp/source/rtmp-chunk-write.c
+@@ -1,6 +1,9 @@
+ #include "rtmp-chunk-header.h"
+ #include "rtmp-internal.h"
+ #include "rtmp-util.h"
++#include "rtmp-msgtypeid.h"
++#include "ww-rtmp-profile.h"
++#include "wmem.h"
+ #include <stdlib.h>
+ #include <string.h>
+ #include <assert.h>
+@@ -105,9 +108,8 @@ int rtmp_chunk_write(struct rtmp_t* rtmp, const struct rtmp_chunk_header_t* h, c
+ 	N = (header->cid < 64 ? 1 : (header->cid < (64 + 256) ? 2 : 3) /*type-3 header*/) + (header->timestamp >= 0xFFFFFF ? 4 : 0);
+ 	if (MAX_CHUNK_HEADER + header->length / rtmp->out_chunk_size * N > rtmp->chunk_write_header.capacity)
+ 	{
+-		p = realloc(rtmp->chunk_write_header.ptr == rtmp->chunk_write_header.bufer ? 0 : rtmp->chunk_write_header.ptr, MAX_CHUNK_HEADER + header->length / rtmp->out_chunk_size * MAX_CHECK_TYPE3_WITH_TIMESTAMP);
+-		if (!p)
+-			return -ENOMEM;
++		p = memoryReAllocate(rtmp->chunk_write_header.ptr == rtmp->chunk_write_header.bufer ? 0 : rtmp->chunk_write_header.ptr, MAX_CHUNK_HEADER + header->length / rtmp->out_chunk_size * MAX_CHECK_TYPE3_WITH_TIMESTAMP);
++
+ 		rtmp->chunk_write_header.ptr = p;
+ 		rtmp->chunk_write_header.capacity = MAX_CHUNK_HEADER + header->length / rtmp->out_chunk_size * MAX_CHECK_TYPE3_WITH_TIMESTAMP;
+ 	}
+@@ -118,12 +120,20 @@ int rtmp_chunk_write(struct rtmp_t* rtmp, const struct rtmp_chunk_header_t* h, c
+ 	headerSize += rtmp_chunk_message_header_write(p + headerSize, header);
+ 	if(header->timestamp >= 0xFFFFFF)
+ 		headerSize += rtmp_chunk_extended_timestamp_write(p + headerSize, header->timestamp);
+-	assert(headerSize < MAX_CHUNK_HEADER);
++	assert(headerSize <= MAX_CHUNK_HEADER);
+ 
+ 	while (payloadSize > 0 && 0 == r)
+ 	{
+ 		chunkSize = payloadSize < rtmp->out_chunk_size ? payloadSize : rtmp->out_chunk_size;
+-		r = rtmp->send(rtmp->param, p, headerSize, payload, chunkSize); // callback
++		if (rtmp->profile)
++		{
++			ww_rtmp_output_e kind = h->type == RTMP_TYPE_FLEX_STREAM ? kRtmpOutputData : kRtmpOutputOrdered;
++			r = ww_rtmp_profile_output(rtmp, kind, p, headerSize, payload, chunkSize);
++		}
++		else
++		{
++			r = rtmp->send(rtmp->param, p, headerSize, payload, chunkSize);
++		}
+ 
+ 		payload += chunkSize;
+ 		payloadSize -= chunkSize;
+diff --git a/librtmp/source/rtmp-client-invoke-handler.h b/librtmp/source/rtmp-client-invoke-handler.h
+index 096e3cd..4814326 100644
+--- a/librtmp/source/rtmp-client-invoke-handler.h
++++ b/librtmp/source/rtmp-client-invoke-handler.h
+@@ -8,6 +8,8 @@
+ 
+ #if defined(_WIN32) || defined(_WIN64)
+ #define strcasecmp _stricmp
++#else
++#include <strings.h>
+ #endif
+ 
+ struct rtmp_result_t
+@@ -15,6 +17,7 @@ struct rtmp_result_t
+ 	char code[64]; // NetStream.Play.Start
+ 	char level[8]; // warning/status/error
+ 	char description[256];
++	double encoding;
+ };
+ 
+ //static const char* s_rtmp_command_code[] = {
+@@ -51,12 +54,12 @@ struct rtmp_result_t
+ #define AMF_OBJECT_ITEM_VALUE(v, amf_type, amf_name, amf_value, amf_size) { v.type=amf_type; v.name=amf_name; v.value=amf_value; v.size=amf_size; }
+ 
+ // s -> c
+-static int rtmp_command_onconnect_reply(struct rtmp_result_t* result, const uint8_t* data, uint32_t bytes)
++static int rtmp_command_onconnect_reply(struct rtmp_t* rtmp, struct rtmp_result_t* result, const uint8_t* data, uint32_t bytes)
+ {
+ 	char fmsver[64] = { 0 };
+ 	double capabilities = 0;
+ 	struct amf_object_item_t prop[2];
+-	struct amf_object_item_t info[3]; 
++	struct amf_object_item_t info[4];
+ 	struct amf_object_item_t items[2];
+ 
+ 	AMF_OBJECT_ITEM_VALUE(prop[0], AMF_STRING, "fmsVer", fmsver, sizeof(fmsver));
+@@ -65,33 +68,36 @@ static int rtmp_command_onconnect_reply(struct rtmp_result_t* result, const uint
+ 	AMF_OBJECT_ITEM_VALUE(info[0], AMF_STRING, "code", result->code, sizeof(result->code));
+ 	AMF_OBJECT_ITEM_VALUE(info[1], AMF_STRING, "level", result->level, sizeof(result->level));
+ 	AMF_OBJECT_ITEM_VALUE(info[2], AMF_STRING, "description", result->description, sizeof(result->description));
++	AMF_OBJECT_ITEM_VALUE(info[3], AMF_NUMBER, "objectEncoding", &result->encoding, sizeof(result->encoding));
+ 
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "Properties", prop, sizeof(prop) / sizeof(prop[0]));
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_OBJECT, "Information", info, sizeof(info) / sizeof(info[0]));
+ 
+-	//rtmp->onstatus();
+-	return amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : EINVAL;
++	return rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : EINVAL;
+ }
+ 
+ // s -> c
+-static int rtmp_command_oncreate_stream_reply(const uint8_t* data, uint32_t bytes, double *stream_id)
++static int rtmp_command_oncreate_stream_reply(struct rtmp_t* rtmp, const uint8_t* data, uint32_t bytes, double *stream_id)
+ {
+ 	struct amf_object_item_t items[2];
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_NUMBER, "streamId", stream_id, 8);
+ 
+-	//rtmp->onstatus();
+-	return amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : EINVAL;
++	return rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : EINVAL;
+ }
+ 
+ // s -> c
+-static int rtmp_command_onresult(struct rtmp_t* rtmp, double transaction, const uint8_t* data, uint32_t bytes)
++static int rtmp_command_onresult(struct rtmp_t* rtmp, const struct rtmp_chunk_header_t* header, double transaction, const uint8_t* data, uint32_t bytes)
+ {
+ 	int r;
+ 	double stream_id = 0;
+ 	double duration = 0;
+ 	struct rtmp_result_t result;
+ 
++	struct ww_rtmp_engine* profile = rtmp->profile;
++	if (profile && (!rtmp->client.onconnect || header->stream_id != 0))
++		return -EINVAL;
++
+ 	memset(&result, 0, sizeof(result));
+ 	switch ((uint32_t)transaction)
+ 	{
+@@ -100,21 +106,37 @@ static int rtmp_command_onresult(struct rtmp_t* rtmp, double transaction, const
+ 		// 1. releaseStream/FCPublish or serverBW/user control message event buffer time
+ 		// 2. createStream
+ 		// 3. FCSubscribe
+-		r = rtmp_command_onconnect_reply(&result, data, bytes);
++		r = rtmp_command_onconnect_reply(rtmp, &result, data, bytes);
++		if (profile)
++		{
++			if (r || profile->phase != kRtmpAwaitConnect || result.encoding != RTMP_ENCODING_AMF_3 ||
++				strcmp(result.code, "NetConnection.Connect.Success") || strcmp(result.level, RTMP_LEVEL_STATUS))
++				return -EINVAL;
++			profile->phase = kRtmpAwaitCreate;
++		}
+ 		return 0 == r ? (rtmp->client.onconnect ? rtmp->client.onconnect(rtmp->param) : -1) : r;
+ 
+ 	case RTMP_TRANSACTION_CREATE_STREAM:
+ 		// next: 
+ 		// publish 
+ 		// or play/user control message event buffer time
+-		r = rtmp_command_oncreate_stream_reply(data, bytes, &stream_id);
++		r = rtmp_command_oncreate_stream_reply(rtmp, data, bytes, &stream_id);
++		if (r || !ww_rtmp_profile_uint32(stream_id) || stream_id == 0)
++			return -EINVAL;
++		if (profile)
++		{
++			if (profile->phase != kRtmpAwaitCreate)
++				return -EINVAL;
++			profile->phase = kRtmpAwaitPublish;
++			profile->stream_id = (uint32_t)stream_id;
++		}
+ 		return 0 == r ? (rtmp->client.oncreate_stream ? rtmp->client.oncreate_stream(rtmp->param, stream_id) : -1) : r;
+ 
+ 	case RTMP_TRANSACTION_GET_STREAM_LENGTH:
+-		return rtmp_command_oncreate_stream_reply(data, bytes, &duration);
++		return profile ? -EINVAL : rtmp_command_oncreate_stream_reply(rtmp, data, bytes, &duration);
+ 
+ 	default:
+-		return 0;
++		return profile ? -EINVAL : 0;
+ 	}
+ }
+ 
+@@ -144,6 +166,35 @@ static int rtmp_command_onresult(struct rtmp_t* rtmp, double transaction, const
+ //	return -1;
+ //}
+ 
++static int rtmp_profile_onstatus(struct rtmp_t* rtmp, const struct rtmp_chunk_header_t* header,
++	double transaction, const uint8_t* data, uint32_t bytes)
++{
++	struct ww_rtmp_engine* profile = rtmp->profile;
++	struct rtmp_result_t result = {0};
++	struct amf_object_item_t info[3];
++	struct amf_object_item_t items[2];
++
++	AMF_OBJECT_ITEM_VALUE(info[0], AMF_STRING, "code", result.code, sizeof(result.code));
++	AMF_OBJECT_ITEM_VALUE(info[1], AMF_STRING, "level", result.level, sizeof(result.level));
++	AMF_OBJECT_ITEM_VALUE(info[2], AMF_STRING, "description", result.description, sizeof(result.description));
++	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
++	AMF_OBJECT_ITEM_VALUE(items[1], AMF_OBJECT, "information", info, sizeof(info) / sizeof(info[0]));
++	if (profile->is_server || transaction != 0 || !rtmp_command_read(rtmp, data, bytes, items, 2) ||
++		strcmp(result.level, RTMP_LEVEL_STATUS))
++		return -EINVAL;
++
++	if (header->stream_id == 0 && !strcmp(result.code, "NetConnection.Connect.Closed"))
++		return ww_rtmp_profile_closed(rtmp);
++	if (!profile->stream_id || header->stream_id != profile->stream_id)
++		return -EINVAL;
++	if (profile->phase == kRtmpAwaitPublish && profile->stream_begin && !strcmp(result.code, "NetStream.Publish.Start"))
++		return ww_rtmp_profile_ready(rtmp);
++	if (profile->phase == kRtmpActive && (!strcmp(result.code, "NetStream.Unpublish.Success") ||
++		!strcmp(result.code, "NetStream.Play.Stop") || !strcmp(result.code, "NetStream.Publish.Stop")))
++		return ww_rtmp_profile_closed(rtmp);
++	return -EINVAL;
++}
++
+ // s -> c
+ static int rtmp_command_onstatus(struct rtmp_t* rtmp, double transaction, const uint8_t* data, uint32_t bytes)
+ {
+@@ -162,7 +213,7 @@ static int rtmp_command_onstatus(struct rtmp_t* rtmp, double transaction, const
+ 	AMF_OBJECT_ITEM_VALUE(info[1], AMF_STRING, "level", result.level, sizeof(result.level));
+ 	AMF_OBJECT_ITEM_VALUE(info[2], AMF_STRING, "description", result.description, sizeof(result.description));
+ 	AMF_OBJECT_ITEM_VALUE(info[3], AMF_STRING, "tcUrl", tcurl, sizeof(tcurl)); // enhanced rtmp v2
+-	AMF_OBJECT_ITEM_VALUE(info[4], AMF_OBJECT, "ex", redirect, sizeof(redirect)); // AMS(adoble media server) serverside redirect
++	AMF_OBJECT_ITEM_VALUE(info[4], AMF_OBJECT, "ex", redirect, sizeof(redirect) / sizeof(redirect[0])); // AMS(adoble media server) serverside redirect
+ 
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0); // Command object
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_OBJECT, "information", info, sizeof(info) / sizeof(info[0])); // Information object
+@@ -220,7 +271,7 @@ static int rtmp_command_onstatus(struct rtmp_t* rtmp, double transaction, const
+ 		return -1;
+ 	}
+ 	else if (0 == strcasecmp(result.code, "NetConnection.Connect.ReconnectRequest") // enhanced rtmp v2
+-		|| (302 == (int)code && 0 == strcasecmp(result.code, "NetConnection.Connect.Rejected"))) // AMS(adoble media server) server-side redirect
++		|| (302 == code && 0 == strcasecmp(result.code, "NetConnection.Connect.Rejected"))) // AMS(adoble media server) server-side redirect
+ 	{
+ 		return rtmp->client.onreconnect ? rtmp->client.onreconnect(rtmp->param, tcurl, result.description) : 0;
+ 	}
+diff --git a/librtmp/source/rtmp-client.c b/librtmp/source/rtmp-client.c
+index 562ba3a..3e4ff58 100644
+--- a/librtmp/source/rtmp-client.c
++++ b/librtmp/source/rtmp-client.c
+@@ -46,6 +46,8 @@ C -> S: Video
+ #include "rtmp-netconnection.h"
+ #include "rtmp-netstream.h"
+ #include "rtmp-event.h"
++#include "ww-rtmp-profile.h"
++#include "wmem.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -93,7 +95,9 @@ static int rtmp_client_send_control(struct rtmp_t* rtmp, const uint8_t* payload,
+ static int rtmp_client_send_c2(struct rtmp_client_t* ctx)
+ {
+ 	int r;
+-	rtmp_handshake_c2(ctx->payload, (uint32_t)time(NULL), ctx->payload, RTMP_HANDSHAKE_SIZE);
++	rtmp_handshake_c2(ctx->payload, (uint32_t)time(NULL) * 1000U, ctx->payload, RTMP_HANDSHAKE_SIZE);
++	if (ctx->rtmp.profile)
++		return ww_rtmp_profile_output(&ctx->rtmp, kRtmpOutputHandshake, ctx->payload, RTMP_HANDSHAKE_SIZE, NULL, 0);
+ 	r = ctx->handler.send(ctx->param, ctx->payload, RTMP_HANDSHAKE_SIZE, NULL, 0);
+ 	return RTMP_HANDSHAKE_SIZE == r ? 0 : -1;
+ }
+@@ -103,7 +107,10 @@ static int rtmp_client_send_connect(struct rtmp_client_t* ctx)
+ {
+ 	int r;
+ 	r = (int)(rtmp_netconnection_connect(ctx->payload, sizeof(ctx->payload), RTMP_TRANSACTION_CONNECT, &ctx->connect) - ctx->payload);
+-	return rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, 0);
++	r = rtmp_client_send_control(&ctx->rtmp, ctx->payload, r, 0);
++	if (r == 0 && ctx->rtmp.profile)
++		r = ww_rtmp_profile_advertise(&ctx->rtmp);
++	return r;
+ }
+ 
+ // ReleaseStream
+@@ -222,7 +229,7 @@ static int rtmp_client_onconnect(void* param)
+ 	struct rtmp_client_t* ctx;
+ 	ctx = (struct rtmp_client_t*)param;
+ 	ctx->state = RTMP_STATE_CONNECTED;
+-	if (0 == ctx->publish)
++	if (0 == ctx->publish && !ctx->rtmp.profile)
+ 	{
+ 		// publish only
+ 		r = rmtp_client_send_release_stream(ctx);
+@@ -244,6 +251,11 @@ static int rtmp_client_oncreate_stream(void* param, double stream_id)
+ 	ctx = (struct rtmp_client_t*)param;
+ 	ctx->state = RTMP_STATE_CREATE_STREAM;
+ 	ctx->stream_id = (uint32_t)stream_id;
++	if (ctx->rtmp.profile)
++	{
++		r = ww_rtmp_profile_set_chunk_size(&ctx->rtmp);
++		return r == 0 ? rtmp_client_send_publish(ctx) : r;
++	}
+ 
+ 	if (0 == ctx->publish)
+ 	{
+@@ -352,11 +364,10 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
+ 	struct rtmp_client_t* ctx;
+ 
+ 	assert(appname && *appname && playpath && *playpath && handler);
+-	ctx = (struct rtmp_client_t*)calloc(1, sizeof(struct rtmp_client_t));
+-	if (!ctx) return NULL;
++	ctx = memoryAllocateZero(sizeof(*ctx));
+ 
+ 	memcpy(&ctx->handler, handler, sizeof(ctx->handler));
+-	snprintf(ctx->stream_name, sizeof(ctx->stream_name) - 1, "%s", playpath);
++	snprintf(ctx->stream_name, sizeof(ctx->stream_name), "%s", playpath);
+ 	ctx->stream_id = 0;
+ 	ctx->param = param;
+ 	ctx->state = RTMP_STATE_UNINIT;
+@@ -381,8 +392,8 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
+     ctx->rtmp.client.oneof = rtmp_client_oneof;
+ 	ctx->rtmp.client.onbandwidth = rtmp_client_onbandwidth;
+ 
+-	snprintf(ctx->connect.app, sizeof(ctx->connect.app) - 1, "%s", appname);
+-	if (tcurl) snprintf(ctx->connect.tcUrl, sizeof(ctx->connect.tcUrl) - 1, "%s", tcurl);
++	snprintf(ctx->connect.app, sizeof(ctx->connect.app), "%s", appname);
++	if (tcurl) snprintf(ctx->connect.tcUrl, sizeof(ctx->connect.tcUrl), "%s", tcurl);
+ 	//snprintf(ctx->connect.swfUrl, sizeof(ctx->connect.swfUrl) - 1, "%s", tcurl ? tcurl : url);
+ 	//snprintf(ctx->connect.pageUrl, sizeof(ctx->connect.pageUrl) - 1, "%s", tcurl ? tcurl : url);
+ 	snprintf(ctx->connect.flashver, sizeof(ctx->connect.flashver) - 1, "%s", FLASHVER);
+@@ -392,6 +403,7 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
+ 	ctx->connect.videoCodecs = 252; // SUPPORT_VID_H264;
+ 	ctx->connect.videoFunction = SUPPORT_VID_CLIENT_SEEK;
+ 	ctx->connect.encoding = RTMP_ENCODING_AMF_0;
++	ctx->connect.capsEx = RTMP_CAPSEX_RECONNECT;
+ 
+ 	ctx->rtmp.out_packets[RTMP_CHANNEL_PROTOCOL].header.cid = RTMP_CHANNEL_PROTOCOL;
+ 	ctx->rtmp.out_packets[RTMP_CHANNEL_INVOKE].header.cid = RTMP_CHANNEL_INVOKE;
+@@ -404,6 +416,14 @@ struct rtmp_client_t* rtmp_client_create(const char* appname, const char* playpa
+ 	return ctx;
+ }
+ 
++struct rtmp_t* ww_rtmp_client_profile(struct rtmp_client_t* ctx, struct ww_rtmp_engine* profile)
++{
++	ctx->connect.encoding = RTMP_ENCODING_AMF_3;
++	ctx->connect.capsEx = 0;
++	ctx->rtmp.profile = profile;
++	return &ctx->rtmp;
++}
++
+ void rtmp_client_destroy(struct rtmp_client_t* ctx)
+ {
+ 	size_t i;
+@@ -416,21 +436,21 @@ void rtmp_client_destroy(struct rtmp_client_t* ctx)
+ #if defined(DEBUG) || defined(_DEBUG)
+ 			memset(ctx->rtmp.in_packets[i].payload, 0xCC, ctx->rtmp.in_packets[i].capacity);
+ #endif
+-			free(ctx->rtmp.in_packets[i].payload);
++			memoryFree(ctx->rtmp.in_packets[i].payload);
+ 			ctx->rtmp.in_packets[i].payload = NULL;
+ 		}
+ 	}
+ 
+ 	if (ctx->rtmp.chunk_write_header.ptr && ctx->rtmp.chunk_write_header.ptr != ctx->rtmp.chunk_write_header.bufer)
+ 	{
+-		free(ctx->rtmp.chunk_write_header.ptr);
++		memoryFree(ctx->rtmp.chunk_write_header.ptr);
+ 		ctx->rtmp.chunk_write_header.capacity = 0;
+ 	}
+ 
+ #if defined(DEBUG) || defined(_DEBUG)
+ 	memset(ctx, 0xCC, sizeof(*ctx));
+ #endif
+-	free(ctx);
++	memoryFree(ctx);
+ }
+ 
+ int rtmp_client_input(struct rtmp_client_t* ctx, const void* data, size_t bytes)
+@@ -446,7 +466,7 @@ int rtmp_client_input(struct rtmp_client_t* ctx, const void* data, size_t bytes)
+ 		case RTMP_HANDSHAKE_UNINIT: // S0: version
+ 			ctx->handshake_state = RTMP_HANDSHAKE_0;
+ 			ctx->handshake_bytes = 0; // clear buffer
+-			assert(*p <= RTMP_VERSION);
++			if (*p != RTMP_VERSION) return -EINVAL;
+ 			bytes -= 1;
+ 			p += 1;
+ 			break;
+@@ -494,7 +514,10 @@ int rtmp_client_input(struct rtmp_client_t* ctx, const void* data, size_t bytes)
+ 			break;
+ 
+ 		default:
+-			rtmp_client_send_acknowledgement(ctx, bytes);
++			if (ctx->rtmp.profile)
++				return ww_rtmp_profile_input(&ctx->rtmp, p, bytes);
++			r = rtmp_client_send_acknowledgement(ctx, bytes);
++			if (r != 0) return r;
+ 			return rtmp_chunk_read(&ctx->rtmp, (const uint8_t*)p, bytes);
+ 		}
+ 	}
+@@ -510,8 +533,10 @@ int rtmp_client_start(struct rtmp_client_t* ctx, int publish)
+ 	// handshake C0/C1
+ 	ctx->handshake_state = RTMP_HANDSHAKE_UNINIT;
+ 	n = rtmp_handshake_c0(ctx->payload, RTMP_VERSION);
+-	n += rtmp_handshake_c1(ctx->payload + n, (uint32_t)time(NULL));
++	n += rtmp_handshake_c1(ctx->payload + n, (uint32_t)time(NULL) * 1000U);
+ 	assert(n == RTMP_HANDSHAKE_SIZE + 1);
++	if (ctx->rtmp.profile)
++		return ww_rtmp_profile_output(&ctx->rtmp, kRtmpOutputHandshake, ctx->payload, n, NULL, 0);
+ 	return n == ctx->handler.send(ctx->param, ctx->payload, n, NULL, 0) ? 0 : -1;
+ }
+ 
+diff --git a/librtmp/source/rtmp-handler.c b/librtmp/source/rtmp-handler.c
+index d02de0d..e7ff82b 100644
+--- a/librtmp/source/rtmp-handler.c
++++ b/librtmp/source/rtmp-handler.c
+@@ -1,5 +1,6 @@
+ #include "rtmp-internal.h"
+ #include "rtmp-msgtypeid.h"
++#include "ww-rtmp-profile.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -76,6 +77,9 @@ static int rtmp_aggregate(struct rtmp_t* rtmp, struct rtmp_chunk_header_t* heade
+ 
+ int rtmp_handler(struct rtmp_t* rtmp, struct rtmp_chunk_header_t* header, const uint8_t* payload)
+ {
++	if (rtmp->profile && header->type == RTMP_TYPE_FLEX_STREAM)
++		return rtmp->profile->callbacks.data(rtmp->profile->context, payload, header->length,
++			header->timestamp, header->cid, header->stream_id);
+ 	switch (header->type)
+ 	{
+ 	case RTMP_TYPE_FLEX_MESSAGE:
+@@ -95,6 +99,8 @@ int rtmp_handler(struct rtmp_t* rtmp, struct rtmp_chunk_header_t* header, const
+ 
+ 	case RTMP_TYPE_EVENT:
+ 		// User Control Message Events
++		if (rtmp->profile)
++			return ww_rtmp_profile_user_control(rtmp, header, payload);
+ 		return 0 == rtmp_event_handler(rtmp, header, payload) ? -1 : 0;
+ 
+ 		// Protocol Control Messages
+@@ -103,6 +109,8 @@ int rtmp_handler(struct rtmp_t* rtmp, struct rtmp_chunk_header_t* header, const
+ 	case RTMP_TYPE_ACKNOWLEDGEMENT:
+ 	case RTMP_TYPE_WINDOW_ACKNOWLEDGEMENT_SIZE:
+ 	case RTMP_TYPE_SET_PEER_BANDWIDTH:
++		if (rtmp->profile)
++			return ww_rtmp_profile_control(rtmp, header, payload);
+ 		return 0 == rtmp_control_handler(rtmp, header, payload) ? -1 : 0;
+ 
+ 	case RTMP_TYPE_DATA:
+diff --git a/librtmp/source/rtmp-handshake.c b/librtmp/source/rtmp-handshake.c
+index 47634c8..bc72a58 100644
+--- a/librtmp/source/rtmp-handshake.c
++++ b/librtmp/source/rtmp-handshake.c
+@@ -181,12 +181,14 @@ static int rtmp_handshake_create_response(uint8_t* handshake, const uint8_t* key
+ 
+ static void rtmp_handshake_random(uint8_t* p, uint32_t timestamp)
+ {
++	uint32_t state = timestamp ^ UINT32_C(0xb15be6b1);
+ 	int i;
+-	
+-	srand(timestamp);
+-	for (i = 0; i * 4 < RTMP_HANDSHAKE_SIZE - 8; i++)
++
++	/* Simple RTMP uses these bytes as an echo. They are not secret material. */
++	for (i = 0; i < RTMP_HANDSHAKE_SIZE - 8; i += 4)
+ 	{
+-		*((int*)p + i) = rand();
++		state = state * UINT32_C(1664525) + UINT32_C(1013904223);
++		be_write_uint32(p + i, state);
+ 	}
+ }
+ 
+@@ -277,10 +279,9 @@ int rtmp_handshake_s2(uint8_t* s2, uint32_t timestamp, const uint8_t* c1, size_t
+ 		return RTMP_HANDSHAKE_SIZE;
+ 	}
+ #else
+-	(void)timestamp;
+ 	assert(RTMP_HANDSHAKE_SIZE == bytes);
+ 	memmove(s2, c1, bytes);
+-	//be_write_uint32(s2 + 4, timestamp); // for hik ipc
++	be_write_uint32(s2 + 4, timestamp);
+ #endif
+ 	return RTMP_HANDSHAKE_SIZE;
+ }
+diff --git a/librtmp/source/rtmp-invoke-handler.c b/librtmp/source/rtmp-invoke-handler.c
+index 2528dec..ae12ae1 100644
+--- a/librtmp/source/rtmp-invoke-handler.c
++++ b/librtmp/source/rtmp-invoke-handler.c
+@@ -5,6 +5,16 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <assert.h>
++#include "ww-rtmp-profile.h"
++
++static int rtmp_command_read(const struct rtmp_t* rtmp, const uint8_t* data, uint32_t bytes,
++	struct amf_object_item_t* items, size_t count)
++{
++	if (rtmp->profile)
++		return amf_read_items_strict(data, data + bytes, items, count) == data + bytes;
++	return amf_read_items(data, data + bytes, items, count) != NULL;
++}
++
+ #include "rtmp-client-invoke-handler.h"
+ 
+ // connect request parser
+@@ -29,7 +39,14 @@ static int rtmp_command_onconnect(struct rtmp_t* rtmp, double transaction, const
+ 
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", commands, sizeof(commands) / sizeof(commands[0]));
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
++	if (rtmp->profile)
++	{
++		if (r || !bytes || data[0] != AMF_OBJECT || connect.encoding != RTMP_ENCODING_AMF_3 ||
++			strcmp(connect.app, rtmp->profile->app) || !connect.tcUrl[0])
++			return -EINVAL;
++		rtmp->profile->phase = kRtmpAwaitCreate;
++	}
+ 	return rtmp->server.onconnect ? rtmp->server.onconnect(rtmp->param, r, transaction, &connect) : -1;
+ }
+ 
+@@ -40,7 +57,13 @@ static int rtmp_command_oncreate_stream(struct rtmp_t* rtmp, double transaction,
+ 	struct amf_object_item_t items[1];
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
++	if (rtmp->profile)
++	{
++		if (r || bytes != 1 || data[0] != AMF_NULL)
++			return -EINVAL;
++		rtmp->profile->phase = kRtmpAwaitPublish;
++	}
+ 	return rtmp->server.oncreate_stream ? rtmp->server.oncreate_stream(rtmp->param, r, transaction) : -1;
+ }
+ 
+@@ -60,7 +83,7 @@ static int rtmp_command_onplay(struct rtmp_t* rtmp, double transaction, const ui
+ 	AMF_OBJECT_ITEM_VALUE(items[3], AMF_NUMBER, "duration", &duration, 8);
+ 	AMF_OBJECT_ITEM_VALUE(items[4], AMF_BOOLEAN, "reset", &reset, 1);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onplay ? rtmp->server.onplay(rtmp->param, r, transaction, stream_name, start, duration, reset) : -1;
+ }
+ 
+@@ -73,7 +96,13 @@ static int rtmp_command_ondelete_stream(struct rtmp_t* rtmp, double transaction,
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_NUMBER, "streamId", &stream_id, 8);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
++	if (rtmp->profile)
++	{
++		if (r || !bytes || data[0] != AMF_NULL || stream_id != rtmp->profile->stream_id || !rtmp->profile->stream_id)
++			return -EINVAL;
++		return ww_rtmp_profile_closed(rtmp);
++	}
+ 	return rtmp->server.ondelete_stream ? rtmp->server.ondelete_stream(rtmp->param, r, transaction, stream_id) : -1;
+ }
+ 
+@@ -86,7 +115,7 @@ static int rtmp_command_onreceive_audio(struct rtmp_t* rtmp, double transaction,
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_BOOLEAN, "receiveAudio", &receiveAudio, 1);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onreceive_audio ? rtmp->server.onreceive_audio(rtmp->param, r, transaction, receiveAudio) : -1;
+ }
+ 
+@@ -99,7 +128,7 @@ static int rtmp_command_onreceive_video(struct rtmp_t* rtmp, double transaction,
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_BOOLEAN, "receiveVideo", &receiveVideo, 1);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onreceive_video ? rtmp->server.onreceive_video(rtmp->param, r, transaction, receiveVideo) : -1;
+ }
+ 
+@@ -115,7 +144,10 @@ static int rtmp_command_onpublish(struct rtmp_t* rtmp, double transaction, const
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_STRING, "name", stream_name, sizeof(stream_name));
+ 	AMF_OBJECT_ITEM_VALUE(items[2], AMF_STRING, "type", stream_type, sizeof(stream_type));
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
++	if (rtmp->profile && (r || !bytes || data[0] != AMF_NULL || strcmp(stream_name, rtmp->profile->stream) ||
++		strcmp(stream_type, RTMP_STREAM_LIVE)))
++		return -EINVAL;
+ 	return rtmp->server.onpublish ? rtmp->server.onpublish(rtmp->param, r, transaction, stream_name, stream_type) : -1;
+ }
+ 
+@@ -128,7 +160,7 @@ static int rtmp_command_onseek(struct rtmp_t* rtmp, double transaction, const ui
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_NUMBER, "milliSeconds", &milliSeconds, 8);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onseek ? rtmp->server.onseek(rtmp->param, r, transaction, milliSeconds) : -1;
+ }
+ 
+@@ -143,7 +175,7 @@ static int rtmp_command_onpause(struct rtmp_t* rtmp, double transaction, const u
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_BOOLEAN, "pause", &pause, 1);
+ 	AMF_OBJECT_ITEM_VALUE(items[2], AMF_NUMBER, "milliSeconds", &milliSeconds, 8);
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onpause ? rtmp->server.onpause(rtmp->param, r, transaction, pause, milliSeconds) : -1;
+ }
+ 
+@@ -155,7 +187,7 @@ static int rtmp_command_onget_stream_length(struct rtmp_t* rtmp, double transact
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_OBJECT, "command", NULL, 0);
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_STRING, "playpath", stream_name, sizeof(stream_name));
+ 
+-	r = amf_read_items(data, data + bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -1;
++	r = rtmp_command_read(rtmp, data, bytes, items, sizeof(items) / sizeof(items[0])) ? 0 : -EINVAL;
+ 	return rtmp->server.onget_stream_length ? rtmp->server.onget_stream_length(rtmp->param, r, transaction, stream_name) : -1;
+ }
+ 
+@@ -213,9 +245,7 @@ struct rtmp_command_handler_t
+ 
+ const static struct rtmp_command_handler_t s_command_handler[] = {
+ 	// client side
+-	{ "_result",		rtmp_command_onresult },
+-	{ "_error",			rtmp_command_onstatus },
+-	{ "onStatus",		rtmp_command_onstatus },
++
+ 
+ //	{ "close",			rtmp_command_onclose },
+ 
+@@ -262,12 +292,46 @@ int rtmp_invoke_handler(struct rtmp_t* rtmp, const struct rtmp_chunk_header_t* h
+ 	AMF_OBJECT_ITEM_VALUE(items[0], AMF_STRING, "command", command, sizeof(command));
+ 	AMF_OBJECT_ITEM_VALUE(items[1], AMF_NUMBER, "transactionId", &transaction, sizeof(double));
+ 
+-	data = amf_read_items(data, end, items, sizeof(items) / sizeof(items[0]));
++	if (rtmp->profile)
++		data = amf_read_items_strict(data, end, items, sizeof(items) / sizeof(items[0]));
++	else
++		data = amf_read_items(data, end, items, sizeof(items) / sizeof(items[0]));
+ 	if (!data)
+ 		return -EINVAL; // invalid data
+-	if (-1.0 == transaction)
++	if (!rtmp->profile && -1.0 == transaction)
+ 		return 0; // fix: no transactionId onFCPublish
+ 
++	if (!ww_rtmp_profile_uint32(transaction))
++		return -EINVAL;
++	if (!strcmp(command, "_result"))
++		return rtmp_command_onresult(rtmp, header, transaction, data, (uint32_t)(end - data));
++	if (!strcmp(command, "_error"))
++		return rtmp->profile ? -EINVAL : rtmp_command_onstatus(rtmp, transaction, data, (uint32_t)(end - data));
++	if (!strcmp(command, "onStatus"))
++		return rtmp->profile ? rtmp_profile_onstatus(rtmp, header, transaction, data, (uint32_t)(end - data)) :
++			rtmp_command_onstatus(rtmp, transaction, data, (uint32_t)(end - data));
++
++	if (rtmp->profile)
++	{
++		struct ww_rtmp_engine* profile = rtmp->profile;
++		const uint32_t length = (uint32_t)(end - data);
++		if (!profile->is_server)
++			return -EINVAL;
++		if (!strcmp(command, "connect") && profile->phase == kRtmpAwaitConnect && header->stream_id == 0 &&
++			transaction == RTMP_TRANSACTION_CONNECT)
++			return rtmp_command_onconnect(rtmp, transaction, data, length);
++		if (!strcmp(command, "createStream") && profile->phase == kRtmpAwaitCreate && header->stream_id == 0 && transaction != 0)
++			return rtmp_command_oncreate_stream(rtmp, transaction, data, length);
++		if (!strcmp(command, "publish") && profile->phase == kRtmpAwaitPublish && header->stream_id == profile->stream_id && transaction == 0)
++			return rtmp_command_onpublish(rtmp, transaction, data, length);
++		if (!strcmp(command, "deleteStream") && header->stream_id == 0 && transaction == 0)
++			return rtmp_command_ondelete_stream(rtmp, transaction, data, length);
++		if (!strcmp(command, "closeStream") && profile->stream_id && header->stream_id == profile->stream_id && transaction == 0 &&
++			length == 1 && data[0] == AMF_NULL)
++			return ww_rtmp_profile_closed(rtmp);
++		return -EINVAL;
++	}
++
+ 	for (i = 0; i < sizeof(s_command_handler) / sizeof(s_command_handler[0]); i++)
+ 	{
+ 		if (0 == strcmp(command, s_command_handler[i].name))
+diff --git a/librtmp/source/rtmp-netconnection.c b/librtmp/source/rtmp-netconnection.c
+index 1ba7be4..c0f95df 100644
+--- a/librtmp/source/rtmp-netconnection.c
++++ b/librtmp/source/rtmp-netconnection.c
+@@ -23,12 +23,12 @@ uint8_t* rtmp_netconnection_connect(uint8_t* out, size_t bytes, double transacti
+ 	out = AMFWriteNamedDouble(out, end, "videoCodecs", 11, connect->videoCodecs);
+ 	out = AMFWriteNamedDouble(out, end, "videoFunction", 13, connect->videoFunction);
+ 	out = AMFWriteNamedDouble(out, end, "objectEncoding", 14, connect->encoding);
+-	out = AMFWriteNamedDouble(out, end, "capsEx", 6, RTMP_CAPSEX_RECONNECT);
++	out = AMFWriteNamedDouble(out, end, "capsEx", 6, connect->capsEx);
+ 	out = AMFWriteObjectEnd(out, end);
+ 	return out;
+ }
+ 
+-uint8_t* rtmp_netconnection_connect_reply(uint8_t* out, size_t bytes, double transactionId, const char* fmsver, double capabilities, const char* code, const char* level, const char* description, double encoding)
++uint8_t* rtmp_netconnection_connect_reply(uint8_t* out, size_t bytes, double transactionId, const char* fmsver, double capabilities, const char* code, const char* level, const char* description, double encoding, double caps_ex)
+ {
+ 	uint8_t* end = out + bytes;
+ 	const char* command = "_result";
+@@ -46,7 +46,7 @@ uint8_t* rtmp_netconnection_connect_reply(uint8_t* out, size_t bytes, double tra
+ 	out = AMFWriteNamedString(out, end, "code", 4, code, strlen(code));
+ 	out = AMFWriteNamedString(out, end, "description", 11, description, strlen(description));
+ 	out = AMFWriteNamedDouble(out, end, "objectEncoding", 14, encoding);
+-	out = AMFWriteNamedDouble(out, end, "capsEx", 6, RTMP_CAPSEX_RECONNECT);
++	out = AMFWriteNamedDouble(out, end, "capsEx", 6, caps_ex);
+ 	out = AMFWriteObjectEnd(out, end);
+ 	return out;
+ }
+diff --git a/librtmp/source/rtmp-server.c b/librtmp/source/rtmp-server.c
+index 4af0c5a..e0233f0 100644
+--- a/librtmp/source/rtmp-server.c
++++ b/librtmp/source/rtmp-server.c
+@@ -6,6 +6,8 @@
+ #include "rtmp-netconnection.h"
+ #include "rtmp-control-message.h"
+ #include "rtmp-event.h"
++#include "ww-rtmp-profile.h"
++#include "wmem.h"
+ #include <errno.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -70,10 +72,13 @@ static int rtmp_server_send_onstatus(struct rtmp_server_t* ctx, double transacti
+ static int rtmp_server_send_handshake(struct rtmp_server_t* ctx)
+ {
+ 	int n, r;
++	const uint32_t received_at = (uint32_t)time(NULL) * 1000U;
+ 	n = rtmp_handshake_s0(ctx->handshake, RTMP_VERSION);
+-	n += rtmp_handshake_s1(ctx->handshake + n, (uint32_t)time(NULL), ctx->payload, RTMP_HANDSHAKE_SIZE);
+-	n += rtmp_handshake_s2(ctx->handshake + n, (uint32_t)time(NULL), ctx->payload, RTMP_HANDSHAKE_SIZE);
++	n += rtmp_handshake_s1(ctx->handshake + n, received_at, ctx->payload, RTMP_HANDSHAKE_SIZE);
++	n += rtmp_handshake_s2(ctx->handshake + n, received_at, ctx->payload, RTMP_HANDSHAKE_SIZE);
+ 	assert(n == 1 + RTMP_HANDSHAKE_SIZE + RTMP_HANDSHAKE_SIZE);
++	if (ctx->rtmp.profile)
++		return ww_rtmp_profile_output(&ctx->rtmp, kRtmpOutputHandshake, ctx->handshake, n, NULL, 0);
+ 	r = ctx->handler.send(ctx->param, ctx->handshake, n, NULL, 0);
+ 	return n == r ? 0 : r;
+ }
+@@ -133,6 +138,8 @@ static int rtmp_server_send_stream_begin(struct rtmp_server_t* ctx)
+ {
+ 	int n, r;
+ 	n = rtmp_event_stream_begin(ctx->payload, sizeof(ctx->payload), ctx->stream_id);
++	if (ctx->rtmp.profile)
++		return ww_rtmp_profile_output(&ctx->rtmp, kRtmpOutputOrdered, ctx->payload, n, NULL, 0);
+ 	r = ctx->handler.send(ctx->param, ctx->payload, n, NULL, 0);
+ 	return n == r ? 0 : r;
+ }
+@@ -189,20 +196,30 @@ static int rtmp_server_onconnect(void* param, int r, double transaction, const s
+ 	int n;
+ 	struct rtmp_server_t* ctx;
+ 	ctx = (struct rtmp_server_t*)param;
+-	assert((double)RTMP_ENCODING_AMF_0 == connect->encoding || (double)RTMP_ENCODING_AMF_3 == connect->encoding);
++	if (connect->encoding != RTMP_ENCODING_AMF_0 && connect->encoding != RTMP_ENCODING_AMF_3)
++		return -EINVAL;
+ 
+ 	if (0 == r)
+ 	{
+-		assert(1 == (int)transaction);
++		if (transaction != RTMP_TRANSACTION_CONNECT)
++			return -EINVAL;
+ 		memcpy(&ctx->info, connect, sizeof(ctx->info));
+-		r = rtmp_server_send_server_bandwidth(ctx);
+-		r = 0 == r ? rtmp_server_send_client_bandwidth(ctx) : r;
+-		r = 0 == r ? rtmp_server_send_set_chunk_size(ctx) : r;
++		if (ctx->rtmp.profile)
++		{
++			r = ww_rtmp_profile_advertise(&ctx->rtmp);
++			r = r == 0 ? ww_rtmp_profile_set_chunk_size(&ctx->rtmp) : r;
++		}
++		else
++		{
++			r = rtmp_server_send_server_bandwidth(ctx);
++			r = 0 == r ? rtmp_server_send_client_bandwidth(ctx) : r;
++			r = 0 == r ? rtmp_server_send_set_chunk_size(ctx) : r;
++		}
+ 	}
+ 
+ 	if(0 == r)
+ 	{
+-		n = (int)(rtmp_netconnection_connect_reply(ctx->payload, sizeof(ctx->payload), transaction, RTMP_FMSVER, RTMP_CAPABILITIES, "NetConnection.Connect.Success", RTMP_LEVEL_STATUS, "Connection Succeeded.", connect->encoding) - ctx->payload);
++		n = (int)(rtmp_netconnection_connect_reply(ctx->payload, sizeof(ctx->payload), transaction, RTMP_FMSVER, RTMP_CAPABILITIES, "NetConnection.Connect.Success", RTMP_LEVEL_STATUS, "Connection Succeeded.", connect->encoding, ctx->rtmp.profile ? 0 : RTMP_CAPSEX_RECONNECT) - ctx->payload);
+ 		r = rtmp_server_send_control(&ctx->rtmp, ctx->payload, n, 0);
+ 	}
+ 
+@@ -219,6 +236,8 @@ static int rtmp_server_oncreate_stream(void* param, int r, double transaction)
+ 	if (0 == r)
+ 	{
+ 		ctx->stream_id = 1;
++		if (ctx->rtmp.profile)
++			ctx->rtmp.profile->stream_id = ctx->stream_id;
+ 		//r = ctx->handler.oncreate_stream(ctx->param, &ctx->stream_id);
+ 		if (0 == r)
+ 			r = (int)(rtmp_netconnection_create_stream_reply(ctx->payload, sizeof(ctx->payload), transaction, ctx->stream_id) - ctx->payload);
+@@ -278,10 +297,20 @@ static int rtmp_server_onpublish(void* param, int r, double transaction, const c
+ 	{
+ 		ctx->start.play = RTMP_SERVER_ONPUBLISH;
+ 		ctx->start.transaction = transaction;
+-		snprintf(ctx->stream_name, sizeof(ctx->stream_name) - 1, "%s", stream_name ? stream_name : "");
+-		snprintf(ctx->stream_type, sizeof(ctx->stream_type) - 1, "%s", stream_type ? stream_type : "");
++		snprintf(ctx->stream_name, sizeof(ctx->stream_name), "%s", stream_name ? stream_name : "");
++		snprintf(ctx->stream_type, sizeof(ctx->stream_type), "%s", stream_type ? stream_type : "");
+ 
+-		r = ctx->handler.onpublish(ctx->param, ctx->info.app, stream_name, stream_type);
++		if (ctx->rtmp.profile)
++		{
++			ctx->rtmp.profile->phase = kRtmpPublishing;
++			r = ww_rtmp_profile_event(&ctx->rtmp, kRtmpEventPublish, ctx->stream_id, 0);
++			if (r != 0) return r;
++			r = RTMP_SERVER_ASYNC_START;
++		}
++		else
++		{
++			r = ctx->handler.onpublish(ctx->param, ctx->info.app, stream_name, stream_type);
++		}
+ 		if (RTMP_SERVER_ASYNC_START == r || 0 == ctx->start.play)
+ 			return RTMP_SERVER_ASYNC_START == r ? 0 : r;
+ 
+@@ -303,8 +332,8 @@ static int rtmp_server_onplay(void* param, int r, double transaction, const char
+ 		ctx->start.play = RTMP_SERVER_ONPLAY;
+ 		ctx->start.reset = reset;
+ 		ctx->start.transaction = transaction;
+-		snprintf(ctx->stream_name, sizeof(ctx->stream_name) - 1, "%s", stream_name ? stream_name : "");
+-		snprintf(ctx->stream_type, sizeof(ctx->stream_type) - 1, "%s", -1 == start ? RTMP_STREAM_LIVE : RTMP_STREAM_RECORD);
++		snprintf(ctx->stream_name, sizeof(ctx->stream_name), "%s", stream_name ? stream_name : "");
++		snprintf(ctx->stream_type, sizeof(ctx->stream_type), "%s", -1 == start ? RTMP_STREAM_LIVE : RTMP_STREAM_RECORD);
+ 
+ 		r = ctx->handler.onplay(ctx->param, ctx->info.app, stream_name, start, duration, reset);
+ 		if (RTMP_SERVER_ASYNC_START == r || 0 == ctx->start.play)
+@@ -401,9 +430,7 @@ static int rtmp_server_send(void* param, const uint8_t* header, uint32_t headerB
+ struct rtmp_server_t* rtmp_server_create(void* param, const struct rtmp_server_handler_t* handler)
+ {
+ 	struct rtmp_server_t* ctx;
+-	ctx = (struct rtmp_server_t*)calloc(1, sizeof(*ctx));
+-	if (NULL == ctx)
+-		return NULL;
++	ctx = memoryAllocateZero(sizeof(*ctx));
+ 
+ 	memcpy(&ctx->handler, handler, sizeof(ctx->handler));
+ 	ctx->param = param;
+@@ -447,6 +474,12 @@ struct rtmp_server_t* rtmp_server_create(void* param, const struct rtmp_server_h
+ 	return ctx;
+ }
+ 
++struct rtmp_t* ww_rtmp_server_profile(struct rtmp_server_t* ctx, struct ww_rtmp_engine* profile)
++{
++	ctx->rtmp.profile = profile;
++	return &ctx->rtmp;
++}
++
+ void rtmp_server_destroy(struct rtmp_server_t* ctx)
+ {
+ 	size_t i;
+@@ -455,16 +488,16 @@ void rtmp_server_destroy(struct rtmp_server_t* ctx)
+ 	{
+ 		assert(NULL == ctx->rtmp.out_packets[i].payload);
+ 		if (ctx->rtmp.in_packets[i].payload)
+-			free(ctx->rtmp.in_packets[i].payload);
++			memoryFree(ctx->rtmp.in_packets[i].payload);
+ 	}
+ 
+ 	if (ctx->rtmp.chunk_write_header.ptr && ctx->rtmp.chunk_write_header.ptr != ctx->rtmp.chunk_write_header.bufer)
+ 	{
+-		free(ctx->rtmp.chunk_write_header.ptr);
++		memoryFree(ctx->rtmp.chunk_write_header.ptr);
+ 		ctx->rtmp.chunk_write_header.capacity = 0;
+ 	}
+ 
+-	free(ctx);
++	memoryFree(ctx);
+ }
+ 
+ int rtmp_server_getstate(struct rtmp_server_t* ctx)
+@@ -486,7 +519,7 @@ int rtmp_server_input(struct rtmp_server_t* ctx, const uint8_t* data, size_t byt
+ 		case RTMP_HANDSHAKE_UNINIT: // C0: version
+ 			ctx->handshake_state = RTMP_HANDSHAKE_0;
+ 			ctx->handshake_bytes = 0; // clear buffer
+-			assert(*p <= RTMP_VERSION);
++			if (*p != RTMP_VERSION) return -EINVAL;
+ 			bytes -= 1;
+ 			p += 1;
+ 			break;
+@@ -527,7 +560,10 @@ int rtmp_server_input(struct rtmp_server_t* ctx, const uint8_t* data, size_t byt
+ 
+ 		case RTMP_HANDSHAKE_2:
+ 		default:
+-			rtmp_server_send_acknowledgement(ctx, bytes);
++			if (ctx->rtmp.profile)
++				return ww_rtmp_profile_input(&ctx->rtmp, p, bytes);
++			r = rtmp_server_send_acknowledgement(ctx, bytes);
++			if (r != 0) return r;
+ 			return rtmp_chunk_read(&ctx->rtmp, (const uint8_t*)p, bytes);
+ 		}
+ 	}
+@@ -579,6 +615,8 @@ int rtmp_server_start(rtmp_server_t* rtmp, int r, const char* msg)
+ 	}
+ 
+ 	rtmp->start.play = 0;
++	if (r == 0 && rtmp->rtmp.profile)
++		return ww_rtmp_profile_ready(&rtmp->rtmp);
+ 	return r;
+ }
+ 
