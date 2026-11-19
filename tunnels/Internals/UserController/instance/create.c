@@ -84,7 +84,7 @@ static bool parseSettings(usercontroller_tstate_t *ts, node_t *node, const cJSON
 
 tunnel_t *usercontrollerTunnelCreate(node_t *node)
 {
-    tunnel_t *t = tunnelCreate(node, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t));
+    tunnel_t *t = tunnelCreate(node, sizeof(usercontroller_tstate_t), kLineStateSize);
     if (! t)
     {
         return NULL;
@@ -100,6 +100,7 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     t->fnPauseU   = &usercontrollerTunnelUpStreamPause;
     t->fnResumeU  = &usercontrollerTunnelUpStreamResume;
 
+    t->fnEstD     = &usercontrollerTunnelDownStreamEst;
     t->fnInitD    = &usercontrollerTunnelDownStreamInit;
     t->fnFinD     = &usercontrollerTunnelDownStreamFinish;
     t->fnPayloadD = &usercontrollerTunnelDownStreamPayload;
@@ -109,6 +110,7 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
     t->onPrepare        = &usercontrollerTunnelOnPrepair;
     t->onStart          = &usercontrollerTunnelOnStart;
     t->onQuiesceRequest = &usercontrollerTunnelOnQuiesceRequest;
+    t->onWorkerStop     = &usercontrollerTunnelOnWorkerStop;
     t->onWorkerQuiesce  = &usercontrollerTunnelOnWorkerQuiesce;
     t->onDestroy        = &usercontrollerTunnelDestroy;
 

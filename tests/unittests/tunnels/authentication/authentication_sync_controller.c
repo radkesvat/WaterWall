@@ -23,6 +23,17 @@ static void reverseBorrowerFinished(tunnel_t *t, line_t *l)
     ++reverse_borrower_finishes;
 }
 
+/* The onward datagram neighbor causes the source to send Finish on their
+ * common borrowed line. Its creator can destroy the line after this returns. */
+static void finishDatagramSource(tunnel_t *next, line_t *line)
+{
+    tunnel_t                *controller = next->prev;
+    usercontroller_lstate_t *state      = usercontrollerGetLineState(controller, line);
+    require(state->phase == kUserControllerNotifyingOwner && ! state->managed,
+            "internal close kept the account reservation during Finish");
+    tunnelUpStreamFin(controller, line);
+}
+
 static void initialized(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -51,6 +62,12 @@ static void consumed(tunnel_t *t, line_t *l, sbuf_t *b)
     }
 }
 
+static void finishDatagramSourceDuringPayload(tunnel_t *next, line_t *line, sbuf_t *payload)
+{
+    consumed(next, line, payload);
+    tunnelUpStreamFin(next->prev, line);
+}
+
 static void paused(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -65,7 +82,7 @@ static void resumed(tunnel_t *t, line_t *l)
     if (check_resume_progress)
     {
         check_resume_progress           = false;
-        usercontroller_lstate_t *ls     = lineGetState(l, controller);
+        usercontroller_lstate_t *ls     = usercontrollerGetLineState(controller, l);
         traffic_shaper_t        *shaper = &ls->directions[t == controller->prev ? 0 : 1].shaper;
         require(trafficshaperPending(shaper) != 0 && (shaper->continuation != NULL || shaper->timer != NULL),
                 "external Resume must schedule retained datagrams before notifying producer");
@@ -79,7 +96,7 @@ static void resumed(tunnel_t *t, line_t *l)
 
 tunnel_t *authTestControllerCreate(tunnel_t *auth)
 {
-    tunnel_t *controller = tunnelCreate(NULL, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t));
+    tunnel_t *controller = tunnelCreate(NULL, sizeof(usercontroller_tstate_t), kLineStateSize);
     tunnel_t *head = tunnelCreate(NULL, 0, 0), *tail = tunnelCreate(NULL, 0, 0);
     require(controller != NULL && head != NULL && tail != NULL, "controller fixture allocation");
     head->fnFinD           = finished;
@@ -214,7 +231,7 @@ static void controllerConsumerPressure(tunnel_t *t, line_t *l, bool upstream, bo
 
 static size_t controllerDatagramAllowance(tunnel_t *t, line_t *l, size_t *charge)
 {
-    usercontroller_lstate_t   *ls     = lineGetState(l, t);
+    usercontroller_lstate_t   *ls     = usercontrollerGetLineState(t, l);
     const buffer_budget_cost_t limits = bufferbudgetGetLimits(&ls->budget);
     const buffer_budget_cost_t used   = bufferbudgetGetUsage(&ls->budget);
     require(used.bytes == 0 && used.charge == 0, "datagram allowance fixture retained earlier input");
@@ -245,7 +262,7 @@ static void controllerDatagramPressureCases(tunnel_t *auth, tunnel_chain_t *chai
         for (size_t i = 0; i < allowance; ++i)
             controllerSend(a, first, 1, 'q', upstream);
         controllerSend(a, first, 1, 'x', upstream);
-        usercontroller_lstate_t *ls = lineGetState(first, a);
+        usercontroller_lstate_t *ls = usercontrollerGetLineState(a, first);
         require(lineIsAlive(first) && trafficshaperPending(&ls->directions[direction].shaper) == allowance &&
                     ls->budget.used.bytes == allowance && ls->budget.used.charge == allowance * charge &&
                     ls->budget.limits.charge - ls->budget.used.charge < charge && pauses == 0 && resumes == 0,
@@ -283,7 +300,7 @@ static void controllerDatagramPressureCases(tunnel_t *auth, tunnel_chain_t *chai
         advance(1000);
         require(frames == 1 && frame_marks[0] == 'b' && delivered[direction] == 10 && pauses == 1 && resumes == 0,
                 "consumer Pause failed to gate datagrams, yield its fair turn, or forward producer pressure");
-        ls = lineGetState(first, a);
+        ls = usercontrollerGetLineState(a, first);
         require(ls->directions[direction].shaper.timer == NULL && ls->directions[direction].shaper.continuation == NULL,
                 "externally paused datagrams must not poll for credit");
         check_resume_progress = true;
@@ -324,6 +341,110 @@ static void controllerDatagramPressureCases(tunnel_t *auth, tunnel_chain_t *chai
     }
 }
 
+static void controllerFinalDrain(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned), bool large)
+{
+    controllerTraceReset();
+    controllerPolicy(auth, 1, 1, 3);
+    tunnel_t *t     = authTestControllerCreate(auth);
+    t->prev->fnFinD = reverseBorrowerFinished;
+    t->next->fnFinU = finished;
+    line_t *source  = lineCreate(chain->line_pools, 0);
+    tunnelDownStreamInit(t, source);
+    const user_handle_t handle = {.generation = authenticationclientUsersGeneration(auth), .user_id = 42};
+    lineAddUser(source, &handle, NULL, NULL);
+    require(usercontrollerTunnelTryManageLine(t, source) == kUserAdmissionOk, "late stream promotion before close");
+    controllerConsumerPressure(t, source, false, true);
+    const unsigned first_length = large ? 32768U : 3U;
+    const unsigned expected     = large ? 16384U : 3U;
+    controllerSend(t, source, first_length, 'a', false);
+    controllerSend(t, source, 3, 'b', false);
+    /* A failed ordinary credit commit can leave a prepared prefix ahead of the FIFO. */
+    traffic_shaper_t *shaper = &usercontrollerGetLineState(t, source)->directions[1].shaper;
+    if (! large)
+        shaper->candidate = bufferqueuePopFront(&shaper->queue);
+    require(shaper->retained_cost.bytes == first_length + 3U && controllerStats(auth).traffic.u == 0,
+            "prepared and queued bytes must remain uncharged before close");
+    reverse_borrower_finishes = 0;
+    tunnelDownStreamFin(t, source);
+    require(lineIsAlive(source) && reverse_borrower_finishes == 1 && delivered[1] == expected && frames == 1 &&
+                frame_marks[0] == 'a' && controllerStats(auth).traffic.u == expected && resumes == 0,
+            "reverse Finish must deliver the prepared quota-ending buffer immediately and close once");
+    lineDestroy(source);
+    advance(1000);
+    require(frames == 1 && controllerStats(auth).traffic.u == expected,
+            "late work delivered or charged the discarded suffix");
+    authTestControllerDestroy(t);
+}
+
+static void controllerFinishWithFullSharedBudget(tunnel_t *auth, tunnel_chain_t *chain)
+{
+    controllerTraceReset();
+    controllerPolicy(auth, 1, 1, 0);
+    tunnel_t *t    = authTestControllerCreate(auth);
+    line_t   *line = authTestControllerOpen(t, chain);
+    controllerConsumerPressure(t, line, true, true);
+    controllerConsumerPressure(t, line, false, true);
+    controllerSend(t, line, 32768, 'a', true);
+
+    /* Consume the remaining shared allocation budget with reverse-direction
+     * buffers. Once their destination closes they can no longer be delivered. */
+    usercontroller_lstate_t *state = usercontrollerGetLineState(t, line);
+    buffer_pool_fit_t        small;
+    require(bufferpoolQueryBestFit(lineGetBufferPool(line), 1, 0, &small), "reverse buffer allocation geometry");
+    size_t count = (state->budget.limits.charge - state->budget.used.charge) / small.allocation_charge;
+    require(count > 0, "opposite direction must fit into the shared budget");
+    for (size_t i = 0; i < count; ++i)
+        controllerSend(t, line, 1, 'b', false);
+    require(frames == 0 && state->budget.limits.charge - state->budget.used.charge < small.allocation_charge,
+            "fixture must leave insufficient room to split the forward buffer");
+    t->next->fnFinU           = reverseBorrowerFinished;
+    reverse_borrower_finishes = 0;
+    tunnelUpStreamFin(t, line);
+    user_stat_t stats = controllerStats(auth);
+    require(lineIsAlive(line) && reverse_borrower_finishes == 1 && frames == 2 && delivered[0] == 32768 &&
+                delivered[1] == 0 && stats.traffic.u == 32768 && stats.traffic.d == 0,
+            "queued bytes for the finished sender prevented the surviving stream from flushing");
+    lineDestroy(line);
+    lineUnref(line);
+    authTestControllerDestroy(t);
+}
+
+static void finishStreamReceiverDuringPayload(tunnel_t *next, line_t *line, sbuf_t *payload)
+{
+    consumed(next, line, payload);
+    tunnelDownStreamFin(next->prev, line);
+}
+
+static void controllerInterruptedFinish(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned), bool disabled)
+{
+    controllerTraceReset();
+    controllerPolicy(auth, 1, 1, 0);
+    tunnel_t *t    = authTestControllerCreate(auth);
+    line_t   *line = authTestControllerOpen(t, chain);
+    controllerConsumerPressure(t, line, true, true);
+    controllerSend(t, line, 8, 'a', true);
+    controllerSend(t, line, 8, 'b', true);
+    if (disabled)
+    {
+        user_update_t update = {.mask = kUserUpdateEnabled, .enabled = false};
+        authTestControllerUpdateUser(auth, &update);
+    }
+    else
+        t->next->fnPayloadU = finishStreamReceiverDuringPayload;
+    t->next->fnFinU           = reverseBorrowerFinished;
+    reverse_borrower_finishes = 0;
+    tunnelUpStreamFin(t, line);
+    require(lineIsAlive(line) && reverse_borrower_finishes == (unsigned) disabled,
+            "source Finish was reflected or receiver received the wrong number of closes");
+    require(frames == (disabled ? 0U : 1U) && (disabled || frame_marks[0] == 'a') &&
+                controllerStats(auth).traffic.u == (disabled ? 0U : 8U),
+            "stream Finish forwarded or charged a buffer after peer close or account refusal");
+    lineDestroy(line);
+    lineUnref(line);
+    advance(1000);
+    authTestControllerDestroy(t);
+}
+
 void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, void (*advance)(unsigned))
 {
     /* Two controllers share one account burst. Physical callback direction and
@@ -356,12 +477,12 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     advance(1000);
     a     = authTestControllerCreate(auth);
     first = authTestControllerOpen(a, chain);
-    usercontrollerTunnelDownStreamPause(a, first);
-    usercontrollerTunnelDownStreamPause(a, first);
+    controllerConsumerPressure(a, first, true, true);
+    controllerConsumerPressure(a, first, true, true);
     controllerSend(a, first, 20, 'p', true);
     advance(1000);
     require(delivered[0] == 0 && controllerStats(auth).traffic.u == 0, "paused consumer received/charged queued bytes");
-    usercontrollerTunnelDownStreamResume(a, first);
+    controllerConsumerPressure(a, first, true, false);
     advance(0);
     require(delivered[0] == 10 && pauses == 1 && resumes == 0, "local and external pressure were not combined");
     close_in_resume = true;
@@ -391,14 +512,14 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
             "datagram split/merge or empty FIFO position");
     advance(1000);
     require(delivered[0] == 4 && frames == 3 && frame_marks[2] == 'y', "1 byte/s datagram progress");
-    usercontrollerTunnelDownStreamPause(a, first);
+    controllerConsumerPressure(a, first, true, true);
     size_t       charge;
     const size_t allowance = controllerDatagramAllowance(a, first, &charge);
     controllerSend(a, first, 1, 'q', true);
     for (size_t i = 1; i < allowance; ++i)
         controllerSend(a, first, 1, 'z', true);
     controllerSend(a, first, 1, 'x', true);
-    usercontroller_lstate_t *ls = lineGetState(first, a);
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(a, first);
     require(lineIsAlive(first) && trafficshaperPending(&ls->directions[0].shaper) == allowance &&
                 ls->budget.used.bytes == allowance && ls->budget.used.charge == allowance * charge,
             "datagram overflow did not preserve bounded accepted FIFO");
@@ -419,7 +540,7 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     controllerPolicy(auth, 100, 0, 0);
     a     = authTestControllerCreate(auth);
     first = authTestControllerOpen(a, chain);
-    usercontrollerTunnelDownStreamPause(a, first);
+    controllerConsumerPressure(a, first, true, true);
     controllerSend(a, first, 1024U * 1024U + 1U, 'o', true);
     require(! lineIsAlive(first) && controllerStats(auth).traffic.u == 0, "stream overflow leaked or charged input");
     lineUnref(first);
@@ -432,6 +553,26 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
             "quota-ending chunk must be charged and forwarded once before close");
     lineUnref(first);
     authTestControllerDestroy(a);
+
+    for (unsigned finish_in_payload = 0; finish_in_payload < 2; ++finish_in_payload)
+    {
+        controllerTraceReset();
+        controllerPolicy(auth, 0, 0, 3);
+        a                                                                   = authTestControllerCreate(auth);
+        ((usercontroller_tstate_t *) tunnelGetState(a))->fixed_payload_mode = kUserControllerPayloadDatagram;
+        if (finish_in_payload)
+            a->next->fnPayloadU = finishDatagramSourceDuringPayload;
+        else
+            a->next->fnFinU = finishDatagramSource;
+        first = authTestControllerOpen(a, chain);
+        controllerSend(a, first, 5, 'q', true);
+        require(lineIsAlive(first) && usercontrollerGetLineState(a, first)->phase == kUserControllerClosed &&
+                    delivered[0] == 5 && controllerStats(auth).traffic.u == 5,
+                "datagram quota close reflected Finish to the source or lost its committed delivery");
+        lineDestroy(first);
+        lineUnref(first);
+        authTestControllerDestroy(a);
+    }
 
     /* A consumer can close during Payload, including a prepared final chunk.
      * The helper's physical reference must never grant access to dead state. */
@@ -473,7 +614,7 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     first = authTestControllerOpen(a, chain);
     controllerSend(a, first, 11, 'u', true);
     controllerSend(a, first, 11, 'd', false);
-    ls = lineGetState(first, a);
+    ls = usercontrollerGetLineState(a, first);
     require(ls->directions[0].shaper.continuation != NULL && ls->directions[1].shaper.continuation != NULL,
             "both directions must track their admitted continuations");
     usercontrollerTunnelOnQuiesceRequest(a, wwLifecycleProcessShutdown());
@@ -483,6 +624,12 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     advance(0); // Canceled tasks settle independent tokens after local state is gone.
     require(delivered[0] == 0 && delivered[1] == 0 && controllerStats(auth).traffic.u == 0,
             "quiescence delivered or charged discarded continuation work");
+
+    controllerFinalDrain(auth, chain, advance, false);
+    controllerFinalDrain(auth, chain, advance, true);
+    controllerFinishWithFullSharedBudget(auth, chain);
+    controllerInterruptedFinish(auth, chain, advance, false);
+    controllerInterruptedFinish(auth, chain, advance, true);
 
     controllerPolicy(auth, 100, 0, 0);
     a     = authTestControllerCreate(auth);

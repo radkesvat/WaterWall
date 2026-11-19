@@ -278,8 +278,14 @@ wall/accounting clock metadata; unchanged pulls never extend an existing countdo
 - A per-worker sweep timer checks open managed lines even when they are idle, so disabled, expired, removed, or
   over-quota users are cut off without waiting for another payload.
 
-- On `Finish` from either side, it releases the user's reserved connection and IP slot, destroys its own line state, and
-  propagates the finish to the opposite side, following Waterwall's directional-finish rule.
+- On orderly stream `Finish`, the controller hands its accepted bytes to the
+  surviving neighbor in order on the original line, without waiting for
+  bandwidth credit, a fair turn or `Resume`. This can produce a final burst.
+  Each queued stream slice is at most 16 KiB. The controller checks the user's
+  eligibility and charges each permitted slice at handoff. A slice that reaches
+  or crosses quota is the last one sent. Receiver closure stops delivery
+  immediately. The connection and IP reservation are released during `Finish`.
+  Datagram close and worker shutdown release any remaining queue.
 
 ### Programmatic Promotion API
 
@@ -312,7 +318,7 @@ Contract:
   nothing, so retrying later is safe.
 - Call it on the line's owner worker (`lineIsOnCurrentWorker(l)`), and only on a normal line that has already traversed
   this `UserController` instance. It retains the payload mode saved during Init. Do not call it on packet lines.
-- Once a line is managed this way, traffic accounting, the idle sweep, and `Finish`-time slot release all apply exactly
+- Once a line is managed this way, traffic accounting, the idle sweep, and slot release at settlement all apply exactly
   as they do for a line admitted at `Init`; no extra teardown wiring is needed on the caller side.
 
 Example sketch (inside the authenticating node, after a successful handshake on `line`):

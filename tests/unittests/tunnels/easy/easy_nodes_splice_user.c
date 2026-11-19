@@ -89,7 +89,7 @@ void testUserControllerSplice(bool splice)
         for (unsigned managed = 0; managed < 2; ++managed)
         {
             easy_fixture_t f;
-            easySetup(&f, tunnelCreate(NULL, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t)));
+            easySetup(&f, tunnelCreate(NULL, sizeof(usercontroller_tstate_t), kLineStateSize));
             if (reverse)
             {
                 // Reverse Init describes a next-side creator. Match the exact
@@ -98,11 +98,14 @@ void testUserControllerSplice(bool splice)
                 f.prev->fnFinD = userReverseFinish;
                 f.next->fnFinU = userReverseFinish;
             }
-            usercontroller_lstate_t *ls = lineGetState(f.line, f.node);
-            usercontrollerLinestateInitialize(ls, reverse);
-            ls->payload_mode = kUserControllerPayloadStream;
-            usercontrollerBandwidthInitialize(f.node, f.line);
-            ls->managed = managed;
+            usercontroller_worker_state_t worker   = {0};
+            usercontroller_tstate_t      *settings = tunnelGetState(f.node);
+            settings->fixed_payload_mode           = kUserControllerPayloadStream;
+            settings->worker_states                = &worker;
+            settings->worker_count                 = 1;
+            usercontrollerOpenLine(f.node, f.line, reverse);
+            usercontroller_lstate_t *ls = usercontrollerGetLineState(f.node, f.line);
+            ls->managed                 = managed;
             upload = download = account_calls = releases = 0;
             reject                                       = false;
             sbuf_t *buf                                  = easyPayload(splice);
@@ -130,6 +133,10 @@ void testUserControllerSplice(bool splice)
                 easyRequire(f.line == NULL && f.finishes == 2 && releases == 1,
                             "rejection must dispose then close/release once");
             }
+            else if (reverse)
+                usercontrollerTunnelDownStreamFinish(f.node, f.line);
+            else
+                usercontrollerTunnelUpStreamFinish(f.node, f.line);
             easyTeardown(&f);
         }
     }
