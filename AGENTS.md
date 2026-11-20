@@ -1,8 +1,7 @@
 # AGENTS.md — WaterWall
 
-Policy for AI agents and contributors to **WaterWall**, a modular chain-based C
-tunneling runtime. Contracts/examples:
-`WaterWall-Docs/docs/05-devguides/`. Keep this kernel below 16 KiB.
+Policy for WaterWall, a modular chain-based C tunneling runtime. Keep below 16 KiB.
+See `WaterWall-Docs/docs/05-devguides/` for contracts and examples.
 
 ## 1. Task Authority, Scope, And Evidence
 
@@ -24,36 +23,35 @@ tunneling runtime. Contracts/examples:
 - Preserve unrelated dirty-worktree changes; never discard, overwrite, or reformat
   them.
 
-### Where the tunnel contracts apply
+### Tunnel contract scope
 
-Domain contracts apply to `ww/net/`, `tunnels/`, and their callers. Unrelated docs,
-builds, packaging, scripts, and tooling use only relevant repository-wide rules.
-Preserve every **applicable** invariant without forcing irrelevant tunnel analysis.
+Tunnel contracts cover `ww/net/`, `tunnels/`, and their callers. Unrelated docs,
+builds, packaging, scripts, and tooling use relevant repository-wide rules.
 
 ### Durable project knowledge
 
-The Developer Guide is durable memory, not task history. Update its canonical
-section for in-scope contract changes or confirmed reusable knowledge whose
-omission would mislead; docs do not authorize redesign.
+In the same implementation task, update the canonical guide section for in-scope
+contract changes or confirmed reusable knowledge whose omission would mislead.
+Check `git -C WaterWall-Docs status --short` before finishing such work.
+Read-only tasks propose edits. Implementers may report unrelated findings.
 
-Never record speculation, pending ideas, review history, artifacts, or one-off
-details as contracts or promote patterns without confirming intent. Report
-conflicting or unclear evidence.
+Keep speculation, pending ideas, review history, artifacts, and one-offs out of
+contracts. Confirm intent before promoting patterns. Report unclear or conflicting
+evidence. Version labels, migration notes, and backward-compatibility commentary
+require an explicit maintainer request.
 
-Add version labels (`v2`, `v3`, etc.), migration notes, or backward-compatibility
-commentary only on explicit maintainer request, not merely because a project
-structure, node, or wire format changes.
-
-Read-only tasks only propose doc edits. Implementation may sync related guide text
-and report unrelated findings. Change `AGENTS.md` only when authorized work changes
-always-on policy, a catastrophic guardrail, or routing, using a short rule/link;
-otherwise the guide is enough. Explicit contract/lifecycle redesign updates code,
-callers, guide text, and tests.
+Docs cannot authorize redesign. Explicit contract/lifecycle redesign updates code,
+callers, guide, and tests. Limit `AGENTS.md` edits to short rules or links for
+authorized changes to always-on policy, catastrophic guardrails, or routing.
 
 ## 2. Repository Map And Mandatory Reading
 
-Networking, buffers, and nodes live in `ww/net/`, `ww/bufio/`, and `tunnels/`.
-`tests/` holds native/integration tests. Build presets use `CMakePresets.json` and
+Before substantive work (reviews included), reuse the `WaterWall-Docs/` checkout with local edits intact.
+If absent, run `git clone https://github.com/radkesvat/WaterWall-Docs.git WaterWall-Docs`
+from the WaterWall root. On failure, name the unavailable required contracts.
+
+`ww/net/`, `ww/bufio/`, and `tunnels/` hold networking, buffers, and nodes.
+`tests/` holds native/integration tests. Presets use `CMakePresets.json` and
 `ww/cmake/preset/`. Node settings use `WaterWall-Docs/docs/02-noderefs/`.
 
 Read applicable [reference contracts](WaterWall-Docs/docs/05-devguides/reference/).
