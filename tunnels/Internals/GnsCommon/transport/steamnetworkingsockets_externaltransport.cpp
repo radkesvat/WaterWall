@@ -69,7 +69,7 @@ TRACELOGGING_DEFINE_PROVIDER(
 
 namespace SteamNetworkingSocketsLib {
 
-// [COPIED 93-102]  (g_nSendECNAuto dropped: no ECN without a socket)
+// [ADAPTED 93-102]  No ECN socket. The service thread samples the manual poll flag outside the global lock.
 constexpr int k_msMaxPollWait = 1000;
 
 // There is no socket buffer any more.  The only remaining reader is
@@ -78,7 +78,7 @@ constexpr int k_cbDefaultUDPSocketBufferSize = 256*1024;
 int g_cbUDPSocketBufferSize = k_cbDefaultUDPSocketBufferSize;
 
 std::atomic<int> s_nLowLevelSupportRefCount(0);
-static volatile bool s_bManualPollMode;
+static std::atomic<bool> s_bManualPollMode{false};
 
 // [ADAPTED 104-165]  Mock network branches removed.
 int ClassifyIP( const CIPAddress &ip )
@@ -404,7 +404,8 @@ static bool ServiceThreadWait( int nMaxTimeoutMS, bool bManualPoll )
 	FlushSystemSpew();
 
 	// Shutdown request?
-	if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode != bManualPoll )
+	if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0
+		|| s_bManualPollMode.load(std::memory_order_relaxed) != bManualPoll )
 		return false; // ABORT THREAD
 
 	// [NEW] Wait for us to be asked to wake up.  A wake request that arrived
@@ -428,7 +429,8 @@ static bool ServiceThreadWait( int nMaxTimeoutMS, bool bManualPoll )
 		// Shutdown request?  We've potentially been waiting a long time.
 		// Don't attempt to grab the lock again if we know we want to shutdown,
 		// that is just a waste of time.
-		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode != bManualPoll )
+		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0
+			|| s_bManualPollMode.load(std::memory_order_relaxed) != bManualPoll )
 			return false;
 
 		// Try to acquire the lock.  But don't wait forever, in case the other thread has
@@ -532,7 +534,8 @@ static bool SteamNetworkingSockets_InternalPoll( int msWait, bool bManualPoll )
 	AssertGlobalLockHeldExactlyOnce();
 
 	// Shutdown request?
-	if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode != bManualPoll )
+	if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0
+		|| s_bManualPollMode.load(std::memory_order_relaxed) != bManualPoll )
 	{
 		SteamNetworkingGlobalLock::Unlock();
 		return false; // Shutdown request, we have released the lock
@@ -591,7 +594,7 @@ static void SteamNetworkingThreadProc()
 	// where we want to shut down immediately after starting the thread
 	do
 	{
-		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode )
+		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode.load(std::memory_order_relaxed) )
 			return;
 	} while ( !SteamNetworkingGlobalLock::TryLock( "ServiceThread", 10 ) );
 
@@ -605,7 +608,7 @@ static void SteamNetworkingThreadProc()
 	while ( SteamNetworkingSockets_InternalPoll( 5000, false ) )
 	{
 		// If they activate manual poll mode, then bail!
-		if ( s_bManualPollMode )
+		if ( s_bManualPollMode.load(std::memory_order_relaxed) )
 		{
 			SteamNetworkingGlobalLock::Unlock();
 			break;
@@ -619,7 +622,7 @@ static void SteamNetworkingThreadProc()
 static void StopServiceThread()
 {
 	// They should have set some sort of flag that will cause us the thread to stop
-	Assert( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) == 0 || s_bManualPollMode );
+	Assert( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) == 0 || s_bManualPollMode.load(std::memory_order_relaxed) );
 
 	// Send wake up signal
 	WakeServiceThread();
@@ -888,7 +891,7 @@ bool BSteamNetworkingSocketsLowLevelAddRef( SteamNetworkingErrMsg &errMsg )
 	s_nLowLevelSupportRefCount.fetch_add(1, std::memory_order_acq_rel);
 
 	// Make sure the thread is running, if it should be
-	if ( !s_bManualPollMode && !s_pServiceThread )
+	if ( !s_bManualPollMode.load(std::memory_order_relaxed) && !s_pServiceThread )
 		s_pServiceThread = new std::thread( SteamNetworkingThreadProc );
 
 	// Install an axexit handler, so that if static destruction is triggered without
@@ -988,19 +991,19 @@ bool GetLocalAddresses( CUtlVector<LocalAddress_t> *pAddrs )
 
 using namespace SteamNetworkingSocketsLib;
 
-// [COPIED 4291-4343]
+// [ADAPTED 4291-4343]  Serialize mode changes and publish them to polls outside the global lock.
 STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetManualPollMode( bool bFlag )
 {
-	if ( s_bManualPollMode == bFlag )
-		return;
 	SteamNetworkingGlobalLock scopeLock( "SteamNetworkingSockets_SetManualPollMode" );
-	s_bManualPollMode = bFlag;
+	if ( s_bManualPollMode.load(std::memory_order_relaxed) == bFlag )
+		return;
+	s_bManualPollMode.store(bFlag, std::memory_order_relaxed);
 
 	// Check for starting/stopping the thread
 	if ( s_pServiceThread )
 	{
 		// Thread is active.  Should it be?
-		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || s_bManualPollMode )
+		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) <= 0 || bFlag )
 		{
 			SpewMsg( "Service thread is running, and manual poll mode actiavted.  Stopping service thread.\n" );
 			StopServiceThread();
@@ -1008,7 +1011,7 @@ STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetManualPollMode( 
 	}
 	else
 	{
-		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) > 0 && !s_bManualPollMode )
+		if ( s_nLowLevelSupportRefCount.load(std::memory_order_acquire) > 0 && !bFlag )
 		{
 			// Start up the thread
 			SpewMsg( "Service thread is not running, and manual poll mode was turned off, starting service thread.\n" );
@@ -1019,7 +1022,7 @@ STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetManualPollMode( 
 
 STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_Poll( int msMaxWaitTime )
 {
-	if ( !s_bManualPollMode )
+	if ( !s_bManualPollMode.load(std::memory_order_relaxed) )
 	{
 		AssertMsg( false, "Not in manual poll mode!" );
 		return;

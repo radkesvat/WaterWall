@@ -22,6 +22,10 @@
 #include <thread>
 #include <vector>
 
+/* These low-level GNS entry points are exported without public header declarations. */
+STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_SetManualPollMode(bool enabled);
+STEAMNETWORKINGSOCKETS_INTERFACE void SteamNetworkingSockets_Poll(int max_wait_ms);
+
 namespace
 {
 
@@ -358,6 +362,9 @@ void caseTransferAndClose()
         const HSteamNetConnection client = sockets->ConnectByIPAddress(address, 3, options);
         REQUIRE(client != k_HSteamNetConnection_Invalid);
         WAIT_FOR(g_status.connected.load() == 2);
+        SteamNetworkingSockets_SetManualPollMode(true);
+        SteamNetworkingSockets_Poll(0);
+        SteamNetworkingSockets_SetManualPollMode(false);
         const HSteamNetConnection server = g_status.accepted.load();
         REQUIRE(server != k_HSteamNetConnection_Invalid);
 
