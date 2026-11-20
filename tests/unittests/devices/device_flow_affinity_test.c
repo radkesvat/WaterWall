@@ -773,6 +773,24 @@ static void testSingleReaderNativeLocalityAndOpaqueRotation(void)
                               (wid_t) (opaque_index++ % getWorkersCount()));
 }
 
+static void testOpaqueRoundRobinWrap(void)
+{
+    device_reader_session_t session  = {.opaque_flow_mode = kDeviceOpaqueFlowSpread};
+    sbuf_t                 *packet   = makeIpv4Packet(0x0A000001U, 0, 0xC0000201U, 0, 50, 0);
+    const uint32_t          starts[] = {INT32_MAX, UINT32_MAX - 1U};
+    for (size_t i = 0; i < ARRAY_SIZE(starts); ++i)
+    {
+        atomicStoreU32Relaxed(&session.distribution_next, starts[i]);
+        uint32_t cursor = starts[i];
+        for (unsigned step = 0; step < 4; ++step, ++cursor)
+        {
+            require(deviceReaderSelectWID(&session, 0, 1, packet) == cursor % getWorkersCount(),
+                    "round-robin worker selection lost the unsigned cursor at a counter boundary");
+        }
+    }
+    sbufDestroy(packet);
+}
+
 static void testSingleReaderOpaqueModes(void)
 {
     /* Omission is the zero-initialized prefix policy. Independent device
@@ -817,7 +835,7 @@ static void testSingleReaderOpaqueModes(void)
         sbufDestroy(packet);
     }
     require(prefix_workers == 15, "varied opaque prefixes did not use all processing workers");
-    require(atomicLoadRelaxed(&prefix.distribution_next) == 0 && atomicLoadRelaxed(&peer.distribution_next) == 0,
+    require(atomicLoadU32Relaxed(&prefix.distribution_next) == 0 && atomicLoadU32Relaxed(&peer.distribution_next) == 0,
             "deterministic modes consumed the software spreading cursor");
 }
 
@@ -1304,6 +1322,7 @@ int main(void)
     testBucketedDispatch();
     testSingleReaderNativeLocalityAndOpaqueRotation();
     testSingleReaderOpaqueModes();
+    testOpaqueRoundRobinWrap();
     testGsoDispatchPreservesLocalityAndReservations();
     testGsoRefusalSettlesEveryUnpostedReservation();
     testDispatchBucketsAreSplitAtSessionCapacity();

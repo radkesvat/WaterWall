@@ -52,7 +52,7 @@ wid_t deviceReaderSelectWID(device_reader_session_t *session, wid_t reader_wid, 
     {
         return (wid_t) (hash % getWorkersCount());
     }
-    return (wid_t) (atomicIncExplicit(&session->distribution_next, memory_order_relaxed) % getWorkersCount());
+    return (wid_t) (atomicIncU32Relaxed(&session->distribution_next) % getWorkersCount());
 }
 
 /*
