@@ -78,7 +78,7 @@ void authTestPeerExpireSessions(tunnel_t *t)
     authenticationserver_tstate_t *ts = tunnelGetState(t);
     rwlockWriteLock(&ts->state_lock);
     for (uint32_t i = 0; i < ts->sessions_count; ++i)
-        atomicStoreRelaxed(&ts->sessions[i]->last_activity_ms, getTickMS() - 2000);
+        atomicStoreU32Relaxed(&ts->sessions[i]->last_activity_ms, getTickMS() - 2000);
     rwlockWriteUnlock(&ts->state_lock);
     authenticationserverSessionsExpireIdle(t);
 }

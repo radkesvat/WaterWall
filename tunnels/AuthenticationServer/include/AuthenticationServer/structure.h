@@ -47,7 +47,7 @@ typedef struct authenticationserver_session_s
     bool        allow_stats_push;
     bool        allow_user_pull;
     bool                                allow_user_write;
-    atomic_uint last_activity_ms;
+    atomic_u32_t                        last_activity_ms;
     uint32_t    session_idle_timeout_ms;
 } authenticationserver_session_t;
 

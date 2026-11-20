@@ -38,19 +38,6 @@ static void authenticationserverSessionFree(authenticationserver_tstate_t *ts, a
     memoryFree(session);
 }
 
-static bool authenticationserverSessionCompareExchangeLastActivity(authenticationserver_session_t *session,
-                                                                   uint32_t *expected, uint32_t desired)
-{
-    w_atomic_uint_value_t expected_value = (w_atomic_uint_value_t) *expected;
-    const bool            exchanged      = atomic_compare_exchange_weak_explicit(&session->last_activity_ms,
-                                                                 &expected_value,
-                                                                 (w_atomic_uint_value_t) desired,
-                                                                 memory_order_relaxed,
-                                                                 memory_order_relaxed);
-    *expected                            = (uint32_t) expected_value;
-    return exchanged;
-}
-
 static authenticationserver_auth_client_t *authenticationserverFindAuthClient(authenticationserver_tstate_t *ts,
                                                                               const char *name, const char *secret)
 {
@@ -200,7 +187,7 @@ authenticationserver_session_t *authenticationserverSessionCreate(tunnel_t *t, c
     session->allow_user_pull         = client->allow_user_pull;
     session->allow_user_write        = client->allow_user_write;
     session->session_idle_timeout_ms = client->session_idle_timeout_ms;
-    atomicStoreRelaxed(&session->last_activity_ms, getTickMS());
+    atomicStoreU32Relaxed(&session->last_activity_ms, getTickMS());
 
     if (resume_epoch == NULL)
     {
@@ -238,11 +225,12 @@ void authenticationserverSessionTouch(authenticationserver_session_t *session, u
 {
     if (LIKELY(session != NULL))
     {
-        uint32_t observed = (uint32_t) atomicLoadRelaxed(&session->last_activity_ms);
+        uint32_t observed = atomicLoadU32Relaxed(&session->last_activity_ms);
 
         while ((int32_t) (now_ms - observed) > 0)
         {
-            if (authenticationserverSessionCompareExchangeLastActivity(session, &observed, now_ms))
+            if (atomicCompareExchangeU32Explicit(
+                    &session->last_activity_ms, &observed, now_ms, memory_order_relaxed, memory_order_relaxed))
             {
                 break;
             }
@@ -305,7 +293,7 @@ void authenticationserverSessionsExpireIdle(tunnel_t *t)
     for (uint32_t i = 0; i < ts->sessions_count;)
     {
         authenticationserver_session_t *session          = ts->sessions[i];
-        const uint32_t                  last_activity_ms = (uint32_t) atomicLoadRelaxed(&session->last_activity_ms);
+        const uint32_t                  last_activity_ms = atomicLoadU32Relaxed(&session->last_activity_ms);
         const uint32_t                  idle_ms          = now_ms - last_activity_ms;
 
         if (LIKELY(idle_ms < session->session_idle_timeout_ms))
