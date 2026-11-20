@@ -451,6 +451,14 @@ static void appendSpanBoundaries(const char *path)
                "span-check append wrote bytes outside the accepted records");
 }
 
+static WTHREAD_ROUTINE(submitToFullAuditQueue)
+{
+    authenticationserver_audit_t *audit = userdata;
+    for (unsigned i = 0; i < kAuthenticationServerAuditQueueCap; ++i)
+        authenticationserverAuditRecordProducer(audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    return 0;
+}
+
 static void writerFailure(const char *path)
 {
     startAudit(path);
@@ -458,8 +466,13 @@ static void writerFailure(const char *path)
     atomic_store(&fail_append, true);
     cJSON_Delete(call("create-user", "{\"id\":\"43\",\"password\":\"PRIVATE_PASSWORD_BEFORE_FAILURE\"}", NULL));
     twfRequire(semaphoreWait(&entered), "writer gate failed");
-    authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    for (unsigned i = 0; i < kAuthenticationServerAuditQueueCap + 1U; ++i)
+        authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 100, 0, NULL);
+    wthread_t submitter;
+    twfRequire(threadCreate(&submitter, submitToFullAuditQueue, state()->audit) == kWThreadErrorNone,
+               "audit submitter did not start");
     semaphorePost(&release_writer);
+    twfRequire(safeThreadJoin(submitter), "audit submitter did not join");
     waitFor(0, 1);
     uint64_t revision = state()->store.config_revision;
     cJSON_Delete(call("create-user", "{\"id\":\"44\",\"password\":\"PRIVATE_PASSWORD_AFTER_FAILURE\"}", NULL));
@@ -469,10 +482,11 @@ static void writerFailure(const char *path)
     authenticationserverAuditRecordProducer(state()->audit, "producer", "UpdateUser", 42, 0, 0, "invalid-user");
     authenticationserver_audit_snapshot_t snapshot;
     authenticationserverAuditSnapshot(state()->audit, &snapshot);
-    twfRequire(snapshot.enabled && ! snapshot.healthy && snapshot.queued_records == 0 &&
-                   snapshot.written_records == 0 && snapshot.dropped_records == 4 && snapshot.write_failures == 1 &&
-                   snapshot.suppressed_rejections == 0 && strcmp(snapshot.last_error, "write") == 0,
-               "failed writer did not account for queued and subsequent records");
+    twfRequire(
+        snapshot.enabled && ! snapshot.healthy && snapshot.queued_records == 0 && snapshot.written_records == 0 &&
+            snapshot.dropped_records == 2U * kAuthenticationServerAuditQueueCap + 4U && snapshot.write_failures == 1 &&
+            snapshot.suppressed_rejections == 0 && strcmp(snapshot.last_error, "write") == 0,
+        "failed writer did not account for queued and subsequent records");
     stopAudit();
     twfRequire(inspectFile(path, false) == 0, "injected failure unexpectedly wrote a record");
 }

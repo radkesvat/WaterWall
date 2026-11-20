@@ -228,16 +228,15 @@ void authenticationserverAuditSnapshot(const authenticationserver_audit_t    *au
     *snapshot = (authenticationserver_audit_snapshot_t) {.healthy = true};
     if (audit == NULL)
         return;
+    const bool writer_failed        = atomicLoadExplicit(&audit->writer_failed, memory_order_acquire);
     snapshot->enabled               = true;
     snapshot->queued_records        = atomicLoadU64Relaxed(&audit->queued);
     snapshot->written_records       = atomicLoadU64Relaxed(&audit->written);
     snapshot->dropped_records       = atomicLoadU64Relaxed(&audit->dropped);
     snapshot->write_failures        = atomicLoadU64Relaxed(&audit->write_failures);
     snapshot->suppressed_rejections = atomicLoadU64Relaxed(&audit->suppressed);
-    snapshot->last_error =
-        authenticationserverAuditLastError(atomic_load_explicit(&audit->last_error, memory_order_relaxed));
-    snapshot->healthy = ! atomic_load_explicit(&audit->writer_failed, memory_order_acquire) &&
-                        snapshot->dropped_records == 0 && snapshot->write_failures == 0;
+    snapshot->last_error            = authenticationserverAuditLastError(atomicLoadRelaxed(&audit->last_error));
+    snapshot->healthy = ! writer_failed && snapshot->dropped_records == 0 && snapshot->write_failures == 0;
 }
 
 static void authenticationserverAuditSuppress(authenticationserver_audit_t *audit)
@@ -254,8 +253,8 @@ static void authenticationserverAuditSuppress(authenticationserver_audit_t *audi
 static void authenticationserverAuditDrop(authenticationserver_audit_t *audit, int error)
 {
     atomicAddU64Explicit(&audit->dropped, 1, memory_order_relaxed);
-    if (! atomic_load_explicit(&audit->writer_failed, memory_order_relaxed))
-        atomic_store_explicit(&audit->last_error, error, memory_order_relaxed);
+    /* All queue-drop diagnostics and the terminal append error share the queue lock. */
+    atomicStoreRelaxed(&audit->last_error, error);
 }
 
 static void authenticationserverAuditReport(authenticationserver_audit_t *audit)
@@ -326,13 +325,13 @@ static WTHREAD_ROUTINE(authenticationserverAuditThread)
         authenticationserver_audit_error_t error;
         if (! authenticationserverAuditWriterAppend(audit->writer, json.bytes, json.length, &error))
         {
-            atomic_store_explicit(&audit->writer_failed, true, memory_order_release);
-            atomic_store_explicit(&audit->last_error, error.code, memory_order_relaxed);
-            atomicAddU64Explicit(&audit->write_failures, 1, memory_order_relaxed);
             condmutexLock(&audit->lock);
+            atomicStoreRelaxed(&audit->last_error, error.code);
+            atomicIncU64Relaxed(&audit->write_failures);
             atomicAddU64Explicit(&audit->dropped, audit->count + 1, memory_order_relaxed);
             audit->count = 0;
             atomicStoreU64Relaxed(&audit->queued, 0);
+            atomicStoreExplicit(&audit->writer_failed, true, memory_order_release);
             condmutexUnlock(&audit->lock);
             LOGE("AuthenticationServer: audit file operation failed: %s (native=%u)",
                  authenticationserverAuditErrorName(error.code),
@@ -351,8 +350,9 @@ static WTHREAD_ROUTINE(authenticationserverAuditThread)
     authenticationserver_audit_error_t error;
     if (! authenticationserverAuditWriterClose(audit->writer, &error))
     {
-        atomic_store_explicit(&audit->last_error, error.code, memory_order_relaxed);
-        atomicAddU64Explicit(&audit->write_failures, 1, memory_order_relaxed);
+        atomicStoreRelaxed(&audit->last_error, error.code);
+        atomicIncU64Relaxed(&audit->write_failures);
+        atomicStoreExplicit(&audit->writer_failed, true, memory_order_release);
         LOGE("AuthenticationServer: audit file close failed (native=%u)", error.native_error);
         authenticationserverAuditReport(audit);
     }
@@ -453,7 +453,7 @@ static void authenticationserverAuditSubmit(authenticationserver_audit_t *audit,
     if (audit == NULL)
         return;
     assert(operation != NULL && (fields & ~((1U << 20U) - 1U)) == 0);
-    if (atomic_load_explicit(&audit->writer_failed, memory_order_acquire))
+    if (atomicLoadExplicit(&audit->writer_failed, memory_order_acquire))
     {
         atomicAddU64Explicit(&audit->dropped, 1, memory_order_relaxed);
         return;
@@ -462,7 +462,7 @@ static void authenticationserverAuditSubmit(authenticationserver_audit_t *audit,
      * The writer never holds it while formatting, logging, or touching files. */
     condmutexLock(&audit->lock);
     assert(! audit->stopping); /* Submitters quiesce before destruction. */
-    if (atomic_load_explicit(&audit->writer_failed, memory_order_acquire))
+    if (atomicLoadExplicit(&audit->writer_failed, memory_order_acquire))
         atomicAddU64Explicit(&audit->dropped, 1, memory_order_relaxed);
     else if (audit->sequence == UINT64_MAX)
         authenticationserverAuditDrop(audit, kAuthenticationServerAuditSequenceExhausted);
