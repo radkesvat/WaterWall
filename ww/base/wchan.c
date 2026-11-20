@@ -10,248 +10,75 @@
 #include "watomic.h"
 #include "wmutex.h"
 
-// DEBUG_CHAN_LOG: define to enable debug logging of send and recv
-// #define DEBUG_CHAN_LOG
+/* DEBUG_CHAN_LOG traces channel operations. DEBUG_CHAN_LOCK traces lock ownership. */
+#if defined(DEBUG) && (defined(DEBUG_CHAN_LOG) || defined(DEBUG_CHAN_LOCK))
+#include "wlog.h"
+#include "wthread.h"
 
-// DEBUG_CHAN_LOCK: define to enable debug logging of channel locks
-// #define DEBUG_CHAN_LOCK
-
-// kCpuLineCacheSize is the size of a cache line of the target CPU.
-// The value 64 covers i386, x86_64, arm32, arm64.
-// Note that Intel TBB uses 128 (max_nfs_size).
-// TODO: set value depending on target preprocessor information.
-
-typedef _Atomic(unsigned int)       atomic_uint32_t;
-typedef _Atomic(unsigned long long) atomic_uint64_t;
-typedef _Atomic(unsigned long long) atomic_size_t_t;
-typedef _Atomic(long long)          atomic_ssize_t;
-typedef _Atomic(unsigned char)      atomic_uint8_t;
-
-// ----------------------------------------------------------------------------
-// debugging
-
-#if defined(DEBUG_CHAN_LOG) && ! defined(DEBUG)
-#undef DEBUG_CHAN_LOG
-#endif
-#ifdef DEBUG_CHAN_LOG
-#define THREAD_ID_INVALID SIZE_MAX
-
-// Assigns a compact debug-only id to each calling thread.
-static size_t thread_id()
+/* A single write keeps debug records together without acquiring a logger or stdio lock. */
+static void chanDebugTrace(const char *operation, const void *object)
 {
-    static thread_local size_t _thread_id         = THREAD_ID_INVALID;
-    static atomic_size         _thread_id_counter = (0);
-    size_t                     tid                = _thread_id;
-    if (tid == THREAD_ID_INVALID)
-    {
-        tid        = atomicAddExplicit(&_thread_id_counter, 1);
-        _thread_id = tid;
-    }
-    return tid;
+    static atomic_ullong sequence;
+    char                 record[128];
+    const int            length = snprintf(record,
+                                sizeof(record),
+                                "channel %llu thread %ld %s %p\n",
+                                (unsigned long long) atomicIncU64Relaxed(&sequence) + 1U,
+                                getTID(),
+                                operation,
+                                (void *) object);
+    if (length > 0)
+        stderrLogger(LOG_LEVEL_DEBUG, record, min(length, (int) sizeof(record) - 1));
 }
-
-// Returns a per-thread ANSI color for debug log output.
-static const char *tcolor()
-{
-    static const char *colors[] = {
-        //"\x1b[1m",  // bold (white)
-        "\x1b[93m", // yellow
-        "\x1b[92m", // green
-        "\x1b[91m", // red
-        "\x1b[94m", // blue
-        "\x1b[96m", // cyan
-        "\x1b[95m", // magenta
-    };
-    return colors[thread_id() % countof(colors)];
-}
-
-// _//dlog_chan writes a log message to stderr along with a globally unique "causality"
-// sequence number. It does not use libc FILEs as those use mutex locks which would alter
-// the behavior of multi-threaded channel operations. Instead it uses a buffer on the stack,
-// which of course is local per thread and then calls the write syscall with the one buffer.
-// This all means that log messages may be out of order; use the "causality" sequence number
-// to understand what other messages were produced according to the CPU.
-ATTR_FORMAT(printf, 2, 3)
-static void _                             // dlog_chan(const char* fname, const char* fmt, ...) {
-    static atomic_uint32_t seqnext = (1); // start at 1 to map to line nubmers
-
-uint32_t seq = atomic_fetch_add_explicitx(&seqnext, 1, memory_order_acquire);
-
-char          buf[256];
-const ssize_t sbufGetTotalCapacity = (ssize_t) sizeof(buf);
-ssize_t       buflen               = 0;
-
-buflen += (ssize_t) snprintf(&buf[buflen], sbufGetTotalCapacity - buflen, "%04u \x1b[1m%sT%02zu ", seq, tcolor(),
-                             thread_id());
-
-va_list ap;
-va_start(ap, fmt);
-buflen += (ssize_t) vsnprintf(&buf[buflen], sbufGetTotalCapacity - buflen, fmt, ap);
-va_end(ap);
-
-if (buflen > 0)
-{
-    buflen += (ssize_t) snprintf(&buf[buflen], sbufGetTotalCapacity - buflen, "\x1b[0m (%s)\n", fname);
-    if (buflen >= sbufGetTotalCapacity)
-    {
-        // truncated; make sure to end the line
-        buf[buflen - 1] = '\n';
-    }
-}
-
-#undef FMT
-write(STDERR_FILENO, buf, buflen);
-}
-
-#define dlog_chan(fmt, ...) _ // dlog_chan(__FUNCTION__, fmt, ##__VA_ARGS__)
-#define dlog_send(fmt, ...)   // dlog_chan("send: " fmt, ##__VA_ARGS__)
-#define dlog_recv(fmt, ...)   // dlog_chan("recv: " fmt, ##__VA_ARGS__)
-// #define dlog_send(fmt, ...) do{}while(0)
-// #define dlog_recv(fmt, ...) do{}while(0)
-#else
-#define dlog_chan(fmt, ...)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-    } while (0)
-#define dlog_send(fmt, ...)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-    } while (0)
-#define dlog_recv(fmt, ...)                                                                                            \
-    do                                                                                                                 \
-    {                                                                                                                  \
-    } while (0)
 #endif
 
-// ----------------------------------------------------------------------------
-// misc utils
-
-#define is_power_of_two(intval) (intval) && (0 == ((intval) & ((intval) - 1)))
-
-// is_aligned checks if passed in pointer is aligned on a specific border.
-// bool is_aligned<T>(T* pointer, uintptr_t alignment)
-#define is_aligned(pointer, alignment) (0 == ((uintptr_t) (pointer) & (((uintptr_t) alignment) - 1)))
-
-// -------------------------------------------------------------------------
-// channel lock
-
-#ifdef DEBUG_CHAN_LOCK
-static uint32_t chlock_count = 0;
-
-#define CHAN_LOCK_T             wmutex_t
-#define chan_lock_init(lock)    mutexInit((lock), wmutex_plain)
-#define chan_lock_destroy(lock) mutexDestroy(lock)
-
-#define chan_lock(lock)                                                                                                \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        uint32_t n = chlock_count++;                                                                                   \
-        dlog("CL #%u LOCK %s:%d", n, __FILE__, __LINE__);                                                              \
-        mutexLock(lock);                                                                                               \
-        dlog("CL #%u UNLOCK %s:%d", n, __FILE__, __LINE__);                                                            \
-    } while (0)
-
-#define chan_unlock(lock)                                                                                              \
-    do                                                                                                                 \
-    {                                                                                                                  \
-        /*dlog("CL UNLOCK %s:%d", __FILE__, __LINE__);*/                                                               \
-        mutexUnlock(lock);                                                                                             \
-    } while (0)
+#if defined(DEBUG) && defined(DEBUG_CHAN_LOG)
+#define chan_trace(operation, channel) chanDebugTrace(operation, channel)
 #else
-// // wmutex_t
-// #define CHAN_LOCK_T             wmutex_t
-// #define chan_lock_init(lock)    mutexInit((lock), wmutex_plain)
-// #define chan_lock_destroy(lock) mutexDestroy(lock)
-// #define chan_lock(lock)         mutexLock(lock)
-// #define chan_unlock(lock)       mutexUnlock(lock)
+#define chan_trace(operation, channel) ((void) 0)
+#endif
 
-// wmutex_
 #define CHAN_LOCK_T             wmutex_t
 #define chan_lock_init(lock)    mutexInit(lock)
 #define chan_lock_destroy(lock) mutexDestroy(lock)
-#define chan_lock(lock)         mutexLock(lock)
-#define chan_unlock(lock)       mutexUnlock(lock)
-#endif
 
-// -------------------------------------------------------------------------
+#if defined(DEBUG) && defined(DEBUG_CHAN_LOCK)
+static inline void chan_lock(wmutex_t *lock)
+{
+    chanDebugTrace("lock requested", lock);
+    mutexLock(lock);
+    chanDebugTrace("lock acquired", lock);
+}
+
+static inline void chan_unlock(wmutex_t *lock)
+{
+    chanDebugTrace("unlock", lock);
+    mutexUnlock(lock);
+}
+#else
+#define chan_lock(lock)   mutexLock(lock)
+#define chan_unlock(lock) mutexUnlock(lock)
+#endif
 
 typedef struct Thr Thr;
 
 // Thr holds thread-specific data and is owned by thread-local storage
 
-#if ! WW_HAVE_C11_ATOMICS
-/*
- * The slots the accessors below operate on are declared as the fallback's own
- * atomic type rather than as pointers. The fallback's generic atomics take an
- * intptr_t *, so keeping real pointer types here would mean casting Thr ** and
- * void ** at every call, and reading an object of one type through an lvalue of
- * another is exactly what strict aliasing forbids -- gcc rejects it outright at
- * every optimization level. Storing intptr_t makes the declared type match the
- * access, and the accessors convert at the edge so callers still see pointers.
- */
 struct Thr
 {
-    size_t                            id;
-    bool                              init;
-    atomic_bool                       closed;
-    atomic_int                        signals; // thr_signal() calls that have not returned yet
-    wlsem_t                           sema;
-    MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next; // list link
-    atomic_intptr_t                   elemptr;
+    bool                                   init;
+    atomic_bool                            closed;
+    atomic_int                             signals; // thr_signal() calls that have not returned yet
+    wlsem_t                                sema;
+    MSVC_ATTR_ALIGNED_LINE_CACHE Thr *next GNU_ATTR_ALIGNED_LINE_CACHE;
+    atomic_ptr_t                           elemptr;
 };
 
 typedef struct WaitQ
 {
-    atomic_intptr_t first; // head of linked list of parked threads
-    atomic_intptr_t last;  // tail of linked list of parked threads
+    atomic_ptr_t first; // head of linked list of parked threads
+    atomic_ptr_t last;  // tail of linked list of parked threads
 } WaitQ;
-#else
-
-struct Thr
-{
-    size_t          id;
-    bool            init;
-    atomic_bool     closed;
-    atomic_int      signals; // thr_signal() calls that have not returned yet
-    wlsem_t         sema;
-    Thr *next       GNU_ATTR_ALIGNED_LINE_CACHE; // list link
-    _Atomic(void *) elemptr;
-};
-
-typedef struct WaitQ
-{
-    _Atomic(Thr *) first; // head of linked list of parked threads
-    _Atomic(Thr *) last;  // tail of linked list of parked threads
-} WaitQ;
-
-#endif
-
-#if ! WW_HAVE_C11_ATOMICS
-#define atomicLoadThrPtr(p, order)      ((Thr *) atomicLoadExplicit((p), order))
-#define atomicStoreThrPtr(p, v, order)  atomicStoreExplicit((p), (intptr_t) (v), order)
-#define atomicLoadVoidPtr(p, order)     ((void *) atomicLoadExplicit((p), order))
-#define atomicStoreVoidPtr(p, v, order) atomicStoreExplicit((p), (intptr_t) (v), order)
-#else
-inline static Thr *atomicLoadThrPtr(_Atomic(Thr *) *p, memory_order order)
-{
-    return atomicLoadExplicit(p, order);
-}
-
-inline static void atomicStoreThrPtr(_Atomic(Thr *) *p, Thr *v, memory_order order)
-{
-    atomicStoreExplicit(p, v, order);
-}
-
-inline static void *atomicLoadVoidPtr(_Atomic(void *) *p, memory_order order)
-{
-    return atomicLoadExplicit(p, order);
-}
-
-inline static void atomicStoreVoidPtr(_Atomic(void *) *p, void *v, memory_order order)
-{
-    atomicStoreExplicit(p, v, order);
-}
-#endif
 
 typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
 {
@@ -261,9 +88,9 @@ typedef MSVC_ATTR_ALIGNED_LINE_CACHE struct wchan_s
 
     // These fields are frequently accessed and stored to.
     // There's a perf opportunity here with a different more cache-efficient layout.
-    atomic_uint32_t qlen;   // number of messages currently queued in buf
-    atomic_bool     closed; // one way switch (once it becomes true, never becomes false again)
-    CHAN_LOCK_T     lock;   // guards the wchan_t struct
+    atomic_u32_t qlen;   // number of messages currently queued in buf
+    atomic_bool  closed; // one way switch (once it becomes true, never becomes false again)
+    CHAN_LOCK_T  lock;   // guards the wchan_t struct
 
     // sendq is accessed on every call to chan_recv and only in some cases by chan_send,
     // when parking a thread when there's no waiting receiver nor queued message.
@@ -393,9 +220,6 @@ static void thr_register_cleanup(Thr *t)
 // Initializes thread-local channel wait context.
 static void thr_init(Thr *t)
 {
-    static atomic_size_t _thread_id_counter = (0);
-
-    t->id = atomicAddExplicit(&_thread_id_counter, 1, memory_order_relaxed);
     if (UNLIKELY(! leightweightsemaphoreInit(&t->sema, 0)))
     {
         // Without a usable semaphore every park would return immediately, silently
@@ -432,7 +256,6 @@ inline static void thr_signal(Thr *t)
 // Blocks current sender/receiver thread until signaled.
 inline static void thr_wait(Thr *t)
 {
-    // dlog_chan("thr_wait ...");
     if (UNLIKELY(! leightweightsemaphoreWait(&t->sema))) // sleep
     {
         // A failed wait returns without a wakeup while this thread is still linked into a
@@ -447,25 +270,26 @@ inline static void thr_wait(Thr *t)
 static void wq_enqueue(WaitQ *wq, Thr *t)
 {
     // note: atomic loads & stores for cache reasons, not thread safety; c->lock is held.
-    if (atomicLoadThrPtr(&wq->first, memory_order_acquire))
+    if (atomicLoadPtrExplicit(&wq->first, memory_order_acquire))
     {
         // Note: compare first instead of last as we don't clear wq->last in wq_dequeue
-        atomicLoadThrPtr(&wq->last, memory_order_acquire)->next = t;
+        Thr *last  = atomicLoadPtrExplicit(&wq->last, memory_order_acquire);
+        last->next = t;
     }
     else
     {
-        atomicStoreThrPtr(&wq->first, t, memory_order_release);
+        atomicStorePtrExplicit(&wq->first, t, memory_order_release);
     }
-    atomicStoreThrPtr(&wq->last, t, memory_order_release);
+    atomicStorePtrExplicit(&wq->last, t, memory_order_release);
 }
 
 // Dequeues one waiting participant from a channel wait queue.
 static inline Thr *wq_dequeue(WaitQ *wq)
 {
-    Thr *t = atomicLoadThrPtr(&wq->first, memory_order_acquire);
+    Thr *t = atomicLoadPtrExplicit(&wq->first, memory_order_acquire);
     if (t)
     {
-        atomicStoreThrPtr(&wq->first, t->next, memory_order_release);
+        atomicStorePtrExplicit(&wq->first, t->next, memory_order_release);
         t->next = NULL;
         // Note: intentionally not clearing wq->last in case wq->first==wq->last as we can
         // avoid that branch by not checking wq->last in wq_enqueue.
@@ -483,21 +307,20 @@ inline static void *chan_bufptr(wchan_t *c, uint32_t i)
 // Caller must hold the lock of the channel that owns wq.
 static void wq_cancel_all(WaitQ *wq)
 {
-    Thr *t = atomicLoadThrPtr(&wq->first, memory_order_acquire);
+    Thr *t = atomicLoadPtrExplicit(&wq->first, memory_order_acquire);
 
     // The queue must be emptied, not just walked: a woken waiter returns to its caller and
     // its Thr (thread-local) along with the elemptr it parked with (usually a stack address)
     // stop being valid to touch. A leftover link would let a later recv hand out the canceled
     // message, write through that stale pointer, or signal a thread parked elsewhere.
-    atomicStoreThrPtr(&wq->first, NULL, memory_order_release);
-    atomicStoreThrPtr(&wq->last, NULL, memory_order_release);
+    atomicStorePtrExplicit(&wq->first, NULL, memory_order_release);
+    atomicStorePtrExplicit(&wq->last, NULL, memory_order_release);
 
     while (t)
     {
-        // dlog_chan("close: cancel waiter [%zu]", t->id);
         Thr *next = t->next;
         t->next   = NULL;
-        atomicStoreVoidPtr(&t->elemptr, NULL, memory_order_relaxed);
+        atomicStorePtrExplicit(&t->elemptr, NULL, memory_order_relaxed);
         atomicStoreExplicit(&t->closed, true, memory_order_relaxed);
         thr_signal(t); // the semaphore pair orders the two stores above against the wakeup
         t = next;
@@ -514,8 +337,8 @@ static Thr *chan_park(wchan_t *c, WaitQ *wq, void *elemptr)
     // every waiter it cancels, and wq_enqueue requires next to be NULL. Both are stale here.
     t->next = NULL;
     atomicStoreExplicit(&t->closed, false, memory_order_relaxed);
-    atomicStoreVoidPtr(&t->elemptr, elemptr, memory_order_relaxed);
-    // dlog_chan("park: elemptr %p", elemptr);
+    atomicStorePtrExplicit(&t->elemptr, elemptr, memory_order_relaxed);
+    chan_trace("park", c);
     wq_enqueue(wq, t);
     chan_unlock(&c->lock);
     thr_wait(t);
@@ -527,8 +350,8 @@ inline static bool chan_full(wchan_t *c)
     // c.qcap is immutable (never written after the channel is created)
     // so it is safe to read at any time during channel operation.
     if (c->qcap == 0)
-        return atomicLoadThrPtr(&c->recvq.first, memory_order_relaxed) == NULL;
-    return atomicLoadExplicit(&c->qlen, memory_order_relaxed) == c->qcap;
+        return atomicLoadPtrExplicit(&c->recvq.first, memory_order_relaxed) == NULL;
+    return atomicLoadU32Explicit(&c->qlen, memory_order_relaxed) == c->qcap;
 }
 
 // Copies sender payload directly into a waiting receiver and wakes it.
@@ -540,12 +363,11 @@ static bool chan_send_direct(wchan_t *c, void *srcelemptr, Thr *recvt)
     // wchan_nel c must be empty and locked. This function unlocks c with chan_unlock.
     // recvt must already be dequeued from c.
 
-    void *dstelemptr = atomicLoadVoidPtr(&recvt->elemptr, memory_order_acquire);
+    void *dstelemptr = atomicLoadPtrExplicit(&recvt->elemptr, memory_order_acquire);
     assert(dstelemptr != NULL);
-    // dlog_send("direct send of srcelemptr %p to [%zu] (dstelemptr %p)", srcelemptr, recvt->id, dstelemptr);
     //  store to address provided with chan_recv call
     memoryCopy(dstelemptr, srcelemptr, c->elemsize);
-    atomicStoreVoidPtr(&recvt->elemptr, NULL, memory_order_relaxed); // clear pointer (TODO: is this really needed?)
+    atomicStorePtrExplicit(&recvt->elemptr, NULL, memory_order_relaxed); // clear pointer (TODO: is this really needed?)
 
     chan_unlock(&c->lock);
     thr_signal(recvt); // wake up chan_recv caller
@@ -556,7 +378,7 @@ static bool chan_send_direct(wchan_t *c, void *srcelemptr, Thr *recvt)
 inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
 {
     bool block = closed == NULL;
-    // dlog_send("srcelemptr %p", srcelemptr);
+    chan_trace(block ? "send" : "try send", c);
 
     // fast path for non-blocking send on full channel
     //
@@ -614,7 +436,7 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         return chan_send_direct(c, srcelemptr, recvt);
     }
 
-    const uint32_t qlen = (uint32_t) atomicLoadExplicit(&c->qlen, memory_order_relaxed);
+    const uint32_t qlen = atomicLoadU32Explicit(&c->qlen, memory_order_relaxed);
     if (qlen < c->qcap)
     {
         // space available in message buffer -- enqueue
@@ -622,10 +444,9 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         // copy *srcelemptr -> *dstelemptr
         void *dstelemptr = chan_bufptr(c, i);
         memoryCopy(dstelemptr, srcelemptr, c->elemsize);
-        // dlog_send("enqueue elemptr %p at buf[%u]", srcelemptr, i);
         c->sendx = i == c->qcap - 1 ? 0 : i + 1;
         // Publish the copied ring element after it is fully initialized.
-        atomicStoreExplicit(&c->qlen, qlen + 1, memory_order_relaxed);
+        atomicStoreU32Explicit(&c->qlen, qlen + 1, memory_order_relaxed);
         chan_unlock(&c->lock);
         return true;
     }
@@ -639,7 +460,6 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
 
     // park the calling thread. Some recv caller will wake us up.
     // Note that chan_park calls chan_unlock(&c->lock)
-    // dlog_send("wait... (elemptr %p)", srcelemptr);
     Thr *t = chan_park(c, &c->sendq, srcelemptr);
 
     // woken up by a receiver or by close. Like chan_recv, check "closed" on the Thr and not
@@ -647,7 +467,6 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
     // sent, while a canceled send never delivered anything and must not report success.
     if (UNLIKELY(atomicLoadExplicit(&t->closed, memory_order_relaxed)))
     {
-        // dlog_send("woke up -- channel closed");
         if (! block)
         {
             *closed = true;
@@ -655,7 +474,6 @@ inline static bool chan_send(wchan_t *c, void *srcelemptr, bool *closed)
         return false;
     }
 
-    // dlog_send("woke up -- sent elemptr %p", srcelemptr);
     return true;
 }
 
@@ -665,8 +483,8 @@ inline static bool chan_empty(wchan_t *c)
 {
     // Note: qcap is immutable
     if (c->qcap == 0)
-        return atomicLoadThrPtr(&c->sendq.first, memory_order_relaxed) == NULL;
-    return atomicLoadExplicit(&c->qlen, memory_order_relaxed) == 0;
+        return atomicLoadPtrExplicit(&c->sendq.first, memory_order_relaxed) == NULL;
+    return atomicLoadU32Explicit(&c->qlen, memory_order_relaxed) == 0;
 }
 
 // chan_empty_ordered is chan_empty for the lock-free try-recv path, where the result has to
@@ -678,8 +496,8 @@ inline static bool chan_empty(wchan_t *c)
 inline static bool chan_empty_ordered(wchan_t *c)
 {
     if (c->qcap == 0)
-        return atomicLoadThrPtr(&c->sendq.first, memory_order_seq_cst) == NULL;
-    return atomicLoadExplicit(&c->qlen, memory_order_seq_cst) == 0;
+        return atomicLoadPtrExplicit(&c->sendq.first, memory_order_seq_cst) == NULL;
+    return atomicLoadU32Explicit(&c->qlen, memory_order_seq_cst) == 0;
 }
 
 static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *st);
@@ -688,7 +506,7 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *st);
 inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
 {
     bool block = closed == NULL; // TODO: non-blocking path
-    // dlog_recv("dstelemptr %p", dstelemptr);
+    chan_trace(block ? "receive" : "try receive", c);
 
     // Fast path: check for failed non-blocking operation without acquiring the lock.
     if (! block && chan_empty_ordered(c))
@@ -725,10 +543,9 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
     chan_lock(&c->lock);
 
     if (atomicLoadExplicit(&c->closed, memory_order_relaxed) &&
-        (atomicLoadExplicit(&c->qlen, memory_order_relaxed) == 0))
+        (atomicLoadU32Explicit(&c->qlen, memory_order_relaxed) == 0))
     {
         // channel is closed and the buffer queue is empty
-        // dlog_recv("channel closed & empty queue");
         chan_unlock(&c->lock);
         memoryZero(dstelemptr, c->elemsize);
         if (closed)
@@ -748,7 +565,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
         return chan_recv_direct(c, dstelemptr, t);
     }
 
-    const uint32_t qlen = (uint32_t) atomicLoadExplicit(&c->qlen, memory_order_relaxed);
+    const uint32_t qlen = atomicLoadU32Explicit(&c->qlen, memory_order_relaxed);
     if (qlen > 0)
     {
         // Receive directly from queue
@@ -763,9 +580,7 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
 #endif
 
         // The item has been copied before a lockless probe may observe space.
-        atomicStoreExplicit(&c->qlen, qlen - 1, memory_order_relaxed);
-
-        // dlog_recv("dequeue elemptr %p from buf[%u]", srcelemptr, i);
+        atomicStoreU32Explicit(&c->qlen, qlen - 1, memory_order_relaxed);
 
         chan_unlock(&c->lock);
         return true;
@@ -787,7 +602,6 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
 
     // Block by parking the thread. Some send caller will wake us up.
     // Note that chan_park calls chan_unlock(&c->lock)
-    // dlog_recv("wait... (elemptr %p)", dstelemptr);
     t = chan_park(c, &c->recvq, dstelemptr);
 
     // woken up by sender or close call
@@ -795,16 +609,13 @@ inline static bool chan_recv(wchan_t *c, void *dstelemptr, bool *closed)
     {
         // Note that we check "closed" on the Thr, not the wchan_t.
         // This is important since c->closed may be true even as we receive a message.
-        // dlog_recv("woke up -- channel closed");
         goto ret_closed;
     }
 
     // message was delivered by storing to elemptr by some sender
-    // dlog_recv("woke up -- received to elemptr %p", dstelemptr);
     return true;
 
 ret_closed:
-    // dlog_recv("channel closed");
     memoryZero(dstelemptr, c->elemsize);
     return false;
 }
@@ -824,12 +635,10 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
     // sendert must already be dequeued from c.sendq.
     bool ok = true;
 
-    if (atomicLoadExplicit(&c->qlen, memory_order_relaxed) == 0)
+    if (atomicLoadU32Explicit(&c->qlen, memory_order_relaxed) == 0)
     {
         // Copy data from sender
-        void *srcelemptr = atomicLoadVoidPtr(&sendert->elemptr, memory_order_consume);
-        // dlog_recv("direct recv of srcelemptr %p from [%zu] (dstelemptr %p, buffer empty)", srcelemptr, sendert->id,
-        // dstelemptr);
+        void *srcelemptr = atomicLoadPtrExplicit(&sendert->elemptr, memory_order_consume);
         assert(srcelemptr != NULL);
         memoryCopy(dstelemptr, srcelemptr, c->elemsize);
     }
@@ -838,8 +647,6 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
         // Queue is full. Take the item at the head of the queue.
         // Make the sender enqueue its item at the tail of the queue.
         // Since the queue is full, those are both the same slot.
-        // dlog_recv("direct recv from [%zu] (dstelemptr %p, buffer full)", sendert->id, dstelemptr);
-        // assert_debug(atomicLoadExplicit(&c->qlen) == c->qcap); // queue is full
 
         // copy element from queue to receiver
         const uint32_t i = c->recvx;
@@ -858,13 +665,11 @@ static bool chan_recv_direct(wchan_t *c, void *dstelemptr, Thr *sendert)
         void *bufelemptr = chan_bufptr(c, i);
         assert(bufelemptr != NULL);
         memoryCopy(dstelemptr, bufelemptr, c->elemsize);
-        // dlog_recv("dequeue srcelemptr %p from buf[%u]", bufelemptr, i);
 
         // copy *sendert->elemptr -> c->buf[i]
-        void *srcelemptr = atomicLoadVoidPtr(&sendert->elemptr, memory_order_consume);
+        void *srcelemptr = atomicLoadPtrExplicit(&sendert->elemptr, memory_order_consume);
         assert(srcelemptr != NULL);
         memoryCopy(bufelemptr, srcelemptr, c->elemsize);
-        // dlog_recv("enqueue srcelemptr %p to buf[%u]", srcelemptr, i);
     }
 
     chan_unlock(&c->lock);
@@ -897,10 +702,7 @@ wchan_t *chanTryOpen(size_t elemsize, uint32_t cap)
     c->qcap     = cap;
     chan_lock_init(&c->lock);
 
-// make sure that the thread setting up the channel gets a low thread_id
-#ifdef DEBUG_CHAN_LOG
-    thread_id();
-#endif
+    chan_trace("open", c);
 
     return c;
 }
@@ -918,10 +720,9 @@ wchan_t *chanOpen(size_t elemsize, uint32_t cap)
 
 void chanClose(wchan_t *c)
 {
-    // dlog_chan("--- close ---");
+    chan_trace("close", c);
 
     chan_lock(&c->lock);
-    // dlog_chan("close: channel locked");
 
     // Sequentially consistent, not acquire: the acquire half of an exchange orders nothing
     // for the store, and lock-free readers of c->closed observe this store without taking
@@ -936,7 +737,6 @@ void chanClose(wchan_t *c)
     wq_cancel_all(&c->sendq);
 
     chan_unlock(&c->lock);
-    // dlog_chan("close: done");
 }
 
 void chanFree(wchan_t *c)
@@ -978,7 +778,7 @@ uint32_t chanWaiterCount(wchan_t *c, bool senders)
 {
     chan_lock(&c->lock);
     uint32_t count = 0;
-    Thr     *t     = atomicLoadThrPtr(senders ? &c->sendq.first : &c->recvq.first, memory_order_acquire);
+    Thr     *t     = atomicLoadPtrExplicit(senders ? &c->sendq.first : &c->recvq.first, memory_order_acquire);
     while (t)
     {
         count++;
