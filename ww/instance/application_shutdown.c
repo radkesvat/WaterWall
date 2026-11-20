@@ -23,7 +23,7 @@ static atomic_int              fatal_exit_status;
 _Static_assert(ATOMIC_INT_LOCK_FREE == 2, "fatal shutdown status requires an always-lock-free atomic_int");
 #elif defined(OS_WIN)
 /* The fallback atomic_int is pointer-width and its compare/exchange and load map
- * directly to the lock-free Windows Interlocked pointer primitives. */
+ * directly to the lock-free Windows Interlocked integer primitives. */
 _Static_assert(sizeof(atomic_int) == sizeof(void *), "fatal shutdown status must use an Interlocked-width object");
 #endif
 

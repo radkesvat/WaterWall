@@ -1,4 +1,4 @@
-/* Unsigned 32-bit atomic boundaries, strong compare-exchange and four threads performing 10000 increments each.
+/* Generic, pointer and size operations on both backends, plus unsigned 32-bit boundaries and concurrent increments.
  * Joined threads precede the final count check; exit(1) failures.
  * CTest: waterwall.atomic_u32_unit and Windows waterwall.atomic_u32_fallback_unit. */
 
@@ -147,8 +147,36 @@ static void testConcurrentCompareExchange(void)
             "concurrent 32-bit compare-exchange changed adjacent fields");
 }
 
+static void testPortableOperations(void)
+{
+    atomic_uint count = 0;
+    require(atomicIncRelaxed(&count) == 0 && atomicOrExplicit(&count, 2U, memory_order_relaxed) == 1,
+            "integer operations must return the previous value");
+    require(atomicSubExplicit(&count, 3U, memory_order_relaxed) == 3 && atomicLoadRelaxed(&count) == 0,
+            "subtraction changed the wrong value");
+
+    atomic_size_t size     = SIZE_MAX;
+    size_t        expected = 0;
+    require(! atomicCompareExchangeWeakSizeExplicit(&size, &expected, 7, memory_order_relaxed, memory_order_relaxed) &&
+                expected == SIZE_MAX,
+            "size compare/exchange lost the high bit on mismatch");
+    while (! atomicCompareExchangeWeakSizeExplicit(&size, &expected, 7, memory_order_relaxed, memory_order_relaxed))
+        require(expected == SIZE_MAX, "spurious size compare/exchange changed the expected value");
+    require(atomicLoadRelaxed(&size) == 7, "size compare/exchange did not update the object");
+
+    int          first = 1, second = 2;
+    atomic_ptr_t pointer = NULL;
+    atomicStorePtrExplicit(&pointer, &first, memory_order_release);
+    require(atomicLoadPtrExplicit(&pointer, memory_order_acquire) == &first, "pointer publication lost its value");
+    require(atomicExchangePtrExplicit(&pointer, &second, memory_order_acq_rel) == &first &&
+                atomicExchangePtrExplicit(&pointer, NULL, memory_order_acq_rel) == &second &&
+                atomicLoadPtrExplicit(&pointer, memory_order_relaxed) == NULL,
+            "pointer exchange lost its previous value");
+}
+
 int main(void)
 {
+    TEST_RUN_CASE(testPortableOperations);
     TEST_RUN_CASE(testUnsignedBoundaries);
     TEST_RUN_CASE(testCompareExchangeBoundaries);
     TEST_RUN_CASE(testConcurrentIncrements);

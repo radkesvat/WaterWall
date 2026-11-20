@@ -3,26 +3,18 @@
 
 #include "wplatform.h" // for WW_HAVE_C11_ATOMICS
 
-/*
- * This header exposes three atomic APIs and they are not interchangeable:
- *
- *   atomic_u32_t objects  -> the u32 API:      atomicLoadU32, atomicStoreU32, atomicAddU32, ...
- *   atomic_ullong objects -> the u64 API:      atomicLoadU64, atomicStoreU64, atomicAddU64,
- *                                              atomicIncU64, atomicCompareExchangeU64, ...
- *   everything else       -> the generic API:  atomicLoad, atomicStore, atomicAdd,
- *                                              atomicInc, atomicCompareExchange, ...
- *
- * The generic API is pointer-width, which is not 64 bits everywhere this project
- * builds. The "64-bit atomics" section at the bottom of this file explains what
- * that costs and why the second API had to exist; read it before adding a new
- * atomic_ullong field or reaching for a generic operation on an existing one.
- */
+/* Published objects use WaterWall operations. Choose U32 or U64 for fixed-width
+ * unsigned state, Ptr for object pointers, and the generic operations for
+ * flags and native counts. Add, Sub, Inc and Dec return the previous value.
+ * Before publication an initializer or atomic_init is sufficient. */
 
 #if WW_HAVE_C11_ATOMICS
 
 // c11
 #include <stdatomic.h>
 
+typedef _Atomic(void *)    atomic_ptr_t;
+typedef long long          w_atomic_llong_value_t;
 typedef int                w_atomic_int_value_t;
 typedef unsigned int       w_atomic_uint_value_t;
 typedef unsigned long long w_atomic_ullong_value_t;
@@ -44,7 +36,7 @@ typedef _Atomic(uint32_t)  atomic_u32_t;
 
 #define kill_dependency(y) ((void) 0)
 
-#define atomic_thread_fence(order) MemoryBarrier();
+#define atomic_thread_fence(order) MemoryBarrier()
 
 #define atomic_signal_fence(order) ((void) 0)
 
@@ -65,28 +57,27 @@ typedef enum memory_order_e
     memory_order_seq_cst
 } memory_order;
 
-typedef intptr_t atomic_flag;
-typedef intptr_t atomic_bool;
-typedef intptr_t atomic_char;
-typedef intptr_t atomic_schar;
-typedef intptr_t atomic_uchar;
-typedef intptr_t atomic_short;
-typedef intptr_t atomic_ushort;
-typedef intptr_t atomic_int;
-typedef intptr_t w_atomic_int_value_t;
-typedef intptr_t atomic_uint;
-typedef intptr_t w_atomic_uint_value_t;
+/* LONG_PTR is the signed operand type of the pointer-width Interlocked
+ * integer intrinsics on both Win32 (LONG) and Win64 (LONG64). */
+typedef void *volatile atomic_ptr_t;
+typedef LONG_PTR      w_atomic_llong_value_t;
+typedef LONG_PTR      atomic_flag;
+typedef LONG_PTR      atomic_bool;
+typedef LONG_PTR      atomic_char;
+typedef LONG_PTR      atomic_schar;
+typedef LONG_PTR      atomic_uchar;
+typedef LONG_PTR      atomic_short;
+typedef LONG_PTR      atomic_ushort;
+typedef LONG_PTR      atomic_int;
+typedef LONG_PTR      w_atomic_int_value_t;
+typedef LONG_PTR      atomic_uint;
+typedef LONG_PTR      w_atomic_uint_value_t;
 typedef volatile LONG atomic_u32_t;
 #define W_ATOMIC_UINT_VALUE_SIGNED 1
-typedef intptr_t atomic_long;
-typedef intptr_t atomic_ulong;
-/*
- * atomic_llong stays pointer-width on purpose: its only user is the lightweight
- * semaphore count in wmutex.h, which is bounded by the worker count and can
- * never need more than a pointer. atomic_ullong cannot make that promise -- see
- * the 64-bit atomics section at the bottom of this file.
- */
-typedef intptr_t atomic_llong;
+typedef LONG_PTR      atomic_long;
+typedef LONG_PTR      atomic_ulong;
+/* The lightweight semaphore stores its signed permit/waiter count in a native word. */
+typedef LONG_PTR atomic_llong;
 /*
  * Interlocked*64 requires its operand to be 8-byte aligned, and on a 32-bit
  * target that is more than the C alignment rules promise for an 8-byte integer.
@@ -100,31 +91,31 @@ typedef __declspec(align(8)) unsigned long long atomic_ullong;
 typedef __attribute__((aligned(8))) unsigned long long atomic_ullong;
 #endif
 typedef unsigned long long w_atomic_ullong_value_t;
-typedef intptr_t           atomic_wchar_t;
-typedef intptr_t           atomic_int_least8_t;
-typedef intptr_t           atomic_uint_least8_t;
-typedef intptr_t           atomic_int_least16_t;
-typedef intptr_t           atomic_uint_least16_t;
-typedef intptr_t           atomic_int_least32_t;
-typedef intptr_t           atomic_uint_least32_t;
-typedef intptr_t           atomic_int_least64_t;
-typedef intptr_t           atomic_uint_least64_t;
-typedef intptr_t           atomic_int_fast8_t;
-typedef intptr_t           atomic_uint_fast8_t;
-typedef intptr_t           atomic_int_fast16_t;
-typedef intptr_t           atomic_uint_fast16_t;
-typedef intptr_t           atomic_int_fast32_t;
-typedef intptr_t           atomic_uint_fast32_t;
-typedef intptr_t           atomic_int_fast64_t;
-typedef intptr_t           atomic_uint_fast64_t;
-typedef intptr_t           atomic_intptr_t;
-typedef intptr_t           atomic_uintptr_t;
-typedef intptr_t           atomic_size_t;
-typedef intptr_t           atomic_ptrdiff_t;
-typedef intptr_t           atomic_intmax_t;
-typedef intptr_t           atomic_uintmax_t;
+typedef LONG_PTR           atomic_wchar_t;
+typedef LONG_PTR           atomic_int_least8_t;
+typedef LONG_PTR           atomic_uint_least8_t;
+typedef LONG_PTR           atomic_int_least16_t;
+typedef LONG_PTR           atomic_uint_least16_t;
+typedef LONG_PTR           atomic_int_least32_t;
+typedef LONG_PTR           atomic_uint_least32_t;
+typedef LONG_PTR           atomic_int_least64_t;
+typedef LONG_PTR           atomic_uint_least64_t;
+typedef LONG_PTR           atomic_int_fast8_t;
+typedef LONG_PTR           atomic_uint_fast8_t;
+typedef LONG_PTR           atomic_int_fast16_t;
+typedef LONG_PTR           atomic_uint_fast16_t;
+typedef LONG_PTR           atomic_int_fast32_t;
+typedef LONG_PTR           atomic_uint_fast32_t;
+typedef LONG_PTR           atomic_int_fast64_t;
+typedef LONG_PTR           atomic_uint_fast64_t;
+typedef LONG_PTR           atomic_intptr_t;
+typedef LONG_PTR           atomic_uintptr_t;
+typedef LONG_PTR           atomic_size_t;
+typedef LONG_PTR           atomic_ptrdiff_t;
+typedef LONG_PTR           atomic_intmax_t;
+typedef LONG_PTR           atomic_uintmax_t;
 
-#define _Atomic(x)              intptr_t
+#define _Atomic(x)              LONG_PTR
 #define W_ATOMIC_UINT_VALUE_MAX INTPTR_MAX
 
 /*
@@ -135,26 +126,9 @@ typedef intptr_t           atomic_uintmax_t;
  * wrong side of the access.
  */
 
-/*
- * Every generic operation below is an Interlocked*Pointer call, so it accesses
- * exactly one pointer -- no more and no less -- and the check below demands
- * exactly that width. Both directions are silent corruption otherwise, and
- * neither is caught by the type system, because these macros cast their operand
- * to (PVOID volatile *) and that cast accepts any object pointer:
- *
- *   too wide     half-writes and half-reads the object, and the value that
- *                comes back is not even the surviving low half -- the load
- *                returns a signed intptr_t, so it sign-extends. This is what
- *                a 64-bit field costs on a 32-bit Windows target.
- *
- *   too narrow   reads and writes past the end of the object. A pointer-width
- *                store into a 32-bit field on a 64-bit target overwrites
- *                whatever the compiler laid out in the next four bytes.
- *
- * Fixed-width state belongs to the u32 or u64 API below. Generic callers use
- * w_atomic_int_value_t / w_atomic_uint_value_t and convert at the boundary,
- * the way worker.c and quiescence_gate.h do.
- */
+/* The fallback operates on exactly one pointer-width integer. Reject both
+ * narrower and wider objects before any access. Fixed-width fields have
+ * separate U32 and U64 operations. */
 #define W_ATOMIC_REQUIRE_PTR_WIDTH(object)                                                                             \
     ((void) sizeof(struct {                                                                                            \
         int atomic_object_is_not_pointer_width_use_the_u64_api_for_64_bit_state                                        \
@@ -163,38 +137,30 @@ typedef intptr_t           atomic_uintmax_t;
               : -1;                                                                                                    \
     }))
 
-#define atomic_store(object, desired)                                                                                  \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
-     (void) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
+#ifdef _WIN64
+#define W_ATOMIC_WORD_EXCHANGE InterlockedExchange64
+#define W_ATOMIC_WORD_CAS      InterlockedCompareExchange64
+#else
+#define W_ATOMIC_WORD_EXCHANGE InterlockedExchange
+#define W_ATOMIC_WORD_CAS      InterlockedCompareExchange
+#endif
 
+#define atomic_store(object, desired)                 (void) atomic_exchange(object, desired)
 #define atomic_store_explicit(object, desired, order) atomic_store(object, desired)
-
 #define atomic_load(object)                                                                                            \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
-     (intptr_t) InterlockedCompareExchangePointer((PVOID volatile *) (object), NULL, NULL))
-
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), W_ATOMIC_WORD_CAS((volatile LONG_PTR *) (object), 0, 0))
 #define atomic_load_explicit(object, order) atomic_load(object)
-
 #define atomic_exchange(object, desired)                                                                               \
-    (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
-     (intptr_t) InterlockedExchangePointer((PVOID volatile *) (object), (PVOID) (intptr_t) (desired)))
-
+    (W_ATOMIC_REQUIRE_PTR_WIDTH(object), W_ATOMIC_WORD_EXCHANGE((object), (LONG_PTR) (desired)))
 #define atomic_exchange_explicit(object, desired, order) atomic_exchange(object, desired)
 
-static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *expected, intptr_t desired)
+static inline bool w_atomicCompareExchangePtrWidth(LONG_PTR *object, LONG_PTR *expected, LONG_PTR desired)
 {
-    intptr_t old = *expected;
-    *expected    = (intptr_t) InterlockedCompareExchangePointer(
-        (PVOID volatile *) object, (PVOID) (intptr_t) desired, (PVOID) (intptr_t) old);
+    const LONG_PTR old = *expected;
+    *expected          = W_ATOMIC_WORD_CAS(object, desired, old);
     return *expected == old;
 }
 
-/*
- * Wrapped in a macro so the width check reaches compare/exchange too. Both the
- * object and the expected-value slot are checked: passing 64-bit state here is
- * one mistake spelled two ways, and the intptr_t parameters alone would only
- * report it as a pointer type mismatch.
- */
 #define atomic_compare_exchange_strong(object, expected, desired)                                                      \
     (W_ATOMIC_REQUIRE_PTR_WIDTH(object),                                                                               \
      W_ATOMIC_REQUIRE_PTR_WIDTH(expected),                                                                             \
@@ -279,8 +245,58 @@ static inline int w_atomicCompareExchangePtrWidth(intptr_t *object, intptr_t *ex
 #define atomicIncExplicit(p, y) atomicAddExplicit(p, 1, y)
 #define atomicDecExplicit(p, y) atomicSubExplicit(p, 1, y)
 
+#define atomicExchange                    atomic_exchange
+#define atomicOrExplicit                  atomic_fetch_or_explicit
+#define atomicCompareExchangeWeakExplicit atomic_compare_exchange_weak_explicit
 #define atomicCompareExchange         atomic_compare_exchange_strong
 #define atomicCompareExchangeExplicit atomic_compare_exchange_strong_explicit
+
+/* Pass size_t to compare/exchange on every backend. A failed attempt
+ * replaces the caller's expected value with the observed count. */
+static inline bool atomicCompareExchangeWeakSizeExplicit(atomic_size_t *object, size_t *expected, size_t desired,
+                                                         memory_order success, memory_order failure)
+{
+#if WW_HAVE_C11_ATOMICS
+    return atomic_compare_exchange_weak_explicit(object, expected, desired, success, failure);
+#else
+    (void) success;
+    (void) failure;
+    LONG_PTR   observed  = (LONG_PTR) *expected;
+    const bool exchanged = w_atomicCompareExchangePtrWidth(object, &observed, (LONG_PTR) desired);
+    *expected            = (size_t) observed;
+    return exchanged;
+#endif
+}
+
+static inline void *atomicLoadPtrExplicit(const atomic_ptr_t *object, memory_order order)
+{
+#if WW_HAVE_C11_ATOMICS
+    return atomic_load_explicit(object, order);
+#else
+    (void) order;
+    return InterlockedCompareExchangePointer((PVOID volatile *) object, NULL, NULL);
+#endif
+}
+
+static inline void atomicStorePtrExplicit(atomic_ptr_t *object, void *desired, memory_order order)
+{
+#if WW_HAVE_C11_ATOMICS
+    atomic_store_explicit(object, desired, order);
+#else
+    (void) order;
+    (void) InterlockedExchangePointer(object, desired);
+#endif
+}
+
+static inline void *atomicExchangePtrExplicit(atomic_ptr_t *object, void *desired, memory_order order)
+{
+#if WW_HAVE_C11_ATOMICS
+    return atomic_exchange_explicit(object, desired, order);
+#else
+    (void) order;
+    return InterlockedExchangePointer(object, desired);
+#endif
+}
 
 /*
  * Fixed-width 32-bit atomics. Use only the U32 helpers on atomic_u32_t after
@@ -374,58 +390,9 @@ static inline bool atomicCompareExchangeU32Explicit(atomic_u32_t *object, uint32
 #define atomicIncU32Relaxed(x)      atomicIncU32Explicit((x), memory_order_relaxed)
 #define atomicDecU32Relaxed(x)      atomicDecU32Explicit((x), memory_order_relaxed)
 
-/*
- * ---------------------------------------------------------------------------
- * 64-bit atomics
- * ---------------------------------------------------------------------------
- *
- * The generic API operates on pointer-width objects on the Windows fallback. Use it for flags,
- * counters, indices, enums, sizes and pointers -- anything that fits in an
- * intptr_t. Use the u64 API below, and only the u64 API, on atomic_ullong.
- *
- * The split is not stylistic, and it is not about range. The Windows fallback
- * in the middle of this file is not a real C11 implementation: it emulates
- * every operation with an Interlocked primitive, and the only width
- * Interlocked*Pointer offers is the width of a pointer. On a 64-bit target that
- * is 64 bits and nobody notices, but this project also builds windows-x86 and
- * windows-arm32, where a pointer is four bytes.
- *
- * What that does to a 64-bit value is worse than dropping the high word. The
- * generic load returns a signed intptr_t, so a value that does not fit is
- * truncated on the way in and then sign-extended on the way out: it comes back
- * as a completely different number rather than as its own low half. Storing
- * 3000000000 through the generic API on a 32-bit target reads back as
- * 18446744072414584320.
- *
- * Every atomic_ullong in this codebase holds a value that cannot fit in 32
- * bits. widle_table and SoftIpLimiter store absolute epoch-millisecond
- * timestamps, which passed 2^32 in 1970 and are around 1.8e12 today. SpeedLimit
- * stores token counts scaled by kSpeedLimitUnitsPerByte, which overflows a
- * signed 32-bit slot at roughly 2.15 MB/s. On the generic API those produced
- * idle items that never expired (or expired instantly, depending on which side
- * of the sign boundary the clock's low 32 bits were on) and an all-connections
- * bandwidth limit that stopped limiting -- silently, on release builds, with no
- * diagnostic anywhere.
- *
- * So atomic_ullong is real 64-bit storage on every target, and the helpers
- * below are the only way to operate on it. They lower to Interlocked*64, which
- * is cmpxchg8b on x86 and ldrexd/strexd on ARM32; winnt.h supplies the variants
- * that have no single instruction as compare-exchange loops. Those primitives
- * require 8-byte-aligned storage, which the natural alignment of unsigned long
- * long already provides on every Windows ABI -- the assertions below keep it
- * that way.
- *
- * Plain assignment to an atomic_ullong is still fine while the object is being
- * constructed and is not yet reachable by another thread; on the fallback it is
- * an ordinary 64-bit store, which is two stores on a 32-bit target and is only
- * safe because nothing else can see it yet. Once the object is published, every
- * access goes through the API.
- *
- * The generic operations reject an atomic_ullong at compile time on 32-bit
- * Windows (see W_ATOMIC_REQUIRE_PTR_WIDTH). Elsewhere they would compile and
- * behave correctly, so the mistake surfaces on the Windows CI leg rather than
- * on a developer's machine.
- */
+/* Published atomic_ullong fields use the U64 operations. These preserve
+ * the entire unsigned value on 32-bit Windows, where the generic operations
+ * are pointer-width and Interlocked*64 requires 8-byte aligned storage. */
 _Static_assert(sizeof(atomic_ullong) == sizeof(uint64_t),
                "atomic_ullong must be real 64-bit storage on every target, see the comment above");
 _Static_assert(sizeof(atomic_ullong) == sizeof(w_atomic_ullong_value_t),
