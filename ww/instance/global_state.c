@@ -17,6 +17,7 @@
 #if defined(OS_WIN)
 #include "devices/tun/tun.h"
 #include "devices/windows_driver_artifacts.h"
+#include "wsocket.h"
 #ifdef WW_HAVE_WINDIVERT
 #include "managers/windivert_manager.h"
 #endif
@@ -408,6 +409,9 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
     bool  frand_initialized   = false;
     bool  worker_bound        = false;
     wid_t constructed_workers = 0;
+#ifdef OS_WIN
+    bool winsock_initialized = false;
+#endif
 
     GSTATE                       = (ww_global_state_t) {0};
     GSTATE.flag_initialized      = true;
@@ -451,6 +455,16 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
     }
     crypto_initialized = true;
 
+#ifdef OS_WIN
+    const int winsock_error = WSATryInit();
+    if (UNLIKELY(winsock_error != 0))
+    {
+        printError("Failed to initialize Winsock: %d\n", winsock_error);
+        startupFailureRecord(1);
+        goto rollback;
+    }
+    winsock_initialized = true;
+#endif
     int ares_rc = ares_library_init(ARES_LIB_INIT_ALL);
     if (ares_rc != ARES_SUCCESS)
     {
@@ -658,6 +672,10 @@ ww_startup_result_t createGlobalState(const ww_construction_data_t init_data)
 rollback:
     globalstateRollbackConstruction(
         constructed_workers, ares_initialized, crypto_initialized, frand_initialized, worker_bound);
+#ifdef OS_WIN
+    if (winsock_initialized)
+        WSADeinit();
+#endif
     return wwStartupContextEnd(&startup);
 }
 
@@ -904,6 +922,9 @@ WW_EXPORT void destroyGlobalState(void)
 
     ares_library_cleanup();
 
+#ifdef OS_WIN
+    WSADeinit();
+#endif
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();

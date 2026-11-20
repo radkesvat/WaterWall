@@ -17,23 +17,42 @@
 #include <iphlpapi.h>
 #include <winsock2.h>
 
-static atomic_flag s_wsa_initialized = ATOMIC_FLAG_INIT;
-void               WSAInit(void)
+static SRWLOCK s_wsa_lock = SRWLOCK_INIT;
+static bool    s_wsa_initialized;
+
+int WSATryInit(void)
 {
-    if (! atomicFlagTestAndSet(&s_wsa_initialized))
+    int error = 0;
+    AcquireSRWLockExclusive(&s_wsa_lock);
+    if (! s_wsa_initialized)
     {
         WSADATA wsadata;
-        WSAStartup(MAKEWORD(2, 2), &wsadata);
+        error             = WSAStartup(MAKEWORD(2, 2), &wsadata);
+        s_wsa_initialized = error == 0;
+    }
+    ReleaseSRWLockExclusive(&s_wsa_lock);
+    return error;
+}
+
+void WSAInit(void)
+{
+    const int error = WSATryInit();
+    if (UNLIKELY(error != 0))
+    {
+        printError("Failed to initialize Winsock: %d\n", error);
+        abortProgramNow(1);
     }
 }
 
 void WSADeinit(void)
 {
-    if (atomicFlagTestAndSet(&s_wsa_initialized))
+    AcquireSRWLockExclusive(&s_wsa_lock);
+    if (s_wsa_initialized)
     {
-        atomicFlagClear(&s_wsa_initialized);
         WSACleanup();
+        s_wsa_initialized = false;
     }
+    ReleaseSRWLockExclusive(&s_wsa_lock);
 }
 #else
 #include <ifaddrs.h>

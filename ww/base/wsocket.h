@@ -53,11 +53,13 @@ typedef SOCKET wsocket_t;
 typedef int    socklen_t;
 
 /**
- * @brief Initialize WinSock once per process.
+ * @brief Acquire the shared Winsock startup reference if needed. Returns the WSAStartup error or zero.
  */
+int WSATryInit(void);
+/** @brief Require Winsock for a standalone socket consumer, terminating on failure. */
 void WSAInit(void);
 /**
- * @brief Deinitialize WinSock when no longer needed.
+ * @brief Release the shared startup reference after all Winsock users have stopped.
  */
 void WSADeinit(void);
 
