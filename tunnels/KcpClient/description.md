@@ -1,5 +1,5 @@
 <!--
-Documentation version: 158
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KcpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KcpClient.mdx, and all files must keep the same documentation version.
 -->
 
@@ -93,6 +93,12 @@ There are no required tunnel-specific settings.
 - `kcp-resend` `(number)`
   KCP fast-resend threshold.
   Default: `2`
+
+- `kcp-ack-batch` `(integer)`
+  Each peer chooses its own threshold in the range `0..kcp-recv-window`. `1` flushes after every valid input datagram. A larger value flushes when that many ACKs are pending. `0` leaves ordinary data ACKs for the next `kcp-interval-ms` update.
+  Batching packs ACKs into fewer datagrams and can save CPU on bulk transfers. An ACK can wait up to one update interval, which increases measured RTT. Fast retransmit can also take longer because KCP counts duplicate acknowledgments once per received datagram. With batching enabled, ACK-only input can leave newly unblocked data waiting for the next update.
+  The receiver immediately acknowledges a keepalive PING, including a retransmission. On the first peer CLOSE, it retires the application and immediately sends the ACK. It also acknowledges duplicate CLOSE packets immediately while outgoing data drains. During ACK-only retention, every valid input triggers a flush.
+  Default: `1`
 
 - `kcp-no-congestion-control` `(boolean)`
   Disables KCP congestion control for higher-throughput UDP paths.
@@ -190,6 +196,7 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `kcp-nodelay = true`
 - `kcp-interval-ms = 10`
 - `kcp-resend = 2`
+- `kcp-ack-batch = 1`
 - `kcp-no-congestion-control = true`
 - `kcp-send-window = 8192`
 - `kcp-recv-window = 8192`

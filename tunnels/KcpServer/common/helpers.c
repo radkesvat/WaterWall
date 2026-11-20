@@ -337,6 +337,7 @@ static void promoteSession(kcpserver_carrier_t *carrier)
         .kcp_no_congestion_control = ts->kcp_no_congestion_control,
         .kcp_interval_ms           = ts->kcp_interval_ms,
         .kcp_resend                = ts->kcp_resend,
+        .kcp_ack_batch             = ts->kcp_ack_batch,
         .kcp_send_window           = ts->kcp_send_window,
         .kcp_recv_window           = ts->kcp_recv_window,
         .kcp_initial_cwnd          = ts->kcp_initial_cwnd,

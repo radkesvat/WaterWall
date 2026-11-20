@@ -857,8 +857,10 @@ static void pump(unsigned ms)
     for (unsigned elapsed = 0; elapsed < ms; elapsed += 10)
         advance(min(10U, ms - elapsed));
 }
-static void setupWithKcpSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
-                                 unsigned client_mtu, unsigned server_mtu, const char *kcp_settings)
+/* Each settings suffix supplies JSON members with a leading comma, or is empty. */
+static void setupWithPeerSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                                  unsigned client_mtu, unsigned server_mtu, const char *client_settings,
+                                  const char *server_settings)
 {
     memoryZero(fixture, sizeof(*fixture));
     active               = fixture;
@@ -876,12 +878,18 @@ static void setupWithKcpSettings(fixture_t *fixture, bool fec, unsigned client_c
             settings,
             sizeof(settings),
             "{\"send-mtu\":%u,\"fec\":%s,\"fec-data-shards\":2,\"fec-parity-shards\":1,\"close-drain-timeout-ms\":%u,"
-            "\"ping-interval-ms\":100,\"kcp-send-buffer-limit\":2%s}",
+            "\"kcp-send-buffer-limit\":2%s}",
             i == 1 ? client_mtu : server_mtu,
             fec ? "true" : "false",
             i == 1 ? client_close : server_close,
-            kcp_settings);
-        fixture->nodes[i].node_settings_json = cJSON_Parse(settings);
+            i == 1 ? client_settings : server_settings);
+        cJSON *node_settings = cJSON_Parse(settings);
+        require(node_settings != NULL, "fixture generated invalid KCP settings");
+        if (! cJSON_HasObjectItem(node_settings, "ping-interval-ms"))
+            cJSON_AddNumberToObject(node_settings, "ping-interval-ms", 100);
+        if (! cJSON_HasObjectItem(node_settings, "no-recv-timeout-ms"))
+            cJSON_AddNumberToObject(node_settings, "no-recv-timeout-ms", 2000);
+        fixture->nodes[i].node_settings_json = node_settings;
     }
     fixture->source  = tunnelCreate(&fixture->nodes[0], 0, 0);
     fixture->client  = fixture->nodes[1].createHandle(&fixture->nodes[1]);
@@ -921,11 +929,15 @@ static void setupWithKcpSettings(fixture_t *fixture, bool fec, unsigned client_c
     }
     tunnelchainFinalize(fixture->chain);
 }
+static void setupWithSettings(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
+                              unsigned client_mtu, unsigned server_mtu, const char *settings)
+{
+    setupWithPeerSettings(fixture, fec, client_close, server_close, client_mtu, server_mtu, settings, settings);
+}
 static void setupWithMtus(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close,
                           unsigned client_mtu, unsigned server_mtu)
 {
-    setupWithKcpSettings(
-        fixture, fec, client_close, server_close, client_mtu, server_mtu, ",\"no-recv-timeout-ms\":2000");
+    setupWithSettings(fixture, fec, client_close, server_close, client_mtu, server_mtu, "");
 }
 static void setup(fixture_t *fixture, bool fec, unsigned client_close, unsigned server_close, unsigned mtu)
 {
@@ -2147,8 +2159,7 @@ static void caseKeepaliveTimer(bool fec)
 {
     testCaseSet("worker timer sends keepalives and expires idle KCP before its long update interval");
     fixture_t fixture;
-    setupWithKcpSettings(
-        &fixture, fec, 1000, 1000, 1500, 1500, ",\"kcp-interval-ms\":5000,\"no-recv-timeout-ms\":1000");
+    setupWithSettings(&fixture, fec, 1000, 1000, 1500, 1500, ",\"kcp-interval-ms\":5000,\"no-recv-timeout-ms\":1000");
     endpoint_t *ep = openApp();
     established(ep);
     sbuf_t *ignored = touControlCreate(getCurrentWorkerBufferPool(),
@@ -2213,6 +2224,53 @@ static void caseKeepaliveTimer(bool fec)
     teardown();
 }
 
+static void caseAckBatchKeepalive(bool fec, unsigned ack_batch)
+{
+    testCaseSet("batched receiver acknowledges a keepalive and its retry before its periodic update");
+    fixture_t fixture;
+    char      server_settings[128];
+    snprintf(server_settings,
+             sizeof(server_settings),
+             ",\"ping-interval-ms\":10000,\"no-recv-timeout-ms\":30000,\"kcp-interval-ms\":1000,\"kcp-ack-batch\":%u",
+             ack_batch);
+    setupWithPeerSettings(&fixture,
+                          fec,
+                          1000,
+                          1000,
+                          1500,
+                          1500,
+                          ",\"ping-interval-ms\":100,\"no-recv-timeout-ms\":400,\"kcp-interval-ms\":10",
+                          server_settings);
+    endpoint_t *ep = openApp();
+    established(ep);
+
+    advance(100);
+    const ikcpcb *client = touSessionKcp(ep->client_session);
+    sbuf_t       *ack    = extraFindRecord(ep, 1, 82, -1);
+    require(client->nsnd_buf == 1 && ack != NULL, "first keepalive did not get an immediate ACK");
+    bufferpoolReuseBuffer(getCurrentWorkerBufferPool(), ack);
+    extraDiscardQueuedWire(); /* Lose the reply, including any FEC repair shard. */
+
+    const struct IKCPSEG *ping        = iqueue_entry(client->snd_buf.next, struct IKCPSEG, node);
+    const IUINT32         now         = (IUINT32) (clock_us / 1000);
+    const IUINT32         retry_delay = ping->resendts - now;
+    require(ping->len == 1 && (uint8_t) ping->data[0] == kTouFramePing && retry_delay > 0 && retry_delay < 300 &&
+                ikcp_check(touSessionKcp(ep->server_session), now) - now > retry_delay,
+            "fixture needs a PING retry before the receive deadline and the server update");
+    advance(retry_delay);
+    require(client->xmit == 1, "the client did not retransmit its unacknowledged PING");
+    flushDirection(1);
+    require(ikcp_waitsnd(client) == 0, "duplicate PING waited for the server's periodic ACK flush");
+
+    pump(1200);
+    require(touSessionIsReady(ep->client_session) && touSessionIsReady(ep->server_session),
+            "the idle pair expired with keepalives crossing the wire");
+    sendBytes(ep, 0, 1);
+    pump(20);
+    require(ep->received[0] == 1, "the application could not transfer data after the idle period");
+    teardown();
+}
+
 static uint16_t segmentReceiveWindow(const uint8_t *segment)
 {
     return (uint16_t) (segment[6] | (uint16_t) segment[7] << 8);
@@ -2229,7 +2287,7 @@ static void caseSaturatedReceiveWindow(bool fec)
                  sizeof(settings),
                  ",\"no-recv-timeout-ms\":2000,\"kcp-recv-window\":%u,\"kcp-send-window\":32",
                  window);
-        setupWithKcpSettings(&fixture, fec, 1000, 1000, 1500, 1500, settings);
+        setupWithSettings(&fixture, fec, 1000, 1000, 1500, 1500, settings);
         endpoint_t *ep = openApp();
         established(ep);
         ikcpcb *receiver = touSessionKcp(ep->server_session);
@@ -2381,6 +2439,8 @@ int kcpSessionCases(const char *selection)
             caseLargeFlight(fec != 0, true);
             caseZeroWindowReopen(fec != 0);
             caseKeepaliveTimer(fec != 0);
+            caseAckBatchKeepalive(fec != 0, 0);
+            caseAckBatchKeepalive(fec != 0, 32);
             caseSaturatedReceiveWindow(fec != 0);
             caseFinishBeforeReady(fec != 0);
             caseEarlyOutput(fec != 0);
