@@ -986,7 +986,7 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
              bytes_buf,
              rate_buf,
              (unsigned int) state->connection_count,
-             (unsigned int) atomicLoadRelaxed(&state->failed_streams));
+             (unsigned int) state->failed_streams);
     }
 
     if (state->download)
@@ -1004,7 +1004,7 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
              (unsigned long long) state->aggregate_receiver.validation_errors,
              state->aggregate_receiver.jitter_us / 1000.0,
              (unsigned int) state->connection_count,
-             (unsigned int) atomicLoadRelaxed(&state->failed_streams));
+             (unsigned int) state->failed_streams);
     }
 
     if (state->json_summary)
@@ -1014,7 +1014,7 @@ static void speedtestclientLogAggregate(tunnel_t *t, bool success)
              "packets\":%llu,\"validation_errors\":%llu,\"verification_enabled\":%s}",
              boolToTrueFalse(success),
              (unsigned int) state->connection_count,
-             (unsigned int) atomicLoadRelaxed(&state->failed_streams),
+             (unsigned int) state->failed_streams,
              (unsigned long long) state->aggregate_sender.bytes,
              (unsigned long long) state->aggregate_receiver.bytes,
              (unsigned long long) state->aggregate_receiver.lost_packets,
@@ -1053,16 +1053,15 @@ static void speedtestclientFinishLine(tunnel_t *t, line_t *l, bool success, bool
     speedtestclientAddStats(&state->aggregate_receiver, &ls->receiver);
     speedtestclientAddStats(&state->aggregate_remote_sender, &ls->remote_sender);
     speedtestclientAddStats(&state->aggregate_remote_receiver, &ls->remote_receiver);
-    mutexUnlock(&state->aggregate_mutex);
-
     if (! success)
     {
-        atomicIncRelaxed(&state->failed_streams);
+        ++state->failed_streams;
     }
-
-    const unsigned int completed     = atomicIncRelaxed(&state->completed_streams) + 1U;
-    const bool         all_done      = completed == state->connection_count;
-    const bool         final_success = atomicLoadRelaxed(&state->failed_streams) == 0;
+    /* The last stream acquires every earlier writer's totals through this mutex.
+     * After its increment the final counts and aggregate records are immutable. */
+    const bool all_done      = ++state->completed_streams == state->connection_count;
+    const bool final_success = state->failed_streams == 0;
+    mutexUnlock(&state->aggregate_mutex);
 
     lineRef(l);
     speedtestclientRemoveOwnedLine(t, l, ls->stream_id);

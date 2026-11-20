@@ -296,8 +296,8 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     state->owned_lines = memoryAllocateZero(owned_lines_bytes);
 
     atomicStoreExplicit(&state->stopping, false, memory_order_relaxed);
-    atomicStoreRelaxed(&state->completed_streams, 0);
-    atomicStoreRelaxed(&state->failed_streams, 0);
+    state->completed_streams = 0;
+    state->failed_streams    = 0;
 
     return t;
 }

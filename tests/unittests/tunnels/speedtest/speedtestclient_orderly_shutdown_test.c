@@ -22,6 +22,7 @@
 #include "ev_memory.h"
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 #include "startup.h"
+#include "wthread.h"
 
 #include <math.h>
 
@@ -222,6 +223,41 @@ static void fixtureTeardown(speedtestclient_fixture_t *fixture)
     tunnelDestroy(fixture->next);
     tunnelDestroy(fixture->speed);
     tosWorkerEnvTeardown(&fixture->env);
+}
+
+static WTHREAD_ROUTINE(finishSecondStream)
+{
+    speedtestclient_fixture_t *fixture = userdata;
+    testWorkerBindWID(1);
+    line_t                   *line = publishLine(fixture, 1, true);
+    speedtestclient_lstate_t *ls   = lineGetState(line, fixture->speed);
+    ls->sender.bytes               = 2;
+    speedtestclientFinishFromDownstreamFinish(fixture->speed, line, true, NULL);
+    return 0;
+}
+
+static void caseParallelStreamCompletion(void)
+{
+    twfSetCase("SpeedTestClient publishes all worker results before deciding the exit code");
+    tosResetProcessApi(true);
+    speedtestclient_fixture_t fixture;
+    fixtureSetup(&fixture);
+    speedtestclient_tstate_t *state = tunnelGetState(fixture.speed);
+    state->duration_ms              = 1000;
+    state->upload                   = true;
+    state->terminate_on_complete    = true;
+    line_t                   *line  = publishLine(&fixture, 0, true);
+    speedtestclient_lstate_t *ls    = lineGetState(line, fixture.speed);
+    ls->sender.bytes                = 1;
+    wthread_t finisher;
+    twfRequire(threadCreate(&finisher, finishSecondStream, &fixture) == kWThreadErrorNone,
+               "failed to start completing worker");
+    speedtestclientFinishFromDownstreamFinish(fixture.speed, line, false, "fixture failure");
+    twfRequire(safeThreadJoin(finisher), "completing worker did not join");
+    tosRequireAcceptedRequest(1);
+    twfRequire(state->completed_streams == 2 && state->failed_streams == 1 && state->aggregate_sender.bytes == 3,
+               "final aggregate omitted a worker result");
+    fixtureTeardown(&fixture);
 }
 
 static void caseWorkerStopDrainsOnlyItsPublishedSlots(void)
@@ -825,6 +861,7 @@ int main(void)
     caseConstructorTimeoutBounds();
     casePacingCounterBeyondMultiplyRange(8000000, false);
     casePacingCounterBeyondMultiplyRange(1, true);
+    caseParallelStreamCompletion();
     caseWorkerStopDrainsOnlyItsPublishedSlots();
     caseRequiredStartupFailuresPropagateStartupStatus();
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();

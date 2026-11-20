@@ -96,8 +96,8 @@ typedef struct speedtestclient_tstate_s
 
     atomic_bool             stopping;
     line_t                **owned_lines;
-    atomic_uint             completed_streams;
-    atomic_uint             failed_streams;
+    uint32_t                completed_streams;
+    uint32_t                failed_streams;
     wmutex_t                aggregate_mutex;
     speedtestclient_stats_t aggregate_sender;
     speedtestclient_stats_t aggregate_receiver;
