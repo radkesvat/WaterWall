@@ -1022,21 +1022,28 @@ if(PROJECT_REQUIRES_OPENSSL)
         # Pin the source archive and wrapper beside the consumer. Keeping the
         # immutable identities here is sufficient; no separate verifier-owned
         # dependency manifest is needed.
+        set(WW_OPENSSL_VERSION "4.0.3")
         CPMAddPackage(
             NAME openssl-source
-            URL https://github.com/openssl/openssl/releases/download/openssl-4.0.1/openssl-4.0.1.tar.gz
-            URL_HASH SHA256=2db3f3a0d6ea4b59e1f094ace2c8cd536dffb87cdc39084c5afa1e6f7f37dd09
+            URL https://github.com/openssl/openssl/releases/download/openssl-${WW_OPENSSL_VERSION}/openssl-${WW_OPENSSL_VERSION}.tar.gz
+            URL_HASH SHA256=325b5c806167c13b40b1ffeadfe0248197c00eccc4cf123ec1e28d2d2fd216d9
             DOWNLOAD_ONLY True
         )
         set(OPENSSL_SOURCE "${openssl-source_SOURCE_DIR}")
 
+        # The wrapper skips Configure when the options match. Force its
+        # source-change cleanup on upgrades, even if the source path is reused.
+        if(NOT "$CACHE{WW_OPENSSL_CONFIGURED_PIN}" STREQUAL WW_OPENSSL_VERSION)
+            set(openssl-source_SOURCE_DIR_OLD "" CACHE INTERNAL "Previously fetched OpenSSL source")
+        endif()
         CPMAddPackage(
             NAME openssl-cmake
             GIT_REPOSITORY https://github.com/jimmy-park/openssl-cmake.git
-            GIT_TAG f2318c9f4e31f1e449ce3533cd9f9a9d3a44256c # 4.0.1
+            GIT_TAG f2318c9f4e31f1e449ce3533cd9f9a9d3a44256c # openssl-cmake wrapper tag 4.0.1
             OPTIONS
             ${WW_OPENSSL_CPM_OPTIONS}
         )
+        set(WW_OPENSSL_CONFIGURED_PIN "${WW_OPENSSL_VERSION}" CACHE INTERNAL "OpenSSL source pin last configured")
 
         # Consumers may need capability checks before the wrapper generates
         # opensslv.h. Record the version of the source archive we actually own;
@@ -1046,7 +1053,7 @@ if(PROJECT_REQUIRES_OPENSSL)
             set(WW_OPENSSL_CRYPTO_REAL_TARGET OpenSSL::Crypto)
         endif()
         set_property(TARGET ${WW_OPENSSL_CRYPTO_REAL_TARGET}
-                     PROPERTY WW_PINNED_OPENSSL_VERSION "4.0.1")
+                     PROPERTY WW_PINNED_OPENSSL_VERSION "${WW_OPENSSL_VERSION}")
 
         set(ENV{CC} "${WW_OPENSSL_PREV_ENV_CC}")
         set(ENV{CXX} "${WW_OPENSSL_PREV_ENV_CXX}")
