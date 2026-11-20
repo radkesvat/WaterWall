@@ -587,9 +587,9 @@ typedef struct hlsem_s
  *
  * @param s Semaphore object.
  * @param initcount Initial token count.
- * @return `false` only when system semaphore init fails.
+ * @return `false` if the count is unrepresentable or the backing semaphore cannot be initialized.
  */
-bool leightweightsemaphoreInit(wlsem_t *, uint32_t initcount); // returns false if system impl failed (rare)
+bool leightweightsemaphoreInit(wlsem_t *, uint32_t initcount);
 /**
  * @brief Destroy a lightweight semaphore.
  *

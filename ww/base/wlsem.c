@@ -269,11 +269,7 @@ static bool semaSignal(wsem_t *sp, uint32_t count)
  */
 static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_usecs)
 {
-#if defined(OS_WIN) && ! WW_HAVE_C11_ATOMICS
-    atomic_llong old_count;
-#else
-    long long old_count;
-#endif
+    w_atomic_llong_value_t old_count;
     int spin = LSEMA_MAX_SPINS;
     while (--spin >= 0)
     {
@@ -334,8 +330,12 @@ static bool _leightweightsemaphoreWaitPartialSpin(wlsem_t *s, uint64_t timeout_u
  */
 bool leightweightsemaphoreInit(wlsem_t *s, uint32_t initcount)
 {
-    s->count = initcount;
-    return semaInit(&s->sema, initcount);
+    const w_atomic_llong_value_t count = (w_atomic_llong_value_t) initcount;
+    if ((uint64_t) count != initcount)
+        return false;
+    atomic_init(&s->count, count);
+    /* Available permits are held in count. The OS semaphore only wakes parked waiters. */
+    return semaInit(&s->sema, 0);
 }
 
 /**
@@ -367,17 +367,13 @@ bool leightweightsemaphoreWait(wlsem_t *s)
  */
 bool leightweightsemaphoreTryWait(wlsem_t *s)
 {
-#if defined(OS_WIN) && ! WW_HAVE_C11_ATOMICS
-    atomic_llong old_count;
-#else
-    long long old_count;
-#endif
+    w_atomic_llong_value_t old_count;
     old_count = atomicLoadExplicit(&s->count, memory_order_relaxed);
 
     while (old_count > 0)
     {
-        if (atomic_compare_exchange_weak_explicit(&s->count, &old_count, old_count - 1, memory_order_acquire,
-                                                  memory_order_relaxed))
+        if (atomicCompareExchangeWeakExplicit(
+                &s->count, &old_count, old_count - 1, memory_order_acquire, memory_order_relaxed))
         {
             return true;
         }
@@ -430,10 +426,6 @@ void leightweightsemaphoreSignal(wlsem_t *s, uint32_t count)
 size_t leightweightsemaphoreApproxAvail(wlsem_t *s)
 {
 
-#ifdef OS_UNIX
-    ssize_t count = atomicLoadExplicit(&s->count, memory_order_relaxed);
-#else
-    long long count = atomicLoadExplicit(&s->count, memory_order_relaxed);
-#endif
+    const w_atomic_llong_value_t count = atomicLoadExplicit(&s->count, memory_order_relaxed);
     return count > 0 ? (size_t) (count) : 0;
 }

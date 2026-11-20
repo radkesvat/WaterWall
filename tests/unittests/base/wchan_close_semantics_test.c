@@ -443,9 +443,21 @@ static void testCloseVersusFastFullRejection(void)
     chanFree(channel);
 }
 
+static void testInitialSemaphorePermit(void)
+{
+    wlsem_t sema;
+    require(leightweightsemaphoreInit(&sema, 1), "could not initialize semaphore with one permit");
+    require(leightweightsemaphoreTryWait(&sema), "first wait did not consume the initial permit");
+    require(! leightweightsemaphoreTimedWait(&sema, 1000), "initial permit was consumed twice");
+    leightweightsemaphoreSignal(&sema, 1);
+    require(leightweightsemaphoreTryWait(&sema), "signal did not restore one permit after timeout");
+    leightweightsemaphoreDestroy(&sema);
+}
+
 int main(void)
 {
     testCaseSet("wchan_close_semantics_test");
+    testInitialSemaphorePermit();
     testCanceledSenderReportsFailure();
     testCanceledReceiverStaysUsable();
     testBufferedRoundTrip();
