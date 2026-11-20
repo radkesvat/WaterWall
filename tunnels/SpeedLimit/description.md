@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedLimit.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SpeedLimit.mdx, and all files must keep the same documentation version.
 -->
 
 # SpeedLimit Node
+
+## Overview
 
 `SpeedLimit` slows traffic down to a configured maximum rate.
 
@@ -14,37 +16,37 @@ It can be used in two broad styles:
 
 This tunnel does not change protocol data. It only decides how quickly payload is allowed to pass.
 
-## What It Does
+## Typical placement
 
-- Applies rate limit to payload crossing the tunnel
-- Uses a token bucket, so traffic is released again as tokens refill over time
-- Can keep a separate limit per line, one shared limit for the whole tunnel, or one shared limit per worker
-- In `pause` work mode, buffers excess stream data and resumes later
-- In `drop` work mode, discards whole payload chunks when there are not enough tokens
+### Work Mode
 
-The configured limit applies to both directions combined for the selected bucket.
-
-That means if one bucket is limited to `1 MB/s`, upload and download through that same bucket together share that `1 MB/s`.
-
-## Work Mode
-
-### Stream shaping
+#### Stream shaping
 
 Use `pause` mode when you want traffic to wait:
 
 - `TcpListener <--> SpeedLimit <--> TcpConnector`
 - `TcpListener <--> SpeedLimit <--> TlsClient <--> TcpConnector`
 
-### Packet dropping
+#### Packet dropping
 
 Use `drop` mode when waiting is not the right behavior:
 
-- `TunDevice <--> SpeedLimit <--> UdpStatelessSocket`
+- `TunDevice <--> SpeedLimit <--> RawSocket`
 - packet or UDP-datagram chains where dropping is acceptable
 
-## Configuration Example
+`UdpStatelessSocket` must start its own chain; it cannot follow `SpeedLimit`.
 
-### Per connection stream limit
+
+## Minimal practical example
+
+The JSON below is a **node fragment**, not a complete config file.
+`next-node` names the following configured stream node. This example uses
+`pause` and gives each line its own bucket shared by upload and download.
+
+### Configuration Example
+
+
+#### Per connection stream limit
 
 ```json
 {
@@ -59,40 +61,12 @@ Use `drop` mode when waiting is not the right behavior:
 }
 ```
 
-### Global shared limit
 
-```json
-{
-  "name": "global-speed-limit",
-  "type": "SpeedLimit",
-  "settings": {
-    "mega-bytes-per-sec": 8,
-    "limit-mode": "all-lines",
-    "token-recharge-rate": 20,
-    "work-mode": "pause"
-  },
-  "next": "next-node"
-}
-```
+## Configuration
 
-### Packet drop limit
+### Required JSON Fields
 
-```json
-{
-  "name": "packet-speed-limit",
-  "type": "SpeedLimit",
-  "settings": {
-    "bytes-per-sec": 500000,
-    "limit-mode": "per-worker",
-    "work-mode": "drop"
-  },
-  "next": "next-node"
-}
-```
-
-## Required JSON Fields
-
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen node name.
@@ -100,11 +74,11 @@ Use `drop` mode when waiting is not the right behavior:
 - `type` `(string)`
   Must be exactly `"SpeedLimit"`.
 
-### `settings`
+#### `settings`
 
 `settings` must be a non-empty object.
 
-## Required `settings` Fields
+### Required `settings` Fields
 
 You must set exactly one speed field:
 
@@ -119,9 +93,7 @@ You must also set:
 - `limit-mode` `(string)`
 - `work-mode` `(string)`
 
-
-
-## `limit-mode`
+### `limit-mode`
 
 - `per-connection`
 - `per-line`
@@ -147,7 +119,7 @@ Each worker thread gets its own shared counter.
 
 If the limit is `1 MB/s` and Waterwall is running with `4` workers, the practical total cap can reach about `4 MB/s` overall, because each worker has its own `1 MB/s` bucket.
 
-## `work-mode` Meanings
+### `work-mode` Meanings
 
 - `pause`
 
@@ -172,14 +144,14 @@ When the bucket is empty:
 
 This is the safer choice for packet tunnels and UDP-style traffic.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `token-recharge-rate` `(integer)`
   Milliseconds between token recharges.
 
   Default: `10`
 
-## How `token-recharge-rate` Works
+### How `token-recharge-rate` Works
 
 This value is a time interval in milliseconds, not a bandwidth value.
 
@@ -202,9 +174,67 @@ Larger values:
 - can feel more bursty
 - may release traffic in larger steps
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### In `pause` mode
+### Additional rate examples
+
+#### Global shared limit
+
+```json
+{
+  "name": "global-speed-limit",
+  "type": "SpeedLimit",
+  "settings": {
+    "mega-bytes-per-sec": 8,
+    "limit-mode": "all-lines",
+    "token-recharge-rate": 20,
+    "work-mode": "pause"
+  },
+  "next": "next-node"
+}
+```
+
+#### Packet drop limit
+
+```json
+{
+  "name": "packet-speed-limit",
+  "type": "SpeedLimit",
+  "settings": {
+    "bytes-per-sec": 500000,
+    "limit-mode": "per-worker",
+    "work-mode": "drop"
+  },
+  "next": "next-node"
+}
+```
+
+### Notes And Caveats
+
+- `pause` mode can temporarily hold extra data in memory while the sender waits.
+- `drop` mode is usually the right choice for packet tunnels and UDP-style traffic.
+- `per-worker` mode intentionally scales with worker count.
+- `all-lines` mode is the best choice when you want one shared cap for the whole node.
+- The limit is shared by both directions combined inside each selected bucket.
+- In packet chains, Waterwall packet lines are worker-shared helper lines. Because of that, `per-line` on a packet line behaves like a worker-local shared bucket, not a separate limit for each packet flow.
+
+## Implementation details
+
+### What It Does
+
+- Applies rate limit to payload crossing the tunnel
+- Uses a token bucket, so traffic is released again as tokens refill over time
+- Can keep a separate limit per line, one shared limit for the whole tunnel, or one shared limit per worker
+- In `pause` work mode, buffers excess stream data and resumes later
+- In `drop` work mode, discards whole payload chunks when there are not enough tokens
+
+The configured limit applies to both directions combined for the selected bucket.
+
+That means if one bucket is limited to `1 MB/s`, upload and download through that same bucket together share that `1 MB/s`.
+
+### Detailed Behavior
+
+#### In `pause` mode
 
 For stream traffic, `SpeedLimit` may release only part of a large queued buffer, then keep the rest queued until later.
 
@@ -212,29 +242,33 @@ This helps preserve ordering while still shaping the average speed.
 
 When the queue becomes empty again, the tunnel resumes the paused source side.
 
-### In `drop` mode
+#### In `drop` mode
 
 For packet-style traffic, `SpeedLimit` makes a whole-payload decision.
 
 If there are not enough tokens for that packet or datagram chunk, it drops that chunk instead of sending part of it.
 
-### Lifecycle behavior
+#### Lifecycle behavior
 
 - per-line state is created only during upstream `Init`
 - downstream `Init` is forbidden and terminates the process through `abortProgramNow(1)`; downstream payload remains supported after upstream initialization
 - `SpeedLimit` must not intervene between `Bridge` and `ReverseClient`; those nodes must be directly adjacent when connected in that topology
-- in `pause` mode, drain timers are cancelled during line-state destruction
-- `Finish` clears any queued payload owned by this tunnel before forwarding the Waterwall finish callback
 - `required_padding_left` is `0`, because this tunnel does not prepend protocol bytes
 
-## Splice support and bounded retention
+In stream `pause` mode, orderly `Finish` cancels pacing and hands queued bytes to
+the surviving neighbor in FIFO order before returning. The final handoff can burst
+through the configured rate and an outstanding consumer Pause. If the receiver
+closes during a handoff, the node releases the remainder and sends nothing further.
+After `UdpOverTcpClient` this rule applies to the framed TCP stream. After
+`UdpOverTcpServer` the output is UDP and queued datagrams are released at close.
+
+### Splice support and bounded retention
 
 Each direction has a separate FIFO bounded by 16 MiB of logical payload, 32 MiB of
-retained buffer capacity charge, and 1,024 buffers. Empty buffers still count toward
-the charge and entry limits. Admission refusal closes the affected TCP connection
+retained buffer capacity charge. Empty buffers still consume charge. Admission refusal closes the affected TCP connection
 and releases both queues; accepted TCP bytes are never silently dropped.
 
-A consumer Pause stops the corresponding timer drain. The queued data stays owned
+During normal operation, a consumer Pause stops the corresponding timer drain. The queued data stays owned
 by this node, without repeated timer polling while paused. Resume rearms the drain,
 but the source remains paused until both the local queue hold and external pressure
 have cleared. If creating or rearming the drain timer is refused, both queues are
@@ -251,16 +285,7 @@ mode makes its whole-buffer decision without reading payload bytes.
 Splice I/O still requires support throughout the finalized stream chain. Packet
 chains and unsupported platforms use ordinary buffers.
 
-## Notes And Caveats
-
-- `pause` mode can temporarily hold extra data in memory while the sender waits.
-- `drop` mode is usually the right choice for packet tunnels and UDP-style traffic.
-- `per-worker` mode intentionally scales with worker count.
-- `all-lines` mode is the best choice when you want one shared cap for the whole node.
-- The limit is shared by both directions combined inside each selected bucket.
-- In packet chains, Waterwall packet lines are worker-shared helper lines. Because of that, `per-line` on a packet line behaves like a worker-local shared bucket, not a separate limit for each packet flow.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 163
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationClient.mdx, and all files must keep the same documentation version.
 -->
 
 # AuthenticationClient
+
+## Overview
 
 `AuthenticationClient` is the frontend side of the Waterwall authentication database protocol. It is a chain-head control
 node: when the tunnel starts it creates one internal control `line_t` on worker 0, sends that line upstream to its next
@@ -13,7 +15,9 @@ alive and pushes local traffic counters.
 It is not a data pass-through tunnel. Other tunnels use its internal API from
 `include/AuthenticationClient/interface.h` to read users or add traffic to the local table.
 
-## Expected Chain
+## Typical placement
+
+### Expected Chain
 
 Local loopback client-side chain:
 
@@ -28,7 +32,162 @@ The connector path should reach an `AuthenticationServer`. The client sends prot
 `AuthenticationClient` owns the control line it creates. Because it is the line creator, it is also the only tunnel that
 destroys that line.
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Define `auth-db` as the control path to AuthenticationServer and configure a matching `edge-1` credential there. Replace `long-random-secret` on both sides. This is a database control connection, separate from user payload traffic.
+
+The control protocol carries credentials and user passwords. Untrusted remote links require an authenticated encrypted transport with server identity verification; the direct in-process or loopback examples do not provide that protection.
+
+```json
+{
+  "name": "auth-client",
+  "type": "AuthenticationClient",
+  "settings": {
+    "name": "edge-1",
+    "secret": "long-random-secret"
+  },
+  "next": "auth-db"
+}
+```
+
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
+
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
+
+- `name` `(string)`
+  A user-chosen name for this node. Other nodes, such as `Socks5Server`, use this value when they reference the
+  authentication client.
+
+- `type` `(string)`
+  Must be exactly `"AuthenticationClient"`.
+
+- `next` `(string)`
+  Required. The next node must lead to an `AuthenticationServer`, either directly or through transport/client tunnels
+  such as `TcpConnector`, `TlsClient`, or other chain components.
+
+#### `settings`
+
+- `name` `(string)`
+  Authentication client name sent to `AuthenticationServer`. This is a control-plane credential name and must match one
+  entry in the server's `settings.auth-clients` array.
+
+- `secret` `(string)`
+  Authentication client secret sent with `settings.name`. This is not a traffic user's password.
+
+### Settings Reference
+
+Required settings:
+
+```json
+{
+  "name": "edge-a",
+  "secret": "shared-secret"
+}
+```
+
+Optional settings:
+
+```json
+{
+  "ping-interval-ms": 60000,
+  "pull-interval-ms": 300000,
+  "push-interval-ms": 300000,
+  "reconnect-interval-ms": 5000,
+  "request-timeout-ms": 120000,
+  "max-pending-requests": 64,
+  "sync-max-users": 100000,
+  "sync-max-bytes": 268435456,
+  "traffic-multiplier": 1,
+  "verbose": false
+}
+```
+
+All five interval settings accept plain JSON integers from `0` through `2147483647` (`INT_MAX`).
+`max-pending-requests` accepts integers from `1` through `2147483647`.
+Defaults apply only when a setting is absent. Present values with fractions, decimal or exponent spelling,
+strings, `null`, or values outside the range are rejected at startup; they are never rounded or wrapped.
+The existing meaning of an explicitly configured `0` is preserved for each interval. Duplicate recognized settings are rejected,
+and `verbose` accepts only a JSON Boolean.
+
+On an initialized control line with writes permitted, `ping-interval-ms` sends `Ping` after authentication.
+Before authentication, it retries `Authenticate` if no such request is outstanding.
+
+`pull-interval-ms` enables periodic full `GetUsersPage` traversals. A value of `0` disables timer-driven pulls, but
+authentication and every matching usage ACK still request a refresh. A failed refresh retries independently while
+usage reporting continues from the last installed baseline.
+
+`push-interval-ms` enables periodic `PushUserStats`. A value of `0` disables periodic pushes. Other tunnels can still
+ask for a push through the internal API.
+
+When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull/push interval. Each sync tick checks
+which jobs are due and attempts `PushUserStats` first. `GetUsersPage` starts a traversal when configuration revisions differ or the pull cadence is due.
+Statistics revision differences follow the configured cadence; response-envelope revisions can be newer than the retained snapshot.
+Periodic ticks during a traversal join it. An explicit `authenticationclientRequestPull()` during a traversal instead
+coalesces into one later traversal; installation preserves that explicit demand.
+
+`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline. Credential rejection has a minimum one-second delay and participates in exponential backoff, even when the configured reconnect interval is zero.
+
+`request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
+time using an independent worker-0 deadline timer, even with ping/pull/push disabled. The deadline starts at
+request submission. For `Authenticate`, it includes time queued downstream during connection setup or a transport
+handshake. A value of `0` disables the timeout.
+
+`max-pending-requests` is a request-admission ceiling. A full table retains desired pulls, pushes and catch-up work
+until a matching response frees capacity; it does not repeatedly build batches, warn or arm a short retry timer.
+The response is semantically validated and enrollment/ACK/error processing finishes before queued work resumes.
+Local send rollback schedules a deferred continuation; stale correlations release no capacity. With request timeout
+and optional jobs disabled, an unanswered request may wait indefinitely without busy retry.
+
+`verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
+request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
+
+### Local Per-User Bandwidth
+
+UserController enforces each user's `limit.bandwidth.u` and `.d` as actual logical bytes per second, with zero unlimited.
+All lines, controllers and workers referencing this AuthenticationClient share each user's independent directional budget.
+Different clients and users are independent; no distributed allowance is implied. Queued bytes are charged only at onward
+handoff, while first positive arrival starts first-use expiry even before forwarding. Runtime buckets and fair-turn tickets
+migrate by durable user ID and remain outside JSON, snapshots and persistence. Multipliers affect quota only. Per user in one AuthenticationClient, queues permit 4 MiB logical bytes,
+8 MiB allocation charge and 1024 buffers/tickets. Per AuthenticationClient the limits are 64 MiB, 128 MiB and 16384
+buffers/tickets, with independently accounted byte/buffer and ticket registries. These are not cross-client budgets.
+
+### Traffic Multiplier
+
+`traffic-multiplier` is an optional JSON number inside `settings`, defaulting to `1`. It accepts values from
+`0.001` through `1000` with up to three effective decimal places. For example, `2` charges 2 GB of quota for 1 GB
+of measured traffic, `1.5` charges 1.5 GB, and `0.5` charges 0.5 GB. Zero, negative values, strings and unsupported
+precision are rejected at startup. The value is fixed for the lifetime of this AuthenticationClient instance.
+
+The same multiplier applies to upload and download for every user and protocol referencing this instance.
+`UserController` and other traffic callers pass actual measured bytes to AuthenticationClient. The client converts each
+new measurement to charged usage exactly once, before updating local quota counters and checking limits. This also
+applies while offline. It never multiplies totals received from AuthenticationServer or already charged pending batches,
+retries, acknowledgements and catch-up debt. AuthenticationServer aggregates the reported charged bytes unchanged.
+
+Calculation uses integer arithmetic and a separate fractional remainder for each user and direction. Whole charged
+bytes are added as they accumulate, so splitting a transfer into small payloads cannot change its charge. At `0.5`, two
+one-byte uploads together charge one byte; a one-byte download keeps its own half-byte remainder. Remainders survive
+ordinary refreshes and reconnects by durable user ID, including credential changes for the same ID. They are process-local,
+excluded from database JSON and synchronization, and discarded when the user is removed or the client is destroyed.
+There is no crash recovery. Checked saturation never wraps a large charge back to a smaller counter.
+
+First-use expiry starts on the first positive measured traffic, even when a discounted charge has not yet accumulated a
+whole byte. Login and zero-byte calls do not start it. Existing expiry and reservation rules are unchanged.
+
+Account traffic totals, traffic limits, and unacknowledged byte totals in status use **charged quota bytes**, not physical
+network bytes. A combined total from clients with different multipliers cannot reconstruct actual traffic. Bandwidth,
+speed, connection/IP counts, and first-use timestamps are not multiplied. Use separate AuthenticationClient instances
+with distinct producer identities when different traffic-serving chains need different rates.
+
+## Usage and troubleshooting
+
+### Configuration Example
 
 Minimal in-process authentication chain:
 
@@ -132,31 +291,53 @@ Traffic-serving nodes reference the client by node name. For example, `Socks5Ser
 `AuthenticationClient` is not placed in the data path for `Socks5Server`. It runs its own control connection and exposes
 the pulled users table through its internal API.
 
-## Required JSON Fields
+### External Status API
 
-### Top-level fields
+APIServer exposes the registered read-only `status` operation on worker 0. Its request and response content type is
+`application/json`, encoded as UTF-8. Send `{}` for basic status or `{"include_accounting":true}` for aggregate accounting.
+Unknown or duplicate fields, non-Boolean options, malformed JSON and trailing input return a bounded operation error.
 
-- `name` `(string)`
-  A user-chosen name for this node. Other nodes, such as `Socks5Server`, use this value when they reference the
-  authentication client.
+Basic status includes `traffic_multiplier` as the configured exact decimal JSON number, even without accounting sampling.
+It reports `can_authenticate` and `blocking_reason` separately from `connected`, `authenticated` and
+`sync_phase`. The `connected` flag reflects downstream transport `Est`. A validated `Session` can set
+`authenticated` while `connected` is still false. `sync_phase` can report `authenticating` while
+`Authenticate` is in flight before `Est`. A valid cache can admit new traffic during an outage.
+Explicit credential rejection can block admission while `users_loaded` remains true.
+Blocking precedence is stopping, not started, continuity error, credential rejection,
+unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
+limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts retained obligations,
+while `orphan_debt_count` counts retained obligations for authoritatively absent IDs. An otherwise idle client with only
+these obligations reports `sync_phase: "orphan_debt"`; it does not repeatedly schedule unsendable batches.
 
-- `type` `(string)`
-  Must be exactly `"AuthenticationClient"`.
+When captured usage or first-use observations await their next batch, `sync_phase` is `catchup_pending`.
+Capture, required refresh and in-flight operations retain their more specific phases. An `idle` client may still have
+local traffic waiting for its next periodic push.
 
-- `next` `(string)`
-  Required. The next node must lead to an `AuthenticationServer`, either directly or through transport/client tunnels
-  such as `TcpConnector`, `TlsClient`, or other chain components.
+Success ages track validated authorization, installed table/clock and committed matching usage ACK separately. They survive
+reconnect. Unknown ages are `null`; monotonic zero is valid. The bounded latest failure uses a fixed code and operation,
+never server error text. Historical failure does not imply a current admission block. ACK age describes server-memory
+acceptance, not a durable disk save.
 
-### `settings`
+`accounting_state` is `not_requested`, `available` or `unavailable`. Only an available requested sample includes
+`locally_unacknowledged_upload_bytes`, `locally_unacknowledged_download_bytes` (both in charged quota bytes), `usage_user_count`,
+`first_use_observation_count`, `accounting_lower_bound`, `sampling_started_ms` and `sampling_finished_ms`. A lost ACK may mean
+the server has already applied some locally unacknowledged usage. Every unsigned 64-bit value is a decimal JSON string.
+No tokens, epoch, raw batches, account identifiers, names, passwords, hashes or IP lists are returned.
 
-- `name` `(string)`
-  Authentication client name sent to `AuthenticationServer`. This is a control-plane credential name and must match one
-  entry in the server's `settings.auth-clients` array.
+Accounting merges active-minus-baseline usage, retained catch-up debt and immutable pending batches by durable ID, taking
+overlapping maxima instead of double-counting. Later traffic after the immutable batch is included; retained-only entries
+remain represented. First-use counts use explicit unacknowledged observation state and retained obligations, rather than
+assuming any batch timestamp is unacknowledged. Exhausted counters and aggregate overflow set `accounting_lower_bound`,
+including when the represented amount is zero.
 
-- `secret` `(string)`
-  Authentication client secret sent with `settings.name`. This is not a traffic user's password.
+Sampling releases the admission/control mutex before copying accounting under the table lock. It uses coherent per-user copies over the reported monotonic interval; traffic continues between samples. It pins
+the tables, preflights temporary storage against the handler reservation and performs bounded linear scan/radix-merge
+work with deadline checks. Insufficient allowance or elapsed deadline preserves basic status and returns accounting as
+`unavailable`. Queries never modify counters, baselines, observations, batches, retry state or synchronization scheduling.
 
-## Communication Model
+## Advanced behavior
+
+### Communication Model
 
 `AuthenticationClient` uses one long-lived control line, not one line per request or per job.
 
@@ -174,114 +355,10 @@ The client keeps the control line open while the downstream transport stays aliv
 schedules reconnect. The next connection starts with a new `Authenticate` request; the old token is not reused by the
 client, even though the server may keep the old session record until its idle timeout expires.
 
-While disconnected or not yet authenticated, new protocol requests are not sent. The local users table remains available
-to callers as a cache, but server synchronization resumes only after reconnect, transport `Est`, and successful
-authentication.
+The local users table remains available as a cache under the admission policy. Server synchronization on a
+new control line begins after the client validates its `Session` response.
 
-## Settings Reference
-
-Required settings:
-
-```json
-{
-  "name": "edge-a",
-  "secret": "shared-secret"
-}
-```
-
-Optional settings:
-
-```json
-{
-  "ping-interval-ms": 60000,
-  "pull-interval-ms": 300000,
-  "push-interval-ms": 300000,
-  "reconnect-interval-ms": 5000,
-  "request-timeout-ms": 120000,
-  "max-pending-requests": 64,
-  "sync-max-users": 100000,
-  "sync-max-bytes": 268435456,
-  "traffic-multiplier": 1,
-  "verbose": false
-}
-```
-
-All five interval settings accept plain JSON integers from `0` through `2147483647` (`INT_MAX`).
-`max-pending-requests` accepts integers from `1` through `2147483647`.
-Defaults apply only when a setting is absent. Present values with fractions, decimal or exponent spelling,
-strings, `null`, or values outside the range are rejected at startup; they are never rounded or wrapped.
-The existing meaning of an explicitly configured `0` is preserved for each interval. Duplicate recognized settings are rejected,
-and `verbose` accepts only a JSON Boolean.
-
-`ping-interval-ms` sends authenticated `Ping` requests and also retries `Authenticate` while the transport is connected
-but not authenticated.
-
-`pull-interval-ms` enables periodic full `GetUsersPage` traversals. A value of `0` disables timer-driven pulls, but
-authentication and every matching usage ACK still request a refresh. A failed refresh retries independently while
-usage reporting continues from the last installed baseline.
-
-`push-interval-ms` enables periodic `PushUserStats`. A value of `0` disables periodic pushes. Other tunnels can still
-ask for a push through the internal API.
-
-When pull or push is enabled, one `sync_timer` runs at the shortest enabled pull/push interval. Each sync tick checks
-which jobs are due and attempts `PushUserStats` first. `GetUsersPage` starts a traversal when configuration revisions differ or the pull cadence is due.
-Statistics revision differences follow the configured cadence; response-envelope revisions can be newer than the retained snapshot.
-Periodic ticks during a traversal join it. An explicit `authenticationclientRequestPull()` during a traversal instead
-coalesces into one later traversal; installation preserves that explicit demand.
-
-`reconnect-interval-ms` controls reconnect delay after the control transport closes. A value of `0` queues a retry for a later loop turn. Repeated retry requests preserve the first positive deadline. Credential rejection has a minimum one-second delay and participates in exponential backoff, even when the configured reconnect interval is zero.
-
-`request-timeout-ms` closes and reconnects the control line if any request stays pending longer than the configured
-time using an independent worker-0 deadline timer, even with ping/pull/push disabled. A value of `0` disables it.
-
-`max-pending-requests` is a request-admission ceiling. A full table retains desired pulls, pushes and catch-up work
-until a matching response frees capacity; it does not repeatedly build batches, warn or arm a short retry timer.
-The response is semantically validated and enrollment/ACK/error processing finishes before queued work resumes.
-Local send rollback schedules a deferred continuation; stale correlations release no capacity. With request timeout
-and optional jobs disabled, an unanswered request may wait indefinitely without busy retry.
-
-`verbose` enables focused debug logs for the control-line lifecycle, reconnect decisions, timer ticks, and
-request/response correlation flow. It does not log secrets, session tokens, passwords, or raw users JSON.
-
-## Local Per-User Bandwidth
-
-UserController enforces each user's `limit.bandwidth.u` and `.d` as actual logical bytes per second, with zero unlimited.
-All lines, controllers and workers referencing this AuthenticationClient share each user's independent directional budget.
-Different clients and users are independent; no distributed allowance is implied. Queued bytes are charged only at onward
-handoff, while first positive arrival starts first-use expiry even before forwarding. Runtime buckets and fair-turn tickets
-migrate by durable user ID and remain outside JSON, snapshots and persistence. Multipliers affect quota only. Per user in one AuthenticationClient, queues permit 4 MiB logical bytes,
-8 MiB allocation charge and 1024 buffers/tickets. Per AuthenticationClient the limits are 64 MiB, 128 MiB and 16384
-buffers/tickets, with independently accounted byte/buffer and ticket registries. These are not cross-client budgets.
-
-## Traffic Multiplier
-
-`traffic-multiplier` is an optional JSON number inside `settings`, defaulting to `1`. It accepts values from
-`0.001` through `1000` with up to three effective decimal places. For example, `2` charges 2 GB of quota for 1 GB
-of measured traffic, `1.5` charges 1.5 GB, and `0.5` charges 0.5 GB. Zero, negative values, strings and unsupported
-precision are rejected at startup. The value is fixed for the lifetime of this AuthenticationClient instance.
-
-The same multiplier applies to upload and download for every user and protocol referencing this instance.
-`UserController` and other traffic callers pass actual measured bytes to AuthenticationClient. The client converts each
-new measurement to charged usage exactly once, before updating local quota counters and checking limits. This also
-applies while offline. It never multiplies totals received from AuthenticationServer or already charged pending batches,
-retries, acknowledgements and catch-up debt. AuthenticationServer aggregates the reported charged bytes unchanged.
-
-Calculation uses integer arithmetic and a separate fractional remainder for each user and direction. Whole charged
-bytes are added as they accumulate, so splitting a transfer into small payloads cannot change its charge. At `0.5`, two
-one-byte uploads together charge one byte; a one-byte download keeps its own half-byte remainder. Remainders survive
-ordinary refreshes and reconnects by durable user ID, including credential changes for the same ID. They are process-local,
-excluded from database JSON and synchronization, and discarded when the user is removed or the client is destroyed.
-There is no crash recovery. Checked saturation never wraps a large charge back to a smaller counter.
-
-First-use expiry starts on the first positive measured traffic, even when a discounted charge has not yet accumulated a
-whole byte. Login and zero-byte calls do not start it. Existing expiry and reservation rules are unchanged.
-
-Account traffic totals, traffic limits, and unacknowledged byte totals in status use **charged quota bytes**, not physical
-network bytes. A combined total from clients with different multipliers cannot reconstruct actual traffic. Bandwidth,
-speed, connection/IP counts, and first-use timestamps are not multiplied. Use separate AuthenticationClient instances
-with distinct producer identities when different traffic-serving chains need different rates.
-
-## Wire Protocol
+### Wire Protocol
 
 The protocol intentionally matches `AuthenticationServer`.
 
@@ -324,7 +401,7 @@ All integer fields on the wire are big-endian. The client sends one request fram
 number of response frames in a response message and matches each frame by correlation id. The response revisions are
 remembered as the latest server revisions and compared with the local users-table revisions before timer-driven pulls.
 
-## Startup Flow
+### Startup Flow
 
 On `onStart`, the tunnel queues startup work to worker 0.
 
@@ -335,14 +412,14 @@ Worker 0 then:
 3. Initializes this tunnel's per-line state before calling the next tunnel.
 4. Sends `tunnelNextUpStreamInit()`.
 
-When the next side establishes the transport and sends downstream `Est`, the client marks the control line connected and
-sends `Authenticate` with a zero session token.
+When the next tunnel's `Init` returns with the owned control line alive, the client can submit `Authenticate` with a zero
+session token. If the next tunnel paused writes, submission waits for `Resume`.
 
 `Authenticate` accepts `name`, `secret`, and an optional `epoch` for resumption. A Session response contains 128 bytes:
 a 64-byte token followed by a 64-byte accounting epoch, both hexadecimal OS-secure random values. The client stores
 the token, resolves any retained batch first, then pulls with `GetUsersPage`. A stale response cannot replace an enrolled epoch.
 
-## Paged Synchronization
+### Paged Synchronization
 
 `GetUsersPage` (request 9, response `Users`/3) transfers a complete configuration through bounded pages. Each ordinary
 page targets 256 KiB including framing and contains at most 128 users. An exceptional first record may occupy one page
@@ -404,7 +481,7 @@ bypass it; independent retry wakeups work with optional intervals zero. Session,
 the streak; complete installation does. Status exposes `sync_retry_streak`, `sync_retry_remaining_ms`,
 `sync_retry_failure`, `orphan_debt_count`, `traversal_active`, `sync_staged_users`, `sync_staged_bytes` and `sync_total_users` without secrets.
 
-## Local Users Table
+### Local Users Table
 
 The client keeps one active local users table. It is protected by a tunnel-level `wrwlock_t`.
 
@@ -427,7 +504,7 @@ The table is local cache plus local counter accumulation. The server remains the
 including optional `wireguard-allowed-ips`. The server stores canonical `first-usage-at-ms`; clients report their
 immutable first-local-traffic observations through deduplicated batches. Local expiry never waits for that report.
 
-## Cached Admission And Local Expiry
+### Cached Admission And Local Expiry
 
 `authenticationclientCanAuthenticate()` separates account admission from control-session readiness. Before the first
 valid table and clock pair, during stopping, after terminal continuity failure, or after an explicit correlated
@@ -469,132 +546,7 @@ Cross-machine clock conversion is an estimate affected by transit/serialization 
 countdowns retain elapsed age. Runtime host-suspend semantics remain unchanged; Linux CLOCK_MONOTONIC excludes suspension.
 All this state is RAM-only; no crash recovery, journal, outbox or guaranteed final delivery is provided.
 
-## External Status API
-
-APIServer exposes the registered read-only `status` operation on worker 0. Its request and response content type is
-`application/json`, encoded as UTF-8. Send `{}` for basic status or `{"include_accounting":true}` for aggregate accounting.
-Unknown or duplicate fields, non-Boolean options, malformed JSON and trailing input return a bounded operation error.
-
-Basic status includes `traffic_multiplier` as the configured exact decimal JSON number, even without accounting sampling.
-It separates `can_authenticate` and `blocking_reason` from transport `connected`/`authenticated` and
-`sync_phase`. A valid cache can admit new traffic during an outage; explicit credential rejection can block admission
-while `users_loaded` remains true. Blocking precedence is stopping, not started, continuity error, credential rejection,
-unusable cache/clock, then none. Queue/in-flight flags, unresolved batch sequence/count/size, remaining request/retry
-limits, applied/observed revisions and success/failure history are included. `retained_catchup_slots` counts retained obligations,
-while `orphan_debt_count` counts retained obligations for authoritatively absent IDs. An otherwise idle client with only
-these obligations reports `sync_phase: "orphan_debt"`; it does not repeatedly schedule unsendable batches.
-
-When captured usage or first-use observations await their next batch, `sync_phase` is `catchup_pending`.
-Capture, required refresh and in-flight operations retain their more specific phases. An `idle` client may still have
-local traffic waiting for its next periodic push.
-
-Success ages track validated authorization, installed table/clock and committed matching usage ACK separately. They survive
-reconnect. Unknown ages are `null`; monotonic zero is valid. The bounded latest failure uses a fixed code and operation,
-never server error text. Historical failure does not imply a current admission block. ACK age describes server-memory
-acceptance, not a durable disk save.
-
-`accounting_state` is `not_requested`, `available` or `unavailable`. Only an available requested sample includes
-`locally_unacknowledged_upload_bytes`, `locally_unacknowledged_download_bytes` (both in charged quota bytes), `usage_user_count`,
-`first_use_observation_count`, `accounting_lower_bound`, `sampling_started_ms` and `sampling_finished_ms`. A lost ACK may mean
-the server has already applied some locally unacknowledged usage. Every unsigned 64-bit value is a decimal JSON string.
-No tokens, epoch, raw batches, account identifiers, names, passwords, hashes or IP lists are returned.
-
-Accounting merges active-minus-baseline usage, retained catch-up debt and immutable pending batches by durable ID, taking
-overlapping maxima instead of double-counting. Later traffic after the immutable batch is included; retained-only entries
-remain represented. First-use counts use explicit unacknowledged observation state and retained obligations, rather than
-assuming any batch timestamp is unacknowledged. Exhausted counters and aggregate overflow set `accounting_lower_bound`,
-including when the represented amount is zero.
-
-Sampling releases the admission/control mutex before copying accounting under the table lock. It uses coherent per-user copies over the reported monotonic interval; traffic continues between samples. It pins
-the tables, preflights temporary storage against the handler reservation and performs bounded linear scan/radix-merge
-work with deadline checks. Insufficient allowance or elapsed deadline preserves basic status and returns accounting as
-`unavailable`. Queries never modify counters, baselines, observations, batches, retry state or synchronization scheduling.
-
-## Internal API
-
-The internal Waterwall API is exposed through:
-
-```c
-#include "AuthenticationClient/interface.h"
-```
-
-This is intentionally separate from `api.c`, which is the external program API pattern used by all tunnels.
-
-Other tunnels must not receive or cache raw `user_t *` pointers from `AuthenticationClient`. Instead they use
-`user_handle_t` from `ww/objects/user_handle.h`, which contains:
-
-```text
-users_generation
-user_id
-```
-
-The handle is a value identifier, not an owned object. `user_id` is copied from the synced user record and must be
-non-zero for the handle to be valid. A full users-table replacement increments the generation, so generation-gated read
-helpers may reject old handles. Callers can either look up a fresh handle or check with
-`authenticationclientUserHandleIsLive()`. `authenticationclientGetUserBySHA224()`,
-`authenticationclientGetUserBySHA256()`, `authenticationclientGetUserByUUID()`, and
-`authenticationclientGetUserByWireGuardPublicKey()` are alternate lookup entry points; successful lookups still return
-the normal id-backed handle.
-
-The `WithResult` wrappers preserve detailed lookup failures; `WithProfile` copies optional identity strings coherently
-with the resolved handle. Release profiles with `authenticationclientUserProfileClear()`. Boolean wrappers and all
-credential-family lookups remain available. `UserObservePayload` starts first use without charging; `UserCommitDelivery`
-charges exactly forwarded bytes after bandwidth admission. `UserBandwidthRegister/SetEligible/Cancel/Reserve/Release/Preview`
-manage directional fair turns and retained costs. `UserAccountTraffic` provides immediate measured accounting for existing
-callers. The older `UserAddTraffic` is generation-sensitive and may reject a handle after refresh; ongoing enforcement
-and the current observation/delivery path resolve durable IDs plus the membership-generation floor. Getters/copy-outs, handles and explicit pull/push remain.
-
-Available internal operations:
-
-```c
-authenticationclientGetState(t)
-authenticationclientIsReady(t)
-authenticationclientCanAuthenticate(t)
-authenticationclientUsersGeneration(t)
-authenticationclientGetUserByPassword(t, password, &handle)
-authenticationclientGetUserBySHA224(t, sha224, &handle)
-authenticationclientGetUserBySHA256(t, sha256, &handle)
-authenticationclientGetUserByUUID(t, uuid, &handle)
-authenticationclientGetUserByWireGuardPublicKey(t, publickey, &handle)
-authenticationclientUserHandleIsLive(t, &handle)
-authenticationclientUserToJson(t, &handle)
-authenticationclientUsersToJson(t)
-authenticationclientUserGetStats(t, &handle, &stats)
-authenticationclientUserAddTraffic(t, &handle, upload, download)
-authenticationclientUserTryAdmitConnection(t, &handle, &ip_key, now_ms)
-authenticationclientUserReleaseConnection(t, &handle, &ip_key)
-authenticationclientUserAccountTraffic(t, &handle, upload, download, now_ms)
-authenticationclientUserShouldClose(t, &handle, now_ms)
-authenticationclientRequestPull(t)
-authenticationclientRequestPush(t)
-```
-
-`authenticationclientUserToJson()` and `authenticationclientUsersToJson()` are trusted full exports containing
-credentials, including plaintext passwords. They return new `cJSON` trees owned by the caller, who must delete them.
-The whole-table helper allocates and copies every account while holding table and collection read locks. Use existing
-redacted status/projection APIs for public diagnostics. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id; the caller
-never mutates a `user_t` directly. Both traffic helpers accept actual measured upload/download bytes; callers must not
-pre-multiply them. Stats copy-outs contain charged usage.
-
-The live enforcement helpers resolve handles by durable id instead of rejecting them solely because a `GetUsersPage`
-refresh bumped the local users generation. A miss means the user disappeared from the refreshed table. The `now_ms`
-argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected
-onto that clock when the users table was installed.
-A handle also belongs to one continuous membership lifetime. Ordinary refreshes preserve its validity, but removal
-and recreation of the same durable ID establish a new generation floor. Old handles remain revoked and cannot charge
-the recreated account or release its connection/IP reservations; old shaping tickets still release client-owned costs.
-
-`authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
-callers queue work to worker 0. Desired jobs coalesce while disconnected, paused or blocked by another synchronization
-operation. A pull cannot replace the baseline during an unresolved push, and a push cannot overtake an active pull.
-After authentication or a usage ACK, a refresh is requested. A retained uncertain batch replays before this pull.
-A failed non-accounting refresh permits new reports from the existing baseline between retry attempts; a later successful
-refresh reconciles those acknowledged totals before normal cadence resumes. A due failed-refresh retry takes a turn
-before another new batch, and otherwise a waiting push precedes ordinary pulls.
-Credential eligibility checks enabled state, expiry and traffic quota; saved connection, IP, device and speed gauges do
-not block lookup. Live capacity is reserved separately by the atomic runtime admission helper.
-
-## Stats Push
+### Stats Push
 
 The client synchronizes already-charged traffic deltas and first-use accounting observations keyed by durable user ID:
 
@@ -683,11 +635,98 @@ Future connection reporting needs per-producer snapshots, ordering and expiry; s
 freshness, with missing samples distinct from zero. Distinct-IP reporting needs identity sets, windows and deduplication
 across producers. Devices need defined identity and collection. No such reporting or reset mechanism is implemented.
 
-## Timers
+## Implementation details
+
+### Internal API
+
+The internal Waterwall API is exposed through:
+
+```c
+#include "AuthenticationClient/interface.h"
+```
+
+This is intentionally separate from `api.c`, which is the external program API pattern used by all tunnels.
+
+Other tunnels must not receive or cache raw `user_t *` pointers from `AuthenticationClient`. Instead they use
+`user_handle_t` from `ww/objects/user_handle.h`, which contains:
+
+```text
+users_generation
+user_id
+```
+
+The handle is a value identifier, not an owned object. `user_id` is copied from the synced user record and must be
+non-zero for the handle to be valid. A full users-table replacement increments the generation, so generation-gated read
+helpers may reject old handles. Callers can either look up a fresh handle or check with
+`authenticationclientUserHandleIsLive()`. `authenticationclientGetUserBySHA224()`,
+`authenticationclientGetUserBySHA256()`, `authenticationclientGetUserByUUID()`, and
+`authenticationclientGetUserByWireGuardPublicKey()` are alternate lookup entry points; successful lookups still return
+the normal id-backed handle.
+
+The `WithResult` wrappers preserve detailed lookup failures; `WithProfile` copies optional identity strings coherently
+with the resolved handle. Release profiles with `authenticationclientUserProfileClear()`. Boolean wrappers and all
+credential-family lookups remain available. `UserObservePayload` starts first use without charging; `UserCommitDelivery`
+charges exactly forwarded bytes after bandwidth admission. `UserBandwidthRegister/SetEligible/Cancel/Reserve/Release/Preview`
+manage directional fair turns and retained costs. `UserAccountTraffic` provides immediate measured accounting for existing
+callers. The older `UserAddTraffic` is generation-sensitive and may reject a handle after refresh; ongoing enforcement
+and the current observation/delivery path resolve durable IDs plus the membership-generation floor. Getters/copy-outs, handles and explicit pull/push remain.
+
+Available internal operations:
+
+```c
+authenticationclientGetState(t)
+authenticationclientIsReady(t)
+authenticationclientCanAuthenticate(t)
+authenticationclientUsersGeneration(t)
+authenticationclientGetUserByPassword(t, password, &handle)
+authenticationclientGetUserBySHA224(t, sha224, &handle)
+authenticationclientGetUserBySHA256(t, sha256, &handle)
+authenticationclientGetUserByUUID(t, uuid, &handle)
+authenticationclientGetUserByWireGuardPublicKey(t, publickey, &handle)
+authenticationclientUserHandleIsLive(t, &handle)
+authenticationclientUserToJson(t, &handle)
+authenticationclientUsersToJson(t)
+authenticationclientUserGetStats(t, &handle, &stats)
+authenticationclientUserAddTraffic(t, &handle, upload, download)
+authenticationclientUserTryAdmitConnection(t, &handle, &ip_key, now_ms)
+authenticationclientUserReleaseConnection(t, &handle, &ip_key)
+authenticationclientUserAccountTraffic(t, &handle, upload, download, now_ms)
+authenticationclientUserShouldClose(t, &handle, now_ms)
+authenticationclientRequestPull(t)
+authenticationclientRequestPush(t)
+```
+
+`authenticationclientUserToJson()` and `authenticationclientUsersToJson()` are trusted full exports containing
+credentials, including plaintext passwords. They return new `cJSON` trees owned by the caller, who must delete them.
+The whole-table helper allocates and copies every account while holding table and collection read locks. Use existing
+redacted status/projection APIs for public diagnostics. Stats are copied into caller storage. Traffic updates are applied through the handle's durable id; the caller
+never mutates a `user_t` directly. Both traffic helpers accept actual measured upload/download bytes; callers must not
+pre-multiply them. Stats copy-outs contain charged usage.
+
+The live enforcement helpers resolve handles by durable id instead of rejecting them solely because a `GetUsersPage`
+refresh bumped the local users generation. A miss means the user disappeared from the refreshed table. The `now_ms`
+argument for these helpers is in the client's local monotonic clock domain, because expiry has already been projected
+onto that clock when the users table was installed.
+A handle also belongs to one continuous membership lifetime. Ordinary refreshes preserve its validity, but removal
+and recreation of the same durable ID establish a new generation floor. Old handles remain revoked and cannot charge
+the recreated account or release its connection/IP reservations; old shaping tickets still release client-owned costs.
+
+`authenticationclientRequestPull()` and `authenticationclientRequestPush()` use the current control line. Foreign
+callers queue work to worker 0. Desired jobs coalesce while an authenticated session is unavailable, writes are
+paused or another synchronization operation blocks them. A pull cannot replace the baseline during an unresolved
+push, and a push cannot overtake an active pull.
+After authentication or a usage ACK, a refresh is requested. A retained uncertain batch replays before this pull.
+A failed non-accounting refresh permits new reports from the existing baseline between retry attempts; a later successful
+refresh reconciles those acknowledged totals before normal cadence resumes. A due failed-refresh retry takes a turn
+before another new batch, and otherwise a waiting push precedes ordinary pulls.
+Credential eligibility checks enabled state, expiry and traffic quota; saved connection, IP, device and speed gauges do
+not block lookup. Live capacity is reserved separately by the atomic runtime admission helper.
+
+### Timers
 
 All protocol timers live on worker 0, the same worker as the owned control line:
 
-`ping_timer` sends `Ping` while authenticated and retries `Authenticate` while connected but unauthenticated.
+`ping_timer` submits eligible `Ping` or `Authenticate` requests on the initialized control line.
 
 `sync_timer` drives both user-table pull and stats push using the shortest enabled pull/push interval. Each tick checks
 the independent pull/push cadence, queues `PushUserStats` first when due, then queues `GetUsersPage` when revisions
@@ -703,7 +742,7 @@ before Payload so synchronous replies/Finish are safe. Matching replies settle o
 Timers are detached in `onWorkerQuiesce` for worker 0, before owner drain, because timer deletion must happen on the same
 worker event loop that owns the timer.
 
-## Lifecycle And Line Safety
+### Lifecycle And Line Safety
 
 The control line's `AuthenticationClient` line state contains the downstream response read stream and its parser reentry guard. It is initialized
 before `tunnelNextUpStreamInit()` and destroyed before the client propagates an upstream finish or destroys the owned
@@ -723,7 +762,7 @@ destroys its local line state first, then sends `tunnelNextUpStreamFinish()`, th
 Response payload parsing holds a temporary line reference. If a re-entrant callback closes the line, the parser stops and
 returns without touching destroyed line state.
 
-## Direction Ownership
+### Direction Ownership
 
 The client sends all requests upstream:
 
@@ -746,12 +785,12 @@ AuthenticationClient::DownStreamFinish
 Pause and resume are not reflected to a previous tunnel because `AuthenticationClient` is a chain head and has no
 previous data producer. They only update whether new protocol requests may be sent immediately.
 
-## Packet-Line Semantics
+### Packet-Line Semantics
 
 `AuthenticationClient` is not a packet tunnel. It does not use packet lines and does not call `lineDestroy()` on any line
 except the normal control line that it created itself.
 
-## User Database Performance
+### User Database Performance
 
 - Plaintext-password lookups derive SHA-256 once and resolve through the SHA-256
   hash index with no fallback scan, so hits and misses are average O(1). The
@@ -761,7 +800,7 @@ except the normal control line that it created itself.
   rather than a JSON round trip. Only the received `GetUsersPage` network response
   still requires one JSON parse into the active table.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

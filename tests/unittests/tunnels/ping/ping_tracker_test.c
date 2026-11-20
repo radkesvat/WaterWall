@@ -47,7 +47,6 @@ void wSyncInitTestResourceDestroyed(void)
     discard atomicAdd(&g_sync_resources_destroyed, 1U);
 }
 
-
 static void resetSyncSeam(uint32_t fail_call)
 {
     atomicStoreRelaxed(&g_sync_init_calls, 0);
@@ -117,14 +116,7 @@ static void testBoundedReplacementAndSequenceReuse(void)
     for (uint32_t i = 0; i <= kPingWireOutstandingCapacity; ++i)
     {
         payload[0] = (uint8_t) i;
-        require(pingwireOutstandingRecord(tracker,
-                                          digest_key,
-                                          7,
-                                          (uint16_t) i,
-                                          UINT32_C(0x0200000a),
-                                          UINT32_C(0x0100000a),
-                                          payload,
-                                          sizeof(payload)),
+        require(pingwireOutstandingRecord(tracker, digest_key, 7, (uint16_t) i, payload, sizeof(payload)),
                 "outstanding replacement record failed");
     }
 
@@ -133,35 +125,14 @@ static void testBoundedReplacementAndSequenceReuse(void)
     require(! pingwireOutstandingConsume(tracker, digest_key, &evicted),
             "oldest outstanding entry survived bounded replacement");
 
-    require(pingwireOutstandingRecord(tracker,
-                                      digest_key,
-                                      7,
-                                      0,
-                                      UINT32_C(0x0200000a),
-                                      UINT32_C(0x0100000a),
-                                      evicted_payload,
-                                      sizeof(evicted_payload)),
+    require(pingwireOutstandingRecord(tracker, digest_key, 7, 0, evicted_payload, sizeof(evicted_payload)),
             "sequence reuse after eviction could not be recorded");
     require(pingwireOutstandingConsume(tracker, digest_key, &evicted),
             "new sequence generation after eviction was not consumable");
     require(! pingwireOutstandingConsume(tracker, digest_key, &evicted), "one reply consumed more than once");
 
-    require(pingwireOutstandingRecord(tracker,
-                                      digest_key,
-                                      7,
-                                      0,
-                                      UINT32_C(0x0200000a),
-                                      UINT32_C(0x0100000a),
-                                      evicted_payload,
-                                      sizeof(evicted_payload)) &&
-                pingwireOutstandingRecord(tracker,
-                                          digest_key,
-                                          7,
-                                          0,
-                                          UINT32_C(0x0200000a),
-                                          UINT32_C(0x0100000a),
-                                          evicted_payload,
-                                          sizeof(evicted_payload)),
+    require(pingwireOutstandingRecord(tracker, digest_key, 7, 0, evicted_payload, sizeof(evicted_payload)) &&
+                pingwireOutstandingRecord(tracker, digest_key, 7, 0, evicted_payload, sizeof(evicted_payload)),
             "repeated exact outstanding registration failed");
     require(pingwireOutstandingConsume(tracker, digest_key, &evicted),
             "newest repeated outstanding registration was not consumable");
@@ -186,6 +157,56 @@ static void testBoundedReplacementAndSequenceReuse(void)
     replay.sequence   = 0;
     require(pingwireReplayMark(tracker, digest_key, &replay) == kPingWireReplayNew,
             "evicted replay identity remained suppressed");
+
+    pingwireTrackerDestroy(tracker);
+    memorySecureZero(digest_key, sizeof(digest_key));
+}
+
+static void testTrailerAndRewrittenAddresses(void)
+{
+    resetSyncSeam(0);
+    uint8_t key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE];
+    fillDigestKey(key);
+    ping_wire_tracker_t *tracker = pingwireTrackerCreate();
+    const uint8_t        first[] = {0x11, 0x22, 49};
+    const uint8_t        other[] = {0x11, 0x22, 50};
+    require(pingwireOutstandingRecord(tracker, key, 1, 2, first, sizeof(first)), "trailer record failed");
+    ping_wire_envelope_t envelope = makeEnvelope(ICMP_ER, 1, 2, other, sizeof(other));
+    require(! pingwireOutstandingConsume(tracker, key, &envelope), "different trailer correlated");
+    envelope.icmp_payload = first;
+    envelope.source_ipv4 ^= 0xffffffffU;
+    envelope.destination_ipv4 ^= 0x12345678U;
+    require(pingwireOutstandingConsume(tracker, key, &envelope), "address rewrite prevented correlation");
+    envelope.type = ICMP_ECHO;
+    require(pingwireReplayMark(tracker, key, &envelope) == kPingWireReplayNew, "first request not new");
+    envelope.icmp_payload = other;
+    require(pingwireReplayMark(tracker, key, &envelope) == kPingWireReplayNew, "different trailer deduplicated");
+    pingwireTrackerDestroy(tracker);
+}
+
+static void testPing6TypeParameters(void)
+{
+    resetSyncSeam(0);
+    uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE];
+    fillDigestKey(digest_key);
+    ping_wire_tracker_t *tracker = pingwireTrackerCreate();
+    require(tracker != NULL, "Ping6 type tracker construction failed");
+
+    uint8_t payload[4] = {9, 8, 7, 6};
+    require(pingwireOutstandingRecord(tracker, digest_key, 7, 11, payload, sizeof(payload)),
+            "Ping6 outstanding record failed");
+    ping_wire_envelope_t reply = makeEnvelope(129, 7, 11, payload, sizeof(payload));
+    require(! pingwireOutstandingConsume(tracker, digest_key, &reply), "ICMPv4 wrapper consumed a Ping6 reply type");
+    require(pingwireOutstandingConsumeForType(tracker, digest_key, &reply, 129),
+            "type-parameterized tracker rejected a valid Ping6 reply");
+
+    ping_wire_envelope_t request = makeEnvelope(128, 9, 12, payload, sizeof(payload));
+    require(pingwireReplayMark(tracker, digest_key, &request) == kPingWireReplayError,
+            "ICMPv4 wrapper accepted a Ping6 request type");
+    require(pingwireReplayMarkForType(tracker, digest_key, &request, 128) == kPingWireReplayNew,
+            "type-parameterized tracker rejected a new Ping6 request");
+    require(pingwireReplayMarkForType(tracker, digest_key, &request, 128) == kPingWireReplayDuplicate,
+            "type-parameterized tracker missed a duplicate Ping6 request");
 
     pingwireTrackerDestroy(tracker);
     memorySecureZero(digest_key, sizeof(digest_key));
@@ -236,14 +257,8 @@ static void *stressThread(void *argument)
 
         const uint16_t identifier = (uint16_t) (0x4000U + self);
         const uint16_t sequence   = (uint16_t) (iteration * 2U + self);
-        if (! pingwireOutstandingRecord(state->tracker,
-                                        state->digest_key,
-                                        identifier,
-                                        sequence,
-                                        UINT32_C(0x0200000a),
-                                        UINT32_C(0x0100000a),
-                                        payload,
-                                        sizeof(payload)))
+        if (! pingwireOutstandingRecord(
+                state->tracker, state->digest_key, identifier, sequence, payload, sizeof(payload)))
         {
             atomicStoreExplicit(&state->failed, true, memory_order_release);
             return NULL;
@@ -327,6 +342,8 @@ int main(void)
 
     testConstructionFailureCleanup();
     testBoundedReplacementAndSequenceReuse();
+    testTrailerAndRewrittenAddresses();
+    testPing6TypeParameters();
     testCrossThreadRecordConsumeStress();
 
     wCryptoGlobalCleanup();

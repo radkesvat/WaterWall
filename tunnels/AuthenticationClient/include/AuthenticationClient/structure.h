@@ -133,7 +133,7 @@ typedef struct authenticationclient_tstate_s
     bool                                     catchup_capture_needed;
     uint64_t                                 catchup_retry_not_before_ms; /* Worker 0. */
     wrwlock_t                                users_lock;
-    uint64_t                                 users_generation;
+    atomic_ullong                            users_generation;
 
     /* Shared costs and numeric ticket registry use control_mutex. Lock order:
      * control_mutex -> users_lock -> collection -> user -> stats. Registry costs
@@ -146,6 +146,7 @@ typedef struct authenticationclient_tstate_s
     bool                                     started;
     bool                                     stopping;
     bool                                     connected;
+    bool                                     write_admitted;
     bool                                     authenticated;
     bool                                     auth_rejected;
     bool                                     write_paused;

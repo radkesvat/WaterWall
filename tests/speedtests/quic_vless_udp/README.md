@@ -9,8 +9,8 @@ UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
 
 The frozen functional throughput workload has one worker, two concurrent normal
 lines, verified bidirectional stream data, 65,536-byte DATA bodies, 250 ms warmup
-and one 3,000 ms measured interval. It uses default `h3` ALPN and explicit
-`datagram` carrier mode. The local certificate and replacement trust root are
+and one 3,000 ms measured interval. It uses the default `h3` ALPN.
+The local certificate and replacement trust root are
 copied from `../_shared`; no public service or DNS is involved. This is a raw
 private application stream, not HTTP/3. These choices define this workload and
 are not performance tuning advice.

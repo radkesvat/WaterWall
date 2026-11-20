@@ -250,6 +250,14 @@ static void nextFinish(tunnel_t *t, line_t *l)
     twfRequire(l == f.carrier, "Finish sent on wrong transport");
     ++f.transport_finishes;
 }
+enum
+{
+    kInitSetCachedClock = 17,
+    kInitCloseAdmission,
+    kInitEstWithPayload,
+    kInitSetReceivePadding,
+};
+static const uint64_t first_payload_cached_us = UINT64_C(5000000000789);
 static void nextInit(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -258,7 +266,27 @@ static void nextInit(tunnel_t *t, line_t *l)
     if (l != f.application)
         lineRef(l);
     twfRequire(lineGetDestinationAddressContext(l)->proto_tcp, "carrier is not TCP");
-    performAction(1);
+    switch (f.action)
+    {
+    case kInitSetCachedClock:
+        twfRequire(wloopNTimers(f.env.loop) == 0, "first-payload timer armed inside next Init");
+        f.env.loop->cur_hrtime = first_payload_cached_us;
+        break;
+    case kInitCloseAdmission:
+        wloopCloseNormalAdmission(f.env.loop);
+        break;
+    case kInitEstWithPayload:
+        f.boundary = 3;
+        f.action   = 5;
+        tunnelDownStreamEst(f.t, l);
+        break;
+    case kInitSetReceivePadding:
+        bufferpoolUpdateAllocationPaddings(f.env.pool, 352, 352, 352, 32);
+        break;
+    default:
+        performAction(1);
+        break;
+    }
 }
 static void established(tunnel_t *t, line_t *l)
 {
@@ -334,8 +362,8 @@ static void closeAdmission(unsigned mode)
     twfRequire(! wloopNormalDispatchAllowed(f.env.loop), "fixture did not close normal dispatch");
 }
 
-static void beginWithAdmission(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context,
-                               unsigned admission)
+static void beginWithOptions(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context,
+                             unsigned admission, uint32_t timeout_ms)
 {
     memoryZero(&f, sizeof(f));
     pressure = fail_queue = immediate_pressure = false;
@@ -376,7 +404,7 @@ static void beginWithAdmission(bool udp, const char *target, uint32_t pool_size,
     twfRequire(f.t != NULL, "client construction failed");
     twfRequire(((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms == 400,
                "default timeout changed");
-    ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 0;
+    ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = timeout_ms;
     f.prev                                                                    = twfCreatePrevTunnel(&f.trace);
     f.next                                                                    = twfCreateNextTunnel(&f.trace);
     f.prev->chain_index                                                       = 0;
@@ -413,7 +441,12 @@ static void beginWithAdmission(bool udp, const char *target, uint32_t pool_size,
 }
 static void begin(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context)
 {
-    beginWithAdmission(udp, target, pool_size, init_action, context, 0);
+    beginWithOptions(udp, target, pool_size, init_action, context, 0, 400);
+}
+static void beginWithTimeout(bool udp, const char *target, uint32_t pool_size, unsigned init_action, bool context,
+                             uint32_t timeout_ms)
+{
+    beginWithOptions(udp, target, pool_size, init_action, context, 0, timeout_ms);
 }
 static void end(void)
 {
@@ -594,7 +627,7 @@ static void testUdp(unsigned form, bool pipe)
     {
         for (unsigned pad = 0; pad < 2; ++pad)
         {
-            begin(true, target, 512, 0, true);
+            beginWithTimeout(true, target, 512, 0, true, 0);
             establish();
             twfRequire(f.up_len == 68 && f.up[58] == 3 && memcmp(f.up + 59, "\1\0\0\0\0\0\0", 7) == 0,
                        "UDP request changed");
@@ -854,7 +887,8 @@ static void testFailuresAndClose(void)
         for (unsigned action = 7; action <= 8; ++action)
             for (unsigned boundary = 1; boundary <= 7; ++boundary)
             {
-                begin(udp, "127.0.0.1", 128, boundary == 1 ? action : 0, false);
+                /* The later callback boundaries are exercised after request commitment. */
+                beginWithTimeout(udp, "127.0.0.1", 128, boundary == 1 ? action : 0, false, boundary >= 4 ? 0 : 400);
                 if (boundary != 1)
                 {
                     if (boundary >= 4)
@@ -863,9 +897,9 @@ static void testFailuresAndClose(void)
                         tunnelDownStreamPayload(f.t, f.carrier, bytes("\0\0", 2, false, 320));
                     f.boundary = boundary;
                     f.action   = action;
-                    if (boundary == 2 || boundary == 3)
+                    if (boundary == 3)
                         establish();
-                    if (boundary == 4)
+                    if (boundary == 2 || boundary == 4)
                         tunnelUpStreamPayload(f.t, f.application, bytes("A", 1, true, 320));
                     if (boundary == 5)
                         tunnelDownStreamPayload(
@@ -928,7 +962,7 @@ static void testFallback(void)
 static void testPrefixesAndFragments(void)
 {
     twfSetCase("resident prefixes, mixed assembly, exact padding and unrestricted fragments");
-    begin(true, "127.0.0.1", 128, 0, false);
+    beginWithTimeout(true, "127.0.0.1", 128, 0, false, 0);
     establish();
     sbuf_t *b = bytes("body", 4, true, 320);
     sbufShiftLeft(b, 3);
@@ -971,10 +1005,9 @@ static void testPrefixesAndFragments(void)
     twfRequire(f.deliveries_down == 3 && f.down_len == 1511, "fragmented datagram boundary changed");
     end();
 
-    begin(true, "127.0.0.1", 128, 0, false);
     /* Receive output needs more headroom than this source or the splice pool.
      * Shared helpers must return a sufficiently padded ordinary replacement. */
-    bufferpoolUpdateAllocationPaddings(f.env.pool, 352, 352, 352, 32);
+    beginWithTimeout(true, "127.0.0.1", 128, kInitSetReceivePadding, false, 0);
     establish();
     n = frame(wire, 0, "padded", 6);
     b = bytes(wire, n, true, 32);
@@ -1121,7 +1154,6 @@ static void testInitialAllocationRefusal(void)
     for (unsigned udp = 0; udp < 2; ++udp)
     {
         begin(udp, "127.0.0.1", 128, 0, false);
-        ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
         establish();
         sbuf_t *body            = bytes("owned", 5, true, 0);
         fail_initial_allocation = true;
@@ -1155,36 +1187,41 @@ static void testTimeoutConfiguration(void)
 
 static void testTimers(void)
 {
-    twfSetCase("first-payload deadline uses the cached owner clock");
+    twfSetCase("first-payload deadline starts after next Init on the cached owner clock");
     for (unsigned udp = 0; udp < 2; ++udp)
     {
-        begin(udp, "127.0.0.1", 128, 0, false);
-        ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
-        const uint64_t cached_us                                                  = UINT64_C(5000000000789);
-        f.env.loop->cur_hrtime                                                    = cached_us;
-        establish();
+        begin(udp, "127.0.0.1", 128, kInitSetCachedClock, false);
         trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
-        twfRequire(ls->first_payload.deadline_us == cached_us + 400000,
-                   "first-payload deadline sampled a fresh clock or lost microsecond precision");
+        twfRequire(f.ests == 0 && f.requests == 0 && ls->first_payload.timer != NULL &&
+                       ls->first_payload.deadline_us == first_payload_cached_us + 400000,
+                   "first-payload deadline missed Init or sampled the wrong clock");
         end();
     }
 
     twfSetCase("TCP advisory Pause and UDP carrier control preserve idle-header deadlines");
     for (unsigned udp = 0; udp < 2; ++udp)
     {
-        begin(udp, "127.0.0.1", 128, 1, false);
-        establish();
-        twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == (udp ? 0U : 1U) && wloopNTimers(f.env.loop) == 0,
-                   "zero timeout ignored the exact-line role or withheld Est");
+        beginWithTimeout(udp, "127.0.0.1", 128, 1, false, 0);
+        twfRequire(f.ests == 0 && f.requests == (udp ? 0U : 1U) && wloopNTimers(f.env.loop) == 0,
+                   "zero timeout waited for Est or ignored the exact-line role");
         tunnelDownStreamResume(f.t, f.carrier);
-        twfRequire(f.requests == 1, "Resume stranded or repeated the zero-timeout request");
+        establish();
+        twfRequire(f.requests == 1 && f.ests == (udp ? 1U : 2U), "Resume or Est stranded or repeated the request");
+        end();
+    }
+    twfSetCase("Est and first payload during Init commit the combined request before the fallback");
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        beginWithTimeout(udp, "127.0.0.1", 128, kInitEstWithPayload, false, 0);
+        twfRequire(f.ests == 1 && f.requests == 1 && f.up_len == 68 + (udp ? 12 : 1) && f.up[f.up_len - 1] == 'C' &&
+                       wloopNTimers(f.env.loop) == 0,
+                   "Init reentry split the first payload or scheduled a duplicate request");
         end();
     }
     for (unsigned udp = 0; udp < 2; ++udp)
         for (unsigned mode = 0; mode < 9; ++mode)
         {
             begin(udp, "127.0.0.1", 128, 0, false);
-            ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
             establish();
             trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
             twfRequire(f.ests == (udp ? 1U : 2U) && f.requests == 0 && ls->first_payload.timer != NULL,
@@ -1273,19 +1310,20 @@ static void testTimers(void)
             }
             end();
         }
-    begin(false, "127.0.0.1", 128, 0, false);
-    ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
-    wloopCloseNormalAdmission(f.env.loop);
-    establish();
-    twfRequire(! lineIsAlive(f.application) && f.requests == 0, "timer admission refusal stranded line");
-    end();
-    begin(false, "127.0.0.1", 128, 0, false);
-    ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 1;
-    establish();
+    twfSetCase("quiescence during Init leaves no first-payload timer");
+    for (unsigned udp = 0; udp < 2; ++udp)
+    {
+        begin(udp, "127.0.0.1", 128, kInitCloseAdmission, false);
+        twfRequire(lineIsAlive(f.application) && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
+                   "Init created work after quiescence");
+        end();
+    }
+    twfSetCase("real-loop idle header expires with no Est");
+    beginWithTimeout(false, "127.0.0.1", 128, 0, false, 1);
     uint64_t stop = getHRTimeUs() + 1000000;
     while (f.requests == 0 && getHRTimeUs() < stop)
         discard wloopProcessEvents(f.env.loop, 5);
-    twfRequire(f.requests == 1 && f.up_len == 68, "real-loop timer did not expire");
+    twfRequire(f.ests == 0 && f.requests == 1 && f.up_len == 68, "real-loop timer did not expire without Est");
     end();
 }
 
@@ -1334,7 +1372,6 @@ static void testTimerWorker(void)
     twfSetCase("timer uses exact nonzero carrier worker");
     test_wid = 1;
     begin(true, "127.0.0.1", 128, 0, false);
-    ((trojanclient_tstate_t *) tunnelGetState(f.t))->first_payload_timeout_ms = 400;
     establish();
     trojanclient_lstate_t *ls = lineGetState(f.carrier, f.t);
     twfRequire(lineGetWID(f.carrier) == 1 && ls->first_payload.timer != NULL &&
@@ -1352,7 +1389,7 @@ static void testInitAdmission(void)
             {
                 twfSetCase(admission == 1 ? "TrojanClient Init refuses closed normal admission before next Init"
                                           : "TrojanClient Init refuses stop_requested before next Init");
-                beginWithAdmission(udp, "127.0.0.1", 128, 0, true, admission);
+                beginWithOptions(udp, "127.0.0.1", 128, 0, true, admission, 400);
                 twfRequire(! lineIsAlive(f.application) && f.finishes == 1 && f.inits == 0 && f.carrier == NULL &&
                                f.transport_finishes == 0 && f.requests == 0 && wloopNTimers(f.env.loop) == 0,
                            "late Init was not refused before creating downstream work");
@@ -1384,7 +1421,7 @@ static void testExistingAssociationAfterAdmissionClose(void)
     for (unsigned udp = 0; udp < 2; ++udp)
         for (unsigned admission = 1; admission <= 2; ++admission)
         {
-            begin(udp, "127.0.0.1", 128, 0, true);
+            beginWithTimeout(udp, "127.0.0.1", 128, 0, true, 0);
             establish();
             size_t  prior_up = f.up_len;
             line_t *carrier  = f.carrier;

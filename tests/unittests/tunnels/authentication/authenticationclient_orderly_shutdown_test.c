@@ -298,7 +298,7 @@ static void caseCatchupProgressTimer(void)
     fixtureSetup(&fixture);
     authenticationclient_tstate_t *ts = tunnelGetState(fixture.client);
     ts->pull_interval_ms = ts->push_interval_ms = ts->ping_interval_ms = 0;
-    ts->connected = ts->authenticated = ts->catchup_capture_needed = true;
+    ts->write_admitted = ts->authenticated = ts->catchup_capture_needed = true;
     authenticationclientScheduleSyncProgress(fixture.client);
     twfRequire(ts->progress_timer != NULL, "catch-up has no independent nonzero timer");
     tosRequireNoProcessApiCall();
@@ -312,7 +312,7 @@ static void caseCatchupProgressTimer(void)
     tosResetProcessApi(true);
     fixtureSetup(&fixture);
     ts            = tunnelGetState(fixture.client);
-    ts->connected = ts->authenticated = ts->catchup_capture_needed = true;
+    ts->write_admitted = ts->authenticated = ts->catchup_capture_needed = true;
     g_timer_fails                                                  = true;
     authenticationclientScheduleSyncProgress(fixture.client);
     g_timer_fails = false;

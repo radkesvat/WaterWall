@@ -6,7 +6,7 @@
  * Cases: casePacketResponseMismatch, caseStreamResponseMismatch, caseRefusedHandoffAborts,
  * caseSynchronousStartRefusalPropagatesStartupStatus,
  * caseAcceptedQueuedTimerAdmissionClosureUsesCleanup, casePacketStartRefusalDoesNotArmWatchdog,
- * caseDelayedPacketStartRefusalDoesNotArmWatchdog, caseOwnedRequestScheduleRefusalClosesLine; the driver
+ * caseDelayedPacketStartRefusalDoesNotArmWatchdog, normal-line startup after Init; the driver
  * lists the remaining cases
  * Checks: Assertion labels include: TesterClient armed a watchdog after request admission failed; the
  * payload generator must never return NULL; the response buffer must be recycled exactly once; a failed
@@ -514,55 +514,166 @@ static void caseSynchronousEstPreservesPacketStartDelay(void)
     tosWorkerEnvTeardown(&env);
 }
 
-static void caseOwnedRequestScheduleRefusalClosesLine(void)
+typedef enum testerclient_start_case_e
 {
-    twfSetCase("testerclient owned request schedule refusal closes the line");
-    tosResetProcessApi(true);
+    kOwnedStartWithoutEst,
+    kOwnedStartPaused,
+    kOwnedStartFinish,
+    kOwnedStartRefused,
+    kOwnedStartQuiesce
+} testerclient_start_case_e;
 
-    testerclient_fixture_t fixture;
-    fixtureSetup(&fixture, false);
-
-    testerclient_tstate_t *ts = tunnelGetState(fixture.tester);
-    testerclient_lstate_t *ls = lineGetState(fixture.line, fixture.tester);
-    ls->est_received          = true;
-    ls->request_complete      = false;
-
-    lineRef(fixture.line);
-    fail_next_line_task = true;
-    testerclientScheduleRequestSend(fixture.tester, fixture.line, ls);
-
-    tosRequireAcceptedRequest(1);
-    twfRequire(! lineIsAlive(fixture.line), "request refusal left the owned normal line alive");
-    twfRequire(ts->workers[0].line == NULL, "request refusal left the owned line published");
-    twfRequire(ts->workers[0].closed, "request refusal did not mark the owned line closed");
-    twfRequireEqualU32(fixture.trace.next_finish, 1, "request refusal did not finish away from the owner");
-    twfRequireLineStateZeroed(fixture.line, fixture.tester, "request refusal left TesterClient state alive");
-
-    lineUnref(fixture.line);
-    fixture.line = NULL;
-    twfRequireEqualU32(
-        (uint32_t) masterpoolGetCheckedOut(fixture.lines.master), 0, "request refusal retained the owned line");
-    fixtureTeardown(&fixture);
+static void pauseDuringOwnedInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    tunnelPrevDownStreamEst(t, l);
+    tunnelPrevDownStreamResume(t, l);
+    twfRequireEqualU32(request_line_task_submissions, 0, "Est or Resume scheduled a request during Init");
+    tunnelPrevDownStreamPause(t, l);
 }
 
-static void repeatEstDuringRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+static void finishDuringOwnedInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    tunnelPrevDownStreamFinish(t, l);
+}
+
+static void quiesceDuringOwnedInit(tunnel_t *t, line_t *l)
+{
+    twfNextInit(t, l);
+    wloopCloseNormalAdmission(getWorkerLoop(lineGetWID(l)));
+}
+
+static void runOwnedStartup(testerclient_start_case_e start_case)
+{
+    tosResetProcessApi(true);
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+
+    twf_trace_t trace  = {0};
+    tunnel_t   *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    twfRequire(tester != NULL, "failed to create the normal-line startup fixture");
+    tunnel_t *next    = twfCreateNextTunnel(&trace);
+    tester->fnEstD    = testerclientTunnelDownStreamEst;
+    tester->fnFinD    = testerclientTunnelDownStreamFinish;
+    tester->fnPauseD  = testerclientTunnelDownStreamPause;
+    tester->fnResumeD = testerclientTunnelDownStreamResume;
+    tunnelBind(tester, next);
+
+    twf_line_pool_t lines;
+    twfLinePoolSetup(&lines, tester->lstate_size, kTestLinePoolItems);
+    tunnel_chain_t *chain = tunnelchainCreate(1);
+    tester->chain         = chain;
+    chain->line_pools[0]  = lines.pools[0];
+
+    testerclient_tstate_t *ts = tunnelGetState(tester);
+    ts->chunk_count           = 1;
+    ts->split_payload_burst   = 1;
+    if (start_case == kOwnedStartPaused)
+    {
+        next->fnInitU = pauseDuringOwnedInit;
+    }
+    else if (start_case == kOwnedStartFinish)
+    {
+        next->fnInitU = finishDuringOwnedInit;
+    }
+    else if (start_case == kOwnedStartQuiesce)
+    {
+        next->fnInitU = quiesceDuringOwnedInit;
+    }
+
+    request_line_task_submissions = delayed_line_task_submissions = 0;
+    fail_next_line_task                                           = start_case == kOwnedStartRefused;
+    testerclientStartWorkerTestInvoke(getWorker(0), tester);
+    twfRequireEqualU32(trace.next_init, 1, "startup did not initialize the next node");
+
+    if (start_case == kOwnedStartFinish || start_case == kOwnedStartRefused)
+    {
+        tosRequireAcceptedRequest(1);
+        twfRequire(ts->workers[0].line == NULL && ts->workers[0].closed, "startup failure left the owned line alive");
+        twfRequireEqualU32(trace.next_finish,
+                           start_case == kOwnedStartRefused ? 1 : 0,
+                           "startup failure sent Finish in the wrong direction");
+        twfRequireEqualU32(request_line_task_submissions,
+                           start_case == kOwnedStartRefused ? 1 : 0,
+                           "startup failure submitted an unexpected request task");
+        twfRequireEqualU32(delayed_line_task_submissions, 0, "startup failure armed the watchdog");
+    }
+    else
+    {
+        line_t *line = ts->workers[0].line;
+        twfRequire(line != NULL && lineIsAlive(line), "successful Init did not leave an owned line");
+        if (start_case == kOwnedStartQuiesce)
+        {
+            twfRequireEqualU32(request_line_task_submissions, 0, "quiescence submitted a request");
+            twfRequireEqualU32(delayed_line_task_submissions, 0, "quiescence armed a watchdog");
+        }
+        else
+        {
+            twfRequireEqualU32(delayed_line_task_submissions, 1, "successful Init did not arm one watchdog");
+            if (start_case == kOwnedStartPaused)
+            {
+                twfRequire(lineIsEstablished(line), "Est during Init did not mark transport readiness");
+                twfRequireEqualU32(request_line_task_submissions, 0, "paused Init scheduled a request");
+                tosPumpWorker(&env, 0);
+                twfRequireEqualU32(trace.next_payload, 0, "paused Init emitted a request");
+                tunnelPrevDownStreamResume(next, line);
+            }
+
+            tosPumpWorker(&env, 0);
+            twfRequireEqualU32(request_line_task_submissions, 1, "startup did not schedule exactly one request");
+            twfRequireEqualU32(trace.next_payload, 1, "startup did not send exactly one request");
+            if (start_case == kOwnedStartWithoutEst)
+            {
+                twfRequire(! lineIsEstablished(line), "sending the request marked the line established");
+            }
+        }
+        tosRequireNoProcessApiCall();
+        workerMessagesCleanupPending(&env.workers[0]);
+        testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
+    }
+    twfRequireEqualU32((uint32_t) masterpoolGetCheckedOut(lines.master), 0, "startup retained the owned line");
+    twfLinePoolTeardown(&lines);
+    memoryFree(chain);
+    tunnelDestroy(next);
+    tunnelDestroy(tester);
+    tosWorkerEnvTeardown(&env);
+}
+
+static void caseOwnedStartup(void)
+{
+    twfSetCase("testerclient normal startup sends without Est");
+    runOwnedStartup(kOwnedStartWithoutEst);
+    twfSetCase("testerclient normal startup honors Pause during Init");
+    runOwnedStartup(kOwnedStartPaused);
+    twfSetCase("testerclient Finish during Init suppresses startup");
+    runOwnedStartup(kOwnedStartFinish);
+    twfSetCase("testerclient request refusal closes its owned line without arming a watchdog");
+    runOwnedStartup(kOwnedStartRefused);
+    twfSetCase("testerclient quiescence during Init suppresses startup");
+    runOwnedStartup(kOwnedStartQuiesce);
+}
+
+static void estAndResumeDuringRequestPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     twfNextPayload(t, l, buf);
     tunnelPrevDownStreamEst(t, l);
+    tunnelPrevDownStreamResume(t, l);
 }
 
 static void caseRepeatedEstPreservesSplitRequestDelay(void)
 {
-    twfSetCase("testerclient repeated Est cannot bypass the split request delay");
+    twfSetCase("testerclient Est and reentrant Resume preserve split request delay");
     tosResetProcessApi(true);
     testerclient_fixture_t fixture;
     fixtureSetup(&fixture, false);
     mutexInit(&fixture.env.worker.control_mutex);
     workerMessagesInit(&fixture.env.worker);
     twfRequire(workerMessagesOpenAdmission(&fixture.env.worker), "request fixture admission did not open");
-    fixture.env.loop->status = WLOOP_STATUS_RUNNING;
-    fixture.tester->fnEstD   = testerclientTunnelDownStreamEst;
-    fixture.next->fnPayloadU = repeatEstDuringRequestPayload;
+    fixture.env.loop->status  = WLOOP_STATUS_RUNNING;
+    fixture.tester->fnEstD    = testerclientTunnelDownStreamEst;
+    fixture.tester->fnResumeD = testerclientTunnelDownStreamResume;
+    fixture.next->fnPayloadU  = estAndResumeDuringRequestPayload;
 
     testerclient_tstate_t *ts     = tunnelGetState(fixture.tester);
     ts->max_payload_size          = 1;
@@ -570,18 +681,16 @@ static void caseRepeatedEstPreservesSplitRequestDelay(void)
     ts->split_payload_burst       = 1;
     testerclient_lstate_t *ls     = lineGetState(fixture.line, fixture.tester);
     ls->request_complete          = false;
+    ls->request_ready             = true;
     request_line_task_submissions = delayed_line_task_submissions = 0;
 
-    /* An onward adapter may already have marked the shared line established. */
-    lineMarkEstablished(fixture.line);
-    tunnelDownStreamEst(fixture.tester, fixture.line);
-    tunnelDownStreamEst(fixture.tester, fixture.line);
-    twfRequireEqualU32(request_line_task_submissions, 1, "ordinary repeated Est scheduled another request");
+    twfRequire(testerclientScheduleRequestSend(fixture.tester, fixture.line, ls), "first request admission failed");
     for (unsigned i = 0; i < 8; ++i)
         discard wloopProcessEvents(fixture.env.loop, 0);
-    twfRequireEqualU32(request_line_task_submissions, 1, "reentrant Est scheduled immediate split progress");
-    twfRequireEqualU32(fixture.trace.next_payload, 1, "reentrant Est bypassed the split request delay");
-    twfRequireEqualU32(delayed_line_task_submissions, 1, "reentrant Est created extra delayed request tasks");
+    twfRequire(lineIsEstablished(fixture.line), "Est during request did not mark transport readiness");
+    twfRequireEqualU32(request_line_task_submissions, 1, "reentrant notification scheduled immediate split progress");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "reentrant notification bypassed the split request delay");
+    twfRequireEqualU32(delayed_line_task_submissions, 1, "reentrant notification created extra delayed request tasks");
     twfRequireEqualU32(wloopNTimers(fixture.env.loop), 1, "split request did not retain exactly one timer");
     tunnelDownStreamEst(fixture.tester, fixture.line);
     twfRequireEqualU32(request_line_task_submissions, 1, "repeated Est replaced delayed progress with immediate work");
@@ -613,7 +722,7 @@ static void caseDelayedSplitRequestRefusalClosesLine(void)
     ts->split_payload_burst    = 1;
 
     testerclient_lstate_t *ls  = lineGetState(fixture.line, fixture.tester);
-    ls->est_received           = true;
+    ls->request_ready          = true;
     ls->request_complete       = false;
     ls->request_send_scheduled = true;
 
@@ -1239,7 +1348,7 @@ int main(void)
     caseAcceptedQueuedTimerAdmissionClosureUsesCleanup();
     casePacketStartRefusalDoesNotArmWatchdog();
     caseDelayedPacketStartRefusalDoesNotArmWatchdog();
-    caseOwnedRequestScheduleRefusalClosesLine();
+    caseOwnedStartup();
     caseDelayedSplitRequestRefusalClosesLine();
     caseRepeatedEstPreservesSplitRequestDelay();
     casePacketResponseMismatch();

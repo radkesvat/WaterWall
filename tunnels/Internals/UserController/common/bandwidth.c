@@ -12,11 +12,9 @@ static void usercontrollerLogOversize(const usercontroller_direction_t *directio
              direction->last_oversize_bytes);
 }
 
-#include "loggers/network_logger.h"
-
 static usercontroller_lstate_t *usercontrollerBandwidthLineState(usercontroller_direction_t *direction)
 {
-    return lineGetState(direction->line, direction->tunnel);
+    return usercontrollerGetLineState(direction->tunnel, direction->line);
 }
 
 static user_bandwidth_direction_t usercontrollerBandwidthUserDirection(usercontroller_direction_t *direction)
@@ -55,9 +53,11 @@ static traffic_shaper_preview_t usercontrollerBandwidthPreview(void *context, si
 
 static traffic_shaper_commit_t usercontrollerBandwidthCommit(void *context, size_t bytes, bool queued, bool remaining)
 {
-    usercontroller_direction_t    *direction = context;
-    usercontroller_tstate_t       *ts        = tunnelGetState(direction->tunnel);
-    usercontroller_lstate_t       *ls        = usercontrollerBandwidthLineState(direction);
+    usercontroller_direction_t *direction = context;
+    usercontroller_tstate_t    *ts        = tunnelGetState(direction->tunnel);
+    usercontroller_lstate_t    *ls        = usercontrollerBandwidthLineState(direction);
+    if (usercontrollerBandwidthStopping(direction))
+        return kTrafficShaperReject;
     const user_delivery_decision_t result =
         authenticationclientUserCommitDelivery(ts->auth_client_tunnel,
                                                &ls->handle,
@@ -111,8 +111,10 @@ static void usercontrollerBandwidthPressure(void *context, bool paused)
 
 static void usercontrollerBandwidthClose(void *context)
 {
+    /* A quota-ending handoff may have synchronously retired our line state. */
     usercontroller_direction_t *direction = context;
-    usercontrollerCloseLine(direction->tunnel, direction->line, kUserControllerCloseInternal);
+    if (direction->line != NULL)
+        usercontrollerCloseLine(direction->tunnel, direction->line, kUserControllerCloseInternal);
 }
 
 static bool usercontrollerBandwidthReserve(void *context, buffer_budget_cost_t cost)
@@ -182,7 +184,7 @@ static const traffic_shaper_ops_t usercontrollerBandwidthOps = {
 
 void usercontrollerBandwidthInitialize(tunnel_t *t, line_t *l)
 {
-    usercontroller_lstate_t *ls = lineGetState(l, t);
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(t, l);
     bufferbudgetInit(&ls->budget, (buffer_budget_cost_t) {.bytes = 1024U * 1024U, .charge = 2U * 1024U * 1024U});
     for (unsigned i = 0; i < 2; ++i)
     {
@@ -220,7 +222,7 @@ void usercontrollerBandwidthDestroy(usercontroller_lstate_t *ls)
 
 void usercontrollerBandwidthSubmit(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
 {
-    usercontroller_lstate_t    *ls        = lineGetState(l, t);
+    usercontroller_lstate_t    *ls        = usercontrollerGetLineState(t, l);
     usercontroller_direction_t *direction = &ls->directions[upstream ? 0 : 1];
     if (usercontrollerBandwidthStopping(direction))
     {
@@ -255,16 +257,11 @@ void usercontrollerBandwidthSubmit(tunnel_t *t, line_t *l, sbuf_t *buf, bool ups
                 usercontrollerBandwidthCommit(direction, sbufGetLength(buf), false, false);
             if (decision == kTrafficShaperForward || decision == kTrafficShaperForwardClose)
             {
-                if (decision == kTrafficShaperForwardClose)
-                {
-                    lineRef(l);
+                if (decision == kTrafficShaperForward)
                     usercontrollerBandwidthForward(direction, buf);
-                    if (lineIsAlive(l))
-                        usercontrollerCloseLine(t, l, kUserControllerCloseInternal);
-                    lineUnref(l);
-                }
-                else
-                    usercontrollerBandwidthForward(direction, buf);
+                else if (lineCallWithRefWithBuf(
+                             l, upstream ? tunnelNextUpStreamPayload : tunnelPrevDownStreamPayload, t, buf))
+                    usercontrollerBandwidthClose(direction);
                 return;
             }
             if (decision == kTrafficShaperReject)
@@ -287,9 +284,11 @@ void usercontrollerBandwidthSubmit(tunnel_t *t, line_t *l, sbuf_t *buf, bool ups
 
 void usercontrollerBandwidthSetExternalPause(tunnel_t *t, line_t *l, bool upstream, bool paused)
 {
-    usercontroller_lstate_t    *ls        = lineGetState(l, t);
+    usercontroller_lstate_t    *ls        = usercontrollerGetLineState(t, l);
     usercontroller_direction_t *direction = &ls->directions[upstream ? 0 : 1];
-    bool                        limited   = false;
+    if (ls->phase != kUserControllerOpen || direction->shaper.stopped)
+        return;
+    bool limited = false;
     if (ls->managed)
     {
         usercontroller_tstate_t *ts = tunnelGetState(t);
@@ -310,4 +309,37 @@ void usercontrollerBandwidthSetExternalPause(tunnel_t *t, line_t *l, bool upstre
         return;
     }
     trafficshaperSetExternalPause(&direction->shaper, paused);
+}
+
+void usercontrollerFlushAccepted(tunnel_t *t, line_t *l, bool upstream)
+{
+    usercontroller_lstate_t    *ls        = usercontrollerGetLineState(t, l);
+    usercontroller_direction_t *direction = &ls->directions[upstream ? 0 : 1];
+    if (ls->payload_mode != kUserControllerPayloadStream || tunnelchainIsWorkerPacketLine(t->chain, l) || ! ls->managed)
+        return;
+
+    usercontrollerBandwidthQuiesce(ls);
+    /* Output addressed to the closed sender can no longer be delivered. Its
+     * reservation may be needed to split the surviving FIFO's first chunk. */
+    trafficshaperDiscardPending(&ls->directions[upstream ? 1 : 0].shaper);
+    usercontroller_tstate_t *ts = tunnelGetState(t);
+    sbuf_t                  *buffer;
+    while (! usercontrollerBandwidthStopping(direction) &&
+           (buffer = trafficshaperPopForFinish(&direction->shaper, kUserBandwidthStreamQuantum)) != NULL)
+    {
+        user_delivery_decision_t result =
+            authenticationclientUserCommitFinalDelivery(ts->auth_client_tunnel,
+                                                        &ls->handle,
+                                                        usercontrollerBandwidthUserDirection(direction),
+                                                        sbufGetLength(buffer));
+        if (result == kUserDeliveryReject)
+        {
+            lineReuseBuffer(l, buffer);
+            return;
+        }
+        assert(result == kUserDeliveryForward || result == kUserDeliveryForwardClose);
+        usercontrollerBandwidthForward(direction, buffer);
+        if (! lineIsAlive(l) || ls->phase == kUserControllerClosed || result == kUserDeliveryForwardClose)
+            return;
+    }
 }

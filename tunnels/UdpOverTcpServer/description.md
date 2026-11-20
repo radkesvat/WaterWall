@@ -1,25 +1,19 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpOverTcpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpOverTcpServer.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpOverTcpServer Node
 
+## Overview
+
 `UdpOverTcpServer` is the server-side peer of `UdpOverTcpClient`. It accepts a framed byte stream from the previous node, reconstructs UDP datagrams, and forwards those packets to the next node.
 
 In practice, this node is used together with `UdpOverTcpClient` on the other side of the stream transport.
 
-## What It Does
+## Typical placement
 
-- Accepts framed bytes from the previous node.
-- Reconstructs packet boundaries using a 2-byte length prefix.
-- Forwards each recovered packet to the next node.
-- Accepts packet replies from the next node.
-- Prefixes each reply with a 2-byte length field and sends it back through the previous node.
-
-This node expects the previous side of the chain to provide a stream transport.
-
-## Typical Placement
+### Typical Placement
 
 A common layout is:
 
@@ -29,7 +23,7 @@ A common layout is:
 
 It should usually sit opposite `UdpOverTcpClient`.
 
-## Flow Example
+### Flow Example
 
 ```mermaid
 flowchart LR
@@ -46,7 +40,11 @@ flowchart LR
     TC == "TCP stream" ==> TL
 ```
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -57,9 +55,11 @@ flowchart LR
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -70,17 +70,39 @@ flowchart LR
 - `next` `(string)`
   The next node that should receive the reconstructed packets.
 
-### `settings`
+#### `settings`
 
 There are no required tunnel-specific settings in the current implementation.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 There are no tunnel-specific optional settings in the current implementation.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Framing model
+### Notes And Caveats
+
+- `UdpOverTcpServer` is intended to be paired with `UdpOverTcpClient`.
+- There are no tunnel-specific JSON settings today.
+- Each datagram-facing payload callback must contain exactly one UDP datagram.
+- Invalid zero-length frames and exhausted parser storage close the carrier through its owner.
+- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Implementation details
+
+### What It Does
+
+- Accepts framed bytes from the previous node.
+- Reconstructs packet boundaries using a 2-byte length prefix.
+- Forwards each recovered packet to the next node.
+- Accepts packet replies from the next node.
+- Prefixes each reply with a 2-byte length field and sends it back through the previous node.
+
+This node expects the previous side of the chain to provide a stream transport.
+
+### Detailed Behavior
+
+#### Framing model
 
 `UdpOverTcpServer` expects each packet on the stream side to be encoded as:
 
@@ -95,18 +117,18 @@ Each payload callback on the datagram-facing side represents one UDP datagram. T
 UDP payloads; the source protocol metadata does not change their framing. Mixed listeners must route TCP
 traffic through a separate path before the client.
 
-### Packet size limits
+#### Packet size limits
 
 The maximum outbound UDP datagram size is `65535 - 20 - 8 - 2 = 65505` bytes.
 Larger datagrams are dropped intact. Empty outbound payloads violate the existing Debug invariant;
 Release drops them. Incoming zero-length frames are invalid and close the carrier.
 
-### Data flow direction
+#### Data flow direction
 
 - Stream side to packet side: previous node -> `UdpOverTcpServer` -> next node
 - Packet replies back to stream side: next node -> `UdpOverTcpServer` -> previous node
 
-### Stream buffering behavior
+#### Stream buffering behavior
 
 Incoming stream bytes wait in a read stream until complete datagrams can be extracted.
 After complete frames drain, the 16-bit wire length leaves at most 65,536 bytes
@@ -118,7 +140,7 @@ Malformed frames, unrepresentable storage or exhausted budgets close
 the carrier through its owner. Decoder reentry shares a 2 MiB byte limit and 4 MiB charge limit with its
 retained stream. The parser never discards arbitrary stream bytes to continue.
 
-### Lifecycle behavior
+#### Lifecycle behavior
 
 When the line is initialized, the server creates its framing state, sets the destination protocol to UDP,
 and immediately initializes the next node. Transport Est, Pause and Resume are forwarded promptly.
@@ -126,15 +148,7 @@ and immediately initializes the next node. Transport Est, Pause and Resume are f
 When either side sends Finish, the node destroys its own framing state and forwards Finish away from the
 sender. It borrows the normal line and does not call `lineDestroy()`.
 
-## Notes And Caveats
-
-- `UdpOverTcpServer` is intended to be paired with `UdpOverTcpClient`.
-- There are no tunnel-specific JSON settings today.
-- Each datagram-facing payload callback must contain exactly one UDP datagram.
-- Invalid zero-length frames and exhausted parser storage close the carrier through its owner.
-- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
-
-## Splice Support
+### Splice Support
 
 Both nodes accept ordinary buffers and private-pipe bodies. Each outbound UDP datagram keeps its body,
 gains a resident two-byte length prefix, and is forwarded in one callback. Oversized datagrams are dropped
@@ -145,7 +159,7 @@ UDP datagram boundaries remain intact, and the TCP carrier remains eligible for 
 materialization fallback belongs to the UDP sender. Complete frames in an admitted stream input continue
 after Pause; Finish or admission refusal stops processing.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

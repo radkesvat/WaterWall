@@ -1,15 +1,27 @@
 <!--
-Documentation version: 159
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RawSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RawSocket.mdx, and all files must keep the same documentation version.
 -->
 
 # RawSocket Node
 
+## Overview
+
 `RawSocket` connects WaterWall to raw IPv4 packet capture and raw packet injection. When capture ranges are configured, it captures matching IP packets from the host networking stack and forwards them into the chain. Independently, it can inject raw IP packets coming from the chain back into the system.
 
 This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
-## What It Does
+For Ping/Ping6 paths that rewrite addresses, place IpOverrider between RawSocket
+and the decoder and select `"opaque-flow-mode": "peer"` explicitly; `auto`
+recognizes only direct decoder neighbours. All Ping modes reuse the IPv4 header.
+Ordinary Ping and direct Ping6 add nine bytes and accept at most 1491 complete
+native bytes; `ipv6-in-ipv4` Ping6 adds 49 and accepts at most 1451. Both entry
+points reject fragments. Configure `"fragment-policy": "reassemble"` on adapters
+and budget device/bridge MTUs for the actual path. Capture the peer's network
+address with protocol 1 for Ping, 58 for direct Ping6 or 41 for IPv6-in-IPv4 Ping6. Ordinary Echo traffic may
+satisfy the layout; dedicated capture selection supplies no authentication.
+
+### What It Does
 
 - Optionally creates a capture device for matching IPv4 packets.
 - Creates a raw output device for sending raw IPv4 packets.
@@ -17,9 +29,9 @@ This node is a layer-3 adapter rather than a connection-oriented tunnel.
 - Forwards captured packets to the adjacent chain side.
 - Writes raw IP packets from the chain out through the raw device.
 - Applies checksum recalculation before writing when the packet buffer requests it.
-- Bypasses Linux conntrack by default for capture ranges and raw output; output uses an automatically selected socket mark.
+- Bypasses Linux conntrack for active captured input and raw output; output uses a dedicated explicit or automatic socket mark.
 
-## Typical Placement
+## Typical placement
 
 `RawSocket` can be placed at either edge of a chain:
 
@@ -31,9 +43,11 @@ Payload reaching `RawSocket` from upstream or downstream is treated as an IP pac
 With PingClient/PingServer packet disguise, use these edge orders:
 
 ```text
-TunDevice -> PingClient -> RawSocket
-RawSocket -> PingServer -> TunDevice
+TunDevice -> PingClient -> IpOverrider -> RawSocket
+RawSocket -> IpOverrider -> PingServer -> TunDevice
 ```
+
+Ping6Client/Ping6Server use the same edge orders with outer IPv4 Protocol `58` in direct mode or `41` in `ipv6-in-ipv4` mode. Select `capture-protocols: [58]` or `[41]` respectively with the peer's outer source range. New-mode TunDevice MTU is at most 1451 at a 1500-byte path, before any other expansion; reassemble native/outer IPv4 fragments before Ping6. Inner IPv6 Fragment headers are rejected by Ping6.
 
 In first position, RawSocket forwards captured carrier packets upstream into
 PingServer. PingServer restores the inner packet toward TunDevice; only with
@@ -43,7 +57,11 @@ and can be enabled independently. Plain packets from TunDevice return downstream
 as fresh type-8 Echo Requests for raw injection; they are not inserted into an
 unrelated Echo Reply.
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Replace the capture addresses with the intended peer addresses and define `next-node-name` as the packet path. This fragment preserves fragments; use reassembly for consumers that require complete packets, including Ping/Ping6. Capture and raw injection require the platform support and privileges described below.
 
 ```json
 {
@@ -57,30 +75,19 @@ unrelated Echo Reply.
     "capture-ips": [
       "192.0.2.10",
       "198.51.100.0/24"
-    ],
-    "bypass-conntrack": true
+    ]
   },
   "next": "next-node-name"
 }
 ```
 
-For write-only packet injection, omit all capture-range keys:
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-```json
-{
-  "name": "raw-output",
-  "type": "RawSocket",
-  "settings": {
-    "fragment-policy": "preserve-fragments",
-    "raw-device-name": "raw-out",
-    "bypass-conntrack": true
-  }
-}
-```
+## Configuration
 
-## Required JSON Fields
+### Required JSON Fields
 
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -88,7 +95,7 @@ For write-only packet injection, omit all capture-range keys:
 - `type` `(string)`
   Must be exactly `"RawSocket"`.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `opaque-flow-mode` `(string)`
   Opaque IPv4 receive policy: `prefix` (default), `peer`, `spread`, or `auto`.
@@ -106,10 +113,9 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `[]` (also used when omitted)
 
-  Excluded incoming packets skip this node's capture and incoming NOTRACK rules,
-  including when `bypass-conntrack` is enabled. They continue through normal host
-  conntrack and firewall processing. This setting does not restrict raw output:
-  packets sent by WaterWall's raw socket still follow `bypass-conntrack`.
+  Excluded incoming packets skip this node's capture rules and continue through
+  normal host conntrack and firewall processing. This setting does not restrict
+  raw output: packets sent by WaterWall's raw socket still bypass conntrack.
 
   For example, these settings leave incoming ICMP and TCP to the host:
 
@@ -125,7 +131,7 @@ For write-only packet injection, omit all capture-range keys:
   `dont-capture-protocols` are mutually exclusive, even for empty lists.
 
   The allowlist is compiled once into the existing protocol predicate: Linux
-  uses fixed-size cBPF in both NFQUEUE and incoming NOTRACK rules; Windows uses
+  uses fixed-size cBPF on every NFQUEUE rule; Windows uses
   WinDivert. Unselected protocols stay in the host stack and retain normal
   conntrack/firewall processing. Raw output is unaffected. Nonempty exclusions,
   including those produced from this allowlist, require Linux's iptables `bpf`
@@ -207,33 +213,97 @@ For write-only packet injection, omit all capture-range keys:
 
   Default: `"unnamed-raw-device"`
 
-- `bypass-conntrack` `(boolean)`
-  On Linux, control conntrack bypass for both configured capture ranges and this
-  node's raw output socket. When enabled, WaterWall installs source-range NOTRACK
-  rules in `raw PREROUTING` and an exact-mark rule in `raw OUTPUT` using an
-  automatically selected socket mark. In write-only mode, only the output rule
-  is needed. Setting this to `false` installs neither kind of NOTRACK rule;
-  NFQUEUE capture and drop-and-dispatch remain active. The setting has no effect
-  on the Windows WinDivert backend.
-
-  Default: `true`
-
 - `mark` `(integer)`
-  Explicit firewall mark for the raw output device where supported. This field
-  is permitted only with `"bypass-conntrack": false`; even an explicit `0` is
-  rejected while bypass is enabled. With bypass disabled, WaterWall installs no
-  capture or output NOTRACK rules and preserves the configured mark.
+  Optional Linux output socket mark, an integer from `1` through `4294967295`.
+  It must be dedicated to WaterWall traffic: the output NOTRACK exemption matches
+  this exact mark, so unrelated traffic sharing it would also bypass conntrack.
+  Zero, negative, fractional and nonnumeric values are rejected. An explicit mark
+  is preserved exactly for routing and NOTRACK, including across device restarts.
 
-  Default when bypass is disabled: `0`
+  When omitted, WaterWall selects an automatic mark on each start using the
+  collision checks described below. WinDivert does not apply Linux socket marks.
 
   For explicit policy routing, use:
 
   ```json
   "settings": {
-    "fragment-policy": "preserve-fragments", "bypass-conntrack": false, "mark": 10 }
+    "fragment-policy": "preserve-fragments", "mark": 10 }
   ```
 
-## Detailed Behavior
+### Packet receive policies
+
+#### `opaque-flow-mode` (optional, default: `prefix`)
+
+Accepts only the exact strings `prefix`, `peer`, `spread` and `auto`. Empty or
+unknown strings, `null` and other JSON types fail construction on every platform,
+including write-only RawSocket. Omission always selects `prefix`, even beside Ping or Ping6.
+The setting is independent of `multi-queue`, `gso` and `fragment-policy`; a single
+receive queue still dispatches over the configured processing workers.
+
+For structurally valid, unfragmented IPv4 with Protocol other than TCP (6) or
+UDP (17):
+
+| Value | Receive worker selection |
+| --- | --- |
+| `prefix` | Symmetric hash of addresses, protocol and the first four IP-payload bytes as two big-endian 16-bit endpoint fields. |
+| `peer` | Hash addresses and protocol only; ignore every payload byte. |
+| `spread` | Spread packets using the backend's existing mechanism. |
+| `auto` | Resolve once at startup using the exact direct Ping or Ping6 decoding neighbour below; otherwise use `prefix`. |
+
+The prefix begins after the actual IPv4 header, including options, and must fit
+inside the declared total length. Fewer than four payload bytes use the same
+address/protocol fallback as `peer`. Native TCP/UDP always uses the shared 32-bit
+address/port/protocol worker hash when four transport bytes are present, and the
+address/protocol fallback otherwise; opaque mode never validates transport flags,
+length fields or checksums. IPv6 parsing boundaries and fragment policy are unchanged.
+
+`prefix` keeps a visible flow together only while those four bytes stay stable.
+A fixed XOR can preserve that property; arbitrary encryption or changing masks
+need not. `peer` deliberately groups every opaque packet with the same address
+pair and protocol, concentrating unrelated hidden flows on one worker. `spread`
+can process those flows in parallel but can reorder packets before a consumer
+sees them. A downstream stateful consumer still chooses its owner from the tuple
+it actually consumes after decoding or rewriting.
+
+Only requested `auto` inspects finalized topology before device construction or
+capture activation. Upstream receive publication toward `next` selects `peer`
+only for the immediate physical node of exact type `PingServer` or `Ping6Server`; downstream
+publication toward `prev` selects `peer` only for exact type `PingClient` or `Ping6Client`.
+Encoding directions, intervening nodes, wrappers and all other layouts select
+`prefix`. Instance names do not participate. Explicit modes always take precedence;
+an opposite RawSocket never implies `spread`. With both devices using `auto`:
+
+```text
+TunDevice -> PingClient -> RawSocket
+  prefix                     peer
+
+RawSocket -> PingServer -> TunDevice
+   peer                     prefix
+```
+
+The resolved mode is fixed per device generation, including single-queue fallback
+and restart; readers do not inspect traffic or reevaluate topology per packet.
+Ping and Ping6 pass unrelated packets through, so automatic `peer` groups unrelated
+opaque traffic as well; mixed traffic may require an explicit setting. Startup
+logs requested mode, effective mode, selection reason and effective queue count.
+
+#### `fragment-policy` (optional, default: `reassemble`)
+
+Omitting this setting selects `reassemble`: IPv4 fragments are assembled before
+publication into the chain. `preserve-fragments` keeps their bytes and boundaries.
+The policy does not impose a node-name or topology allowlist; ordinary layer and
+chain validation still applies. Invalid values (including `null`) fail startup.
+
+`PacketsToConnection` upstream packet input and `ConnectionToPackets` downstream
+packet input require complete IPv4 datagrams. Either input drops unsupported
+fragments before stack delivery, logs the first drop as a warning, and counts
+later drops without terminating the process. Reassemble before these consumers,
+regardless of the device policy or intervening nodes. DF alone is not a fragment;
+MF or a nonzero fragment offset is.
+
+Reassembly emits complete IPv4 datagrams up to 65,535 bytes. It does not raise
+packet-output limits or device MTU, and does not automatically fragment output
+again. See Developer Guide Part 4 for assembly bounds and packet ownership.
 
 ### Linux kernel receive queue sizing
 
@@ -274,7 +344,132 @@ This tuning does not change the shared userspace receive FIFO, callback batch
 sizes or raw output backlog. It introduces no global sysctl writes and is
 independent of `skip-sysctl` and core `misc.tcp-tune`.
 
-### Capture path
+### Capture filter behavior
+
+The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP and protocol filters are dropped from the host kernel networking stack: normal local transport delivery stops while capture is active, and WaterWall processes its captured copy.
+
+Current implementation behavior:
+
+- on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
+- on Linux, multiqueue capture creates a flow rule per queue and range; only `spread` adds random opaque rules. Single-queue capture creates one queue rule per range
+- `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
+
+On Linux, nonempty protocol exclusions, whether configured directly or derived
+from `capture-protocols`, require the iptables `bpf` match (`xt_bpf`). One
+fixed-size classic BPF predicate checks the IPv4 Protocol byte in every
+NFQUEUE rule. It also handles fragments and protocol zero
+without interpreting transport headers. Insertion, rollback and deletion use
+identical predicates. Missing matcher support fails startup and rolls back
+installed rules. An unrestricted protocol selection adds no protocol matcher.
+Windows applies the same protocol selection in its WinDivert filter.
+
+By default the Linux capture backend applies best-effort `sysctl` tuning for
+backlogs and other TCP parameters before creating NFQUEUE resources. The core
+`misc.tcp-tune` setting controls separate `net.ipv4.tcp_mem` tuning when
+`misc.splice` is also enabled. `"skip-sysctl": true` suppresses
+only Capture's sysctl tuning batch. Per-device `kernel-queue-tune`, the netlink
+operations and iptables commands needed to configure NFQUEUE remain independent.
+
+Linux capture installs
+NFQUEUE rules in `raw PREROUTING`, matching each source range and its protocol
+filters with `--dst-type LOCAL`. This captures local-unicast destinations only;
+ordinary transit traffic, broadcasts and multicast remain in the host stack.
+Active capture returns `NF_DROP` before conntrack, DNAT and the normal routing
+decision, then dispatches the captured copy. Selected input does not traverse
+later host firewall hooks. No incoming NOTRACK rules are installed.
+
+The rules use normal raw-table priority, leaving fragment reassembly ordering and
+the 1,500-byte capture limit unchanged. They do not change interface MTU or provide
+PMTU discovery; necessary ICMP errors still need to reach the responsible stack.
+`skip-sysctl` does not disable queue-rule setup.
+
+The coordinator services prepared inactive queues with `NF_ACCEPT` during rule
+installation. Capture activates once all selected queue rules are installed.
+If multiqueue installation fails, WaterWall removes the partial rules and retries
+one receive queue. Failed single-queue installation or incomplete rollback fails
+startup. Cleanup tracks failed or outcome-unknown queue commands against the
+raw PREROUTING chain, retaining ownership for retry. Reader failure requests
+orderly shutdown, whose lifecycle owner performs rule cleanup.
+
+On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
+on the queue, matching packets continue through the host firewall instead of
+being dropped by an absent queue. Acceptance resumes at later tables; subsequent
+rules in the queued table are skipped. With early capture, accepted input can
+undergo normal conntrack processing. This is a fail-open availability policy:
+packets are not captured or transformed while no listener exists. It does not
+make queue overflow fail-open while WaterWall remains bound to the queue.
+WaterWall avoids queue numbers already referenced by either filter INPUT or
+raw PREROUTING rules. A
+failed startup closes its queues; complete rollback permits a later restart.
+Unresolved rule cleanup or an inactive queue I/O failure makes that capture-device
+object non-restartable. Closing the queues activates `--queue-bypass` for any
+NFQUEUE rule that could not be removed. Before capture activation and
+after worker detachment, the coordinator performs bounded nonblocking
+`NF_ACCEPT` drains during rule insertion, rollback, and bring-down cleanup.
+The raw output device is ready before capture activates. Receive activation is
+queued behind packet Init on each owner worker. During later startup commands,
+capture uses `NF_DROP` and queues packets for worker delivery within the same
+shared budget; a full session FIFO stops native reads. Packets may remain in the
+bounded kernel queues and session FIFO until worker loops dispatch. Active workers
+use drop-and-dispatch. Shutdown deactivates capture, closes receive admission,
+and detaches each watcher on its owner before rule cleanup and descriptor release.
+A terminal receive failure closes receive admission and requests orderly cleanup;
+closed queue sockets make any residual rules fail open. No dedicated Linux
+capture reader or cleanup thread is created.
+
+## Usage and troubleshooting
+
+### Configuration Example
+
+```json
+{
+  "name": "raw-ip",
+  "type": "RawSocket",
+  "settings": {
+    "fragment-policy": "preserve-fragments",
+    "capture-device-name": "capture-in",
+    "raw-device-name": "raw-out",
+    "capture-filter-mode": "source-ip",
+    "capture-ips": [
+      "192.0.2.10",
+      "198.51.100.0/24"
+    ]
+  },
+  "next": "next-node-name"
+}
+```
+
+For write-only packet injection, omit all capture-range keys:
+
+```json
+{
+  "name": "raw-output",
+  "type": "RawSocket",
+  "settings": {
+    "fragment-policy": "preserve-fragments",
+    "raw-device-name": "raw-out"
+  }
+}
+```
+
+### Notes And Caveats
+
+- The current receive path only forwards IPv4 packets.
+- `capture-filter-mode` is effectively limited to `"source-ip"` when capture is enabled.
+- Omitting capture ranges intentionally selects write-only raw packet injection.
+- Platform support depends on the raw/capture backend available on the operating system.
+
+### Why `TunDevice` may be a better fit for some cases
+
+The current `RawSocket` implementation is focused on capturing inbound IPv4 traffic that matches a source-IP filter and injecting raw IPv4 packets.
+
+If you need a virtual interface model or packet handling that is closer to routed interface traffic, `TunDevice` is usually the better match.
+
+## Implementation details
+
+### Detailed Behavior
+
+#### Capture path
 
 During `onStart`, `RawSocket`:
 
@@ -347,7 +542,7 @@ ownership through copies, delays and worker handoff; they carry no fragment
 settlement claim. Local-stack packet inputs enforce their complete-datagram
 requirement at delivery. See the fragment-policy section below.
 
-### Output path
+#### Output path
 
 When payload reaches `RawSocket` from upstream or downstream:
 
@@ -381,14 +576,18 @@ packet until completion; the native completion notification schedules owner-work
 work and never borrows a worker pool. Stop closes admission, quiesces notifications,
 cancels pending writes, and waits for completion before releasing retained packets.
 
-On Linux, output bypass requires `iptables`, `iptables-save`, `ip` from
-iproute2, and permission to manage firewall rules (`CAP_NET_ADMIN`). Before
-enabling the writer, WaterWall checks IPv4 firewall and routing
-snapshots, selects a random mark, sets `SO_MARK`, and inserts its NOTRACK rule.
-Failure to inspect policy, find a suitable mark, set the socket mark, or install
-the rule fails startup and attempts cleanup.
+On Linux, raw output always bypasses conntrack and requires `iptables` and
+permission to manage firewall rules (`CAP_NET_ADMIN`). Before enabling the
+writer, WaterWall sets `SO_MARK` and installs an exact-mark NOTRACK rule in
+`raw OUTPUT`. An explicit `mark` is used unchanged for both operations and must
+be dedicated to WaterWall; other traffic using the same mark would also bypass
+conntrack. Without `mark`, WaterWall reads IPv4 firewall and routing snapshots
+and selects a random mark on each start. Automatic selection additionally
+requires `iptables-save` and `ip` from iproute2. Failure to select or apply the
+mark, inspect required policy, or install the rule fails startup and attempts
+cleanup.
 
-Selection prefers `0x80000000..0xffffffff`, falls back below that range when
+Automatic selection prefers `0x80000000..0xffffffff`, falls back below that range when
 necessary, and avoids values below `0x00010000`. It checks mark comparisons and
 literal mark assignments exposed by `iptables-save`, plus `ip -4 rule show`,
 including masks and the match results that an unmarked packet would have had.
@@ -399,8 +598,7 @@ sockets, concurrent changes, and future programs may not be visible to it.
 The exemption avoids conntrack; ordinary routing and firewall processing still
 apply. Exempted output cannot rely on host conntrack-based NAT or stateful
 filtering. Normal raw-table priority, fragment handling, and MTU limits remain
-unchanged. `bypass-conntrack=false` disables this node's capture and output
-exemptions; other administrators' rules remain independent.
+unchanged. Other administrators' rules remain independent.
 
 Output admission closes and admitted native writes finish before the
 `WWRAW_NOTRACK_...` rule is removed. Queued output is discarded during stop;
@@ -410,87 +608,7 @@ uncertain outcomes. Abrupt process death or persistent command failures can
 leave this exact-mark rule in `raw OUTPUT`; remove the rule identified by its
 logged comment if cleanup cannot complete.
 
-### Capture filter behavior
-
-The capture device is configured from the ranges supplied through either `capture-ips` or `capture-ip`. Captured packets matching the configured source IP and protocol filters are dropped from the host kernel networking stack: normal local transport delivery stops while capture is active, and WaterWall processes its captured copy.
-
-Current implementation behavior:
-
-- on Windows, the capture filter combines `ip.SrcAddr` equality or inclusive range checks with exclusions on `ip.Protocol`
-- on Linux, multiqueue capture creates a flow rule per queue and range; only `spread` adds random opaque rules. Single-queue capture creates one queue rule per range
-- `capture-filter-mode` is parsed, but only the `source-ip` path is currently implemented
-
-On Linux, nonempty protocol exclusions, whether configured directly or derived
-from `capture-protocols`, require the iptables `bpf` match (`xt_bpf`). One
-fixed-size classic BPF predicate checks the IPv4 Protocol byte in both the
-NFQUEUE and incoming NOTRACK rules. It also handles fragments and protocol zero
-without interpreting transport headers. Insertion, rollback and deletion use
-identical predicates. Missing matcher support fails startup and rolls back
-installed rules. An unrestricted protocol selection adds no protocol matcher.
-Windows applies the same protocol selection in its WinDivert filter.
-
-By default the Linux capture backend applies best-effort `sysctl` tuning for
-backlogs and other TCP parameters before creating NFQUEUE resources. The core
-`misc.tcp-tune` setting controls separate `net.ipv4.tcp_mem` tuning when
-`misc.splice` is also enabled. `"skip-sysctl": true` suppresses
-only Capture's sysctl tuning batch. Per-device `kernel-queue-tune`, the netlink
-operations and iptables commands needed to configure NFQUEUE remain independent.
-
-When `bypass-conntrack` is enabled (the default), Linux capture installs a
-matching `CT --notrack` rule in `raw PREROUTING` for each capture source range, with the same protocol exclusions as capture.
-The exemption also requires `--dst-type LOCAL`: it covers packets addressed to a local unicast address,
-without exempting ordinary transit traffic, broadcasts, or multicast. The INPUT
-capture rule checks the source range and protocol exclusions without this
-destination-type restriction. Raw-table matching is before DNAT, so exempted
-traffic cannot rely on this host's conntrack-based NAT
-or stateful firewall handling. Setting `bypass-conntrack=false` disables these
-capture exemptions along with the output exemption. NFQUEUE capture continues
-with its existing drop-and-dispatch behavior.
-
-The rules use normal raw-table priority, leaving fragment reassembly and the
-1,500-byte capture limit unchanged. They do not change interface MTU or provide
-PMTU discovery; necessary ICMP errors still need to reach the responsible stack.
-`skip-sysctl` does not disable NOTRACK setup.
-
-All INPUT queue rules are installed before any enabled NOTRACK rules. The
-coordinator services the inactive queues with `NF_ACCEPT` during these supervised
-rule commands. Capture activates once its selected rules are installed.
-If multiqueue rule installation fails, WaterWall removes the partial rules and
-retries one receive queue. Failed single-queue installation, NOTRACK installation,
-or incomplete rollback fails startup.
-Cleanup attempts NOTRACK removal before NFQUEUE removal and tracks failed or
-outcome-unknown commands independently in their respective tables. A NOTRACK
-cleanup failure does not prevent an attempt to remove the queue rules. Reader
-failure requests orderly shutdown, whose lifecycle owner performs rule cleanup.
-Removing NOTRACK restores tracking for subsequent packets; already-untracked
-packets are not retroactively tracked. `--queue-bypass` affects only NFQUEUE:
-abrupt process death or failed cleanup can leave `WWCAP_NOTRACK_...` rules that
-an administrator must remove from `raw PREROUTING` to restore tracking.
-
-On Linux, the NFQUEUE rules use `--queue-bypass`. If WaterWall is not listening
-on the queue, matching packets continue through the host firewall instead of
-being dropped by an absent queue. This is a fail-open availability policy:
-packets are not captured or transformed while no listener exists. It does not
-make queue overflow fail-open while WaterWall remains bound to the queue.
-WaterWall avoids queue numbers already referenced by existing INPUT rules. A
-failed startup closes its queues; complete rollback permits a later restart.
-Unresolved rule cleanup or an inactive queue I/O failure makes that capture-device
-object non-restartable. Closing the queues activates `--queue-bypass` for any
-NFQUEUE rule that could not be removed. Before capture activation and
-after worker detachment, the coordinator performs bounded nonblocking
-`NF_ACCEPT` drains during rule insertion, rollback, and bring-down cleanup.
-The raw output device is ready before capture activates. Receive activation is
-queued behind packet Init on each owner worker. During later startup commands,
-capture uses `NF_DROP` and queues packets for worker delivery within the same
-shared budget; a full session FIFO stops native reads. Packets may remain in the
-bounded kernel queues and session FIFO until worker loops dispatch. Active workers
-use drop-and-dispatch. Shutdown deactivates capture, closes receive admission,
-and detaches each watcher on its owner before rule cleanup and descriptor release.
-A terminal receive failure closes receive admission and requests orderly cleanup;
-closed queue sockets make any residual rules fail open. No dedicated Linux
-capture reader or cleanup thread is created.
-
-### Checksum behavior
+#### Checksum behavior
 
 Before writing a packet, `RawSocket` checks the packet buffer request:
 
@@ -498,13 +616,7 @@ Before writing a packet, `RawSocket` checks the packet buffer request:
 - full packet checksum recalculation is attempted
 - for fragmented IPv4 packets, transport checksum recalculation is skipped automatically and only the IPv4 header checksum is recomputed
 
-### Why `TunDevice` may be a better fit for some cases
-
-The current `RawSocket` implementation is focused on capturing inbound IPv4 traffic that matches a source-IP filter and injecting raw IPv4 packets.
-
-If you need a virtual interface model or packet handling that is closer to routed interface traffic, `TunDevice` is usually the better match.
-
-### Callback and line lifecycle
+#### Callback and line lifecycle
 
 Payload is the meaningful callback path. Ordinary connection lifecycle
 callbacks (`Init`, `Est`, `Pause`, and `Resume`) are terminal absorbers at this
@@ -514,14 +626,7 @@ lifecycle violation and aborts the program; it is not a no-op.
 The chain owns one persistent packet line per worker. `RawSocket` never destroys
 those lines and has zero bytes of line state.
 
-## Notes And Caveats
-
-- The current receive path only forwards IPv4 packets.
-- `capture-filter-mode` is effectively limited to `"source-ip"` when capture is enabled.
-- Omitting capture ranges intentionally selects write-only raw packet injection.
-- Platform support depends on the raw/capture backend available on the operating system.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -534,76 +639,3 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer3` |
 | `layer_group_next_node` | `kNodeLayer3` |
 | `required_padding_left` | `0` bytes |
-
-### `opaque-flow-mode` (optional, default: `prefix`)
-
-Accepts only the exact strings `prefix`, `peer`, `spread` and `auto`. Empty or
-unknown strings, `null` and other JSON types fail construction on every platform,
-including write-only RawSocket. Omission always selects `prefix`, even beside Ping.
-The setting is independent of `multi-queue`, `gso` and `fragment-policy`; a single
-receive queue still dispatches over the configured processing workers.
-
-For structurally valid, unfragmented IPv4 with Protocol other than TCP (6) or
-UDP (17):
-
-| Value | Receive worker selection |
-| --- | --- |
-| `prefix` | Symmetric hash of addresses, protocol and the first four IP-payload bytes as two big-endian 16-bit endpoint fields. |
-| `peer` | Hash addresses and protocol only; ignore every payload byte. |
-| `spread` | Spread packets using the backend's existing mechanism. |
-| `auto` | Resolve once at startup using the exact direct Ping decoding neighbour below; otherwise use `prefix`. |
-
-The prefix begins after the actual IPv4 header, including options, and must fit
-inside the declared total length. Fewer than four payload bytes use the same
-address/protocol fallback as `peer`. Native TCP/UDP always uses the shared 32-bit
-address/port/protocol worker hash when four transport bytes are present, and the
-address/protocol fallback otherwise; opaque mode never validates transport flags,
-length fields or checksums. IPv6 parsing boundaries and fragment policy are unchanged.
-
-`prefix` keeps a visible flow together only while those four bytes stay stable.
-A fixed XOR can preserve that property; arbitrary encryption or changing masks
-need not. `peer` deliberately groups every opaque packet with the same address
-pair and protocol, concentrating unrelated hidden flows on one worker. `spread`
-can process those flows in parallel but can reorder packets before a consumer
-sees them. A downstream stateful consumer still chooses its owner from the tuple
-it actually consumes after decoding or rewriting.
-
-Only requested `auto` inspects finalized topology before device construction or
-capture activation. Upstream receive publication toward `next` selects `peer`
-only for the immediate physical node of exact type `PingServer`; downstream
-publication toward `prev` selects `peer` only for exact type `PingClient`.
-Encoding directions, intervening nodes, wrappers and all other layouts select
-`prefix`. Instance names do not participate. Explicit modes always take precedence;
-an opposite RawSocket never implies `spread`. With both devices using `auto`:
-
-```text
-TunDevice -> PingClient -> RawSocket
-  prefix                     peer
-
-RawSocket -> PingServer -> TunDevice
-   peer                     prefix
-```
-
-The resolved mode is fixed per device generation, including single-queue fallback
-and restart; readers do not inspect traffic or reevaluate topology per packet.
-Ping passes unrelated packets through, so automatic `peer` groups unrelated
-opaque traffic as well; mixed traffic may require an explicit setting. Startup
-logs requested mode, effective mode, selection reason and effective queue count.
-
-### `fragment-policy` (optional, default: `reassemble`)
-
-Omitting this setting selects `reassemble`: IPv4 fragments are assembled before
-publication into the chain. `preserve-fragments` keeps their bytes and boundaries.
-The policy does not impose a node-name or topology allowlist; ordinary layer and
-chain validation still applies. Invalid values (including `null`) fail startup.
-
-`PacketsToConnection` upstream packet input and `ConnectionToPackets` downstream
-packet input require complete IPv4 datagrams. Any fragment reaching either input
-is a runtime contract violation: a fatal diagnostic explains the reassembly
-requirement and the process exits, in Debug and Release. Reassemble before these
-consumers, regardless of the device policy or intervening nodes. DF alone is not
-a fragment; MF or a nonzero fragment offset is.
-
-Reassembly emits complete IPv4 datagrams up to 65,535 bytes. It does not raise
-packet-output limits or device MTU, and does not automatically fragment output
-again. See Developer Guide Part 4 for assembly bounds and packet ownership.

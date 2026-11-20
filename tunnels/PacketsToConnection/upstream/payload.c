@@ -381,7 +381,18 @@ void ptcTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         /* Packet sources only choose receive placement. Establish the current
          * tuple's owner here, after any preceding transforms and before lwIP.
          * Keeping the dispatcher inside PTC preserves direct TUN capabilities. */
-        packetAffinityForward(state->input_affinity, l, buf);
+        if (state->source_epoch != NULL)
+        {
+            const uint64_t epoch = ptcPacketSourceEpoch(t, buf, false);
+            if (UNLIKELY(epoch == 0))
+            {
+                lineReuseBuffer(l, buf);
+                return;
+            }
+            packetAffinityForwardTagged(state->input_affinity, l, buf, epoch);
+        }
+        else
+            packetAffinityForward(state->input_affinity, l, buf);
         return;
     }
 

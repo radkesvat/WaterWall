@@ -1,0 +1,66 @@
+{
+  "name": "ping6-tun-client-ipv6-in-ipv4",
+  "nodes": [
+    {
+      "name": "user-tun",
+      "type": "TunDevice",
+      "next": "ping6-client",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "device-name": "wwping6c0",
+        "device-ip": "10.58.0.1/30",
+        "device-mtu": 1451,
+        "route-table": "off"
+      }
+    },
+    {
+      "name": "ping6-client",
+      "type": "Ping6Client",
+      "next": "carrier-addresses",
+      "settings": {
+        "send-replies": false,
+        "mode": "ipv6-in-ipv4",
+        "local-ipv6": "fd00:1234::1",
+        "peer-ipv6": "fd00:1234::2"
+      }
+    },
+    {
+      "name": "carrier-addresses",
+      "type": "IpOverrider",
+      "settings": {
+        "up": {
+          "source-ip": {
+            "ipv4": "192.0.2.10"
+          },
+          "dest-ip": {
+            "ipv4": "198.51.100.10"
+          }
+        },
+        "down": {
+          "source-ip": {
+            "ipv4": "10.58.0.2"
+          },
+          "dest-ip": {
+            "ipv4": "10.58.0.1"
+          }
+        }
+      },
+      "next": "raw"
+    },
+    {
+      "name": "raw",
+      "type": "RawSocket",
+      "settings": {
+        "fragment-policy": "reassemble",
+        "opaque-flow-mode": "peer",
+        "capture-filter-mode": "source-ip",
+        "capture-ips": [
+          "198.51.100.10"
+        ],
+        "capture-protocols": [
+          41
+        ]
+      }
+    }
+  ]
+}

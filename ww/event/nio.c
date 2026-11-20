@@ -199,20 +199,16 @@ connect_error:
 
 static void nio_connect_event_cb(wevent_t *ev)
 {
-    wio_t   *io = (wio_t *) ev->userdata;
-    uint32_t id = (uint32_t) (uintptr_t) ev->privdata;
-    if (io->id != id)
-        return;
-    nio_connect(io);
+    wio_t *io = wioResolveDeferredEvent(ev);
+    if (io != NULL)
+    {
+        nio_connect(io);
+    }
 }
 
 static int nio_connect_async(wio_t *io)
 {
-    wevent_t ev;
-    memoryZero(&ev, sizeof(ev));
-    ev.cb       = nio_connect_event_cb;
-    ev.userdata = io;
-    ev.privdata = (void *) (uintptr_t) io->id;
+    wevent_t ev = wioMakeDeferredEvent(io, nio_connect_event_cb);
     return wloopPostEvent(io->loop, &ev) ? 0 : -1;
 }
 
@@ -373,6 +369,38 @@ static void nioConsumeWrittenBuffer(sbuf_t *buf, uint32_t bytes)
     }
 }
 
+static sbuf_t *nioGetOrdinaryReadBuffer(wio_t *io, bool control_io)
+{
+    buffer_pool_t *pool = io->loop->bufpool;
+    if (control_io)
+    {
+        // eventfd requires an eight-byte read. Pipes and socketpairs carry one wake byte.
+        return bufferpoolGetBestFit(pool, sizeof(uint64_t), 0);
+    }
+    switch (io->io_type)
+    {
+    case WIO_TYPE_TCP:
+        return wioGetTcpReadBuffer(io);
+    case WIO_TYPE_UDP:
+#if defined(OS_LINUX)
+    {
+        int queued_bytes = 0;
+        if (ioctl(wioGetFD(io), FIONREAD, &queued_bytes) == 0 && queued_bytes > 0)
+        {
+            // UDP must fit the entire next datagram.
+            return bufferpoolGetBestFit(pool, queued_bytes, bufferpoolGetLargeBufferPadding(pool));
+        }
+        // A failed/zero hint still needs a receive: empty UDP and transient readiness are distinct.
+    }
+#endif
+        return bufferpoolGetLargeBuffer(pool);
+    case WIO_TYPE_IP:
+        return bufferpoolGetSmallBuffer(pool);
+    default:
+        return bufferpoolGetLargeBuffer(pool);
+    }
+}
+
 static void nio_read(wio_t *io)
 {
     // printd("nio_read fd=%d\n", wioGetFD(io));
@@ -380,6 +408,7 @@ static void nio_read(wio_t *io)
     int err   = 0;
     //  read:;
 
+    const bool control_io = wloopIOIsControl(io);
     sbuf_t *buf;
 
 #if WW_HAVE_SPLICE
@@ -429,32 +458,7 @@ static void nio_read(wio_t *io)
 read_ordinary:
 #endif
 
-    switch (io->io_type)
-    {
-    case WIO_TYPE_UDP:
-#if defined(OS_LINUX)
-    {
-        int queued_bytes = 0;
-        if (ioctl(wioGetFD(io), FIONREAD, &queued_bytes) == 0 && queued_bytes > 0)
-        {
-            buffer_pool_t *pool = io->loop->bufpool;
-            // UDP must fit the entire next datagram.
-            buf = bufferpoolGetBestFit(pool, queued_bytes, bufferpoolGetLargeBufferPadding(pool));
-            break;
-        }
-        // A failed/zero hint still needs a receive: empty UDP and transient readiness are distinct.
-    }
-#endif
-        buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
-        break;
-    case WIO_TYPE_TCP:
-    default:
-        buf = bufferpoolGetLargeBuffer(io->loop->bufpool);
-        break;
-    case WIO_TYPE_IP:
-        buf = bufferpoolGetSmallBuffer(io->loop->bufpool);
-        break;
-    }
+    buf = nioGetOrdinaryReadBuffer(io, control_io);
 
     unsigned int available = sbufGetWritableCapacity(buf);
     assert(available > 0);
@@ -494,12 +498,14 @@ read_ordinary:
     }
     if (UNLIKELY(nread == 0 && (io->io_type & WIO_TYPE_SOCK_DGRAM) == 0))
     {
-        wioHandleReadEOF(io);
         bufferpoolReuseBuffer(io->loop->bufpool, buf);
-        goto disconnect;
+        wioHandleReadEOF(io);
+        return;
     }
     // printf("%d \n",nread);
 
+    if (io->io_type == WIO_TYPE_TCP && ! control_io)
+        wioUpdateTcpReadCapacity(io, (uint32_t) nread, available);
     sbufSetLength(buf, min(available, (uint32_t) nread));
     if (UNLIKELY(! wloopNormalDispatchAllowed(io->loop)))
     {
@@ -510,7 +516,6 @@ read_ordinary:
     // user consumed buffer
     return;
 read_error:
-disconnect:
     if (io->io_type & WIO_TYPE_SOCK_STREAM)
     {
         wioClose(io);
@@ -724,6 +729,7 @@ int wioRead(wio_t *io)
         wloge("wioRead called but fd[%d] already closed!", wioGetFD(io));
         return -1;
     }
+    assert(io->loop->bufpool != NULL);
     int add_error = wioAdd(io, wio_handle_events, WW_READ);
     if (UNLIKELY(add_error != 0))
     {

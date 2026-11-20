@@ -49,17 +49,15 @@ bool socks5serverQueueControl(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
 
 bool socks5serverDrainControl(tunnel_t *t, line_t *l)
 {
-    // An Est callback may have completed setup and bypassed us before returning.
-    if (! tunnelIsActiveForLine(t, l))
-        return true;
     if (! socks5serverHasControlState(t, l))
         return false;
     socks5server_lstate_t *ls = lineGetState(l, t);
-    if (ls->control_draining)
+    if (ls->control_draining || ls->next_initializing)
         return true;
     ls->control_draining = true;
-    if (ls->transport_est_forwarded && ! ls->connect_reply_sent)
+    if (ls->phase == kSocks5ServerPhaseConnectStarting)
     {
+        assert(ls->next_initialized && ! ls->connect_reply_sent);
         sbuf_t *reply          = socks5serverCreateCommandReply(l, kSocks5ReplySucceeded, NULL);
         ls->phase              = kSocks5ServerPhaseTcpEstablished;
         ls->connect_reply_sent = true;
@@ -70,8 +68,8 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
     // Either direction can admit work for the other while this drain owns ordering.
     do
     {
-        // The original request tail precedes any input nested in Init or Est.
-        while (! ls->input_draining && ! ls->next_initializing &&
+        // The original request tail precedes input nested in Init or the reply callback.
+        while (! ls->input_draining &&
                (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetEntryCount(&ls->pending_up)))
         {
             sbuf_t *buf = ! bufferstreamIsEmpty(&ls->in_stream) ? bufferstreamTakeChunk(&ls->in_stream)
@@ -87,11 +85,11 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
                 ! socks5serverHasControlState(t, l))
                 return false;
         }
-    } while (! ls->input_draining && ! ls->next_initializing &&
+    } while (! ls->input_draining &&
              (! bufferstreamIsEmpty(&ls->in_stream) || bufferqueueGetEntryCount(&ls->pending_up)));
     ls->control_draining = false;
     if (ls->kind == kSocks5ServerLineKindControlTcp && ls->phase == kSocks5ServerPhaseTcpEstablished &&
-        ! ls->input_draining && ! ls->next_initializing && ! ls->pending_read_pause)
+        ! ls->input_draining && ! ls->pending_read_pause)
     {
         assert(ls->next_initialized && ls->connect_reply_sent);
         assert(bufferstreamIsEmpty(&ls->in_stream) && bufferqueueGetEntryCount(&ls->pending_up) == 0 &&
@@ -100,12 +98,4 @@ bool socks5serverDrainControl(tunnel_t *t, line_t *l)
         tunnelBypassLine(t, l);
     }
     return true;
-}
-
-void socks5serverOnControlEstablished(tunnel_t *t, line_t *l, socks5server_lstate_t *ls)
-{
-    ls->transport_est_forwarded = true;
-    if (! lineCallWithRef(l, tunnelPrevDownStreamEst, t))
-        return;
-    discard socks5serverDrainControl(t, l);
 }

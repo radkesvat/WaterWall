@@ -151,7 +151,7 @@ static void queueFailure(void)
     twfSetCase("ordering queue byte budget refusal");
     setup(kSocks5ServerLineKindControlTcp);
     socks5server_lstate_t *ls = lineGetState(client, server);
-    ls->phase                 = kSocks5ServerPhaseConnectWaitEst;
+    ls->phase                 = kSocks5ServerPhaseConnectStarting;
     ls->next_initialized      = true;
     ls->next_initializing     = true;
     sbuf_t *b                 = bufferpoolGetBestFit(env.pool, kSocks5ServerMaxPendingBytes + 1U, 0);

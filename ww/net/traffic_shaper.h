@@ -60,21 +60,21 @@ typedef struct traffic_shaper_refusal_sample_s
 
 typedef struct traffic_shaper_s
 {
-    buffer_queue_t                 queue;
-    buffer_budget_t               *budget;
-    buffer_budget_cost_t           retained_cost;
-    sbuf_t                        *candidate;
-    wtimer_t                      *timer;
-    traffic_shaper_continuation_t *continuation;
-    const traffic_shaper_ops_t    *ops;
-    void                          *context;
-    line_t                        *line;
-    uint32_t                       yield_ms;
-    traffic_shaper_mode_t          mode;
-    bool                           allocation_charge;
-    bool                           externally_paused;
-    bool                           locally_paused; /* Stream backlog producer hold; never set for datagrams. */
-    bool                           stopped;
+    buffer_queue_t                  queue;
+    buffer_budget_t                *budget;
+    buffer_budget_cost_t            retained_cost;
+    sbuf_t                         *candidate;
+    wtimer_t                       *timer;
+    traffic_shaper_continuation_t  *continuation;
+    const traffic_shaper_ops_t     *ops;
+    void                           *context;
+    line_t                         *line;
+    uint32_t                        yield_ms;
+    traffic_shaper_mode_t           mode;
+    bool                            allocation_charge;
+    bool                            externally_paused;
+    bool                            locally_paused; /* Stream backlog producer hold; never set for datagrams. */
+    bool                            stopped;
     log_rate_limiter_t              admission_refusals;
     traffic_shaper_refusal_sample_t last_refusal;
 } traffic_shaper_t;
@@ -103,6 +103,13 @@ void                    trafficshaperSetExternalPause(traffic_shaper_t *shaper, 
 bool trafficshaperSchedule(traffic_shaper_t *shaper, uint32_t delay_ms);
 /* Owner-worker quiescence detaches every asynchronous root, retaining buffers
  * for the normal owner's subsequent Finish. No callback is emitted. */
-void   trafficshaperQuiesce(traffic_shaper_t *shaper);
-void   trafficshaperDestroy(traffic_shaper_t *shaper);
-size_t trafficshaperPending(const traffic_shaper_t *shaper);
+void trafficshaperQuiesce(traffic_shaper_t *shaper);
+/* Release all buffers and their combined reservation on a quiesced direction. */
+void trafficshaperDiscardPending(traffic_shaper_t *shaper);
+/* Pop the next accepted stream buffer during an orderly close, including a
+ * previously prepared FIFO prefix. Quiesce first. Each pop releases all local
+ * and provider retention costs before transferring ownership to the caller.
+ * Returns NULL when empty or when preparing a bounded slice is refused. */
+sbuf_t *trafficshaperPopForFinish(traffic_shaper_t *shaper, size_t max_bytes);
+void    trafficshaperDestroy(traffic_shaper_t *shaper);
+size_t  trafficshaperPending(const traffic_shaper_t *shaper);

@@ -1,39 +1,37 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/UdpStatelessSocket.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/UdpStatelessSocket.mdx, and all files must keep the same documentation version.
 -->
 
 # UdpStatelessSocket Node
 
+> **Deprecated: will be removed soon.** Existing configurations still work, and each instance logs a deprecation warning at startup. For new configurations, use [UdpListener](../UdpListener/description.md) for incoming UDP or [UdpConnector](../UdpConnector/description.md) for outgoing UDP.
+>
+> These nodes have different settings and are not always direct replacements: `UdpStatelessSocket` can send to arbitrary destinations through the same bound UDP socket without first receiving traffic from those destinations. Check whether your chain depends on that behavior before replacing it.
+
+## Overview
+
 `UdpStatelessSocket` is a UDP chain-head adapter. It binds one UDP socket, receives datagrams from any peer, and creates normal WaterWall lines for inbound peer flows.
 
-It exists primarily to support components such as `WireGuardDevice`, which need one UDP socket that can both send to configured peers and accept packets from peers that contact the socket first.
+It supports UDP chain heads that send datagrams and accept inbound peer flows.
 
-## What It Does
-
-- Binds a UDP socket on a configured local address and port.
-- Receives UDP datagrams from any remote peer.
-- Keys inbound peer flows by peer endpoint, local endpoint, and tunnel identity.
-- Creates one normal line per inbound peer flow and forwards received datagrams over that line.
-- Sends outbound datagrams on owned peer lines back to the stored peer endpoint.
-- Sends outbound datagrams on other lines to the destination address stored in the line's routing context.
-- Receives peer traffic upstream toward `next` and accepts outgoing datagrams downstream from `next`.
-
-Inbound peer lines use `UdpListener`-style idle lifetimes: a short init timeout and a longer keepalive timeout after traffic starts.
-
-## Typical Placement
+## Typical placement
 
 The supported layout starts with `UdpStatelessSocket`:
 
 ```text
-UdpStatelessSocket -> WireGuardDevice -> packet side node
+UdpStatelessSocket -> datagram consumer
 ```
 
 Head-only placement is the current design decision, not a temporary restriction. A previous node or a missing next node is rejected at startup. Tail placement and downstream peer initialization are disabled.
 
 `UdpStatelessSocket` is meant to sit at the UDP edge of a chain when a component needs one socket for UDP send/receive while still giving received peers distinct WaterWall line lifetimes.
 
-## Configuration Example
+
+## Minimal practical example
+
+This **node fragment** is retained as a reference for existing configurations using
+the deprecated node. It is not a complete config or a recommendation for new chains.
 
 ```json
 {
@@ -41,21 +39,21 @@ Head-only placement is the current design decision, not a temporary restriction.
   "type": "UdpStatelessSocket",
   "settings": {
     "listen-address": "0.0.0.0",
-    "listen-port": 51820,
-    "interface": "eth0",
-    "fwmark": 10,
-    "large-send-buffer": true,
-    "large-recv-buffer": true,
-    "source-ip": "192.0.2.10",
-    "verbose": false
+    "listen-port": 51820
   },
   "next": "wg"
 }
 ```
 
-## Required JSON Fields
+In this existing configuration, `wg` refers to a `WireGuardServer` node with its
+own keys, peers, and packet side. This fragment only selects the local UDP bind
+endpoint. New WireGuard server configurations should use `UdpListener`.
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -63,7 +61,7 @@ Head-only placement is the current design decision, not a temporary restriction.
 - `type` `(string)`
   Must be exactly `"UdpStatelessSocket"`.
 
-### `settings`
+#### `settings`
 
 - `listen-address` `(string)`
   Local IP address to bind.
@@ -75,7 +73,7 @@ Head-only placement is the current design decision, not a temporary restriction.
 
   Valid range: `0` to `65535`
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `interface` `(string)`
   Restricts the UDP socket to a local network device where supported.
@@ -105,7 +103,7 @@ Head-only placement is the current design decision, not a temporary restriction.
   Enables per-packet debug logs for UDP datagrams received from and sent to peers.
   Default: `false`
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up the IP address to which a datagram will be
 sent. Replies on an incoming peer's line use that peer's stored IP and port, so
@@ -160,13 +158,63 @@ The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `
 
 With `resolve: false`, destination preparation still runs. Numeric or already-resolved destinations work; unresolved hostnames fail through the normal line/datagram path without an OS/native DNS fallback.
 
-The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry. WireGuard hostname peer endpoints still use separate synchronous startup resolution.
+The policy covers this socket's asynchronous outbound datagram lookups. Its ordinary `next` has a peer/line role and cannot serve as the implicit DNS entry.
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Peer receive path
+### Configuration Example
+
+`interface`, `source-ip`, and `fwmark` are optional host-specific choices;
+omit them unless the interface, address, and routing policy are configured.
+
+```json
+{
+  "name": "wg-udp-socket",
+  "type": "UdpStatelessSocket",
+  "settings": {
+    "listen-address": "0.0.0.0",
+    "listen-port": 51820,
+    "interface": "eth0",
+    "fwmark": 10,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
+    "source-ip": "192.0.2.10",
+    "verbose": false
+  },
+  "next": "wg"
+}
+```
+
+
+
+### Notes And Caveats
+
+- `UdpStatelessSocket` accepts UDP edge traffic.
+- For non-owned lines, the tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
+- For packet lines, unresolved domain sends snapshot the domain and port for that datagram before resolving, because packet-line routing context is scratch metadata.
+- Received UDP peers get distinct normal lines; packet lines are not destroyed during runtime.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- The JSON parser requires `listen-address` and `listen-port`; `source-ip` may override the effective local bind address.
+
+## Implementation details
+
+### What It Does
+
+- Binds a UDP socket on a configured local address and port.
+- Receives UDP datagrams from any remote peer.
+- Keys inbound peer flows by peer endpoint, local endpoint, and tunnel identity.
+- Creates one normal line per inbound peer flow and forwards received datagrams over that line.
+- Sends outbound datagrams on owned peer lines back to the stored peer endpoint.
+- Sends outbound datagrams on other lines to the destination address stored in the line's routing context.
+- Receives peer traffic upstream toward `next` and accepts outgoing datagrams downstream from `next`.
+
+Inbound peer lines use `UdpListener`-style idle lifetimes: a short init timeout and a longer keepalive timeout after traffic starts.
+
+### Detailed Behavior
+
+#### Peer receive path
 
 When a UDP datagram arrives on the bound socket:
 
@@ -177,12 +225,12 @@ When a UDP datagram arrives on the bound socket:
 
 Received datagrams always enter from the head and are forwarded upstream toward `next`.
 
-### Send path
+#### Send path
 
 When payload is sent through `UdpStatelessSocket`:
 
 - if the line was created for an inbound peer, the datagram is sent back to that stored peer endpoint
-- otherwise, the tunnel reads the destination address from `l->routing_context.dest_ctx`
+- otherwise, the tunnel reads the destination address from `lineGetDestinationAddressContext(l)`
 - with local resolution enabled, an unresolved hostname is looked up asynchronously if no cached answer is available;
   with resolution disabled, that datagram is dropped
 - async results are cached by domain, port, and strategy for 30 minutes in a fixed 256-entry FIFO. Existing keys
@@ -203,22 +251,22 @@ count; there is no timer-driven summary. The line remains open. These warnings
 require the DNS logger's WARN level, not `verbose`. Normal cache operations do
 not produce them.
 
-This keeps compatibility with packet-line producers such as `WireGuardDevice` while allowing inbound peers to keep distinct return paths.
+Inbound peers retain distinct return paths.
 
-### Listener and connector role
+#### Listener and connector role
 
 Although the implementation always binds a local UDP socket, the tunnel can act like either side of a peer exchange:
 
 - it can receive packets from arbitrary peers like a listener
 - it can also send packets to a chosen peer like a connector
 
-That combination is why it is useful for `WireGuardDevice`, where the device may need to initiate contact to a peer or receive the first packet from a peer using the same stateless UDP socket.
+This adapter serves protocols that need shared-socket datagrams and distinct inbound peer lifetimes.
 
-### Chain integration
+#### Chain integration
 
 `UdpStatelessSocket` always owns new peer lines at the head. It sends upstream `Init`, payload, and local/idle-expiry `Finish` toward `next`. Downstream `Finish` from `next` closes an owned peer line without reflecting a callback. Downstream sends on borrowed transport or packet lines remain supported. Calls into the adapter from a previous/upstream node are disabled.
 
-### Worker behavior
+#### Worker behavior
 
 The UDP socket is created on one worker loop.
 
@@ -229,22 +277,13 @@ If payload to be sent originates from a different worker:
 
 This preserves correct ownership of the socket while still allowing payload to come from any worker line.
 
-### Connection semantics
+#### Connection semantics
 
 `UdpStatelessSocket` owns only the peer lines it creates from inbound UDP datagrams. Those lines are closed when the adjacent chain side sends `Finish` or when the idle timer expires.
 
 Packet lines are still supported for outbound routing-context sends, but received datagrams are no longer forwarded over the worker packet line.
 
-## Notes And Caveats
-
-- `UdpStatelessSocket` is intended for UDP edge traffic, especially around `WireGuardDevice`.
-- For non-owned lines, the tunnel depends on valid routing context for outbound sends. In particular, `dest_ctx` must be initialized before sending payload.
-- For packet lines, unresolved domain sends snapshot the domain and port for that datagram before resolving, because packet-line routing context is scratch metadata.
-- Received UDP peers get distinct normal lines; packet lines are not destroyed during runtime.
-- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- The JSON parser requires `listen-address` and `listen-port`; `source-ip` may override the effective local bind address.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -258,7 +297,7 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayerAnything` |
 | `required_padding_left` | `0` bytes |
 
-## UDP splice sending
+### UDP splice sending
 
 UDP receives remain ordinary buffers. On an eligible Linux chain, UDP sends accept ordinary data or a real prefix plus a private-pipe body as one datagram to its explicit destination, including empty datagrams. Supported layouts use pipe-to-socket splice. Highly fragmented pipes, or failure to establish a safe fragment bound before sending, use a complete ordinary fallback before socket assembly. Oversized datagrams are rejected without splitting.
 

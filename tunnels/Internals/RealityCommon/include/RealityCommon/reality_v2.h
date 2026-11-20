@@ -128,8 +128,10 @@ typedef struct reality_v2_session_material_s
     uint8_t s2c_iv[kRealityV2IvSize];
 } reality_v2_session_material_t;
 
-bool realityV2DeriveRootKey(const char *password, const char *salt, uint32_t iterations,
-                            uint8_t out_key[kRealityV2KeySize]);
+/* Returns the crypto status and clears the output on failure when present. */
+WCRYPTO_MUST_USE wcrypto_status_t realityV2DeriveRootKey(const char *password, const char *salt, uint32_t iterations,
+                                                         uint8_t out_key[kRealityV2KeySize]);
+
 bool realityV2DeriveSessionId(const reality_v2_handshake_binding_t *binding,
                               uint8_t                               session_id[kRealityV2SessionIdSize]);
 bool realityV2DeriveSessionMaterial(const uint8_t                         root_key[kRealityV2KeySize],

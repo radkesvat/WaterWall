@@ -1,0 +1,37 @@
+{
+  "name": "packet-analysis-ping6-client-encapsulation",
+  "nodes": [
+    {
+      "name": "sender",
+      "type": "PacketGenerator",
+      "settings": {
+        "source-ipv4-range": "198.51.100.0/31",
+        "dest-ipv4": "203.0.113.10",
+        "protocol-number": "ICMP",
+        "duration-ms": 100,
+        "packets-per-ip": 3
+      },
+      "next": "ping6-client"
+    },
+    {
+      "name": "ping6-client",
+      "type": "Ping6Client",
+      "settings": {
+        "identifier": 4662,
+        "sequence-start": 30
+      },
+      "next": "receiver"
+    },
+    {
+      "name": "receiver",
+      "type": "PacketCounter",
+      "settings": {
+        "source-ipv4-range": "198.51.100.0/31",
+        "protocol-number": 58,
+        "expected-packets-per-ip": 3,
+        "report-after-ms": 700,
+        "output-file": "packet-counter-report.txt"
+      }
+    }
+  ]
+}

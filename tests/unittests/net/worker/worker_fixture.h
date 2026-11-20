@@ -37,7 +37,7 @@ typedef struct worker_loop_blocker_s
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 extern atomic_int  g_enqueue_pause_stage;
 extern atomic_int  g_enqueue_pause_wid;
-extern atomic_bool g_force_timed_rearm_refusal;
+extern atomic_bool g_quiesce_during_timed_dispatch;
 extern atomic_bool g_enqueue_seam_reached;
 extern atomic_bool g_enqueue_seam_release;
 extern atomic_int  g_enqueue_seam_hits;
@@ -60,7 +60,7 @@ void                          testCheckedAccessorsAbortOffWorkers(void);
 void                          testWorkerMessageInitialCapacity(void);
 void                          testTransactionalEnqueueFailureStages(void);
 void                          testWorkerMessagePoolCrossWorkerReturn(void);
-void                          testTimedRearmRefusalInIsolatedProcess(void);
+void                          testTimedDispatchQuiescenceInIsolatedProcess(void);
 void                          testWorkerMessageBatchOrderingAndFairness(void);
 void                          testWorkerMessageFullBatchFifoAndFairness(void);
 void                          testWorkerMessageHardSuccessorWakeFallback(void);

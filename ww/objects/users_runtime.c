@@ -61,7 +61,16 @@ void usersMoveRuntimeStateWithLocks(user_t *dest, user_t *src)
     rwlockWriteLock(&second->lock);
     rwlockWriteLock(&first->stats_lock);
     rwlockWriteLock(&second->stats_lock);
+    const uint64_t wireguard_floor = dest->runtime.wireguard_generation_floor;
+    const bool     wireguard_continuous =
+        dest->enabled && src->enabled && dest->wireguard_publickey_valid && src->wireguard_publickey_valid &&
+        memoryEqual(dest->wireguard_publickey, src->wireguard_publickey, USER_WIREGUARD_PUBLICKEY_SIZE) &&
+        dest->wireguard_allowed_ips_valid == src->wireguard_allowed_ips_valid &&
+        ipAddrCmp(&dest->wireguard_allowed_ip, &src->wireguard_allowed_ip) &&
+        ipAddrCmp(&dest->wireguard_allowed_mask, &src->wireguard_allowed_mask);
     userRuntimeStateMove(&dest->runtime, &src->runtime);
+    if (! wireguard_continuous)
+        dest->runtime.wireguard_generation_floor = wireguard_floor;
     userBandwidthReconcileLocked(dest, getHRTimeUs() / 1000U);
     dest->client_time = src->client_time;
     memoryZero(&src->client_time, sizeof(src->client_time));
@@ -734,6 +743,19 @@ user_bandwidth_result_t usersBandwidthPreviewByIdentifier(users_t *users, uint64
     user_t                 *user   = usersIDTableLookupLocked(users, id);
     user_bandwidth_result_t result = user == NULL ? (user_bandwidth_result_t) {.decision = kUserDeliveryReject}
                                                   : userBandwidthPreview(user, direction, ticket, bytes, datagram);
+    rwlockReadUnlock(&users->lock);
+    return result;
+}
+
+user_delivery_decision_t usersCommitFinalDeliveryByIdentifier(users_t *users, uint64_t id,
+                                                              user_bandwidth_direction_t direction, uint64_t bytes,
+                                                              uint32_t multiplier)
+{
+    assert(users != NULL && id != 0);
+    rwlockReadLock(&users->lock);
+    user_t                  *user = usersIDTableLookupLocked(users, id);
+    user_delivery_decision_t result =
+        user == NULL ? kUserDeliveryReject : userCommitFinalDelivery(user, direction, bytes, multiplier);
     rwlockReadUnlock(&users->lock);
     return result;
 }

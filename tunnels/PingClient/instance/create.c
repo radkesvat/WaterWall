@@ -5,12 +5,8 @@
 static bool pingclientSettingIsSupported(const char *key)
 {
     static const char *const supported[] = {
-        "local-ipv4",
-        "peer-ipv4",
         "identifier",
         "sequence-start",
-        "ttl",
-        "tos",
         "send-replies",
     };
 
@@ -29,7 +25,7 @@ static bool pingclientSettingIsSupported(const char *key)
     return false;
 }
 
-static bool pingclientRejectLegacySettings(const cJSON *settings)
+static bool pingclientRejectUnknownSettings(const cJSON *settings)
 {
     for (const cJSON *item = settings != NULL ? settings->child : NULL; item != NULL; item = item->next)
     {
@@ -38,8 +34,7 @@ static bool pingclientRejectLegacySettings(const cJSON *settings)
             continue;
         }
 
-        LOGF("PingClient: configuration uses removed Ping wire v1 setting '%s'; Ping wire v2 accepts only "
-             "local-ipv4, peer-ipv4, identifier, sequence-start, ttl, tos, and send-replies",
+        LOGF("PingClient: unknown setting '%s'; expected only identifier, sequence-start, and send-replies",
              item->string != NULL ? item->string : "<unnamed>");
         return false;
     }
@@ -66,32 +61,6 @@ static bool pingclientLoadInteger(int *dest, const cJSON *settings, const char *
     }
 
     *dest = (int) value;
-    return true;
-}
-
-static bool pingclientLoadRequiredIpv4(uint32_t *destination, const cJSON *settings, const char *key)
-{
-    const char         *address = NULL;
-    json_value_status_t status  = jsonGetObjectNonEmptyString(settings, key, &address);
-    if (status == kJsonValueMissing)
-    {
-        LOGF("JSON Error: PingClient->settings->%s (required string field) : expected a single IPv4 address", key);
-        return false;
-    }
-    if (status == kJsonValueInvalid)
-    {
-        LOGF("JSON Error: PingClient->settings->%s (string field) : expected a single IPv4 address", key);
-        return false;
-    }
-
-    ip4_addr_t parsed = {0};
-    if (ip4AddrAddressToNetwork(address, &parsed) == 0)
-    {
-        LOGF("JSON Error: PingClient->settings->%s (string field) : expected a single IPv4 address", key);
-        return false;
-    }
-
-    *destination = ip4AddrGetU32(&parsed);
     return true;
 }
 
@@ -145,10 +114,7 @@ tunnel_t *pingclientCreate(node_t *node)
         return NULL;
     }
 
-    if (! pingclientRejectLegacySettings(settings) ||
-        ! pingclientLoadRequiredIpv4(&state->wire.local_ipv4, settings, "local-ipv4") ||
-        ! pingclientLoadRequiredIpv4(&state->wire.peer_ipv4, settings, "peer-ipv4") ||
-        ! pingclientLoadIdentifier(state, settings))
+    if (! pingclientRejectUnknownSettings(settings) || ! pingclientLoadIdentifier(state, settings))
     {
         pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
@@ -163,19 +129,13 @@ tunnel_t *pingclientCreate(node_t *node)
     }
 
     int sequence_start;
-    int ttl;
-    int tos;
     if (! pingclientLoadInteger(
-            &sequence_start, settings, "sequence-start", kPingClientDefaultSequenceStart, 0, UINT16_MAX) ||
-        ! pingclientLoadInteger(&ttl, settings, "ttl", kPingClientDefaultTtl, 0, UINT8_MAX) ||
-        ! pingclientLoadInteger(&tos, settings, "tos", kPingClientDefaultTos, 0, UINT8_MAX))
+            &sequence_start, settings, "sequence-start", kPingClientDefaultSequenceStart, 0, UINT16_MAX))
     {
         pingclientDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
 
-    state->wire.ttl = (uint8_t) ttl;
-    state->wire.tos = (uint8_t) tos;
     atomicStoreRelaxed(&state->next_sequence, (unsigned int) sequence_start);
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
     return t;

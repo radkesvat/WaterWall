@@ -1,11 +1,85 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bgp4Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Bgp4Server.mdx, and all files must keep the same documentation version.
 -->
 
 # Bgp4Server
 
+## Overview
+
 `Bgp4Server` is the peer for `Bgp4Client`. It unwraps upstream BGP-like frames and wraps downstream stream payloads in the reverse direction.
+
+These nodes provide BGP-like stream framing, without BGP routing, route exchange, encryption, or authentication. `settings.password` is accepted but ignored.
+
+## Typical placement
+
+It is intended to be paired with `Bgp4Client`:
+
+```text
+client: TcpListener(127.0.0.1:18080) -> Bgp4Client -> TcpConnector(gateway:7443)
+server: TcpListener(0.0.0.0:7443) -> Bgp4Server -> TcpConnector(127.0.0.1:8080)
+```
+
+The client connector dials the server-side WaterWall listener on `7443`; the
+server connector selects the actual HTTP service on `127.0.0.1:8080`. Point
+the local application at `127.0.0.1:18080`. The two BGP nodes frame and unframe
+the bytes; they neither rewrite HTTP nor choose a destination.
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
+
+Server side:
+
+```json
+{
+  "name": "bgp4-server",
+  "type": "Bgp4Server",
+  "settings": {},
+  "next": "target"
+}
+```
+
+Paired client side:
+
+```json
+{
+  "name": "bgp4-client",
+  "type": "Bgp4Client",
+  "settings": {},
+  "next": "transport-out"
+}
+```
+
+The `password` field is accepted for compatibility with the old configuration
+shape, but it is not used for encryption or authentication in the current
+protocol logic.
+
+## Configuration
+
+### Required Fields
+
+Top-level fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | User-chosen node name. Must be unique inside the config file. |
+| `type` | string | Must be exactly `"Bgp4Server"`. |
+| `next` | string | The next stream node that receives unwrapped upstream payloads. |
+
+### Optional Settings
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `password` | string | — | Accepted but ignored; it provides neither encryption nor authentication. |
+
+No other settings are currently parsed.
+
+## Implementation details
+
+### Stream framing and lifecycle
 
 The first upstream frame must be a synthetic BGP OPEN message. The server validates the marker, reads the frame length through the shared `splice_frame_reader_t` over a `splice_stream_t`, checks that the first BGP type is OPEN, strips the OPEN fields and optional parameters, then forwards the remaining application payload upstream. Later upstream frames only strip the marker, length, and type.
 
@@ -19,7 +93,7 @@ The length is network byte order and covers the type byte plus body bytes. `sett
 
 Protocol errors destroy local line state and close both directions in the usual middle-tunnel order: upstream finish first, downstream finish second. Normal directional finishes only forward the received finish direction after local cleanup. `Bgp4Server` is a layer-4 stream tunnel and does not create, destroy, or repurpose packet lines.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

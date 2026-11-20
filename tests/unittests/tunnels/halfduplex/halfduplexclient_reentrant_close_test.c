@@ -64,21 +64,18 @@ static void fixtureSetup(halfduplexclient_fixture_t *fixture)
     halfduplexclient_tstate_t *ts = tunnelGetState(fixture->halfduplex);
     ts->upload_tunnel             = fixture->next;
     ts->download_tunnel           = fixture->next;
-    fixture->next->fnFinU = nextFinishReentrantlyClosesMain;
+    fixture->next->fnFinU         = nextFinishReentrantlyClosesMain;
 
     twfLinePoolSetup(&fixture->line_pool, fixture->halfduplex->lstate_size, 6);
     fixture->main_line     = twfLinePoolCreateLine(&fixture->line_pool);
     fixture->upload_line   = twfLinePoolCreateLine(&fixture->line_pool);
     fixture->download_line = twfLinePoolCreateLine(&fixture->line_pool);
 
-    halfduplexclient_lstate_t *main_ls     = lineGetState(fixture->main_line, fixture->halfduplex);
-    halfduplexclient_lstate_t *upload_ls   = lineGetState(fixture->upload_line, fixture->halfduplex);
-    halfduplexclient_lstate_t *download_ls = lineGetState(fixture->download_line, fixture->halfduplex);
-    halfduplexclientLinestateInitialize(main_ls, fixture->main_line);
-    halfduplexclientLinestateInitialize(upload_ls, fixture->main_line);
-    halfduplexclientLinestateInitialize(download_ls, fixture->main_line);
-    main_ls->upload_line   = fixture->upload_line;
-    main_ls->download_line = fixture->download_line;
+    halfduplexclient_pair_t *state = halfduplexclientCreatePair(fixture->halfduplex, fixture->main_line);
+    state->upload                  = fixture->upload_line;
+    state->download                = fixture->download_line;
+    halfduplexclientSetPair(fixture->halfduplex, state->upload, state);
+    halfduplexclientSetPair(fixture->halfduplex, state->download, state);
     g_fixture              = fixture;
 }
 
@@ -127,6 +124,25 @@ typedef enum upload_finish_stage_e
     kUploadFinishDuringUploadIntro
 } upload_finish_stage_t;
 
+typedef enum source_close_case_e
+{
+    kSourceDrain,
+    kSourceDrainAfterDownloadFinish,
+    kUploadClosedDuringDrain,
+    kUploadDrainDeadline,
+    kUploadDrainWorkerStop,
+    kUploadDrainTimerRefused,
+} source_close_case_t;
+
+static bool refuse_close_timer;
+
+wtimer_t *__real_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms);
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb callback, uint32_t delay_ms)
+{
+    return refuse_close_timer ? NULL : __real_wtimerAddDeadline(loop, callback, delay_ms);
+}
+
 typedef struct runtime_fixture_s
 {
     twf_worker_env_t      env;
@@ -141,7 +157,7 @@ typedef struct runtime_fixture_s
     size_t                upload_length;
     uint8_t               response[32];
     size_t                response_length;
-    bool                  injected;
+    bool                  injected, close_upload_during_drain, inject_large_ready_upload;
     bool                  keep_main_alive, finish_on_resume, retirement_case;
     upload_finish_stage_t upload_finish_stage;
 } runtime_fixture_t;
@@ -293,6 +309,17 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
         r.upload_length += length;
     }
     lineReuseBuffer(l, buf);
+    if (r.inject_large_ready_upload && l == r.upload)
+    {
+        r.inject_large_ready_upload = false;
+        const uint32_t size         = kHalfDuplexClientMaxPendingBytes + 1;
+        sbuf_t        *large        = bufferpoolGetBestFit(r.env.pool, size, 0);
+        memset(sbufGetMutablePtr(large), 'C', size);
+        sbufSetLength(large, size);
+        halfduplexclientTunnelUpStreamPayload(r.client, r.main, large);
+    }
+    if (r.close_upload_during_drain && l == r.upload)
+        halfduplexclientTunnelDownStreamFinish(r.client, l);
     if (r.retirement_case)
     {
         if (r.upload_finish_stage == kUploadFinishDuringDownloadIntro && l == r.download)
@@ -301,8 +328,7 @@ static void runtimeReceive(tunnel_t *t, line_t *l, sbuf_t *buf)
         {
             halfduplexclientTunnelDownStreamPause(r.client, r.upload);
             halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("queued", 6));
-            twfRequire(bufferqueueGetEntryCount(
-                           &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 1,
+            twfRequire(bufferqueueGetEntryCount(&halfduplexclientGetPair(r.client, r.main)->pending) == 1,
                        "intro reentry did not retain the pending upload");
             halfduplexclientTunnelDownStreamFinish(r.client, r.upload);
         }
@@ -341,8 +367,8 @@ static void runtimeSetup(void)
     twfWorkerEnvSetup(&r.env, 4096, 64);
     r.client_node = (node_t) {.next = (char *) "transport"};
     r.client      = halfduplexclientTunnelCreate(&r.client_node);
-    r.prev   = tunnelCreate(NULL, 0, 0);
-    r.next   = tunnelCreate(NULL, 0, 0);
+    r.prev        = tunnelCreate(NULL, 0, 0);
+    r.next        = tunnelCreate(NULL, 0, 0);
     tunnelBind(r.prev, r.client);
     r.download_next = split_paths ? tunnelCreate(NULL, 0, 0) : r.next;
     tunnelBind(r.client, r.download_next);
@@ -350,23 +376,23 @@ static void runtimeSetup(void)
     halfduplexclient_tstate_t *ts = tunnelGetState(r.client);
     ts->upload_tunnel             = r.next;
     ts->download_tunnel           = r.download_next;
-    r.prev->fnFinD               = runtimeOwnerFinish;
-    r.prev->fnPayloadD           = runtimeResponse;
-    r.prev->fnEstD               = runtimeEstablished;
-    r.prev->fnPauseD             = runtimePause;
-    r.prev->fnResumeD            = runtimeResume;
-    r.next->fnInitU              = runtimeInitialize;
+    r.prev->fnFinD                = runtimeOwnerFinish;
+    r.prev->fnPayloadD            = runtimeResponse;
+    r.prev->fnEstD                = runtimeEstablished;
+    r.prev->fnPauseD              = runtimePause;
+    r.prev->fnResumeD             = runtimeResume;
+    r.next->fnInitU               = runtimeInitialize;
     r.download_next->fnInitU      = runtimeInitialize;
-    r.next->fnFinU               = runtimeChildFinish;
+    r.next->fnFinU                = runtimeChildFinish;
     r.download_next->fnFinU       = runtimeChildFinish;
-    r.next->fnPayloadU           = runtimeReceive;
+    r.next->fnPayloadU            = runtimeReceive;
     r.download_next->fnPayloadU   = runtimeReceive;
-    r.next->fnPauseU             = runtimeReadPause;
+    r.next->fnPauseU              = runtimeReadPause;
     r.download_next->fnPauseU     = runtimeReadPause;
-    r.next->fnResumeU            = runtimeReadResume;
+    r.next->fnResumeU             = runtimeReadResume;
     r.download_next->fnResumeU    = runtimeReadResume;
-    r.chain                      = tunnelchainCreate(1);
-    r.chain->sum_line_state_size = r.client->lstate_size;
+    r.chain                       = tunnelchainCreate(1);
+    r.chain->sum_line_state_size  = r.client->lstate_size;
     tunnelchainFinalize(r.chain);
     r.client->chain = r.chain;
     r.main          = lineCreate(tunnelchainGetLinePools(r.chain), 0);
@@ -412,12 +438,19 @@ static void runRuntimeCase(unsigned mode)
     bool closes = (mode >= 2 && mode <= 6) || mode == 11 || mode == 13 || mode == 15;
     if (closes)
     {
+        if (mode == 6)
+        {
+            twfRequire(lineIsAlive(r.download) && r.upload_length == kHLFDIntroSize + 1 &&
+                           r.upload_bytes[kHLFDIntroSize] == 'A',
+                       "reentrant source Finish lost the upload intro or its accepted body");
+            halfduplexclientTunnelDownStreamFinish(r.client, r.download);
+        }
         twfRequire(! lineIsAlive(r.main) && ! lineIsAlive(r.upload) &&
                        (r.download == NULL || ! lineIsAlive(r.download)),
                    "Init/intro Finish leaked an owned line");
         if (mode == 3 || mode == 4)
             twfRequire(r.est_count == 0, "closed Init emitted mapped Est");
-        twfRequire(r.upload_length == 0, "terminal intro callback emitted later upload bytes");
+        twfRequire(mode == 6 || r.upload_length == 0, "terminal intro callback emitted later upload bytes");
     }
     else
     {
@@ -466,14 +499,86 @@ static void runRuntimeCase(unsigned mode)
                            r.upload_bytes[r.upload_length - 1] == 'x',
                        "exact temporary byte limit truncated input");
         if (mode == 1)
-            twfRequire(bufferqueueGetEntryCount(
-                           &((halfduplexclient_lstate_t *) lineGetState(r.main, r.client))->pending_up) == 0,
+            twfRequire(bufferqueueGetEntryCount(&halfduplexclientGetPair(r.client, r.main)->pending) == 0,
                        "first-intro nested batch stranded behind Pause");
         if (mode == 12)
             twfRequire(r.upload_callbacks == 1, "temporary charge equality lost empty admitted inputs");
         halfduplexclientTunnelUpStreamFinish(r.client, r.main);
         lineDestroy(r.main);
+        if (lineIsAlive(r.download))
+            halfduplexclientTunnelDownStreamFinish(r.client, r.download);
     }
+    runtimeTeardown();
+}
+
+static void caseSourceFinishDrainsUpload(source_close_case_t scenario)
+{
+    twfSetCase(
+        "HalfDuplexClient source Finish preserves paused AB through valid intros and independent download close");
+    memoryZero(&r, sizeof(r));
+    r.mode = 8;
+    runtimeSetup();
+    twfRequire(r.upload_length == 0 && r.download_callbacks == 0, "startup queue escaped the upload Pause");
+    halfduplexclient_tstate_t *ts = tunnelGetState(r.client);
+
+    refuse_close_timer = scenario == kUploadDrainTimerRefused;
+    halfduplexclientTunnelUpStreamFinish(r.client, r.main);
+    refuse_close_timer = false;
+    lineDestroy(r.main);
+    twfRequire(r.read_pauses == 1 && r.read_resumes == 1 && r.download_callbacks == 1,
+               "source Finish left an obsolete download hold or skipped its intro");
+    if (scenario != kUploadDrainTimerRefused)
+    {
+        twfRequire(lineIsAlive(r.upload) && lineIsAlive(r.download) && r.upload_finishes == 0 &&
+                       ts->drains[0] != NULL && r.env.loop->ntimers == 1,
+                   "source Finish retired a child before its paused body drained");
+        const uint64_t deadline = ts->drains[0]->deadline_ms;
+        halfduplexclientTunnelDownStreamPause(r.client, r.upload);
+        twfRequire(ts->drains[0]->deadline_ms == deadline, "repeat Pause restarted the upload drain deadline");
+    }
+    if (scenario == kSourceDrainAfterDownloadFinish)
+    {
+        halfduplexclientTunnelDownStreamFinish(r.client, r.download);
+        twfRequire(lineIsAlive(r.upload), "early download Finish truncated the outstanding upload");
+    }
+    if (scenario == kUploadDrainDeadline)
+    {
+        close_drain_t *drain = ts->drains[0];
+        drain->deadline_ms   = getHRTimeUs() / 1000U;
+        twfRequire(wtimerReset(drain->timer, 1), "failed to advance upload deadline timer");
+        r.env.loop->status = WLOOP_STATUS_RUNNING;
+        for (unsigned i = 0; i < 4 && lineIsAlive(r.upload); ++i)
+            discard wloopProcessEvents(r.env.loop, 10);
+    }
+    else if (scenario == kUploadDrainWorkerStop)
+    {
+        halfduplexclientQuiesceDrains(r.client, 0, NULL);
+        halfduplexclientStopDrains(r.client, 0, NULL);
+    }
+    else if (scenario < kUploadDrainDeadline)
+    {
+        r.close_upload_during_drain = scenario == kUploadClosedDuringDrain;
+        halfduplexclientTunnelDownStreamResume(r.client, r.upload);
+    }
+
+    const size_t body_length   = scenario < kUploadClosedDuringDrain ? 2 : scenario == kUploadClosedDuringDrain ? 1 : 0;
+    const size_t upload_length = body_length == 0 ? 0 : kHLFDIntroSize + body_length;
+    twfRequire(! lineIsAlive(r.upload) && r.upload_finishes == (scenario != kUploadClosedDuringDrain) &&
+                   r.download_finishes == (scenario >= kUploadDrainDeadline) && r.owner_finishes == 0 &&
+                   r.upload_length == upload_length,
+               "upload drain misdelivered application bytes or Finish");
+    if (body_length != 0)
+        twfRequire(r.upload_bytes[0] == kHLFDCmdUpload &&
+                       memoryEqual(r.upload_bytes + kHLFDPairIdOffset, r.pair_id, kHLFDPairIdSize) &&
+                       memoryEqual(r.upload_bytes + kHLFDIntroSize, "AB", body_length),
+                   "upload drain delivered invalid intro or reordered body bytes");
+    if (scenario == kSourceDrain || scenario == kUploadClosedDuringDrain)
+    {
+        twfRequire(lineIsAlive(r.download), "upload settlement retired the download before the peer");
+        halfduplexclientTunnelDownStreamFinish(r.client, r.download);
+    }
+    twfRequire(! lineIsAlive(r.download) && r.env.loop->ntimers == 0 && ts->drains[0] == NULL,
+               "upload drain leaked association, download or timer");
     runtimeTeardown();
 }
 
@@ -543,14 +648,14 @@ static void caseUploadFinishKeepsResponse(upload_finish_stage_t stage, bool hold
         {
             twfRequireEqualU32(r.owner_finishes, 0, "upload Finish prematurely finished the application");
             twfRequireEqualU32(r.download_finishes, 0, "upload Finish prematurely closed download");
-            halfduplexclient_lstate_t *ls = lineGetState(r.main, r.client);
-            twfRequire(ls->upload_line == NULL, "retired upload remained attached to main");
-            twfRequire(bufferqueueGetEntryCount(&ls->pending_up) == 0,
+            halfduplexclient_pair_t *pair = halfduplexclientGetPair(r.client, r.main);
+            twfRequire(pair->upload == NULL, "retired upload remained attached to main");
+            twfRequire(bufferqueueGetEntryCount(&pair->pending) == 0,
                        "upload retirement retained queued application input");
             const unsigned upload_callbacks = r.upload_callbacks;
             halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("late", 4));
             twfRequireEqualU32(r.upload_callbacks, upload_callbacks, "late application payload reached retired upload");
-            twfRequire(bufferqueueGetEntryCount(&ls->pending_up) == 0,
+            twfRequire(bufferqueueGetEntryCount(&pair->pending) == 0,
                        "late application payload was queued after upload retirement");
             halfduplexclientTunnelUpStreamPause(r.client, r.main);
             halfduplexclientTunnelUpStreamResume(r.client, r.main);
@@ -584,6 +689,22 @@ static void caseUploadFinishKeepsResponse(upload_finish_stage_t stage, bool hold
     runtimeTeardown();
 }
 
+static void caseLargeReadyReentry(void)
+{
+    twfSetCase("HalfDuplexClient streams a ready nested upload larger than the startup FIFO cap");
+    memoryZero(&r, sizeof(r));
+    r.mode = 16;
+    runtimeSetup();
+    halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("A", 1));
+    r.inject_large_ready_upload = true;
+    halfduplexclientTunnelUpStreamPayload(r.client, r.main, runtimePayload("B", 1));
+    twfRequire(r.upload_length == kHLFDIntroSize + 3 + kHalfDuplexClientMaxPendingBytes &&
+                   memoryEqual(r.upload_bytes + kHLFDIntroSize, "ABC", 3) && r.upload_bytes[r.upload_length - 1] == 'C',
+               "ready upload reentry encountered the startup queue limit");
+    halfduplexclientTunnelDownStreamFinish(r.client, r.download);
+    runtimeTeardown();
+}
+
 static void runUploadFinishCases(void)
 {
     caseUploadFinishKeepsResponse(kUploadFinishAfterStartup, false, false, false);
@@ -608,11 +729,17 @@ int main(void)
         for (unsigned mode = 0; mode < 16; ++mode)
             runRuntimeCase(mode);
         runUploadFinishCases();
+        caseLargeReadyReentry();
+        for (source_close_case_t scenario = kSourceDrain; scenario <= kUploadDrainTimerRefused; ++scenario)
+            caseSourceFinishDrainsUpload(scenario);
 #if WW_HAVE_SPLICE
         splice_inputs = true;
         for (unsigned mode = 0; mode < 16; ++mode)
             runRuntimeCase(mode);
         runUploadFinishCases();
+        caseLargeReadyReentry();
+        for (source_close_case_t scenario = kSourceDrain; scenario <= kUploadDrainTimerRefused; ++scenario)
+            caseSourceFinishDrainsUpload(scenario);
 #endif
     }
     caseSynchronousSiblingCloseSurvivesReentrantMainFinish();

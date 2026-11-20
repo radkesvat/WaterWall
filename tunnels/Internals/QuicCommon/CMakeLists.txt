@@ -3,7 +3,7 @@ target_link_libraries(quic_node_runtime PRIVATE ww)
 target_include_directories(quic_node_runtime PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 set_target_properties(quic_node_runtime PROPERTIES UNITY_BUILD OFF)
 
-add_library(QuicCommon STATIC quic_engine.cc carrier.c $<TARGET_OBJECTS:quic_node_runtime>)
+add_library(QuicCommon STATIC quic_engine.cc $<TARGET_OBJECTS:quic_node_runtime>)
 target_include_directories(QuicCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(QuicCommon PRIVATE ${PROJECT_SOURCE_DIR}/ww/utils)
 target_link_libraries(QuicCommon PRIVATE WaterWall::Quiche WaterWall::BoringSSL)

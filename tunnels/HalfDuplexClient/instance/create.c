@@ -51,23 +51,25 @@ static bool halfduplexclientReadPaths(node_t *node, halfduplexclient_tstate_t *t
 tunnel_t *halfduplexclientTunnelCreate(node_t *node)
 {
     assert(node != NULL);
-    tunnel_t *t = tunnelCreate(node, kTunnelStateSize, kLineStateSize);
+    tunnel_t *t = tunnelCreate(node, kTunnelStateSize + getWorkersCount() * sizeof(close_drain_t *), kLineStateSize);
     if (! t)
     {
         return NULL;
     }
 
-    t->fnInitU    = &halfduplexclientTunnelUpStreamInit;
-    t->fnFinU     = &halfduplexclientTunnelUpStreamFinish;
-    t->fnPayloadU = &halfduplexclientTunnelUpStreamPayload;
-    t->fnPauseU   = &halfduplexclientTunnelUpStreamPause;
-    t->fnResumeU  = &halfduplexclientTunnelUpStreamResume;
-    t->fnEstD     = &halfduplexclientTunnelDownStreamEst;
-    t->fnFinD     = &halfduplexclientTunnelDownStreamFinish;
-    t->fnPayloadD = &halfduplexclientTunnelDownStreamPayload;
-    t->fnPauseD   = &halfduplexclientTunnelDownStreamPause;
-    t->fnResumeD  = &halfduplexclientTunnelDownStreamResume;
-    t->onChain    = &halfduplexclientTunnelOnChain;
+    t->fnInitU         = &halfduplexclientTunnelUpStreamInit;
+    t->fnFinU          = &halfduplexclientTunnelUpStreamFinish;
+    t->fnPayloadU      = &halfduplexclientTunnelUpStreamPayload;
+    t->fnPauseU        = &halfduplexclientTunnelUpStreamPause;
+    t->fnResumeU       = &halfduplexclientTunnelUpStreamResume;
+    t->fnEstD          = &halfduplexclientTunnelDownStreamEst;
+    t->fnFinD          = &halfduplexclientTunnelDownStreamFinish;
+    t->fnPayloadD      = &halfduplexclientTunnelDownStreamPayload;
+    t->fnPauseD        = &halfduplexclientTunnelDownStreamPause;
+    t->fnResumeD       = &halfduplexclientTunnelDownStreamResume;
+    t->onChain         = &halfduplexclientTunnelOnChain;
+    t->onWorkerQuiesce = &halfduplexclientQuiesceDrains;
+    t->onWorkerStop    = &halfduplexclientStopDrains;
 
     if (! halfduplexclientReadPaths(node, tunnelGetState(t)))
     {

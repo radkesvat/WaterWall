@@ -248,10 +248,9 @@ void trafficshaperQuiesce(traffic_shaper_t *shaper)
     trafficshaperNotify(shaper);
 }
 
-void trafficshaperDestroy(traffic_shaper_t *shaper)
+void trafficshaperDiscardPending(traffic_shaper_t *shaper)
 {
-    trafficshaperLogRefusal(shaper, logRateLimiterFlush(&shaper->admission_refusals), shaper->last_refusal);
-    trafficshaperQuiesce(shaper);
+    assert(shaper->stopped);
     if (shaper->candidate != NULL)
     {
         lineReuseBuffer(shaper->line, shaper->candidate);
@@ -260,6 +259,13 @@ void trafficshaperDestroy(traffic_shaper_t *shaper)
     bufferqueueDestroy(&shaper->queue);
     trafficshaperRelease(shaper, shaper->retained_cost);
     trafficshaperNotify(shaper);
+}
+
+void trafficshaperDestroy(traffic_shaper_t *shaper)
+{
+    trafficshaperLogRefusal(shaper, logRateLimiterFlush(&shaper->admission_refusals), shaper->last_refusal);
+    trafficshaperQuiesce(shaper);
+    trafficshaperDiscardPending(shaper);
 }
 
 static void trafficshaperForward(traffic_shaper_t *shaper, sbuf_t *buffer, bool close_after)
@@ -406,17 +412,54 @@ static bool trafficshaperPrepare(traffic_shaper_t *shaper, size_t bytes)
     }
     if (destination == NULL)
         destination = bufferpoolGetBestFit(pool, bytes, padding);
-    buffer_budget_cost_t before = trafficshaperCost(shaper, source);
+    buffer_budget_cost_t before       = trafficshaperCost(shaper, source);
     sbuf_t              *owned_source = bufferqueuePopFront(&shaper->queue);
     shaper->candidate                 = sbufMoveRangeTo(pool, owned_source, destination, bytes, bytes, padding);
     buffer_budget_cost_t after        = trafficshaperCost(shaper, owned_source);
-    buffer_budget_cost_t output = trafficshaperCost(shaper, shaper->candidate);
+    buffer_budget_cost_t output       = trafficshaperCost(shaper, shaper->candidate);
     assert(after.bytes + output.bytes == before.bytes && after.charge <= before.charge);
     assert(output.charge <= extra.charge);
     bufferqueuePushFront(&shaper->queue, owned_source);
     trafficshaperRelease(shaper,
                          (buffer_budget_cost_t) {0, extra.charge - output.charge + before.charge - after.charge});
     return true;
+}
+
+/* A prepared head may outlive its original grant if the commit had to wait. */
+static bool trafficshaperPrepareCandidate(traffic_shaper_t *shaper, size_t bytes)
+{
+    if (shaper->candidate != NULL)
+    {
+        if (bytes == sbufGetLength(shaper->candidate))
+            return true;
+        assert(shaper->mode == kTrafficShaperStream && bytes != 0 && bytes < sbufGetLength(shaper->candidate));
+        if (! bufferqueueReserveExtra(&shaper->queue, 1))
+            return false;
+        bufferqueuePushFront(&shaper->queue, shaper->candidate);
+        shaper->candidate = NULL;
+    }
+    return trafficshaperPrepare(shaper, bytes);
+}
+
+sbuf_t *trafficshaperPopForFinish(traffic_shaper_t *shaper, size_t max_bytes)
+{
+    assert(shaper->stopped && shaper->mode == kTrafficShaperStream && max_bytes != 0);
+    if (trafficshaperPending(shaper) == 0)
+        return NULL;
+
+    const sbuf_t *head = shaper->candidate != NULL ? shaper->candidate : bufferqueueFront(&shaper->queue);
+    if (! trafficshaperPrepareCandidate(shaper, min(max_bytes, (size_t) sbufGetLength(head))))
+    {
+        LOGW("TrafficShaper: could not prepare final stream slice (worker=%u, pending_bytes=%zu)",
+             (unsigned) lineGetWID(shaper->line),
+             shaper->retained_cost.bytes);
+        return NULL;
+    }
+    sbuf_t *buffer    = shaper->candidate;
+    shaper->candidate = NULL;
+    trafficshaperRelease(shaper, trafficshaperCost(shaper, buffer));
+    trafficshaperNotify(shaper);
+    return buffer;
 }
 
 void trafficshaperDrain(traffic_shaper_t *shaper)
@@ -438,7 +481,7 @@ void trafficshaperDrain(traffic_shaper_t *shaper)
         return;
 
     const sbuf_t            *head    = shaper->candidate != NULL ? shaper->candidate : bufferqueueFront(&shaper->queue);
-    size_t  length = sbufGetLength(head);
+    size_t                   length  = sbufGetLength(head);
     traffic_shaper_preview_t preview = shaper->ops->preview(shaper->context, length, true);
     if (preview.reject)
     {
@@ -453,27 +496,10 @@ void trafficshaperDrain(traffic_shaper_t *shaper)
             trafficshaperClose(shaper);
         return;
     }
-    if (shaper->candidate == NULL && ! trafficshaperPrepare(shaper, bytes))
+    if (! trafficshaperPrepareCandidate(shaper, bytes))
     {
         trafficshaperClose(shaper);
         return;
-    }
-    if (bytes != sbufGetLength(shaper->candidate))
-    {
-        assert(shaper->mode == kTrafficShaperStream && bytes != 0);
-        if (! bufferqueueReserveExtra(&shaper->queue, 1))
-        {
-            trafficshaperClose(shaper);
-            return;
-        }
-        sbuf_t *prepared  = shaper->candidate;
-        shaper->candidate = NULL;
-        bufferqueuePushFront(&shaper->queue, prepared);
-        if (! trafficshaperPrepare(shaper, bytes))
-        {
-            trafficshaperClose(shaper);
-            return;
-        }
     }
     bool remaining = bufferqueueGetEntryCount(&shaper->queue) != 0;
     /* Establish the next asynchronous obligation before a charge-at-handoff
@@ -510,6 +536,8 @@ void trafficshaperDrain(traffic_shaper_t *shaper)
 
 void trafficshaperSetExternalPause(traffic_shaper_t *shaper, bool paused)
 {
+    if (shaper->stopped)
+        return;
     bool was_paused           = shaper->externally_paused;
     bool held                 = shaper->externally_paused || shaper->locally_paused;
     shaper->externally_paused = paused;

@@ -64,7 +64,7 @@ typedef struct socks5client_lstate_s
     socks5client_phase_t     phase;
     socks5client_line_kind_t kind;
     bool                     input_draining : 1;
-    bool                     transport_est_forwarded : 1;
+    bool                     control_est_forwarded : 1;
     bool                     greeting_due : 1;
     bool                     next_paused : 1; // Next-side consumer pressure; combined on the application line.
     bool                     prev_paused : 1; // UDP relay startup replay only.

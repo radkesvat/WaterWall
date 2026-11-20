@@ -3,9 +3,9 @@
  * suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testSelection, testRules
- * Checks: Assertion labels include: NOTRACK set an unexpected socket option; automatic mark used the
- * conventional low range; command executable differs from argv[0]; NOTRACK commands lost their deadline
+ * Cases: testSelection, testRules, testExplicitMarks
+ * Checks: Exact socket/rule marks, automatic and explicit restart behavior, bounded commands and
+ * cleanup after uncertain outcomes.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.raw_linux_notrack_unit
@@ -30,6 +30,7 @@ static bool         fail_inspection;
 static bool         commit_on_failure;
 static unsigned int command_count;
 static unsigned int mark_count;
+static uint32_t     socket_mark;
 static char         inserted_mark[32];
 static char         inserted_comment[48];
 
@@ -50,7 +51,8 @@ int __wrap_setsockopt(int fd, int level, int option, const void *value, socklen_
 {
     require(fd == 7001 && level == SOL_SOCKET && option == SO_MARK && length == sizeof(uint32_t),
             "NOTRACK set an unexpected socket option");
-    require(*(const uint32_t *) value >= UINT32_C(0x00010000), "automatic mark used the conventional low range");
+    socket_mark = *(const uint32_t *) value;
+    require(socket_mark != 0, "NOTRACK must never exempt ordinary unmarked traffic");
     ++mark_count;
     errno = EPERM;
     return fail_socket_mark ? -1 : 0;
@@ -172,13 +174,16 @@ static void testRules(void)
     reset();
     char         name[] = "notrack-test";
     raw_device_t rdev   = {.name = name, .socket = 7001};
-    require(rawLinuxNotrackInstall(&rdev) && rawLinuxNotrackRemove(&rdev) && command_count == 0 && mark_count == 0,
-            "disabled bypass modified the firewall or socket");
-    rdev.bypass_conntrack = true;
     require(rawLinuxNotrackInstall(&rdev) && installed && rdev.notrack_rule_pending && mark_count == 1,
-            "enabled bypass did not install its rule and socket mark");
+            "output did not install its rule and socket mark");
     require(rawLinuxNotrackRemove(&rdev) && ! installed && ! rdev.notrack_rule_pending,
             "normal cleanup retained NOTRACK");
+
+    const uint32_t first_mark = rdev.mark;
+    require(rawLinuxNotrackInstall(&rdev) && rdev.mark != first_mark && socket_mark == rdev.mark &&
+                rdev.configured_mark == 0,
+            "automatic restart reused the old mark or lost automatic selection");
+    require(rawLinuxNotrackRemove(&rdev), "automatic restart cleanup failed");
 
     reset();
     fail_snapshot = true;
@@ -212,11 +217,42 @@ static void testRules(void)
     require(rawLinuxNotrackRemove(&rdev) && ! installed && ! rdev.notrack_rule_pending,
             "uncertain committed deletion was not reconciled");
 }
+static void testExplicitMarks(void)
+{
+    const uint32_t marks[] = {1, 99, UINT32_C(0x80000000), UINT32_MAX};
+    for (size_t i = 0; i < ARRAY_SIZE(marks); ++i)
+    {
+        reset();
+        char         name[] = "explicit-mark";
+        raw_device_t rdev   = {.name = name, .socket = 7001, .configured_mark = marks[i]};
+        fail_snapshot       = true; // An intentional routing mark must not go through automatic avoidance.
+        for (unsigned start = 0; start < 2; ++start)
+        {
+            const unsigned commands = command_count;
+            require(rawLinuxNotrackInstall(&rdev) && command_count == commands + 1 && installed,
+                    "explicit mark selection scanned host rules or omitted NOTRACK");
+            char expected[32];
+            snprintf(expected, sizeof(expected), "0x%08x/0xffffffff", marks[i]);
+            require(rdev.mark == marks[i] && socket_mark == marks[i] && strcmp(inserted_mark, expected) == 0,
+                    "explicit mark changed between routing and exemption or across restart");
+            require(rawLinuxNotrackRemove(&rdev) && ! installed, "explicit mark cleanup failed");
+        }
+        fail_socket_mark = true;
+        require(! rawLinuxNotrackInstall(&rdev) && ! rdev.notrack_rule_pending,
+                "failed explicit SO_MARK installed NOTRACK");
+        fail_socket_mark = false;
+        fail_insert = commit_on_failure = true;
+        require(! rawLinuxNotrackInstall(&rdev) && rdev.notrack_rule_pending && installed,
+                "uncertain explicit-mark insertion lost ownership");
+        require(rawLinuxNotrackRemove(&rdev) && ! installed, "explicit-mark rollback failed");
+    }
+}
 
 int main(void)
 {
     testCaseSet("raw_linux_notrack_test");
     testSelection();
     testRules();
+    testExplicitMarks();
     return 0;
 }

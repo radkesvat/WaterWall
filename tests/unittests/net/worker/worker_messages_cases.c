@@ -159,15 +159,15 @@ void testWorkerMessagePoolCrossWorkerReturn(void)
 }
 
 #ifdef WW_WORKER_MESSAGE_LINK_WRAP
-static void testTimedRearmRefusalCleansExactlyOnce(void)
+static void testTimedDispatchQuiescenceCleansExactlyOnce(void)
 {
     probeReset();
     const uint32_t timers_before = getWorkerLoop(0)->ntimers;
-    atomicStoreExplicit(&g_force_timed_rearm_refusal, true, memory_order_release);
+    atomicStoreExplicit(&g_quiesce_during_timed_dispatch, true, memory_order_release);
     require(sendWorkerMessageTimedWithCleanup(
                 0, (WorkerMessageCallback) probeCallback, probeCleanup, 1U, NULL, NULL, NULL) ==
                 kWorkerMessageSubmitAccepted,
-            "failed to arm the timed rearm-refusal fixture");
+            "failed to arm the timed dispatch quiescence fixture");
 
     wwSleepMS(2);
     for (uint32_t attempt = 0; attempt < 100U && atomicLoadRelaxed(&g_probe.cleaned) == 0; ++attempt)
@@ -175,27 +175,27 @@ static void testTimedRearmRefusalCleansExactlyOnce(void)
         discard wloopProcessEvents(getWorkerLoop(0), 0);
     }
 
-    require(atomicLoadRelaxed(&g_probe.ran) == 0, "rearm refusal ran the timed task early");
-    require(atomicLoadRelaxed(&g_probe.cleaned) == 1, "rearm refusal did not clean the timed task exactly once");
-    require(getWorkerLoop(0)->ntimers == timers_before, "rearm refusal retained the executing one-shot timer");
+    require(atomicLoadRelaxed(&g_probe.ran) == 0, "quiescence ran the timed task");
+    require(atomicLoadRelaxed(&g_probe.cleaned) == 1, "quiescence did not clean the timed task exactly once");
+    require(getWorkerLoop(0)->ntimers == timers_before, "quiescence retained the executing one-shot timer");
 }
 
 #if defined(HAS_UNIX_FORK)
-void testTimedRearmRefusalInIsolatedProcess(void)
+void testTimedDispatchQuiescenceInIsolatedProcess(void)
 {
     pid_t pid = fork();
-    require(pid >= 0, "fork failed for timed rearm-refusal case");
+    require(pid >= 0, "fork failed for timed dispatch quiescence case");
     if (pid == 0)
     {
         initTestGlobalState();
-        testTimedRearmRefusalCleansExactlyOnce();
+        testTimedDispatchQuiescenceCleansExactlyOnce();
         shutdownTestGlobalState();
         _Exit(0);
     }
 
     int status = 0;
-    require(waitpid(pid, &status, 0) == pid, "waitpid failed for timed rearm-refusal case");
-    require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "timed rearm-refusal child failed");
+    require(waitpid(pid, &status, 0) == pid, "waitpid failed for timed dispatch quiescence case");
+    require(WIFEXITED(status) && WEXITSTATUS(status) == 0, "timed dispatch quiescence child failed");
 }
 #endif
 #endif

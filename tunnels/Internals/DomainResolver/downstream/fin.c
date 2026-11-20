@@ -8,6 +8,8 @@ void domainresolverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         domainresolverTransportFinish(t, l);
         return;
     }
-    domainresolverLinestateDestroy(t, l, lineGetState(l, t));
-    tunnelPrevDownStreamFinish(t, l);
+    bool source_finished = ls->phase == kDomainResolverPhaseClosing;
+    domainresolverLinestateDestroy(t, l, ls);
+    if (! source_finished)
+        tunnelPrevDownStreamFinish(t, l);
 }

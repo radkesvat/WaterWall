@@ -1,9 +1,11 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpUdpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpUdpListener.mdx, and all files must keep the same documentation version.
 -->
 
 # TcpUdpListener Node
+
+## Overview
 
 `TcpUdpListener` is a chain-head wrapper around `TcpListener` and `UdpListener`. It registers both child listeners with
 the same listener settings so TCP and UDP traffic can be accepted on the same address and port set, then forwards both
@@ -12,16 +14,7 @@ transports into one shared next node.
 It does not create connection lines itself. The internal `TcpListener` owns TCP line creation and destruction, and the
 internal `UdpListener` owns UDP peer-line creation and destruction.
 
-## What It Does
-
-- creates one internal `TcpListener`
-- creates one internal `UdpListener`
-- passes the same `settings` object to both child listeners
-- forwards upstream `Init`, `Payload`, `Pause`, `Resume`, `Est`, and `Finish` from either child listener to the next node
-- routes downstream callbacks back to the correct child listener using the line source protocol flags
-- includes both child listeners in the chain so their line states are allocated normally
-
-## Typical Placement
+## Typical placement
 
 `TcpUdpListener` is used at the beginning of a chain when one service should receive both TCP and UDP on the same port or
 port set:
@@ -39,7 +32,87 @@ The next node must be able to handle both TCP and UDP line semantics if both tra
 SOCKS5 control connection, while its UDP child supplies the dynamic endpoint provider. A plain `TcpListener` supports
 only SOCKS5 TCP/`CONNECT` and cannot satisfy `UDP ASSOCIATE`.
 
-## Configuration Example
+
+## Minimal practical example
+
+### TCP and UDP DNS relay
+
+#### One local DNS entry for TCP and UDP
+
+```json
+{
+  "name": "local-dns-relay",
+  "nodes": [
+    {
+      "name": "dns-in",
+      "type": "TcpUdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1053
+      },
+      "next": "dns-out"
+    },
+    {
+      "name": "dns-out",
+      "type": "TcpUdpConnector",
+      "settings": {
+        "address": "192.0.2.53",
+        "port": 53
+      }
+    }
+  ]
+}
+```
+Save this complete node config in a file listed by `core.json.configs`.
+Configure the DNS client to query `127.0.0.1:1053`, and replace `192.0.2.53` with
+a resolver that accepts both TCP and UDP on port 53. TCP queries stay TCP; UDP
+queries stay UDP. WaterWall does not implement a DNS cache or convert between
+the protocols. Both use the same selected backend address and port.
+
+
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
+
+- `name` `(string)`
+  A user-chosen name for this wrapper node.
+
+- `type` `(string)`
+  Must be exactly `"TcpUdpListener"`.
+
+- `next` `(string)`
+  The next node that should receive both accepted TCP lines and UDP peer lines.
+
+#### `settings`
+
+The `settings` object is passed to both internal child listeners.
+
+- `address` `(string)`
+  Bind address for both TCP and UDP listeners.
+
+One of `port` or `port-range` is required.
+
+- `port` `(number or array of numbers)`
+  One explicit port or a list of explicit ports used by both TCP and UDP.
+
+- `port-range` `(array[2])`
+  A contiguous port range used by both TCP and UDP.
+
+### Optional `settings` Fields
+
+Most options are inherited directly from `TcpListener` and `UdpListener`:
+
+- `nodelay` applies to the internal TCP listener.
+- `large-send-buffer` and `large-recv-buffer` are parsed by both child listeners; an explicit `false` also leaves kernel defaults unchanged for dynamic UDP child sockets.
+- `interface`, `fwmark`, `balance-group`, `balance-interval`, `multiport-backend`, `whitelist`, and `blacklist` are passed to both child listeners.
+
+See `TcpListener` and `UdpListener` documentation for the exact behavior of each setting.
+
+## Usage and troubleshooting
+
+### Configuration Example
 
 ```json
 {
@@ -68,58 +141,20 @@ only SOCKS5 TCP/`CONNECT` and cannot satisfy `UDP ASSOCIATE`.
 }
 ```
 
-## Required JSON Fields
+### Notes And Caveats
 
-### Top-level fields
+- Both child listeners use the same port configuration. This node is not for different TCP and UDP port sets.
+- The next node must tolerate both transports, or the config should route by protocol after this wrapper.
+- Do not replace this node with `TcpListener` in a `Socks5Server` topology that enables UDP; `TcpListener` has no dynamic
+  UDP provider.
+- UDP pause semantics remain `UdpListener` semantics: paused UDP peer lines drop inbound datagrams instead of buffering them.
+- Dynamic endpoint allocation uses an ephemeral UDP port from the internal child, not this wrapper's configured static
+  TCP/UDP port.
+- No payload bytes are added or removed, so the node requires no left padding.
 
-- `name` `(string)`
-  A user-chosen name for this wrapper node.
+## Advanced behavior
 
-- `type` `(string)`
-  Must be exactly `"TcpUdpListener"`.
-
-- `next` `(string)`
-  The next node that should receive both accepted TCP lines and UDP peer lines.
-
-### `settings`
-
-The `settings` object is passed to both internal child listeners.
-
-- `address` `(string)`
-  Bind address for both TCP and UDP listeners.
-
-One of `port` or `port-range` is required.
-
-- `port` `(number or array of numbers)`
-  One explicit port or a list of explicit ports used by both TCP and UDP.
-
-- `port-range` `(array[2])`
-  A contiguous port range used by both TCP and UDP.
-
-## Optional `settings` Fields
-
-Most options are inherited directly from `TcpListener` and `UdpListener`:
-
-- `nodelay` applies to the internal TCP listener.
-- `large-send-buffer` and `large-recv-buffer` are parsed by both child listeners; an explicit `false` also leaves kernel defaults unchanged for dynamic UDP child sockets.
-- `interface`, `fwmark`, `balance-group`, `balance-interval`, `multiport-backend`, `whitelist`, and `blacklist` are passed to both child listeners.
-
-See `TcpListener` and `UdpListener` documentation for the exact behavior of each setting.
-
-## Lifecycle And Direction Rules
-
-The internal child listeners are the real socket adapters:
-
-- TCP accept or UDP first packet creates the line in the child listener.
-- Child upstream callbacks enter `TcpUdpListener`.
-- `TcpUdpListener` forwards those callbacks with `tunnelNextUpStream*`.
-- Downstream callbacks from the next node enter `TcpUdpListener`.
-- `TcpUdpListener` selects the internal TCP or UDP listener from `line->routing_context.src_ctx`.
-- The selected child listener handles downstream writes, pauses, resumes, establishment, and finish.
-
-`TcpUdpListener` has no per-line state and never calls `lineDestroy()`.
-
-## Dynamic UDP Endpoint Delegation
+### Dynamic UDP Endpoint Delegation
 
 For a compatible protocol tunnel later in the same chain, including `Socks5Server`, `TcpUdpListener` delegates the typed
 dynamic UDP endpoint provider capability to its internal `UdpListener`. `Socks5Server` discovers this provider
@@ -141,18 +176,31 @@ creation, a configured nonzero source port exactly, and a first-valid-packet pin
 when the configured source port is zero. Mismatches are silent drops and do not
 close or message the associated TCP control line.
 
-## Notes And Caveats
+## Implementation details
 
-- Both child listeners use the same port configuration. This node is not for different TCP and UDP port sets.
-- The next node must tolerate both transports, or the config should route by protocol after this wrapper.
-- Do not replace this node with `TcpListener` in a `Socks5Server` topology that enables UDP; `TcpListener` has no dynamic
-  UDP provider.
-- UDP pause semantics remain `UdpListener` semantics: paused UDP peer lines drop inbound datagrams instead of buffering them.
-- Dynamic endpoint allocation uses an ephemeral UDP port from the internal child, not this wrapper's configured static
-  TCP/UDP port.
-- No payload bytes are added or removed, so the node requires no left padding.
+### What It Does
 
-## Node Metadata
+- creates one internal `TcpListener`
+- creates one internal `UdpListener`
+- passes the same `settings` object to both child listeners
+- forwards upstream `Init`, `Payload`, `Pause`, `Resume`, `Est`, and `Finish` from either child listener to the next node
+- routes downstream callbacks back to the correct child listener using the line source protocol flags
+- includes both child listeners in the chain so their line states are allocated normally
+
+### Lifecycle And Direction Rules
+
+The internal child listeners are the real socket adapters:
+
+- TCP accept or UDP first packet creates the line in the child listener.
+- Child upstream callbacks enter `TcpUdpListener`.
+- `TcpUdpListener` forwards those callbacks with `tunnelNextUpStream*`.
+- Downstream callbacks from the next node enter `TcpUdpListener`.
+- `TcpUdpListener` selects the internal TCP or UDP listener from `lineGetSourceAddressContext(line)`.
+- The selected child listener handles downstream writes, pauses, resumes, establishment, and finish.
+
+`TcpUdpListener` has no per-line state and never calls `lineDestroy()`.
+
+### Node Metadata
 
 Source-backed metadata:
 
@@ -166,7 +214,7 @@ Source-backed metadata:
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
 
-## UDP splice sending
+### UDP splice sending
 
 UDP receives remain ordinary buffers. On an eligible Linux chain, UDP sends accept ordinary data or a real prefix plus a private-pipe body as one datagram to its explicit destination, including empty datagrams. Supported layouts use pipe-to-socket splice. Highly fragmented pipes, or failure to establish a safe fragment bound before sending, use a complete ordinary fallback before socket assembly. Oversized datagrams are rejected without splitting.
 

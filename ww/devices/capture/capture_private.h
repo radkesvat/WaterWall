@@ -21,7 +21,6 @@ typedef struct capture_range_rule_states_s
 {
     capture_rule_state_t queue;
     capture_rule_state_t opaque;
-    capture_rule_state_t notrack;
 } capture_range_rule_states_t;
 #endif
 
@@ -42,7 +41,6 @@ struct capture_device_s
     struct capture_linux_queue_s       *queues;
     char                              **capture_cidrs;
     uint32_t                            capture_range_count;
-    bool                                bypass_conntrack;
     bool                                multi_queue;
     bool                                kernel_queue_tune;
     uint32_t                            kernel_queue_packets;

@@ -50,7 +50,8 @@
 
 static line_t *testLineCreate(void)
 {
-    line_t *line = memoryAllocateZero(sizeof(*line) + tunnelGetCorrectAlignedLineStateSize(sizeof(router_lstate_t)));
+    line_t *line =
+        memoryAllocateCacheAlignedZero(sizeof(*line) + tunnelGetCorrectAlignedLineStateSize(sizeof(router_lstate_t)));
     require(line != NULL, "failed to allocate test line");
     atomic_init(&line->refc, 1);
     memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
@@ -64,7 +65,7 @@ static void testLineDestroy(line_t *line)
     addresscontextReset(&line->routing_context.src_ctx);
     addresscontextReset(&line->routing_context.dest_ctx);
     lineClearUsers(line);
-    memoryFree(line);
+    memoryFreeAligned(line);
 }
 
 static cJSON *parseJsonObject(const char *text)

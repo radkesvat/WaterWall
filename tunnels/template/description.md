@@ -1,5 +1,7 @@
 # Template Node
 
+## Overview
+
 `Template` is the starter tunnel skeleton used for building new Waterwall tunnels.
 
 In its current form it is just a pass-through node:
@@ -10,14 +12,18 @@ In its current form it is just a pass-through node:
 
 This folder is mainly for developers, not for production use.
 
-## What It Does
+### Developer Notes
 
-- Shows the standard Waterwall tunnel file layout.
-- Wires all normal callbacks in `instance/create.c`.
-- Provides stub tunnel state and line state structs.
-- Forwards every lifecycle and payload callback unchanged.
+If you use this folder as the base for a new tunnel, remember the core Waterwall rules:
 
-## Typical Placement
+- upstream talks to `tunnelNext*`
+- downstream talks to `tunnelPrev*`
+- destroy per-line state before propagating `Finish`
+- protect lines around re-entrant callbacks with `lineCallWithRef()` or manual `lineRef()` and `lineUnref()`
+- do not access line state after a callback path that may have closed the line
+- if your tunnel prepends bytes, update `required_padding_left` in `instance/node.c`
+
+## Typical placement
 
 You normally do not place `Template` in a real deployment.
 
@@ -25,7 +31,11 @@ Instead, you copy or rename it when creating a new tunnel implementation and the
 
 If you do instantiate it as-is, it behaves like a no-op relay in the chain.
 
-## Configuration Example
+## Minimal practical example
+
+Development skeleton node fragment; `next-node` is the neighboring tunnel you implement or configure. This is not a production feature.
+
+### Configuration Example
 
 ```json
 {
@@ -35,9 +45,11 @@ If you do instantiate it as-is, it behaves like a no-op relay in the chain.
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -45,13 +57,29 @@ If you do instantiate it as-is, it behaves like a no-op relay in the chain.
 - `type` `(string)`
   Must be exactly `"Template"`.
 
-### `settings`
+#### `settings`
 
 There are no tunnel-specific settings in the current implementation.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Current callback behavior
+### What It Does
+
+- Shows the standard Waterwall tunnel file layout.
+- Wires all normal callbacks in `instance/create.c`.
+- Provides stub tunnel state and line state structs.
+- Forwards every lifecycle and payload callback unchanged.
+
+### Notes And Caveats
+
+- `Template` is scaffolding, not a feature tunnel.
+- As currently implemented it adds no buffering, framing, protocol handling, or stateful behavior.
+
+## Implementation details
+
+### Detailed Behavior
+
+#### Current callback behavior
 
 The current files are intentionally minimal:
 
@@ -71,7 +99,7 @@ And in the other direction:
 
 So as shipped, `Template` is effectively a transparent relay.
 
-### State layout
+#### State layout
 
 Both state structs contain only placeholder fields:
 
@@ -86,7 +114,7 @@ Current defaults:
 - no JSON parsing
 - no tunnel-specific start or prepare behavior
 
-### Stop lifecycle
+#### Stop lifecycle
 
 The framework supplies no-op lifecycle-v2 callbacks by default. A tunnel that
 starts producers closes their admission without waiting in `onQuiesceRequest`,
@@ -95,7 +123,7 @@ external callback roots in `onQuiesceWait`. `onWorkerStop` drains owned lines;
 main-thread `onStop` releases remaining shared resources after every worker is
 drained. Each stage receives an explicit lifecycle context.
 
-### Why this folder matters
+#### Why this folder matters
 
 The useful part of `Template` is the project structure it demonstrates:
 
@@ -107,23 +135,7 @@ The useful part of `Template` is the project structure it demonstrates:
 
 That layout matches the rest of the Waterwall tunnels directory.
 
-## Developer Notes
-
-If you use this folder as the base for a new tunnel, remember the core Waterwall rules:
-
-- upstream talks to `tunnelNext*`
-- downstream talks to `tunnelPrev*`
-- destroy per-line state before propagating `Finish`
-- protect lines around re-entrant callbacks with `lineCallWithRef()` or manual `lineRef()` and `lineUnref()`
-- do not access line state after a callback path that may have closed the line
-- if your tunnel prepends bytes, update `required_padding_left` in `instance/node.c`
-
-## Notes And Caveats
-
-- `Template` is scaffolding, not a feature tunnel.
-- As currently implemented it adds no buffering, framing, protocol handling, or stateful behavior.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata from `instance/node.c`:
 

@@ -2,6 +2,7 @@ add_library(EnetServer STATIC
   instance/create.c
   instance/node.c
   common/output.c
+  common/service.c
   upstream/init.c
   upstream/est.c
   upstream/payload.c

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Exercise real capture/conntrack rules inside run_in_network_namespace.sh. CTest:
-waterwall.capture_linux_conntrack_enabled, waterwall.capture_linux_notrack,
-waterwall.capture_linux_protocols_bypass, waterwall.capture_linux_protocols_tracked,
+waterwall.capture_linux_notrack,
+waterwall.capture_linux_protocols_bypass,
 waterwall.capture_linux_queues_multi, waterwall.capture_linux_queues_single.
 Queue cases cover the default and all four requested opaque modes, fixed H32
 native/prefix/peer placement, stable-key FIFO, exact bytes and owned-rule cleanup."""
@@ -153,7 +153,7 @@ def expect_no_delivery(receiver):
     raise AssertionError(f"captured packet reached the host UDP socket: {packet!r}")
 
 
-def run(binary, directory, bypass_conntrack, exclude_protocols):
+def run(binary, directory, exclude_protocols):
     # Link-layer loopback injection starts at ingress, with no OUTPUT conntrack
     # attachment. These namespace-local settings admit its local source/route.
     command("sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0", "net.ipv4.conf.lo.rp_filter=0",
@@ -167,8 +167,6 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
         }},
         {"name": "sink", "type": "BlackHole", "settings": {"mode": "passive"}},
     ]}
-    if not bypass_conntrack:
-        config["nodes"][0]["settings"]["bypass-conntrack"] = False
     if exclude_protocols:
         config["nodes"][0]["settings"]["dont-capture-protocols"] = [0, 1, 6, 6, 255]
     core = {
@@ -205,28 +203,41 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
                         raise AssertionError("capture did not become ready")
                     time.sleep(0.05)
 
-                assert "WWCAP_" in iptables("-S", "INPUT")
-                assert ("WWCAP_NOTRACK_" in iptables("-t", "raw", "-S", "PREROUTING")) == bypass_conntrack
-                assert ("WWRAW_NOTRACK_" in iptables("-t", "raw", "-S", "OUTPUT")) == bypass_conntrack
+                input_rules = iptables("-S", "INPUT")
+                early_rules = iptables("-t", "raw", "-S", "PREROUTING")
+                assert "WWCAP_" not in input_rules, input_rules
+                assert "WWCAP_" in early_rules, early_rules
+                assert "WWCAP_NOTRACK_" not in early_rules, early_rules
+                assert "--dst-type LOCAL" in early_rules, early_rules
+                assert "WWRAW_NOTRACK_" in iptables("-t", "raw", "-S", "OUTPUT")
 
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, b"captured", 2)
-                expect_counters((1, 1) if bypass_conntrack else (0, 2))
+                expect_counters((0, 1))
+                expect_capture_count(1)
                 expect_no_delivery(receiver)
 
-                # Reassembly still precedes capture with either policy: two
-                # wire fragments produce one additional datagram observation.
+                # Ordinary raw priority preserves defragmentation: the two
+                # wire fragments enter NFQUEUE as one complete datagram.
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, bytes(1400), 3, fragmented=True)
-                expect_counters((2, 1) if bypass_conntrack else (0, 3))
+                expect_counters((0, 1))
+                expect_capture_count(2)
                 expect_no_delivery(receiver)
 
                 send_packet(sender, "127.0.0.3", "127.0.0.1", port, b"unrelated", 4)
                 assert receiver.recv(65535) == b"unrelated"
-                expect_counters((2, 2) if bypass_conntrack else (0, 4))
+                expect_counters((0, 2))
 
                 # Same capture source, nonlocal destination: keep tracking.
                 # TTL 1 prevents recirculation if this namespace forwards on lo.
                 send_packet(sender, "127.0.0.2", "203.0.113.1", port, b"transit", 5, ttl=1)
-                expect_counters((2, 3) if bypass_conntrack else (0, 5))
+                expect_counters((0, 3))
+                expect_capture_count(2)
+                # A selected source is insufficient: early capture excludes
+                # local broadcast/multicast destinations as well as transit.
+                for index, destination in enumerate(("255.255.255.255", "239.1.2.3")):
+                    send_packet(sender, "127.0.0.2", destination, port, b"non-unicast", 20 + index)
+                    expect_counters((0, 4 + index))
+                    expect_capture_count(2)
                 assert "WWCAP" not in iptables("-t", "raw", "-S", "OUTPUT")
 
                 if exclude_protocols:
@@ -239,7 +250,7 @@ def run(binary, directory, bypass_conntrack, exclude_protocols):
                 assert "WWRAW_NOTRACK_" not in iptables("-t", "raw", "-S", "OUTPUT")
                 send_packet(sender, "127.0.0.2", "127.0.0.1", port, b"restored", 6)
                 assert receiver.recv(65535) == b"restored"
-                expect_counters((2, 4) if bypass_conntrack else (0, 6))
+                expect_counters((0, 6))
 
 
 def queue_statistics():
@@ -252,6 +263,16 @@ def queue_statistics():
         rows[fields[0]] = {"pending": fields[2], "dropped": fields[5],
                            "user_dropped": fields[6], "sequence": fields[7]}
     return rows
+
+
+def expect_capture_count(expected):
+    deadline = time.monotonic() + 3
+    while True:
+        actual = sum(row["sequence"] for row in queue_statistics().values())
+        if actual == expected:
+            return
+        assert time.monotonic() < deadline, ("NFQUEUE packet count", expected, actual)
+        time.sleep(0.02)
 
 
 def receive_worker(protocol, source_word, destination_word, mode, workers):
@@ -345,11 +366,10 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
                                  "multi-queue": not single_queue, "dont-capture-protocols": [253]})
             nodes = [
                 {"name": "capture", "type": "RawSocket", "next": "decoder", "settings": settings},
-                # All injected traffic is unrelated to this Ping peer and is
+                # All injected protocols are unrelated to Ping6 protocol 58 and are
                 # passed through unchanged. Auto still selects one peer mode
                 # for the whole device; omission stays prefix at this decoder.
-                {"name": "decoder", "type": "PingServer", "next": "packets", "settings": {
-                    "local-ipv4": "127.0.0.1", "peer-ipv4": "127.0.0.3", "identifier": 4661}},
+                {"name": "decoder", "type": "Ping6Server", "next": "packets", "settings": {}},
                 {"name": "packets", "type": "PacketsToStream", "next": "output"},
                 {"name": "output", "type": "TcpConnector", "settings": {
                     "address": "127.0.0.1", "port": collector.listener.getsockname()[1]}},
@@ -371,15 +391,18 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
                 if not capture:
                     baseline_tasks = task_count
                     assert "WWCAP_" not in iptables("-S", "INPUT")
+                    assert "WWCAP_" not in iptables("-t", "raw", "-S", "PREROUTING")
                 else:
                     assert task_count == baseline_tasks, ("capture added a reader thread", baseline_tasks, task_count)
                     requested_mode = opaque_mode or "prefix"
                     effective_mode = "peer" if requested_mode == "auto" else requested_mode
-                    selection_reason = "direct upstream PingServer decoder" if requested_mode == "auto" else "configured mode"
+                    selection_reason = "direct upstream Ping6Server decoder" if requested_mode == "auto" else "configured mode"
                     startup_log = (case / "stdout.log").read_text()
                     assert (f"opaque-flow-mode requested={requested_mode} effective={effective_mode} "
                             f"reason={selection_reason}") in startup_log
-                    rules = [line for line in iptables("-S", "INPUT").splitlines() if "WWCAP_" in line]
+                    rules = [line for line in iptables("-t", "raw", "-S", "PREROUTING").splitlines() if "WWCAP_" in line]
+                    assert "WWCAP_" not in iptables("-S", "INPUT")
+                    assert all("--dst-type LOCAL" in line and "-j NFQUEUE" in line for line in rules), rules
                     queue_numbers = {int(re.search(r"--queue-num (\d+)", line)[1]) for line in rules}
                     assert len(queue_numbers) == (1 if single_queue else workers), rules
                     assert f"up with {len(queue_numbers)} worker-owned receive queue(s), opaque-flow-mode={effective_mode}" in startup_log
@@ -505,7 +528,7 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
                 process.terminate()
                 assert process.wait(timeout=15) in (0, 143)
                 assert "WWCAP" not in iptables("-S", "INPUT")
-                assert "WWCAP_NOTRACK" not in iptables("-t", "raw", "-S", "PREROUTING")
+                assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING")
                 assert "WWRAW_NOTRACK" not in iptables("-t", "raw", "-S", "OUTPUT")
                 if capture:
                     assert not queue_statistics(), "capture left a bound NFQUEUE after shutdown"
@@ -514,7 +537,6 @@ def run_queue_receive(binary, directory, single_queue, opaque_mode):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("binary")
-    parser.add_argument("--tracked", action="store_true", help="disable bypass-conntrack on both paths")
     parser.add_argument("--exclude-protocols", action="store_true", help="exclude ICMP, TCP, and protocol-byte boundaries")
     parser.add_argument("--queue-mode", choices=("multi", "single"), help="exercise four worker capture and queue steering")
     args = parser.parse_args()
@@ -528,7 +550,7 @@ def main():
                     mode_directory.mkdir()
                     run_queue_receive(binary, mode_directory, args.queue_mode == "single", mode)
             else:
-                run(binary, directory, not args.tracked, args.exclude_protocols)
+                run(binary, directory, args.exclude_protocols)
         except Exception:
             for log in directory.rglob("stdout.log"):
                 print(f"{log}:\n{log.read_text()[-20000:]}", file=sys.stderr)
@@ -536,7 +558,7 @@ def main():
     if args.queue_mode:
         print(f"Capture {args.queue_mode} queues, all opaque modes, H32 placement, FIFO, exact bytes and cleanup passed")
     else:
-        print(f"Capture with bypass-conntrack={not args.tracked}, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
+        print(f"Capture with mandatory bypass, exclusions={args.exclude_protocols}, fragments, scope, and cleanup passed")
 
 
 if __name__ == "__main__":

@@ -31,16 +31,12 @@ void socks5clientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (ls->protocol == kSocks5ClientProtocolUdp)
     {
-        bool line_alive = true;
-        if (! socks5clientStartUdpAssociation(t, l, ls, &line_alive) && line_alive)
-        {
-            socks5clientLinestateDestroy(ls);
-            tunnelPrevDownStreamFinish(t, l);
-        }
+        socks5clientStartUdpAssociation(t, l, ls);
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    if (lineCallWithRef(l, tunnelNextUpStreamInit, t) && tunnelIsActiveForLine(t, l) && socks5clientHasLineState(t, l))
+        discard socks5clientSendGreeting(t, l, lineGetState(l, t));
 }
 
 bool socks5clientDomainResolverPrepare(tunnel_t *resolver, tunnel_t *client, line_t *l, void *user_lstate)

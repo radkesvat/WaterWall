@@ -4,17 +4,60 @@ Upstream: https://github.com/lsalzman/enet
 Pinned commit: `5a9c537fd464b3c6d3c55e1d3bd47588faf71b42` (2026-06-23), version 1.3.18.
 License: MIT; see `LICENSE`.
 
-This directory is an unmodified copy of the upstream files WaterWall uses:
+This directory contains the upstream files WaterWall uses, with the local patches
+described below:
 
 - `callbacks.c`, `compress.c`, `host.c`, `list.c`, `packet.c`, `peer.c`, `protocol.c`
 - `unix.c`, `win32.c`
 - `include/enet/*.h`
 - `LICENSE`
 
-Local changes: none. `tests/enet_vendor_source_policy_test.py` holds the SHA-256
-of every file at the pinned commit and fails when one differs or when another C
-source or header appears here. No download occurs during builds. The local
-`.clang-format` disables formatting so the files stay byte-identical.
+Local changes:
+
+`peer.c` initializes newly allocated fragment-reassembly storage
+when no initial data is supplied. This covers reliable and unreliable fragments
+and prevents unwritten gaps from exposing uninitialized memory; it does not add
+fragment-coverage validation. The patch matches
+[`2a2312f` in radkesvat/enet](https://github.com/radkesvat/enet/commit/2a2312fa92c437abfb626140434230f19a6b490a).
+
+`peer.c` also charges each queued incoming command for its packet structure,
+command structure, payload and fragment bitmap in `totalWaitingData`. Empty
+messages therefore consume the receive budget. Delivery and discard release
+the same charge. Fragment counts and size additions are checked before allocation.
+The comments in `include/enet/enet.h` document the updated counter semantics.
+The existing admission rule is preserved: a packet admitted below
+`maximumWaitingData` may cross that threshold once. This counts requested queue
+allocation sizes, excluding allocator overhead and packets already handed to
+the application; it is not a limit on all ENet or process memory. WaterWall's
+existing temporary threshold increase for a missing reliable command remains in
+the driver. See `radkesvat_changes.txt` for the local change record.
+
+`peer.c`, `protocol.c` and `include/enet/enet.h` bound peer timeout and ping
+settings to 12 hours, preserving zero-as-default and the retry multiplier.
+Initial and doubled retry durations saturate safely at that limit; retry counts
+cannot wrap or produce an oversized shift. Maximum timeouts are checked on
+protocol service passes independently of retry expiration, once per peer per
+send-function invocation. Later datagram-building passes use the same cached
+time and do not repeat queue reconstruction. A bit in the existing
+peer flags distinguishes an active timeout origin from a valid timestamp of
+zero. Queue reset clears it; acknowledgements and successful reliable-command
+removal, including the CONNECT handshake, invalidate it so the origin is rebuilt
+from remaining sent commands and queued retransmissions. Each outgoing reliable
+command retains its first transmission time for the maximum deadline and its
+most recent transmission time for the next retry. Regular servicing is
+still required; the 12-hour cap leaves half the time-comparison window for delay.
+WaterWall rejects timeout/ping settings above this cap and services active
+protocol work every 10 ms, subject to event-loop delay.
+
+`host.c` computes host and peer bandwidth allowances and packet throttle ratios
+with 64-bit arithmetic. Each peer accumulates queued outgoing bytes in a 64-bit
+counter for the sampling interval. Bandwidth settings on the wire use ENet's
+32-bit fields.
+
+`tests/enet_vendor_source_policy_test.py` holds the SHA-256 of every vendored file,
+including these local patches, and fails when one differs or when another C source
+or header appears here. No download occurs during builds. The local
+`.clang-format` disables formatting to preserve the vendored source layout.
 
 `tunnels/Internals/EnetCommon/CMakeLists.txt` compiles the protocol core
 (`callbacks.c`, `host.c`, `list.c`, `packet.c`, `peer.c`, `protocol.c`) into the
@@ -40,6 +83,11 @@ WaterWall relies on these upstream details. Re-check them when the pin moves:
   `extern` rather than `ENET_API`, and the driver calls them.
 - A received reliable packet carries `ENET_PACKET_FLAG_RELIABLE` in its flags.
 
-To refresh: copy the listed files from the new upstream commit, update the pin
-above, replace the digests in `tests/enet_vendor_source_policy_test.py`, and run
+To refresh: copy the listed files from the new upstream commit and update the pin
+above. Check whether upstream already provides reassembly initialization,
+receive-queue allocation accounting, bounded peer timing and bandwidth
+arithmetic. Retain each local patch still needed, then update this record and
+`radkesvat_changes.txt`.
+Replace the digests in
+`tests/enet_vendor_source_policy_test.py` with the final vendored contents and run
 the `waterwall.enet_*` tests.

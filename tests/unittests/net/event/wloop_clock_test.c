@@ -154,6 +154,44 @@ static void testWallClockJumps(void)
     requireCachedTime(loop, (start_ms - 5000) * 1000U + 450125);
     wloopDestroy(&loop);
 }
+
+static void countDeadline(wtimer_t *timer)
+{
+    unsigned *count = weventGetUserdata(timer);
+    ++*count;
+}
+
+static void testMonotonicDeadline(void)
+{
+    wloop_t *loop = createClockLoop();
+    atomicStoreExplicit(&loop->status, WLOOP_STATUS_RUNNING, memory_order_relaxed);
+    unsigned count = 0;
+    clock_monotonic_us += 99999;
+    wtimer_t *timer = wtimerAddDeadline(loop, countDeadline, 1000);
+    require(timer != NULL, "could not arm deadline");
+    weventSetUserData(timer, &count);
+    clock_wall_ms += 300000;
+    clock_monotonic_us += 999999;
+    discard wloopProcessEvents(loop, 0);
+    require(count == 0, "a forward wall-clock jump or coarse rounding fired the deadline early");
+    clock_wall_ms -= 600000;
+    ++clock_monotonic_us;
+    discard wloopProcessEvents(loop, 0);
+    require(count == 1, "a backward wall-clock jump postponed the deadline");
+
+    timer = wtimerAddDeadline(loop, countDeadline, 1000);
+    require(timer != NULL, "could not arm second deadline");
+    weventSetUserData(timer, &count);
+    clock_monotonic_us += 750000; /* Simulate time spent in the current callback. */
+    require(wtimerReset(timer, 0), "could not reset deadline");
+    clock_monotonic_us += 999999;
+    discard wloopProcessEvents(loop, 0);
+    require(count == 1, "reset scheduled the deadline against the previous loop iteration");
+    ++clock_monotonic_us;
+    discard wloopProcessEvents(loop, 0);
+    require(count == 2, "reset deadline did not fire after the full delay");
+    wloopDestroy(&loop);
+}
 #else
 enum
 {
@@ -207,6 +245,7 @@ int main(void)
     TEST_RUN_CASE(testOrdinarySecondBoundary);
     TEST_RUN_CASE(testDriftThresholds);
     TEST_RUN_CASE(testWallClockJumps);
+    TEST_RUN_CASE(testMonotonicDeadline);
 #else
     TEST_RUN_CASE(testNoSpuriousSystemTimeChange);
     TEST_RUN_CASE(testSystemTimeChange);

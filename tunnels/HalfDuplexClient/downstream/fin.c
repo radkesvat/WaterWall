@@ -1,29 +1,36 @@
 #include "structure.h"
 
-void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *l)
+void halfduplexclientTunnelDownStreamFinish(tunnel_t *t, line_t *child)
 {
-    halfduplexclient_lstate_t *child = lineGetState(l, t);
-    line_t                    *main  = child->main_line;
-    if (main != NULL)
+    halfduplexclient_pair_t *pair = halfduplexclientGetPair(t, child);
+    if (pair == NULL)
     {
-        halfduplexclient_lstate_t *ls = lineGetState(main, t);
-        if (ls->upload_line == l && ls->first_packet_sent)
-        {
-            // Upload can finish before the last response bytes reach download.
-            lineRef(main);
-            line_t *download      = ls->download_line;
-            ls->upload_line       = NULL;
-            ls->intro_dispatching = false;
-            bufferqueueDestroy(&ls->pending_up);
-            halfduplexclientLinestateDestroy(child);
-            lineDestroy(l);
-
-            // Retiring upload also retires its producer hold. Resume may close main.
-            halfduplexclient_lstate_t *down = lineGetState(download, t);
-            halfduplexclientSetNextPaused(t, download, down->next_paused);
-            lineUnref(main);
-            return;
-        }
+        lineDestroy(child);
+        return;
     }
-    halfduplexclientClosePair(t, l, false, true);
+    const bool upload = pair->upload == child;
+    halfduplexclientCloseChild(pair, upload ? &pair->upload : &pair->download, false);
+    if (pair->ending)
+        return;
+    if (upload)
+    {
+        halfduplexclientDiscardUpload(pair);
+        pair->upload_paused = false;
+    }
+    if (pair->main == NULL)
+    {
+        if ((pair->upload == NULL && pair->download == NULL) || pair->intro == kHalfDuplexIntroPending)
+            halfduplexclientEndPair(pair, NULL);
+        else
+            halfduplexclientPump(pair, NULL);
+        return;
+    }
+    if (upload && pair->intro == kHalfDuplexUploadIntroSent)
+    {
+        // Keep the independent download open for the response tail. Reconcile
+        // the surviving receiver's hold before a Resume can close the source.
+        halfduplexclientSetNextPaused(t, pair->download, pair->download_paused);
+        return;
+    }
+    halfduplexclientEndPair(pair, NULL);
 }

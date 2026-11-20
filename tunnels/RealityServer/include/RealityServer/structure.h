@@ -142,6 +142,9 @@ typedef struct realityserver_lstate_s
     bool                                        closing_destination_for_authorized;
     bool                                        handoff_request_authenticated;
     bool                                        handoff_ack_sent;
+    bool                                        handoff_ack_dispatching;
+    bool                                        frontend_read_paused;
+    bool                                        protected_read_paused;
     bool                                        prev_est_sent;
     bool                                        prev_finished;
     bool                                        next_finished;

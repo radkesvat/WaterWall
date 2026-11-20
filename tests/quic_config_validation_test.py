@@ -125,8 +125,8 @@ def run(binary, roles=("client", "server")):
                  "verbose", variable_settings=True)
         run_case(binary, role, "whole-settings-variable-value", {**base, "protocol": "h3\0suffix"},
                  "protocol", variable_settings=True)
-        run_case(binary, role, "custom-stream", {**base, "protocol": "waterwall-test",
-            "carrier-mode": "stream", "handshake-timeout-ms": 1000, "idle-timeout-ms": 2000,
+        run_case(binary, role, "custom-settings", {**base, "protocol": "waterwall-test",
+            "handshake-timeout-ms": 1000, "idle-timeout-ms": 2000,
             "close-drain-timeout-ms": 1,
             "max-packet-size": 1200, "max-buffered-bytes": 65536,
             "receive-window-bytes": 16384, "max-buffered-buffers": 8, "verbose": True})
@@ -137,6 +137,9 @@ def run(binary, roles=("client", "server")):
             "receive-window-bytes": 16777216, "max-buffered-buffers": 65536})
         run_case(binary, role, "receive-window-maximum", {**base, "max-buffered-bytes": 67108864,
             "receive-window-bytes": 16777217}, "receive-window-bytes")
+        for carrier_mode in ("stream", "datagram"):
+            run_case(binary, role, f"removed-carrier-mode-{carrier_mode}", {**base, "carrier-mode": carrier_mode},
+                     "carrier-mode was removed. Remove this setting and use UdpOverTcpClient and UdpOverTcpServer")
         invalid = {
             "protocol": [None, False, 3, [], {}, "", "x" * 256, "bad\nprotocol", "h3\x7f", "h\u00e9"],
             "carrier-mode": [None, True, 2, "", "auto", "tcp", "STREAM"],

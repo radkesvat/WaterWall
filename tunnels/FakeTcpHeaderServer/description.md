@@ -1,5 +1,7 @@
 # FakeTcpHeaderServer Node
 
+## Overview
+
 `FakeTcpHeaderServer` receives packets with an extra TCP-looking header from
 [FakeTcpHeaderClient](../FakeTcpHeaderClient/description.md). It removes that
 header and protocol byte to recover the original IPv4 traffic. For replies, it
@@ -26,91 +28,9 @@ addresses expected by the receiving TUN or connection stack.
 | downstream native IPv4 packet | Insert fake TCP from `server-port` to `first client port + i` and the protocol byte, then forward downstream. |
 | refused packet | Recycle it on its worker and emit a rate-limited diagnostic. |
 
-## Per-Packet Protocol Byte
+## Typical placement
 
-The client records each packet's original IPv4 protocol in one byte immediately
-after fake TCP and its options. The server removes this framing and restores the
-protocol from that byte. On replies, the server records the reply packet's own
-protocol. One configured pair can alternate TCP, UDP, ICMP and other IPv4
-protocols without a protocol setting or remembered selection.
-
-The byte is fake TCP payload, not a header field; TCP's data offset excludes it.
-The visible IPv4 protocol is TCP (6) while encoded. A separate ProtoSwap node can
-change the carrier protocol later; see [Composition](#composition). These values
-are IP protocol numbers, not ports or application protocols such as HTTP or DNS.
-
-### UDP example
-
-```text
-Original packet before encoding at the client:
-[IPv4 says UDP][original UDP header][data]
-
-Packet received from the client:
-[IPv4 says TCP][fake TCP + options][17: one byte][original UDP header][data]
-
-Packet after server decoding:
-[IPv4 says UDP][original UDP header][data]
-```
-
-The server removes fake TCP and the byte containing 17, then restores UDP.
-The UDP header and application data remain. Replies undergo the reverse
-operation at the server, then the client decodes them. This framing gives UDP
-no delivery or ordering guarantee.
-
-### TCP example
-
-```text
-Original packet before encoding at the client:
-[IPv4 says TCP][original TCP header][data]
-
-Packet received from the client:
-[IPv4 says TCP][fake TCP + options][6: one byte][original TCP header][data]
-
-Packet after server decoding:
-[IPv4 says TCP][original TCP header][data]
-```
-
-The encoded packet contains **two TCP headers and one IPv4 header**. The server
-removes the fake TCP header and protocol byte. The original TCP header keeps
-its options, sequence numbers, acknowledgments and flags; its checksum is
-adjusted for the current addresses as explained in [Wire Rules](#wire-rules).
-
-The original TCP endpoints still perform their own handshake and
-retransmissions. With the default flags, an original SYN is carried behind a
-fake ACK|PSH header and reaches the receiving stack as a SYN after decoding.
-The node's configured `sequence`, `acknowledgment`, `flags`, `window`, and
-`options` affect only the fake header, not the real TCP connection.
-
-### ICMP example
-
-```text
-Original packet before encoding at the client:
-[IPv4 says ICMP][original ICMP header][ICMP message body]
-
-Packet received from the client:
-[IPv4 says TCP][fake TCP + options][1: one byte][original ICMP header][ICMP message body]
-
-Packet after server decoding:
-[IPv4 says ICMP][original ICMP header][ICMP message body]
-```
-
-The complete ICMP message is preserved without address normalization. ICMP's
-checksum has no surrounding IPv4-address pseudo-header. Quoted IP headers in
-ICMP errors stay unchanged; this does not translate their embedded addresses.
-
-### Other IPv4 protocols
-
-All byte values `0..255` are representable. TCP, UDP and ICMP receive structural
-checks; other native bodies are opaque and byte-preserved, including an empty
-body. Reserved or unknown values do not imply OS or downstream support.
-
-Opaque carriage promises no arbitrary address rewriting or generic integrity
-repair: protocols such as UDP-Lite or AH can protect addresses or other header
-fields. Preserve or restore required fields, or use protocol-aware handling
-elsewhere. `ConnectionToPackets` and `PacketsToConnection` remain TCP/UDP-only;
-a suitable packet path such as TUN can use the broader carriage.
-
-## Chain Order
+### Chain Order
 
 ```text
 server: RawSocket -> IpOverrider -> FakeTcpHeaderServer -> PacketsToConnection -> UdpConnector
@@ -131,7 +51,11 @@ ICMP and opaque protocols need suitable packet endpoints at both ends. Upstream
 means toward the next node and downstream toward the previous node, on the
 server as well as the client.
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Use matching port settings on FakeTcpHeaderClient and define `flows` as the decoded packet path. Feed captured carrier packets from the peer and restore native addresses as shown in Chain Order. This framing provides no TCP reliability; budget the encapsulation overhead below.
 
 ```json
 {
@@ -139,15 +63,20 @@ server as well as the client.
   "type": "FakeTcpHeaderServer",
   "settings": {
     "server-port": 40000,
-    "client-port-range": [40001, 40016],
-    "sequence": "random_port",
-    "increment-sequence": true,
-    "acknowledgment": 12345,
-    "window": 65535
+    "client-port-range": [
+      40001,
+      40016
+    ]
   },
   "next": "flows"
 }
 ```
+
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
+
+## Configuration
+
+### Header settings
 
 Omitted `settings` and `{}` select all defaults. No native-protocol setting is
 needed; each received packet supplies its own protocol byte.
@@ -188,7 +117,8 @@ For example, fake TCP port 40000 can carry original UDP traffic for port 5300.
 The original application port is kept in the original transport header;
 `server-port` does not select or replace the backend application's port.
 
-## Optional Payload Encryption
+
+### Optional Payload Encryption
 
 Set the same nonempty `password` on both FakeTcpHeader peers to encrypt the
 protocol byte and the complete original IP payload. Use a long random secret.
@@ -258,7 +188,7 @@ packet lengths or timing. IP/protocol capture and fake-port checks remain necess
 for routing; they are not authentication by themselves. A ProtoSwap must run
 after encryption on send and restore protocol 6 before decryption on receive.
 
-## Outgoing Flag Script
+### Outgoing Flag Script
 
 `flags` selects an ordered script for the fake TCP header. The default is:
 
@@ -325,7 +255,7 @@ sequence and ACK written. Decode does not interpret flag meanings, compare them
 with its own script, change local script state or require an expected order;
 normal packet geometry and checksum checks remain in force.
 
-## Sequence Progression
+### Sequence Progression
 
 The recommended profile is also the default:
 
@@ -409,7 +339,7 @@ promise acceptance by TCP-aware networks.
 
 See the client's [worked sequence example](../FakeTcpHeaderClient/description.md#sequence-progression).
 
-## Acknowledgment Modes
+### Acknowledgment Modes
 
 `acknowledgment` controls the fake header's ACK value independently of
 `sequence` and `increment-sequence`. It is never calculated from packets
@@ -487,7 +417,136 @@ acknowledgment history. Neither tracks received bytes or confirms delivery.
 An observer might ignore inconsistent values or recognize the pattern; no
 improvement in concealment or network acceptance is guaranteed.
 
-## Wire Rules
+## Usage and troubleshooting
+
+### Configuration Example
+
+```json
+{
+  "name": "fake-tcp-header",
+  "type": "FakeTcpHeaderServer",
+  "settings": {
+    "server-port": 40000,
+    "client-port-range": [40001, 40016],
+    "sequence": "random_port",
+    "increment-sequence": true,
+    "acknowledgment": 12345,
+    "window": 65535
+  },
+  "next": "flows"
+}
+```
+
+### Limits and Detectability
+
+The fake TCP framing and tagged native payload are easy to fingerprint. Stateful firewalls and NAT can drop carriers; rewriting fake TCP
+ports breaks decoding. Without `password`, there is no authentication or
+encryption. The optional helper protects carried contents but does not prevent
+replays or add reliability. Native UDP
+retains loss/reordering behavior and native TCP retains its own TCP behavior.
+
+### Examples
+
+[examples/server](examples/server/config.json) forwards native UDP to
+`127.0.0.1:5300`, serving the client's
+[UDP](../FakeTcpHeaderClient/examples/client/config.json) and
+[TUN](../FakeTcpHeaderClient/examples/client-tun/config.json) examples. Both
+peers use native MTU 1479 without fake options and restore private addresses
+explicitly. These examples carry UDP because of their PTC/UDP endpoints, not a
+FakeTcpHeader protocol setting. Replace documentation public addresses in
+RawSocket and IpOverrider, and run from each example directory with its
+`core.json`. `UdpConnector` may override the backend destination;
+`PacketsToConnection` retains the native tuple for replies. Native TCP needs
+suitable TCP edges; broader protocols need suitable packet endpoints such as
+TUN at both ends.
+
+## Advanced behavior
+
+### Per-Packet Protocol Byte
+
+The client records each packet's original IPv4 protocol in one byte immediately
+after fake TCP and its options. The server removes this framing and restores the
+protocol from that byte. On replies, the server records the reply packet's own
+protocol. One configured pair can alternate TCP, UDP, ICMP and other IPv4
+protocols without a protocol setting or remembered selection.
+
+The byte is fake TCP payload, not a header field; TCP's data offset excludes it.
+The visible IPv4 protocol is TCP (6) while encoded. A separate ProtoSwap node can
+change the carrier protocol later; see [Composition](#composition). These values
+are IP protocol numbers, not ports or application protocols such as HTTP or DNS.
+
+#### UDP example
+
+```text
+Original packet before encoding at the client:
+[IPv4 says UDP][original UDP header][data]
+
+Packet received from the client:
+[IPv4 says TCP][fake TCP + options][17: one byte][original UDP header][data]
+
+Packet after server decoding:
+[IPv4 says UDP][original UDP header][data]
+```
+
+The server removes fake TCP and the byte containing 17, then restores UDP.
+The UDP header and application data remain. Replies undergo the reverse
+operation at the server, then the client decodes them. This framing gives UDP
+no delivery or ordering guarantee.
+
+#### TCP example
+
+```text
+Original packet before encoding at the client:
+[IPv4 says TCP][original TCP header][data]
+
+Packet received from the client:
+[IPv4 says TCP][fake TCP + options][6: one byte][original TCP header][data]
+
+Packet after server decoding:
+[IPv4 says TCP][original TCP header][data]
+```
+
+The encoded packet contains **two TCP headers and one IPv4 header**. The server
+removes the fake TCP header and protocol byte. The original TCP header keeps
+its options, sequence numbers, acknowledgments and flags; its checksum is
+adjusted for the current addresses as explained in [Wire Rules](#wire-rules).
+
+The original TCP endpoints still perform their own handshake and
+retransmissions. With the default flags, an original SYN is carried behind a
+fake ACK|PSH header and reaches the receiving stack as a SYN after decoding.
+The node's configured `sequence`, `acknowledgment`, `flags`, `window`, and
+`options` affect only the fake header, not the real TCP connection.
+
+#### ICMP example
+
+```text
+Original packet before encoding at the client:
+[IPv4 says ICMP][original ICMP header][ICMP message body]
+
+Packet received from the client:
+[IPv4 says TCP][fake TCP + options][1: one byte][original ICMP header][ICMP message body]
+
+Packet after server decoding:
+[IPv4 says ICMP][original ICMP header][ICMP message body]
+```
+
+The complete ICMP message is preserved without address normalization. ICMP's
+checksum has no surrounding IPv4-address pseudo-header. Quoted IP headers in
+ICMP errors stay unchanged; this does not translate their embedded addresses.
+
+#### Other IPv4 protocols
+
+All byte values `0..255` are representable. TCP, UDP and ICMP receive structural
+checks; other native bodies are opaque and byte-preserved, including an empty
+body. Reserved or unknown values do not imply OS or downstream support.
+
+Opaque carriage promises no arbitrary address rewriting or generic integrity
+repair: protocols such as UDP-Lite or AH can protect addresses or other header
+fields. Preserve or restore required fields, or use protocol-aware handling
+elsewhere. `ConnectionToPackets` and `PacketsToConnection` remain TCP/UDP-only;
+a suitable packet path such as TUN can use the broader carriage.
+
+### Wire Rules
 
 The server uses the same
 [single-IPv4 format](../FakeTcpHeaderClient/description.md#wire-rules) and
@@ -552,7 +611,7 @@ rewrites can change that relationship; stable tuples within each direction still
 produce stable distribution. See
 [Per-Flow Carrier Ports](../FakeTcpHeaderClient/description.md#per-flow-carrier-ports).
 
-## Receive Filtering
+### Receive Filtering
 
 Capture IPv4 TCP from the client's public source address:
 
@@ -576,7 +635,7 @@ configured range, but rejecting a captured packet cannot return it to the host
 stack. IP/protocol selection and the codec's port checks alone provide no authentication; optional password protection is applied
 by the internal Encryption helper before the codec sees a decoded carrier.
 
-## Composition
+### Composition
 
 There is only one set of IPv4 address fields. If they are changed to public
 addresses while encoded, those public addresses remain after decoding unless
@@ -618,7 +677,7 @@ protocol, use `protoswap-tcp` next to both codecs and capture that protocol,
 restoring protocol 6 before decode. See
 [client composition](../FakeTcpHeaderClient/description.md#composition).
 
-## MTU and Validation
+### MTU and Validation
 
 Without a password, the overhead is `O = F + 1`, where `F = 20 + outgoing options length` counts
 only fake TCP and the additional byte records the native protocol. Thus overhead
@@ -663,30 +722,9 @@ include packet/max-carrier bytes; outgoing logs include packet/max-native bytes,
 overhead and headroom. One log per node is allowed every five seconds across
 all workers, reasons and both directions. The worker packet line remains alive.
 
-## Limits and Detectability
+## Implementation details
 
-The fake TCP framing and tagged native payload are easy to fingerprint. Stateful firewalls and NAT can drop carriers; rewriting fake TCP
-ports breaks decoding. Without `password`, there is no authentication or
-encryption. The optional helper protects carried contents but does not prevent
-replays or add reliability. Native UDP
-retains loss/reordering behavior and native TCP retains its own TCP behavior.
-
-## Examples
-
-[examples/server](examples/server/config.json) forwards native UDP to
-`127.0.0.1:5300`, serving the client's
-[UDP](../FakeTcpHeaderClient/examples/client/config.json) and
-[TUN](../FakeTcpHeaderClient/examples/client-tun/config.json) examples. Both
-peers use native MTU 1479 without fake options and restore private addresses
-explicitly. These examples carry UDP because of their PTC/UDP endpoints, not a
-FakeTcpHeader protocol setting. Replace documentation public addresses in
-RawSocket and IpOverrider, and run from each example directory with its
-`core.json`. `UdpConnector` may override the backend destination;
-`PacketsToConnection` retains the native tuple for replies. Native TCP needs
-suitable TCP edges; broader protocols need suitable packet endpoints such as
-TUN at both ends.
-
-## Node Metadata
+### Node Metadata
 
 | Property | Value |
 | --- | --- |

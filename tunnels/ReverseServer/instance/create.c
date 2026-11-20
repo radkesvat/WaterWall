@@ -28,7 +28,9 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     t->fnPauseD   = &reverseserverTunnelDownStreamPause;
     t->fnResumeD  = &reverseserverTunnelDownStreamResume;
 
-    t->onDestroy = &reverseserverTunnelDestroy;
+    t->onWorkerQuiesce = &reverseserverQuiesceDrains;
+    t->onWorkerStop    = &reverseserverStopDrains;
+    t->onDestroy       = &reverseserverTunnelDestroy;
 
     const cJSON *settings = node->node_settings_json;
     if (settings != NULL && ! cJSON_IsObject(settings))
@@ -38,7 +40,7 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
         return NULL;
     }
 
-    reverseserver_tstate_t *ts = tunnelGetState(t);
+    reverseserver_tstate_t *ts             = tunnelGetState(t);
     int64_t                 activation_min = kReverseActivationDefaultMinSize;
     int64_t                 activation_max = kReverseActivationDefaultMaxSize;
     if (jsonGetObjectIntegerInRange(settings,
@@ -61,8 +63,8 @@ tunnel_t *reverseserverTunnelCreate(node_t *node)
     ts->activation_max_size = (uint32_t) activation_max;
     for (int i = 0; i < wc; ++i)
     {
-        atomic_init(&ts->threadlocal_pool[i].u_count, 0);
-        atomic_init(&ts->threadlocal_pool[i].d_count, 0);
+        atomic_init(&ts->threadlocal_pool[i].users.count, 0);
+        atomic_init(&ts->threadlocal_pool[i].reverse_links.count, 0);
     }
     if (! reverseclientHandshakeBuildFromSettings(
             settings, "ReverseServer", &ts->handshake_bytes, &ts->handshake_length))

@@ -16,10 +16,10 @@ CTest selections and overrides:
 
 Prerequisites: The production build and Linux user/network namespace support. Loopback endpoints live inside the namespace harness.
 
-Success: The runtime must exit with status `1` and include the diagnostic `PingServer: configuration uses removed Ping wire v1 setting 'strategy'`. Signals, hard aborts, and missing or different diagnostics fail; the accepted expected failure counts as a successful enclosing test.
+Success: The runtime must exit with status `1` and include the diagnostic `PingServer: unknown setting 'strategy'`. Signals, hard aborts, and missing or different diagnostics fail; the accepted expected failure counts as a successful enclosing test.
 
 Discover properties with `ctest --preset linux -N -V -R '^waterwall\.ping_server_legacy_settings_rejected$'`. Execute through the [lane wrapper](../../run_test_lane.sh) using the registered lane; privileged/external and speed cases keep their own prerequisites/serialization.
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
-Contract exercised: Verify that both strict Ping parsers reject removed wire-v1 settings with the explicit migration diagnostic.
+Contract exercised: Verify that both strict Ping parsers reject unsupported settings with the explicit unknown-setting diagnostic.

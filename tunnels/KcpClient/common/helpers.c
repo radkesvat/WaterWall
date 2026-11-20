@@ -1,21 +1,25 @@
 #include "structure.h"
 
-static void clientSignalTransport(tunnel_t *t, line_t *l, LineTaskFnNoBuf signal)
+static void clientSetReadHold(tunnel_t *t, line_t *l, bool paused)
 {
     kcpclient_lstate_t *ls = lineGetState(l, t);
     assert(ls->role == kKcpClientApplication && ls->session != NULL);
-    line_t *transport = ls->session->transport;
+    ls->session->application_read_hold = paused;
+    line_t *transport                  = ls->session->transport;
     lineRef(transport);
-    signal(t, transport);
+    if (paused)
+        tunnelNextUpStreamPause(t, transport);
+    else
+        tunnelNextUpStreamResume(t, transport);
     lineUnref(transport);
 }
 
 void kcpclientTunnelUpStreamPause(tunnel_t *t, line_t *l)
 {
-    clientSignalTransport(t, l, tunnelNextUpStreamPause);
+    clientSetReadHold(t, l, true);
 }
 
 void kcpclientTunnelUpStreamResume(tunnel_t *t, line_t *l)
 {
-    clientSignalTransport(t, l, tunnelNextUpStreamResume);
+    clientSetReadHold(t, l, false);
 }

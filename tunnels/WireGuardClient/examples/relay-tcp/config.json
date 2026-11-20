@@ -1,0 +1,28 @@
+{
+  "name": "wireguard-relay-tcp",
+  "nodes": [
+    {
+      "name": "tcp",
+      "type": "TcpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 51821,
+        "nodelay": true
+      },
+      "next": "uot-server"
+    },
+    {
+      "name": "uot-server",
+      "type": "UdpOverTcpServer",
+      "next": "udp"
+    },
+    {
+      "name": "udp",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 51820
+      }
+    }
+  ]
+}

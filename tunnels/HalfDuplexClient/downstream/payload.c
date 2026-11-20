@@ -1,18 +1,10 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
-void halfduplexclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
+void halfduplexclientTunnelDownStreamPayload(tunnel_t *t, line_t *child, sbuf_t *buf)
 {
-    halfduplexclient_lstate_t *ls = lineGetState(l, t);
-
-    if (LIKELY(ls->main_line != NULL))
-    {
-        tunnelPrevDownStreamPayload(t, ls->main_line, buf);
-    }
+    halfduplexclient_pair_t *pair = halfduplexclientGetPair(t, child);
+    if (pair != NULL && pair->main != NULL && ! pair->ending)
+        tunnelPrevDownStreamPayload(t, pair->main, buf);
     else
-    {
-        lineReuseBuffer(l, buf);
-
-    }
+        lineReuseBuffer(child, buf);
 }

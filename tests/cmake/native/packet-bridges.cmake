@@ -86,6 +86,16 @@ if(TARGET PacketsToConnection)
     add_dependencies(waterwall_unit_tests lwip_ptc_trusted_engine_test)
     add_waterwall_unit_test(waterwall.lwip_ptc_trusted_engine_unit lwip_ptc_trusted_engine_test "unit;net;lwip;thread;packetstoconnection")
     target_compile_definitions(lwip_ptc_trusted_engine_test PRIVATE PTC_TRUSTED_FIXTURE=1)
+    waterwall_add_native_executable(lwip_ptc_source_scope_test SUPPORT SOURCES
+      ${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_ptc_engine_test.c ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
+    target_link_libraries(lwip_ptc_source_scope_test PRIVATE ww_test_support ptc_engine_test IpOverrider)
+    target_compile_definitions(lwip_ptc_source_scope_test PRIVATE PTC_SOURCE_SCOPE_FIXTURE=1)
+    target_link_options(lwip_ptc_source_scope_test PRIVATE
+      "-Wl,--wrap=nodemanagerQuiesceWorker" "-Wl,--wrap=nodemanagerStopWorkerResources"
+      "-Wl,--wrap=workerMessagesDestroyDetached" "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup")
+    add_dependencies(waterwall_unit_tests lwip_ptc_source_scope_test)
+    add_waterwall_unit_test(waterwall.lwip_ptc_source_scope_unit lwip_ptc_source_scope_test
+      "unit;net;lwip;thread;packetstoconnection;wireguard;retirement")
   endif()
   waterwall_add_native_executable(packetstoconnection_netif_contract_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_bridges/packetstoconnection_netif_contract_test.c)
   target_link_libraries(packetstoconnection_netif_contract_test PRIVATE PacketsToConnection ww)

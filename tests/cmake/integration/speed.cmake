@@ -10,6 +10,18 @@ foreach(verification IN ITEMS verified unverified)
   add_waterwall_case_resource_lock(waterwall.${smoke_case} speed_client_tcp_smoke)
 endforeach()
 
+if(TARGET SpeedTestClient AND TARGET SpeedTestServer AND TARGET TrojanClient AND TARGET TrojanServer)
+  foreach(protocol IN ITEMS tcp udp)
+    set(smoke_case speed_client_trojan_direct_${protocol})
+    add_waterwall_isolated_test(waterwall.${smoke_case}
+      "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/run_waterwall_speedtest.sh"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>"
+      "${CMAKE_CURRENT_SOURCE_DIR}/cases/${smoke_case}" "10")
+    set_tests_properties(waterwall.${smoke_case} PROPERTIES TIMEOUT 15)
+    add_waterwall_test_labels(waterwall.${smoke_case} "integration" "smoke" "speed-client" "trojan" "${protocol}")
+  endforeach()
+endif()
+
 add_waterwall_speedtest(waterwall.speedtest_direct_pair direct_pair)
 add_waterwall_speedtest(waterwall.speedtest_tcp_loopback tcp_loopback)
 add_waterwall_speedtest(waterwall.speedtest_tcp_loopback_unverified tcp_loopback_unverified)

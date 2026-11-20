@@ -226,6 +226,7 @@ static void nextInit(tunnel_t *t, line_t *l)
     {
         control = l;
         tunnelDownStreamEst(client, l);
+        twfRequire(greetings == 0, "synchronous Est started greeting before next Init returned");
     }
 }
 static void setupBeforeInit(bool auth, bool udp)
@@ -326,6 +327,28 @@ static void teardown(void)
     tunnelDestroy(next);
     twfWorkerEnvTeardown(&env);
 }
+static void pausedControlInit(tunnel_t *t, line_t *l)
+{
+    nextInit(t, l);
+    tunnelDownStreamPause(client, l);
+    tunnelDownStreamResume(client, l);
+    twfRequire(greetings == 0, "synchronous Resume started greeting before next Init returned");
+    tunnelDownStreamPause(client, l);
+}
+
+static void udpControlGreetingWaitsForResume(void)
+{
+    twfSetCase("UDP control greeting honors Pause across Init");
+    setupBeforeInit(false, true);
+    next->fnInitU = pausedControlInit;
+    tunnelUpStreamInit(client, application);
+    twfRequire(established == 1 && greetings == 0, "Est released the paused UDP control greeting");
+    tunnelDownStreamResume(client, control);
+    tunnelDownStreamResume(client, control);
+    twfRequire(greetings == 1, "UDP control Resume did not send the greeting exactly once");
+    teardown();
+}
+
 static void destinationPreparation(void)
 {
     for (unsigned local_dns = 0; local_dns < 2; ++local_dns)
@@ -803,6 +826,7 @@ int main(int argc, char **argv)
         nestedBodies();
         return 0;
     }
+    udpControlGreetingWaitsForResume();
     destinationPreparation();
 #if WW_HAVE_SPLICE
     spliceHandshake();

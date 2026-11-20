@@ -34,3 +34,10 @@ Generated core settings, logs and mutable inputs belong to the private run direc
 
 Contract exercised: Verifies a TCP roundtrip through PingServer and PacketsToConnection with server reply generation enabled and
   client reply generation omitted, exercising independent endpoint settings and packet alignment.
+
+The carrier reuses the actual IPv4 header and inserts Echo framing plus a final
+saved-protocol byte, for nine bytes of overhead. A complete 1491-byte native
+packet produces a 1500-byte carrier; 1492 bytes is refused. Both codec entry
+points reject fragments, so real adapters explicitly reassemble before these
+nodes. Address rewriting/restoration belongs to the chain; direct codec pairs
+preserve their native tuple. These are fixture expectations, not MTU discovery.

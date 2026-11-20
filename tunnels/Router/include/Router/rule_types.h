@@ -25,6 +25,7 @@ typedef struct router_ip_range_s
 typedef struct router_geoip_code_s
 {
     char code[3];
+    bool negated;
 } router_geoip_code_t;
 
 typedef struct router_port_range_s
@@ -159,6 +160,7 @@ void routerStringListDestroy(router_string_list_t *list);
 bool routerIpRangesParse(const router_string_list_t *patterns, router_ip_range_t **out_ranges, uint32_t *out_count,
                          const char *json_path);
 bool routerIpRangesMatch(const address_context_t *ctx, const router_ip_range_t *ranges, uint32_t count);
+bool routerGeoipTokenHasPrefix(const char *pattern);
 bool routerGeoipCodesParse(const router_string_list_t *patterns, router_geoip_code_t **out_codes, uint32_t *out_count,
                            const char *json_path);
 void routerGeoipCodesDestroy(router_geoip_code_t **codes, uint32_t *count);

@@ -26,7 +26,7 @@ static tunnel_t        *client, *transport;
 static tunnel_chain_t  *chain;
 static unsigned         inits, finishes, depth, maximum_depth, other_work;
 static unsigned         sends, capacity_warnings;
-static bool             fail_init, establish, finish_payload;
+static bool             fail_init, establish, pause_init, finish_payload;
 static uint32_t         last_id;
 static uint8_t          last_type, reply_type;
 static bool             inspect_authentication, refuse_serialization;
@@ -95,6 +95,8 @@ static void init(tunnel_t *t, line_t *l)
         tunnelPrevDownStreamFinish(t, l);
     else if (establish)
         tunnelPrevDownStreamEst(t, l);
+    else if (pause_init)
+        tunnelPrevDownStreamPause(t, l);
     --depth;
 }
 static void finish(tunnel_t *t, line_t *l)
@@ -145,7 +147,7 @@ static authenticationclient_tstate_t *setup(void)
     atomicStoreU64(&clock_us, 100000000);
     inits = finishes = depth = maximum_depth = other_work = 0;
     sends = capacity_warnings = 0;
-    fail_init = establish = finish_payload = false;
+    fail_init = establish = pause_init = finish_payload = false;
     reply_type                             = kAuthenticationClientResponseTypePong;
     retry_random                           = 0;
     twfWorkerEnvSetup(&env, 8192, 0);
@@ -161,6 +163,7 @@ static authenticationclient_tstate_t *setup(void)
     twfRequire(client != NULL && transport != NULL, "tunnel creation failed");
     client->fnFinD        = authenticationclientTunnelDownStreamFinish;
     client->fnEstD        = authenticationclientTunnelDownStreamEst;
+    client->fnPauseD      = authenticationclientTunnelDownStreamPause;
     client->fnPayloadD    = authenticationclientTunnelDownStreamPayload;
     transport->fnInitU    = init;
     transport->fnFinU     = finish;
@@ -184,6 +187,19 @@ static authenticationclient_tstate_t *setup(void)
     ts->request_timeout_ms    = 100;
     return ts;
 }
+
+static void openAuthenticated(authenticationclient_tstate_t *ts)
+{
+    pause_init = true;
+    authenticationclientOpenControlLine(client);
+    pause_init = false;
+    twfRequire(ts->control_line != NULL && ts->write_paused && ts->pending_count == 0,
+               "fixture did not open a paused control line");
+    /* Model a validated session before exposing request-specific test state. */
+    ts->authenticated = true;
+    ts->write_paused  = false;
+}
+
 static void teardown(void)
 {
     authenticationclient_tstate_t *ts = tunnelGetState(client);
@@ -253,7 +269,8 @@ static void testRetryProgress(void)
     ts->reconnect_interval_ms         = 0;
     fail_init                         = true;
     authenticationclientOpenControlLine(client);
-    twfRequire(inits == 1 && ts->reconnect_work_pending, "zero retry ran synchronously");
+    twfRequire(inits == 1 && sends == 0 && ts->control_line == NULL && ts->reconnect_work_pending,
+               "Init refusal sent Authenticate or ran a synchronous retry");
     twfRequire(sendWorkerMessageForceQueueWithCleanup(0, other, NULL, NULL, NULL, NULL) == kWorkerMessageSubmitAccepted,
                "unrelated work was refused");
     pump(0);
@@ -289,9 +306,10 @@ static void testRetryProgress(void)
 static void testDeadlinesAndMalformed(void)
 {
     authenticationclient_tstate_t *ts = setup();
-    establish                         = true;
     authenticationclientOpenControlLine(client);
-    twfRequire(ts->request_timer != NULL && ts->pending_count == 1, "Authenticate has no independent deadline");
+    twfRequire(! ts->connected && sends == 1 && last_type == kAuthenticationClientRequestTypeAuthenticate &&
+                   ts->request_timer != NULL && ts->pending_count == 1,
+               "Authenticate did not start its independent deadline before Est");
     pump(99);
     twfRequire(finishes == 0, "request expired early");
     pump(1);
@@ -300,8 +318,7 @@ static void testDeadlinesAndMalformed(void)
     teardown();
 
     ts = setup();
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     /* Model an authenticated session whose required initial pull completed. */
     ts->pull_requested = ts->pull_required = false;
     twfRequire(authenticationclientSendPing(client), "first manual request failed");
@@ -317,8 +334,7 @@ static void testDeadlinesAndMalformed(void)
     teardown();
 
     ts = setup();
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     ts->pull_requested = ts->pull_required = false;
     twfRequire(authenticationclientSendPing(client), "early request failed");
     pump(50);
@@ -350,8 +366,7 @@ static void testDeadlinesAndMalformed(void)
 static void testPausedProgress(void)
 {
     authenticationclient_tstate_t *ts = setup();
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     ts->pull_requested = ts->pull_required = true;
     authenticationclientScheduleSyncProgress(client);
     twfRequire(ts->progress_timer != NULL, "eligible synchronization did not schedule progress");
@@ -383,8 +398,7 @@ static void testPendingCapacityProgress(void)
         authenticationclient_tstate_t *ts = setup();
         ts->max_pending_requests          = 1;
         ts->request_timeout_ms            = mode == 0 ? 0 : 100;
-        authenticationclientOpenControlLine(client);
-        ts->connected = ts->authenticated = true;
+        openAuthenticated(ts);
         ts->pull_requested = ts->pull_required = false;
         twfRequire(authenticationclientSendPing(client), "capacity Ping failed");
         const uint32_t ping     = last_id;
@@ -435,8 +449,7 @@ static void testPendingCapacityProgress(void)
 
     authenticationclient_tstate_t *ts = setup();
     ts->max_pending_requests          = 1;
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     ts->pull_required                 = false;
     ts->pull_requested                = true;
     twfRequire(! authenticationclientSendRequest(
@@ -448,8 +461,7 @@ static void testPendingCapacityProgress(void)
     teardown();
 
     ts = setup();
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     ts->pull_required                 = false;
     ts->pull_requested                = true;
     authenticationclientRemovePendingById(client, 999);
@@ -505,8 +517,7 @@ static void testRefusalClassificationAndDiagnostics(void)
     for (unsigned i = 0; i < sizeof(errors) / sizeof(errors[0]); ++i)
     {
         authenticationclient_tstate_t *ts = setup();
-        authenticationclientOpenControlLine(client);
-        ts->connected = ts->authenticated = true;
+        openAuthenticated(ts);
         ts->pending_batch                 = stringDuplicate("retained-batch");
         ts->pending_batch_length          = (uint32_t) stringLength(ts->pending_batch);
         ts->accounting_epoch[0]           = 'a';
@@ -526,8 +537,7 @@ static void testRefusalClassificationAndDiagnostics(void)
     }
 
     authenticationclient_tstate_t *ts = setup();
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = true;
+    openAuthenticated(ts);
     ts->pull_requested = ts->pull_required = false;
     twfRequire(authenticationclientSendPing(client), "diagnostic request failed");
     uint8_t bytes[160];
@@ -650,8 +660,8 @@ static void testFirstUseWaitsForPendingCapacity(void)
     cJSON_Delete(json);
     user_t *user = usersLookupByIdentifier(ts->users, 42);
     userInstallClientClock(user, 100000, 100000, 100000);
-    authenticationclientOpenControlLine(client);
-    ts->connected = ts->authenticated = ts->users_loaded = ts->clock_loaded = true;
+    openAuthenticated(ts);
+    ts->users_loaded = ts->clock_loaded = true;
     ts->pull_requested = ts->pull_required = false;
     memset(ts->accounting_epoch, 'a', 64);
     twfRequire(authenticationclientSendPing(client), "first-use capacity Ping");
@@ -680,8 +690,7 @@ static void testAdmissionClosesBeforeNodeQuiesce(void)
         wtimer_t                      *reset_timer = NULL;
         if (mode == 0)
         {
-            authenticationclientOpenControlLine(client);
-            ts->connected = ts->authenticated = true;
+            openAuthenticated(ts);
             twfRequire(authenticationclientSendPing(client), "shutdown deadline fixture");
             wtimerDelete(ts->request_timer);
             ts->request_timer = NULL;

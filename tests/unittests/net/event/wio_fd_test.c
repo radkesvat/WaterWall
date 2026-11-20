@@ -11,8 +11,9 @@
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.wio_fd_no_splice_unit; waterwall.wio_fd_unit
- * Organization: Descriptor ownership, private splice pipes, queue charges and read/write mode changes
- * share one event-loop fixture and the same syscall substitutions; each case resets those observations.
+ * Organization: Descriptor ownership, adaptive TCP receive tiers, private splice pipes, queue charges
+ * and read/write mode changes share one event-loop fixture and the same syscall substitutions; each
+ * case resets those observations.
  */
 #include "buffer_queue.h"
 
@@ -291,7 +292,7 @@ static void requireClosed(int fd)
     require(fcntl(fd, F_GETFD) == -1 && errno == EBADF, "descriptor survived the final release");
 }
 
-static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
+static void setupWithBufferSizes(test_env_t *env, uint32_t large_size, uint32_t medium_size, uint32_t small_size)
 {
     memoryZero(env, sizeof(*env));
 #if WW_HAVE_SPLICE
@@ -307,22 +308,21 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
         env->masters[i] = masterpoolCreateWithCapacity(8);
         require(env->masters[i] != NULL, "failed to create test master pool");
     }
-    env->buffers =
-        bufferpoolCreate(env->masters[0],
-                         env->masters[4],
-                         env->masters[1],
-                         4,
-                         large_size,
-                         MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                         1024,
-                         large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size,
-                         max((uint32_t) (large_size),
-                             (uint32_t) (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size)));
-    bufferpoolUpdateAllocationPaddings(env->buffers, 0, 0, 0, 64);
-    env->wios = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
+    const uint32_t splice_payload_limit = large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size;
+
+    env->buffers = bufferpoolCreate(env->masters[0],
+                                    env->masters[4],
+                                    env->masters[1],
+                                    4,
+                                    large_size,
+                                    medium_size,
+                                    small_size,
+                                    splice_payload_limit,
+                                    max(large_size, splice_payload_limit));
+    env->wios    = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->masters[3], sizeof(wio_t), 4);
     require(env->buffers != NULL && env->wios != NULL, "failed to create test pools");
-    require(bufferpoolGetSplicePayloadLimit(env->buffers) ==
-                (large_size >= LARGE_BUFFER_SIZE_RAM_LOW ? SPLICE_PAYLOAD_LIMIT : large_size),
+    bufferpoolUpdateAllocationPaddings(env->buffers, 0, 0, 0, 64);
+    require(bufferpoolGetSplicePayloadLimit(env->buffers) == splice_payload_limit,
             "pool lost explicit splice setting, including on unsupported builds");
     env->buffer_pools[0]         = env->buffers;
     GSTATE.shortcut_buffer_pools = env->buffer_pools;
@@ -330,6 +330,11 @@ static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
     GSTATE.shortcut_wios_pools   = env->wio_pools;
     env->loop                    = wloopCreate(WLOOP_FLAG_RUN_ONCE, env->buffers, 0);
     require(env->loop != NULL, "failed to create test loop");
+}
+
+static void setupWithBufferSize(test_env_t *env, uint32_t large_size)
+{
+    setupWithBufferSizes(env, large_size, MEDIUM_BUFFER_SIZE_RAM_HIGH, 1024);
 }
 
 static void setup(test_env_t *env)
@@ -501,6 +506,43 @@ static void testCloseCallback(test_env_t *env)
     close(other[1]);
 }
 
+static void replaceInWriteCallback(wio_t *io)
+{
+    wloop_t       *loop    = weventGetLoop(io);
+    const int      fd      = wioGetFD(io);
+    const uint32_t id      = wioGetID(io);
+    const int      next_fd = *(const int *) wioGetContext(io);
+    wioFree(io);
+    require(dup2(next_fd, fd) == fd, "could not reuse descriptor in write callback");
+    wio_t *next = wioGet(loop, fd);
+    require(wioIsOpened(next) && wioGetID(next) != id, "write callback failed to install replacement");
+}
+
+static void testWriteCallbackResult(test_env_t *env)
+{
+    int    sockets[2], replacement[2];
+    wio_t *io = socketIO(env, sockets);
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "could not open replacement socket pair");
+
+    sbuf_t *first = bufferpoolGetSmallBuffer(env->buffers);
+    sbufAppendBytesInPlace(first, "a", 1);
+    require(wWrite(env->loop, sockets[0], first, NULL) == io, "write failed to return the live socket");
+
+    wioSetContext(io, &replacement[0]);
+    sbuf_t *last = bufferpoolGetSmallBuffer(env->buffers);
+    sbufAppendBytesInPlace(last, "b", 1);
+    require(wWrite(env->loop, sockets[0], last, replaceInWriteCallback) == NULL,
+            "write returned a socket retired or replaced by its callback");
+    char bytes[2];
+    require(recv(sockets[1], bytes, sizeof(bytes), MSG_WAITALL) == 2 && memcmp(bytes, "ab", 2) == 0,
+            "peer did not receive both writes before retirement");
+
+    wioFree(wioGet(env->loop, sockets[0]));
+    close(sockets[1]);
+    close(replacement[0]);
+    close(replacement[1]);
+}
+
 typedef struct pending_reuse_probe_s
 {
     test_env_t  *env;
@@ -573,6 +615,45 @@ static void testPendingDescriptorReuse(void)
     teardown(&env);
 }
 
+static void testDeferredSocketOperations(void)
+{
+    test_env_t env;
+    setup(&env);
+    wloop_t  *destination = wloopCreate(WLOOP_FLAG_RUN_ONCE, env.buffers, 0);
+    const int fd          = socket(AF_INET, SOCK_DGRAM, 0);
+    require(fd >= 0, "failed to create a datagram socket for immediate connect");
+    wio_t             *io   = wioGet(env.loop, fd);
+    struct sockaddr_in peer = {.sin_family = AF_INET, .sin_port = htons(9), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    wioSetPeerAddr(io, (struct sockaddr *) &peer, sizeof(peer));
+    // UDP connect only sets the peer. No listener or packet traffic is required.
+    require(wioConnect(io) == 0 && wioCloseAsync(io) == 0, "failed to queue socket operations on the source loop");
+    wioDetach(io);
+    wioAttach(destination, io);
+    require(wloopRun(env.loop) >= 0 && wioIsOpened(io) && ! wioIsConnected(io) && ! wioExists(env.loop, fd),
+            "a deferred source-loop operation followed the socket through handoff");
+
+    require(wioConnect(io) == 0 && wloopRun(destination) >= 0 && wioIsConnected(io),
+            "the owning loop failed to deliver a live socket's immediate connect");
+    int replacement[2];
+    require(socketpair(AF_UNIX, SOCK_STREAM, 0, replacement) == 0, "failed to create replacement socket pair");
+    require(wioConnect(io) == 0 && wioCloseAsync(io) == 0, "failed to queue socket operations before retirement");
+    const uint32_t old_id = wioGetID(io);
+    wioFree(io);
+    require(dup2(replacement[0], fd) == fd, "failed to reuse the retired socket's descriptor");
+    close(replacement[0]);
+    wio_t *fresh = wioGet(destination, fd);
+    require(fresh != NULL && wioGetID(fresh) != old_id, "replacement socket retained the retired generation");
+    require(wloopRun(destination) >= 0 && wioIsOpened(fresh) && ! wioIsConnected(fresh),
+            "a replacement socket received its predecessor's deferred operation");
+
+    require(wioCloseAsync(fresh) == 0 && wloopRequestQuiesce(destination), "failed to request close and quiescence");
+    wloopQuiesceNormalWork(destination);
+    requireClosed(fd);
+    close(replacement[1]);
+    wloopDestroy(&destination);
+    teardown(&env);
+}
+
 static void testPendingDetachRejected(void)
 {
     pid_t child = fork();
@@ -592,6 +673,37 @@ static void testPendingDetachRejected(void)
     int status;
     require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
             "pending detach was not rejected before handoff");
+}
+
+static void testTimedSocketHandoff(void)
+{
+    test_env_t env;
+    setup(&env);
+    int    sockets[2];
+    wio_t *io = socketIO(&env, sockets);
+    wioSetReadTimeout(io, 60000);
+    require(io->read_timer != NULL && io->read_timer->loop == env.loop, "read timeout was not armed on the source");
+
+    pid_t child = fork();
+    require(child >= 0, "failed to fork timed handoff test");
+    if (child == 0)
+    {
+        wioDetach(io);
+        _Exit(0);
+    }
+    int status;
+    require(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 1,
+            "a socket with a live source-loop timeout was allowed to detach");
+
+    wioSetReadTimeout(io, 0);
+    wloop_t *destination = wloopCreate(WLOOP_FLAG_RUN_ONCE, env.buffers, 0);
+    wioDetach(io);
+    wioAttach(destination, io);
+    wioSetReadTimeout(io, 60000);
+    require(io->read_timer != NULL && io->read_timer->loop == destination, "read timeout did not move with rearming");
+    wloopDestroy(&destination);
+    close(sockets[1]);
+    teardown(&env);
 }
 
 static void testPipeDescriptorZero(void)
@@ -832,9 +944,10 @@ static void spliceRead(wio_t *io, sbuf_t *buf)
     if (probe->kind == kSpliceDisabled || (probe->kind == kSplicePipeFallback && probe->calls == 1))
     {
         require(buf->flags == 0 && sbufGetTotalCapacityNoPadding(buf) == bufferpoolGetLargeBufferSize(pool) &&
+                    sbufGetHeadroom(buf) >= bufferpoolGetLargeBufferPadding(pool) &&
                     count <= bufferpoolGetLargeBufferSize(pool) && count <= probe->length - probe->received &&
                     memoryEqual(sbufGetRawPtr(buf), probe->data + probe->received, count),
-                "ordinary read did not deliver the expected bytes");
+                "ordinary read did not deliver the expected bytes or reserved headroom");
         probe->received += count;
         bufferpoolReuseBuffer(pool, buf);
         return;
@@ -1029,7 +1142,8 @@ static void runSpliceCase(splice_case_t kind, uint32_t large_size, uint32_t leng
 {
     test_env_t env;
     setupWithBufferSize(&env, large_size);
-    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+    // With splice disabled, the small tier lacks the headroom required by the TCP reader.
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, kind == kSpliceDisabled ? 0 : 64, 64);
     int            sockets[2];
     wio_t         *io    = socketIO(&env, sockets);
     splice_probe_t probe = {.env = &env, .kind = kind, .length = length};
@@ -2147,72 +2261,159 @@ static void testSpliceReads(void)
 }
 #endif
 
+// Even the full large tier fits in one write to an empty Unix socket with a minimal send buffer.
+enum
+{
+    kReadTestSmall  = 256,
+    kReadTestMedium = 512,
+    kReadTestLarge  = 1024
+};
+
 typedef struct ordinary_read_probe_s
 {
     buffer_pool_t *pool;
     uint32_t       expected_capacity;
+    uint32_t       expected_length;
     uint32_t       received;
+    unsigned int   calls;
+    bool           expect_splice;
 } ordinary_read_probe_t;
 
-static void ordinaryLargeRead(wio_t *io, sbuf_t *buf)
+static void ordinaryTierRead(wio_t *io, sbuf_t *buf)
 {
     ordinary_read_probe_t *probe = weventGetUserdata(io);
-    require(! wioIsSpliceEnabled(io) && buf->flags == 0, "ordinary large-buffer read used splice");
-    require(sbufGetTotalCapacityNoPadding(buf) == probe->expected_capacity && sbufGetHeadroom(buf) == 64,
-            "ordinary TCP read did not use the large tier with its reserved padding");
-    require(sbufGetLength(buf) > 0, "ordinary TCP read delivered an empty payload");
+    require(sbufIsSplice(buf) == probe->expect_splice, "TCP receive changed its expected representation");
+    require(sbufGetLength(buf) == probe->expected_length &&
+                sbufGetHeadroom(buf) >= bufferpoolGetLargeBufferPadding(probe->pool),
+            "TCP receive changed its payload length or reserved padding");
+    if (probe->expect_splice)
+        buf = sbufSpliceMaterializeToBuffer(buf, bufferpoolGetLargeBuffer(probe->pool), probe->pool);
+    else
+        require(buf->flags == 0 && sbufGetTotalCapacityNoPadding(buf) == probe->expected_capacity,
+                "ordinary TCP read used an unexpected allocation tier");
     const uint8_t *payload = sbufGetRawPtr(buf);
     for (uint32_t i = 0; i < sbufGetLength(buf); ++i)
         require(payload[i] == (uint8_t) (probe->received + i), "ordinary TCP read corrupted payload order");
     probe->received += sbufGetLength(buf);
+    ++probe->calls;
     bufferpoolReuseBuffer(probe->pool, buf);
 }
 
-static void testOrdinaryLargeRead(void)
+static void ordinaryReadStep(test_env_t *env, int peer, ordinary_read_probe_t *probe, uint32_t length,
+                             uint32_t capacity)
 {
-    const uint32_t lengths[]     = {512, 4096, 65537};
-    const uint32_t large_sizes[] = {LARGE_BUFFER_SIZE_RAM_LOW, LARGE_BUFFER_SIZE_RAM_HIGH};
-    uint8_t        payload[65537];
-    for (uint32_t i = 0; i < sizeof(payload); ++i)
-        payload[i] = (uint8_t) i;
-    for (size_t profile = 0; profile < ARRAY_SIZE(large_sizes); ++profile)
-    {
-        for (size_t i = 0; i < ARRAY_SIZE(lengths); ++i)
-        {
-            test_env_t env;
-            setupWithBufferSize(&env, large_sizes[profile]);
-            bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
-            int                   sockets[2];
-            wio_t                *io    = socketIO(&env, sockets);
-            ordinary_read_probe_t probe = {.pool = env.buffers, .expected_capacity = large_sizes[profile]};
-            weventSetUserData(io, &probe);
-            wioSetCallBackRead(io, ordinaryLargeRead);
-            require(wioRead(io) == 0, "failed to start ordinary TCP reads");
-            read_test_fd        = sockets[0];
-            socket_read_queries = 0;
-
-            // Transient readiness must still attempt recv without querying queued bytes.
-            io->revents = WW_READ;
-            EVENT_PENDING(io);
-            require(wloopProcessEvents(env.loop, 0) >= 0 && probe.received == 0 && wioIsOpened(io),
-                    "empty TCP receive fabricated payload or closed a live socket");
-            require(socket_read_queries == 0, "ordinary TCP read queried socket availability");
-
-            require(send(sockets[1], payload, lengths[i], 0) == (ssize_t) lengths[i],
-                    "failed to supply ordinary TCP input");
-            for (unsigned int attempt = 0; attempt < 4 && probe.received < lengths[i]; ++attempt)
-                require(wloopProcessEvents(env.loop, 0) >= 0, "ordinary TCP read dispatch failed");
-            require(probe.received == lengths[i], "ordinary TCP reads did not drain all queued bytes");
-            close(sockets[1]);
-            require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io),
-                    "large-buffer TCP receive did not handle EOF");
-            require(wioHasReadEOF(io) && wioGetError(io) == 0, "clean stream EOF was not retained through close");
-            require(socket_read_queries == 0, "ordinary TCP payload or EOF read queried socket availability");
-            read_test_fd = -1;
-            teardown(&env);
-        }
-    }
+    uint8_t payload[kReadTestLarge];
+    require(length > 0 && length <= sizeof(payload), "invalid adaptive receive fixture payload");
+    for (uint32_t i = 0; i < length; ++i)
+        payload[i] = (uint8_t) (probe->received + i);
+    probe->expected_capacity = capacity;
+    probe->expected_length   = length;
+    const unsigned int calls = probe->calls;
+    require(send(peer, payload, length, MSG_DONTWAIT) == (ssize_t) length, "failed to supply adaptive TCP input");
+    require(wloopProcessEvents(env->loop, 0) >= 0 && probe->calls == calls + 1,
+            "adaptive TCP receive did not deliver its queued payload");
 }
+
+static void testOrdinaryReadTiers(void)
+{
+    test_env_t env;
+    setupWithBufferSizes(&env, kReadTestLarge, kReadTestMedium, kReadTestSmall);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+    int                   sockets[2];
+    wio_t                *io    = socketIO(&env, sockets);
+    ordinary_read_probe_t probe = {.pool = env.buffers};
+    weventSetUserData(io, &probe);
+    wioSetCallBackRead(io, ordinaryTierRead);
+    require(wioRead(io) == 0, "failed to start ordinary TCP reads");
+    read_test_fd        = sockets[0];
+    socket_read_queries = 0;
+
+    // Transient readiness must not promote or query queued bytes.
+    io->revents = WW_READ;
+    EVENT_PENDING(io);
+    require(wloopProcessEvents(env.loop, 0) >= 0 && probe.calls == 0 && wioIsOpened(io),
+            "empty TCP receive fabricated payload or closed a live socket");
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestSmall - 1, kReadTestSmall);
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestSmall, kReadTestSmall);
+    ordinaryReadStep(&env, sockets[1], &probe, 1, kReadTestMedium);
+    require(wioReadStop(io) == 0 && wioRead(io) == 0, "failed to restart an adaptive TCP read");
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestMedium, kReadTestMedium);
+    ordinaryReadStep(&env, sockets[1], &probe, 1, kReadTestLarge);
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestLarge, kReadTestLarge);
+    ordinaryReadStep(&env, sockets[1], &probe, 1, kReadTestLarge);
+
+    // A second socket on the same loop starts independently at the small tier.
+    int                   other_sockets[2];
+    wio_t                *other       = socketIO(&env, other_sockets);
+    ordinary_read_probe_t other_probe = {.pool = env.buffers};
+    weventSetUserData(other, &other_probe);
+    wioSetCallBackRead(other, ordinaryTierRead);
+    require(wioRead(other) == 0, "failed to start an independent TCP read");
+    ordinaryReadStep(&env, other_sockets[1], &other_probe, 1, kReadTestSmall);
+
+    close(sockets[1]);
+    require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io), "adaptive TCP receive did not handle EOF");
+    require(wioHasReadEOF(io) && wioGetError(io) == 0, "clean stream EOF was not retained through close");
+    require(socket_read_queries == 0, "ordinary TCP payload or EOF read queried socket availability");
+
+    // Re-adopting the exact descriptor slot must reset the old large tier.
+    require(dup2(other_sockets[0], sockets[0]) == sockets[0], "failed to reuse the adaptive TCP descriptor");
+    wio_t *reused = wioGet(env.loop, sockets[0]);
+    require(reused == io, "adaptive receive fixture did not reuse its WIO");
+    require(wioReadStop(other) == 0, "failed to stop the duplicate TCP reader");
+    weventSetUserData(reused, &other_probe);
+    wioSetCallBackRead(reused, ordinaryTierRead);
+    require(wioRead(reused) == 0, "failed to start the reused TCP reader");
+    ordinaryReadStep(&env, other_sockets[1], &other_probe, 1, kReadTestSmall);
+    wioClose(reused);
+    wioClose(other);
+    close(other_sockets[1]);
+    read_test_fd = -1;
+    teardown(&env);
+}
+
+#if WW_HAVE_SPLICE
+static void testAdaptiveReadSpliceIsolation(void)
+{
+    test_env_t env;
+    setupWithBufferSizes(&env, kReadTestLarge, kReadTestMedium, kReadTestSmall);
+    bufferpoolUpdateAllocationPaddings(env.buffers, 64, 64, 64, 64);
+    int                   sockets[2];
+    wio_t                *io    = socketIO(&env, sockets);
+    ordinary_read_probe_t probe = {.pool = env.buffers};
+    weventSetUserData(io, &probe);
+    wioSetCallBackRead(io, ordinaryTierRead);
+    require(wioRead(io) == 0, "failed to start adaptive splice-isolation reads");
+    read_test_fd = sockets[0];
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestSmall, kReadTestSmall);
+    require(wioEnableSplice(io) == 0, "failed to enable splice after receive promotion");
+    probe.expect_splice = true;
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestMedium, 0);
+    require(splice_read_requested == kReadTestLarge, "adaptive tier changed the independent splice read limit");
+
+    // A full large-buffer fallback must neither use nor advance the ordinary tier.
+    probe.expect_splice = false;
+    splice_read_error   = EAGAIN;
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestLarge, kReadTestLarge);
+    require(splice_read_error == 0 && wioIsSpliceEnabled(io), "splice fallback changed the selected read mode");
+    sbuf_t *held[16];
+    for (size_t i = 0; i < ARRAY_SIZE(held); ++i)
+    {
+        held[i] = bufferpoolGetSpliceBuffer(env.buffers);
+        require(held[i] != NULL, "failed to exhaust splice inventory for adaptive reads");
+    }
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestLarge, kReadTestLarge);
+    for (size_t i = 0; i < ARRAY_SIZE(held); ++i)
+        bufferpoolReuseBuffer(env.buffers, held[i]);
+    wioDisableSplice(io);
+    ordinaryReadStep(&env, sockets[1], &probe, 1, kReadTestMedium);
+    ordinaryReadStep(&env, sockets[1], &probe, kReadTestMedium, kReadTestMedium);
+    wioClose(io);
+    close(sockets[1]);
+    read_test_fd = -1;
+    teardown(&env);
+}
+#endif
 
 static unsigned int eof_close_calls;
 
@@ -2225,7 +2426,8 @@ static void observeEOFClose(wio_t *io)
     require(wioHasPeerWriteShutdown(io) == peer_shutdown_result, "EOF close lost its cached peer shutdown result");
 }
 
-static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, int diagnostic_error)
+static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, int diagnostic_error,
+                                 bool close_before_eof)
 {
     test_env_t env;
     setup(&env);
@@ -2265,9 +2467,9 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     sbufSetLength(queued, sizeof(sentinel));
     require(wioWrite(io, queued) == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
             "EOF fixture output was not queued");
+    if (close_before_eof)
+        require(wioClose(io) == 0 && wioIsOpened(io), "local close did not start a graceful drain");
     require(shutdown(sockets[1], SHUT_WR) == 0, "failed to send fixture EOF");
-    io->revents = WW_READ;
-    EVENT_PENDING(io);
     require(wloopProcessEvents(env.loop, 0) >= 0 && wioHasReadEOF(io), "fixture EOF was not dispatched");
 
     require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && wioHasPeerWriteShutdown(io) == peer_half_closed,
@@ -2280,10 +2482,9 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     {
         require(wioIsOpened(io) && eof_close_calls == 0 && wioGetWriteBufSize(io) == sizeof(sentinel),
                 "unconfirmed peer shutdown discarded queued writes");
-        wioHandleReadEOF(io);
-        require(peer_shutdown_queries == (detect_shutdown ? 1U : 0U) && ! wioHasPeerWriteShutdown(io),
-                "repeated EOF re-queried or changed the cached diagnostic result");
-        wioReadStop(io);
+        require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsOpened(io) && eof_close_calls == 0 &&
+                    wioGetWriteBufSize(io) == sizeof(sentinel),
+                "repeated dispatch after EOF interrupted the output drain");
     }
 
     size_t received = 0;
@@ -2297,8 +2498,6 @@ static void testQueuedWriteOnEOF(bool detect_shutdown, bool peer_half_closed, in
     }
     if (! peer_half_closed)
     {
-        io->revents = WW_WRITE;
-        EVENT_PENDING(io);
         require(wloopProcessEvents(env.loop, 0) >= 0 && wioIsClosed(io) && eof_close_calls == 1,
                 "unconfirmed peer shutdown did not finish after its queue drained");
         require(recv(sockets[1], filler, sizeof(filler), MSG_DONTWAIT) == sizeof(sentinel) &&
@@ -2697,20 +2896,25 @@ static void testSpliceModeSwitch(void)
 int main(void)
 {
     testCaseSet("wio_fd_test");
+    testDeferredSocketOperations();
     testSharedBudget();
     testBudgetRebinding();
     testBudgetReleaseUnderflow();
     testBufferQueueCharge();
-    testOrdinaryLargeRead();
-    testQueuedWriteOnEOF(false, false, 0);
-    testQueuedWriteOnEOF(true, false, EACCES);
-    testQueuedWriteOnEOF(true, false, 0);
-    testQueuedWriteOnEOF(true, true, 0);
+    testOrdinaryReadTiers();
+    testQueuedWriteOnEOF(false, false, 0, false);
+    testQueuedWriteOnEOF(true, false, EACCES, false);
+    testQueuedWriteOnEOF(true, false, 0, false);
+    testQueuedWriteOnEOF(true, true, 0, false);
+    testQueuedWriteOnEOF(false, false, 0, true);
+    testQueuedWriteOnEOF(true, true, 0, true);
     testPrimaryDescriptorZero();
     testPipeDescriptorZero();
     testPendingDescriptorReuse();
     testPendingDetachRejected();
+    testTimedSocketHandoff();
 #if WW_HAVE_SPLICE
+    testAdaptiveReadSpliceIsolation();
     testSpliceModeSwitch();
     testDirectSpliceRead();
     testSpliceUrgentRead();
@@ -2740,6 +2944,7 @@ int main(void)
     testNoClose(&env);
     testFileDescriptor(&env);
     testCloseCallback(&env);
+    testWriteCallbackResult(&env);
     teardown(&env);
     return 0;
 }

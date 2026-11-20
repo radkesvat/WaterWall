@@ -23,6 +23,11 @@ static bool settingsReadInteger(const cJSON *json, const char *node_type, const 
 
 bool enetSettingsParse(enet_settings_t *settings, const cJSON *json, const char *node_type)
 {
+    if (json != NULL && ! cJSON_IsObject(json))
+    {
+        LOGF("JSON Error: %s->settings must be an object", node_type);
+        return false;
+    }
     *settings = (enet_settings_t) {
         .ping_interval_ms       = kEnetPingIntervalDefault,
         .no_recv_timeout_ms     = kEnetNoRecvTimeoutDefault,
@@ -49,8 +54,10 @@ bool enetSettingsParse(enet_settings_t *settings, const cJSON *json, const char 
     /* A budget above ENet's maximum is valid and uses that maximum, as KcpClient does with its own. */
     settings->host_mtu = min((uint32_t) send_mtu - kEnetIpv4UdpOverhead, (uint32_t) kEnetDriverHostMtuMax);
 
-    if (! settingsReadInteger(json, node_type, "no-recv-timeout-ms", 1, INT_MAX, &settings->no_recv_timeout_ms) ||
-        ! settingsReadInteger(json, node_type, "ping-interval-ms", 1, INT_MAX, &settings->ping_interval_ms) ||
+    if (! settingsReadInteger(
+            json, node_type, "no-recv-timeout-ms", 1, kEnetDriverPeerTimeoutMax, &settings->no_recv_timeout_ms) ||
+        ! settingsReadInteger(
+            json, node_type, "ping-interval-ms", 1, kEnetDriverPeerTimeoutMax, &settings->ping_interval_ms) ||
         ! settingsReadInteger(json,
                               node_type,
                               "send-buffer-limit",

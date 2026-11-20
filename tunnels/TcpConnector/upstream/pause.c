@@ -12,7 +12,7 @@ void tcpconnectorTunnelUpStreamPause(tunnel_t *t, line_t *l)
         lstate->read_paused = true;
         if (lstate->io != NULL)
         {
-            wioReadStop(lstate->io);
+            wioPauseTcpRead(lstate->io);
         }
     }
 }

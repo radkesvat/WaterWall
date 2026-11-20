@@ -37,8 +37,8 @@ void authenticationclientScheduleSyncProgress(tunnel_t *t)
     const uint64_t now       = wloopNowMonotonicMS(getWorkerLoop(0));
     const bool     reporting = ! ts->pull_required && (ts->push_requested || ts->pending_batch != NULL ||
                                                    ts->catchup_capture_needed || authenticationclientHasCatchup(ts));
-    const bool needed = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated && ts->connected &&
-                        ! ts->write_paused && ts->pending_count < ts->max_pending_requests &&
+    const bool     needed    = ts->started && ! ts->stopping && ! ts->continuity_error && ts->authenticated &&
+                        ts->write_admitted && ! ts->write_paused && ts->pending_count < ts->max_pending_requests &&
                         (wloopNowMonotonicMS(getWorkerLoop(0)) >= authenticationclientRetryNotBeforeLocked(ts)) &&
                         ! ts->auth_in_flight && ! ts->pull_in_flight && ! ts->push_in_flight &&
                         (ts->pull_requested || ts->pull_required || ts->staging.active || ts->push_requested ||

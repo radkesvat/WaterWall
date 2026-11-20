@@ -1,26 +1,17 @@
 <!--
-Documentation version: 156
+Documentation version: 158
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KcpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KcpServer.mdx, and all files must keep the same documentation version.
 -->
 
 # KcpServer Node
 
+## Overview
+
 `KcpServer` is the server-side peer of `KcpClient`. It receives UDP-style packet traffic carrying KCP data, reconstructs the original byte stream, and forwards that stream to the next node.
 
 In practice, this node is used together with `KcpClient` on the other side of the packet path.
 
-## What It Does
-
-- Accepts packet payload from the previous node.
-- Feeds those packets into KCP.
-- Reconstructs a TCP-like stream from the KCP session.
-- Forwards the reconstructed stream to the next node.
-- Accepts downstream stream replies, re-encodes them into KCP, and sends them back as packets.
-- Uses internal ping and close frames to maintain the session.
-
-This node expects the previous side of the chain to provide packet-preserving transport.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -30,7 +21,11 @@ A common layout is:
 
 It should usually sit opposite `KcpClient`.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -49,9 +44,11 @@ It should usually sit opposite `KcpClient`.
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -62,11 +59,11 @@ It should usually sit opposite `KcpClient`.
 - `next` `(string)`
   The next node that should receive the reconstructed stream.
 
-### `settings`
+#### `settings`
 
 There are no required tunnel-specific settings.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `send-mtu` `(integer)`
   IPv4-based outgoing packet budget in bytes: `118..65535` without FEC, or `126..65535` with FEC. Receiving uses independent protocol limits.
@@ -96,6 +93,12 @@ There are no required tunnel-specific settings.
   KCP fast-resend threshold.
   Default: `2`
 
+- `kcp-ack-batch` `(integer)`
+  Each peer chooses its own threshold in the range `0..kcp-recv-window`. `1` flushes after every valid input datagram. A larger value flushes when that many ACKs are pending. `0` leaves ordinary data ACKs for the next `kcp-interval-ms` update.
+  Batching packs ACKs into fewer datagrams and can save CPU on bulk transfers. An ACK can wait up to one update interval, which increases measured RTT. Fast retransmit can also take longer because KCP counts duplicate acknowledgments once per received datagram. With batching enabled, ACK-only input can leave newly unblocked data waiting for the next update.
+  The receiver immediately acknowledges a keepalive PING, including a retransmission. On the first peer CLOSE, it retires the application and immediately sends the ACK. It also acknowledges duplicate CLOSE packets immediately while outgoing data drains. During ACK-only retention, every valid input triggers a flush.
+  Default: `1`
+
 - `kcp-no-congestion-control` `(boolean)`
   Disables KCP congestion control for higher-throughput UDP paths.
   Default: `true`
@@ -105,7 +108,7 @@ There are no required tunnel-specific settings.
   Default: `8192`
 
 - `kcp-recv-window` `(number)`
-  KCP receive window in segments.
+  Local KCP receive window in segments. The available window advertised to the peer is capped at 65535 segments.
   Default: `8192`
 
 - `kcp-initial-cwnd` `(number)`
@@ -121,20 +124,43 @@ There are no required tunnel-specific settings.
   Default: `0`
 
 - `ping-interval-ms` `(number)`
-  Time without received packets before sending an internal ping.
+  Time since the last valid session packet before sending an internal ping.
   Default: `10000`
 
 - `no-recv-timeout-ms` `(number)`
-  Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
+  Time since the last valid session packet before closing the session. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
 - `close-drain-timeout-ms` `(integer)`
   Maximum send/drain interval and ACK-retention interval, negotiated as the minimum of both peers. Range: `1..2147483647`. Increasing the effective interval requires both peers to allow it.
   Default: `30000`
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### KCP transport model
+### Notes And Caveats
+
+- `KcpServer` is intended to be paired with `KcpClient`.
+- FEC must be enabled on both peers with matching shard settings.
+- The previous node should preserve packet boundaries.
+- `DownStreamInit` is disabled; service lines are created through the upstream handshake.
+- Worker shutdown cancels timers and drains every owned service/session immediately.
+
+## Implementation details
+
+### What It Does
+
+- Accepts packet payload from the previous node.
+- Feeds those packets into KCP.
+- Reconstructs a TCP-like stream from the KCP session.
+- Forwards the reconstructed stream to the next node.
+- Accepts downstream stream replies, re-encodes them into KCP, and sends them back as packets.
+- Uses internal ping and close frames to maintain the session.
+
+This node expects the previous side of the chain to provide packet-preserving transport.
+
+### Detailed Behavior
+
+#### KCP transport model
 
 Incoming Init initializes the borrowed UDP carrier only. A HELLO, CHALLENGE,
 CONFIRM, READY exchange with independent 128-bit nonces establishes each session.
@@ -159,12 +185,14 @@ session/service identities while old sessions can continue acknowledging retries
 This per-carrier cap is not a process-wide KCP/FEC heap budget.
 
 Incoming KCP records carry a one-byte internal frame flag. Replies are chunked,
-framed and sent through KCP toward the previous side. Actual transport Est maps
-promptly between associated lines; protocol readiness remains separate. KCP/FEC
-callbacks stage output before neighboring tunnels run, and nested input is
-serialized with finite byte/allocation-charge admission.
+framed and sent through KCP toward the previous side. Carrier Est is remembered
+and delivered once to each live service whose Init has begun. Each service
+also relays its first Est to the carrier. These callbacks report transport
+readiness independently of KCP handshake progress. KCP/FEC callbacks stage
+output before neighboring tunnels run, and nested input is serialized with
+finite byte/allocation-charge admission.
 
-### Internal frame flags
+#### Internal frame flags
 
 Inside the KCP payload, this tunnel uses:
 
@@ -179,13 +207,14 @@ flag and closes the affected connection, as does an unknown flag or a completed
 KCP message larger than the local receive buffer. Incomplete KCP messages wait
 for their remaining fragments.
 
-### Default KCP settings
+#### Default KCP settings
 
 The implementation exposes KCP tuning in JSON. The higher-throughput defaults are:
 
 - `kcp-nodelay = true`
 - `kcp-interval-ms = 10`
 - `kcp-resend = 2`
+- `kcp-ack-batch = 1`
 - `kcp-no-congestion-control = true`
 - `kcp-send-window = 8192`
 - `kcp-recv-window = 8192`
@@ -195,7 +224,7 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `ping-interval-ms = 10000`
 - `no-recv-timeout-ms = 30000`
 
-### Sending MTU
+#### Sending MTU
 
 Optional integer `send-mtu` inherits core `misc.mtu` at construction (the core fallback
 is 1500). The supported range is **118..65535 without FEC**, or **126..65535 with
@@ -233,7 +262,7 @@ more bytes than the fixed IPv4 allowance, so a 1500 budget can permit a 1520-byt
 IPv6 packet. IPv4 options, IPv6 extension headers and later wrappers need extra
 operator headroom. No family-dependent adjustment occurs.
 
-### Optional FEC layer
+#### Optional FEC layer
 
 When `fec` is enabled, the server expects the previous side to carry FEC-wrapped KCP packets that match the configured shard counts.
 
@@ -247,7 +276,7 @@ On send, it wraps outbound KCP datagrams in the same FEC format and emits parity
 
 When `fec` is disabled, each session envelope carries one KCP packet directly.
 
-### Data flow direction
+#### Data flow direction
 
 - Packet side to stream side: previous node -> `KcpServer` -> next node
 - Stream replies back to packet side: next node -> `KcpServer` -> previous node
@@ -256,7 +285,7 @@ Incoming KCP data frames are decoded and forwarded to the next node as stream pa
 
 Outgoing stream payload is split into KCP-friendly chunks, tagged as data frames, and sent back through the previous side.
 
-### Close and timeout behavior
+#### Close and timeout behavior
 
 Service Finish detaches and destroys the owned service line immediately while
 its independent session keeps accepted output. From that first closing event,
@@ -278,14 +307,14 @@ receipt, not remote application consumption or persistence. No TCP half-close
 semantics are added. Transport Finish, fatal protocol failure and shutdown abort
 immediately; shutdown never waits for graceful-close deadlines.
 
-Normal sessions ping after `ping-interval-ms` of silence and expire after
-`no-recv-timeout-ms`. Closing sessions use their fixed close deadlines instead
-of letting the normal idle check truncate promised ACK retention. Invalid or
-unrelated packets refresh no session deadline. Once no session or pending
-challenge needs a carrier, local state is cleared and the UDP owner receives
-Finish. Closing one session preserves a carrier still needed by another.
+Normal sessions schedule ping and receive expiry from the last valid reception,
+independently of the KCP update interval. Expiry takes precedence if both are
+due. Closing sessions use their fixed close deadlines. Invalid or unrelated
+packets refresh no session deadline. Once no session or pending challenge needs
+a carrier, local state is cleared and the UDP owner receives Finish. Closing one
+session preserves a carrier still needed by another.
 
-### Backpressure behavior
+#### Backpressure behavior
 
 The server combines each session's local KCP backlog pressure with the shared
 carrier's pressure before notifying that session's next-side service stream.
@@ -296,7 +325,13 @@ notify that service only while the carrier is not paused; neither reason can
 release the other's hold.
 After a new service's Init, any pending carrier Pause is delivered even if Init
 also created KCP pressure, so that service receives its initial hold.
-Service-side Pause/Resume still maps to the carrier.
+In the other direction, each service's latest Pause/Resume controls its own
+hold on carrier reads. Repeated Pause leaves a single hold for that service,
+and the carrier receives Resume only when every service hold is clear. On
+service Finish or peer CLOSE, the session enters closing, retires its service
+and releases that service's hold so the live carrier can receive ACKs for the
+drain. A session that terminates independently also releases its hold if the
+carrier survives.
 
 After an admitted stream payload is encoded and KCP output settles, queued and
 unacknowledged KCP segments above `kcp-send-buffer-limit` set that session's local
@@ -311,15 +346,7 @@ continue while a service is paused. KCP windows, timers and the receive timeout
 remain in force. Every payload still needs KCP and optional FEC processing, so
 the node cannot bypass itself after setup.
 
-## Notes And Caveats
-
-- `KcpServer` is intended to be paired with `KcpClient`.
-- FEC must be enabled on both peers with matching shard settings.
-- The previous node should preserve packet boundaries.
-- `DownStreamInit` is disabled; service lines are created through the upstream handshake.
-- Worker shutdown cancels timers and drains every owned service/session immediately.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

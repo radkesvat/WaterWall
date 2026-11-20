@@ -48,9 +48,21 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         return;
     }
 
-    if (ts->packet_mode && ts->packet_start_immediately)
+    if (! ts->packet_mode)
     {
-        ls->est_received = true;
+        if (! wloopNormalDispatchAllowed(real_worker->loop))
+        {
+            return;
+        }
+        ls->request_ready = true;
+        if (! ls->request_paused && ! testerclientScheduleRequestSend(t, l, ls))
+        {
+            return;
+        }
+    }
+    else if (ts->packet_start_immediately)
+    {
+        ls->request_ready = true;
         if (ts->packet_start_delay_ms > 0)
         {
             const line_task_submit_result_e result =
@@ -66,12 +78,7 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
         else
         {
             ls->request_send_scheduled = false;
-            testerclientScheduleRequestSend(t, l, ls);
-            /* Force-queued work cannot run before this owner callback returns,
-             * so a clear latch here means synchronous admission rejection.
-             * testerclientScheduleRequestSend() already recorded the terminal
-             * verdict; do not arm fresh watchdog work after that request. */
-            if (UNLIKELY(! ls->request_send_scheduled))
+            if (! testerclientScheduleRequestSend(t, l, ls))
             {
                 return;
             }

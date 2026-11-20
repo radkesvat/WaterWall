@@ -203,8 +203,7 @@ void usercontrollerUnregisterLine(tunnel_t *t, line_t *l, usercontroller_lstate_
 // The user sits on the side the line was initiated from:
 //   - started_from_next == false (forward, prev-initiated): upstream payload is the user's upload.
 //   - started_from_next == true  (reverse, next-initiated):  upstream payload is the user's download.
-// So a line started from the next side flips the mapping, which is exactly the
-// TunDevice -> WireGuardDevice -> UserController -> UdpStatelessSocket case.
+// A line started from the next side flips the directional mapping.
 //
 bool usercontrollerObserveDirectional(tunnel_t *t, usercontroller_lstate_t *ls, uint64_t bytes, bool upstream_payload)
 {
@@ -229,7 +228,10 @@ user_admission_result_t usercontrollerTunnelTryManageLine(tunnel_t *t, line_t *l
 {
     assert(lineIsOnCurrentWorker(l));
 
-    usercontroller_lstate_t *ls = lineGetState(l, t);
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(t, l);
+
+    if (ls->phase != kUserControllerOpen)
+        return kUserAdmissionInvalid;
 
     // Already enforced: do not admit/reserve twice.
     if (ls->managed)
@@ -300,7 +302,7 @@ void usercontrollerSweepTimerCallback(wtimer_t *timer)
             continue;
         }
 
-        usercontroller_lstate_t *ls = lineGetState(line, t);
+        usercontroller_lstate_t *ls = usercontrollerGetLineState(t, line);
         if (! ls->managed)
         {
             i += 1U;
@@ -334,47 +336,66 @@ static void usercontrollerReleaseAccounting(tunnel_t *t, line_t *l, usercontroll
     authenticationclientUserReleaseConnection(ts->auth_client_tunnel, &ls->handle, &ls->ip_key);
 }
 
-// Single teardown path. Releases this user's reserved connection slot, destroys local line state,
-// then propagates the real Waterwall finish in the correct directions. The `origin` alone decides
-// which side(s) we may finish, which is what keeps us from reflecting a finish back toward the side
-// that already finished us:
-//
-//   kUserControllerCloseFromPrev : prev finished us -> close next only, never touch prev
-//   kUserControllerCloseFromNext : next finished us -> close prev only, never touch next
-//   kUserControllerCloseInternal : our decision     -> close the non-creator side first, then its owner
-//
-// Accounting release and local-state cleanup make no neighbor callbacks. Hold the line allocation
-// across Finish propagation and recheck logical life before notifying the second side.
+void usercontrollerLinestateDestroy(tunnel_t *tunnel, line_t *line)
+{
+    usercontroller_lstate_t *state = usercontrollerGetLineState(tunnel, line);
+    usercontrollerReleaseAccounting(tunnel, line, state);
+    usercontrollerBandwidthDestroy(state);
+    memoryZeroAligned32(state, tunnelGetCorrectAlignedLineStateSize(sizeof(*state)));
+}
+
+static void usercontrollerFinishNeighbor(tunnel_t *t, line_t *l, bool next)
+{
+    if (next)
+        tunnelNextUpStreamFinish(t, l);
+    else
+        tunnelPrevDownStreamFinish(t, l);
+}
+
 void usercontrollerCloseLine(tunnel_t *t, line_t *l, usercontroller_close_origin_t origin)
 {
-    usercontroller_lstate_t *ls = lineGetState(l, t);
-
-    bool close_next = origin != kUserControllerCloseFromNext;
-    bool close_prev = origin != kUserControllerCloseFromPrev;
-    // Reverse Init puts the creator next. Clean its opposite side before
-    // notifying the creator, which can logically destroy this borrowed line.
-    bool prev_first = origin == kUserControllerCloseInternal && ls->started_from_next;
-
+    usercontroller_lstate_t *ls = usercontrollerGetLineState(t, l);
+    if (ls->phase == kUserControllerNotifyingOwner)
+    {
+        /* The creator initiated its own close during our first notification. */
+        if (origin != kUserControllerCloseInternal)
+            ls->phase = kUserControllerClosed;
+        return;
+    }
+    if (ls->phase == kUserControllerFlushingToPrev || ls->phase == kUserControllerFlushingToNext)
+    {
+        bool next = ls->phase == kUserControllerFlushingToNext;
+        usercontrollerLinestateDestroy(t, l);
+        if (origin == kUserControllerCloseInternal)
+            usercontrollerFinishNeighbor(t, l, next);
+        return;
+    }
+    assert(ls->phase == kUserControllerOpen);
+    const bool owner_next = ls->started_from_next;
     lineRef(l);
-
-    usercontrollerReleaseAccounting(t, l, ls);
-
-    usercontrollerLinestateDestroy(ls);
-
-    if (prev_first)
+    if (origin == kUserControllerCloseInternal)
     {
-        tunnelPrevDownStreamFinish(t, l);
+        usercontrollerLinestateDestroy(t, l);
+        /* Notify the borrower first. A nested close can consume the owner's
+         * notification while its physical line remains logically alive. */
+        ls->phase = kUserControllerNotifyingOwner;
+        usercontrollerFinishNeighbor(t, l, ! owner_next);
+        if (lineIsAlive(l) && ls->phase == kUserControllerNotifyingOwner)
+        {
+            ls->phase = kUserControllerClosed;
+            usercontrollerFinishNeighbor(t, l, owner_next);
+        }
     }
-
-    if (close_next && lineIsAlive(l))
+    else
     {
-        tunnelNextUpStreamFinish(t, l);
+        bool next = origin == kUserControllerCloseFromPrev;
+        ls->phase = next ? kUserControllerFlushingToNext : kUserControllerFlushingToPrev;
+        usercontrollerFlushAccepted(t, l, next);
+        if (lineIsAlive(l) && ls->phase != kUserControllerClosed)
+        {
+            usercontrollerLinestateDestroy(t, l);
+            usercontrollerFinishNeighbor(t, l, next);
+        }
     }
-
-    if (close_prev && ! prev_first && lineIsAlive(l))
-    {
-        tunnelPrevDownStreamFinish(t, l);
-    }
-
     lineUnref(l);
 }

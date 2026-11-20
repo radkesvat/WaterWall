@@ -1,17 +1,79 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Bgp4Client.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Bgp4Client.mdx, and all files must keep the same documentation version.
 -->
 
 # Bgp4Client
 
+## Overview
+
 `Bgp4Client` wraps upstream stream payloads in BGP-like frames and unwraps downstream frames from `Bgp4Server`.
+
+These nodes provide BGP-like stream framing, without BGP routing, route exchange, encryption, or authentication. `settings.password` is accepted but ignored.
+
+## Typical placement
 
 The intended pair is:
 
 ```text
 TcpListener -> Bgp4Client -> ... -> Bgp4Server -> TcpConnector
 ```
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
+
+Client side:
+
+```json
+{
+  "name": "bgp4-client",
+  "type": "Bgp4Client",
+  "settings": {},
+  "next": "transport-out"
+}
+```
+
+Paired server side:
+
+```json
+{
+  "name": "bgp4-server",
+  "type": "Bgp4Server",
+  "settings": {},
+  "next": "target"
+}
+```
+
+The `password` field is accepted for compatibility with the old configuration
+shape, but it is not used for encryption or authentication in the current
+protocol logic.
+
+## Configuration
+
+### Required Fields
+
+Top-level fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | User-chosen node name. Must be unique inside the config file. |
+| `type` | string | Must be exactly `"Bgp4Client"`. |
+| `next` | string | The next stream node that receives wrapped frames. |
+
+### Optional Settings
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `password` | string | — | Accepted but ignored; it provides neither encryption nor authentication. |
+
+No other settings are currently parsed.
+
+## Implementation details
+
+### Stream framing and lifecycle
 
 On the first upstream payload, the client prepends a synthetic BGP OPEN body before the application bytes, then wraps the result with:
 
@@ -25,7 +87,7 @@ The body length is encoded in network byte order and covers the BGP type byte pl
 
 `Bgp4Client` initializes line state during `UpStreamInit`, initializes its receive frame reader before forwarding `Init`, and destroys local line state before forwarding directional `Finish`. It advertises enough left padding for the largest first OPEN prefix. It is a normal layer-4 stream tunnel, not a packet-line tunnel.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

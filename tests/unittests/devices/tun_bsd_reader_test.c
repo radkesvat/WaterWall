@@ -7,6 +7,7 @@
 #include "devices/device_reader_session.h"
 #include "fixtures/worker_registry_fixture.h"
 #include "test_assert.h"
+#include "wevent.h"
 #include "worker_messages.h"
 #include "wwapi.h"
 #include <fcntl.h>

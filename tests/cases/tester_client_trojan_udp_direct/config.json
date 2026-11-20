@@ -1,0 +1,40 @@
+{
+  "name": "tester-client-trojan-udp-direct",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "next": "trojan-client",
+      "settings": {
+        "chunk-count": 2
+      }
+    },
+    {
+      "name": "trojan-client",
+      "type": "TrojanClient",
+      "next": "trojan-server",
+      "settings": {
+        "password": "trojan-tester-local",
+        "target-address": "127.0.0.1",
+        "port": 443,
+        "protocol": "udp",
+        "first-payload-timeout-ms": 60000
+      }
+    },
+    {
+      "name": "trojan-server",
+      "type": "TrojanServer",
+      "next": "tester-server",
+      "settings": {
+        "password": "trojan-tester-local"
+      }
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 2
+      }
+    }
+  ]
+}

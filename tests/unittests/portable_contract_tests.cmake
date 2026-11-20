@@ -49,6 +49,11 @@ target_link_libraries(wwapi_header_test PRIVATE ww)
 set_target_properties(wwapi_header_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
 _waterwall_register_portable_contract(waterwall.wwapi_header_unit wwapi_header_test "unit;headers;logger;portable")
 
+waterwall_add_native_executable(wwapi_event_test EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/net/event/wwapi_event_test.c")
+target_link_libraries(wwapi_event_test PRIVATE ww)
+set_target_properties(wwapi_event_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+_waterwall_register_portable_contract(waterwall.wwapi_event_unit wwapi_event_test "unit;headers;event;portable")
+
 waterwall_add_native_executable(lwip_checksum_link_test EXCLUDE_FROM_ALL SOURCES "${WATERWALL_UNIT_SOURCE_ROOT}/lwip/lwip_checksum_link_test.c")
 # Start from the standalone archive to exercise its hook dependency. Borrow only
 # its lwIP configuration headers; ww's headers and PCH stay out of this consumer.

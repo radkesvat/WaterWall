@@ -315,7 +315,7 @@ static raw_device_t *startDevice(void)
     discard_clock_ms     = 1000;
     discard_log_count    = 0;
     last_discard_log[0]  = 0;
-    raw_device_t *device = rawdeviceCreate("fixture", 0, false, NULL);
+    raw_device_t *device = rawdeviceCreate("fixture", 0, NULL);
     require(device != NULL && rawdeviceBringUp(device), "worker-output startup failed");
     return device;
 }
@@ -467,7 +467,7 @@ static void testCompletionRefusalAndFailure(void)
 }
 static void testStartupRefusal(void)
 {
-    raw_device_t *device = rawdeviceCreate("fixture", 0, false, NULL);
+    raw_device_t *device = rawdeviceCreate("fixture", 0, NULL);
     fail_wait_create     = true;
     require(! rawdeviceBringUp(device) && device->writer_states == NULL && device->writer.current == NULL,
             "native wait allocation refusal retained partial startup state");

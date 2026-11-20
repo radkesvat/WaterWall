@@ -1405,7 +1405,9 @@ static bool sendNghttp2OutboundFrames(tunnel_t *t, line_t *l, httpclient_lstate_
         }
     }
 
-    return true;
+    /* nghttp2 finishes a GOAWAY after the last accepted stream settles. */
+    return ! ls->h2_stream_failed &&
+           (! ls->prev_finished || nghttp2_session_want_read(ls->session) || nghttp2_session_want_write(ls->session));
 }
 
 bool httpclientRefreshHttp2SourcePressure(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
@@ -1614,6 +1616,12 @@ static int httpclientOnFrameRecvCallback(nghttp2_session *session, const nghttp2
 
     httpclient_lstate_t *ls = (httpclient_lstate_t *) userdata;
 
+    if (frame->hd.type == NGHTTP2_GOAWAY && frame->goaway.error_code != NGHTTP2_NO_ERROR)
+    {
+        httpclient_tstate_t *ts = tunnelGetState(ls->tunnel);
+        ls->h2_error_goaway     = ts->stay_alive;
+    }
+
     if (frame->hd.type == NGHTTP2_HEADERS && frame->headers.cat == NGHTTP2_HCAT_RESPONSE)
     {
         if (ls->h2_stream_id == 0)
@@ -1644,8 +1652,8 @@ static int httpclientOnFrameRecvCallback(nghttp2_session *session, const nghttp2
         }
     }
 
-    if ((frame->hd.flags & NGHTTP2_FLAG_END_STREAM) == NGHTTP2_FLAG_END_STREAM &&
-        frame->hd.stream_id == ls->h2_stream_id)
+    if ((frame->hd.type == NGHTTP2_HEADERS || frame->hd.type == NGHTTP2_DATA) &&
+        (frame->hd.flags & NGHTTP2_FLAG_END_STREAM) != 0 && frame->hd.stream_id == ls->h2_stream_id)
     {
         ls->response_complete = true;
     }
@@ -1657,7 +1665,6 @@ static int httpclientOnStreamClosedCallback(nghttp2_session *session, int32_t st
                                             void *userdata)
 {
     discard session;
-    discard error_code;
 
     if (userdata == NULL)
     {
@@ -1668,7 +1675,8 @@ static int httpclientOnStreamClosedCallback(nghttp2_session *session, int32_t st
 
     if (stream_id == ls->h2_stream_id)
     {
-        ls->h2_stream_closed = true;
+        /* A reset can carry NO_ERROR. Only two complete body directions are a clean close. */
+        ls->h2_stream_failed = error_code != NGHTTP2_NO_ERROR || ! ls->h2_end_stream_emitted || ! ls->response_complete;
     }
 
     return 0;
@@ -2411,7 +2419,7 @@ static bool drainDownEvents(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 
 static bool httpclientTransportDrainHttp2Received(tunnel_t *t, line_t *l, httpclient_lstate_t *ls)
 {
-    if (ls->h2_stream_closed && ! ls->h2_end_stream_emitted)
+    if (ls->h2_stream_failed)
         return false;
     if (! httpclientTransportMaybeSubmitWebSocketHttp2Request(t, l, ls))
     {

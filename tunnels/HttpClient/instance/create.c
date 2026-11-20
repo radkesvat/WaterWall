@@ -458,6 +458,14 @@ tunnel_t *httpclientTunnelCreate(node_t *node)
     }
     ts->close_drain_timeout_ms = (uint32_t) timeout_ms;
 
+    if (! jsonObjectFieldStringsAreExact(settings, "stay-alive") ||
+        jsonGetObjectBoolean(settings, "stay-alive", &ts->stay_alive) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: HttpClient->settings->stay-alive must be a boolean");
+        httpclientTunnelDestroy(t, wwLifecycleStartupRollback());
+        return NULL;
+    }
+
     if (! parseHttpVersionMode(ts, settings) || ! parseHttp1TransportMode(ts, settings) ||
         ! parseRequiredFields(ts, settings))
     {

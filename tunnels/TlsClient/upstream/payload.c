@@ -37,34 +37,27 @@ static bool tlsclientQueuePlaintext(tunnel_t *t, line_t *l, sbuf_t *buf)
     return tlsclientUpdateSourcePressure(t, l);
 }
 
-/* Publish consumption before the wire callback. The caller either owns buf
- * locally or leaves it in pending_plaintext for close to reclaim. */
-static bool tlsclientWritePlaintextChunk(tunnel_t *t, line_t *l, sbuf_t *buf)
+/* Publish consumption before TLS output can call either neighbour. */
+static bool tlsclientWritePlaintextChunk(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls)
 {
-    tlsclient_lstate_t *ls     = lineGetState(l, t);
-    int                 length = (int) min(sbufGetLength(buf), (uint32_t) SSL3_RT_MAX_PLAIN_LENGTH);
-    int                 n      = SSL_write(ls->ssl, sbufGetRawPtr(buf), length);
+    sbuf_t *buf    = ls->pending_plaintext;
+    int     length = (int) min(sbufGetLength(buf), (uint32_t) SSL3_RT_MAX_PLAIN_LENGTH);
+    int     n      = SSL_write(ls->ssl, sbufGetRawPtr(buf), length);
     if (UNLIKELY(n <= 0))
     {
+        LOGW("TlsClient: failed to encrypt application payload");
         return false;
     }
     sbufShiftRight(buf, n);
-    if (buf == ls->pending_plaintext)
-        bufferbudgetReservationSetBytes(&ls->pending_reservation, sbufGetLength(buf));
+    bufferbudgetReservationSetBytes(&ls->pending_reservation, sbufGetLength(buf));
     return tlsclientFlushSslOutput(t, l, ls);
 }
 
-bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l)
+/* Finish takes over the published head from any suspended normal pump. The
+ * normal pump must check the association after each handoff before using it. */
+static bool tlsclientPumpPlaintext(tunnel_t *t, line_t *l, tlsclient_lstate_t *ls, bool final)
 {
-    tlsclient_lstate_t *ls = lineGetState(l, t);
-    if (ls->plaintext_write_in_progress || ! ls->handshake_completed)
-    {
-        return true;
-    }
-
-    lineRef(l);
-    ls->plaintext_write_in_progress = true;
-    while (! ls->shaping_producer_paused)
+    while (final || ! ls->shaping_producer_paused || ls->pending_reservation.budget == &ls->direct_budget)
     {
         if (ls->pending_plaintext == NULL)
         {
@@ -81,22 +74,50 @@ bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l)
             bufferbudgetReservationRelease(&ls->pending_reservation);
             continue;
         }
-        if (UNLIKELY(! tlsclientWritePlaintextChunk(t, l, ls->pending_plaintext)))
+        if (UNLIKELY(! tlsclientWritePlaintextChunk(t, l, ls) || ! lineIsAlive(l) || ls->tunnel != t ||
+                     ls->resources_released || (! final && ls->upstream_finished)))
         {
-            if (lineIsAlive(l) && tlsclientPlaintextStateIsActive(t, l))
-            {
-                tlsclientCloseLineBidirectional(t, l);
-            }
-            lineUnref(l);
             return false;
         }
-        if (UNLIKELY(! lineIsAlive(l) || ! tlsclientPlaintextStateIsActive(t, l)))
-        {
-            lineUnref(l);
-            return false;
-        }
-        ls = lineGetState(l, t);
     }
+    return true;
+}
+
+bool tlsclientDrainFinalPlaintext(tunnel_t *t, line_t *l)
+{
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    assert(ls->upstream_finished && ls->ssl != NULL);
+    if (! ls->handshake_completed)
+    {
+        const tlsclient_tstate_t *ts = tunnelGetState(t);
+        if (ts->handshake_takeover_enabled || ! SSL_is_init_finished(ls->ssl))
+            return true;
+    }
+
+    /* Finish can reenter the last handshake write. Flush any remaining flight
+     * bytes before enabling application record shaping. */
+    if (! tlsclientFlushSslOutput(t, l, ls))
+        return false;
+    ls->handshake_completed = true;
+    return tlsclientPumpPlaintext(t, l, ls, true);
+}
+
+bool tlsclientDrainPendingPlaintext(tunnel_t *t, line_t *l)
+{
+    tlsclient_lstate_t *ls = lineGetState(l, t);
+    if (ls->plaintext_write_in_progress || ! ls->handshake_completed || ls->upstream_finished)
+        return true;
+
+    lineRef(l);
+    ls->plaintext_write_in_progress = true;
+    if (! tlsclientPumpPlaintext(t, l, ls, false))
+    {
+        if (lineIsAlive(l) && tlsclientPlaintextStateIsActive(t, l))
+            tlsclientCloseLineBidirectional(t, l);
+        lineUnref(l);
+        return false;
+    }
+
     ls->plaintext_write_in_progress = false;
     if (ls->pending_plaintext == NULL && bufferqueueGetEntryCount(&ls->bq) == 0)
     {
@@ -131,33 +152,14 @@ void tlsclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         return;
     }
 
-    /* A direct admitted input may finish after Pause. Reentrant input joins
-     * the FIFO so it cannot overtake the remaining bytes of this input. */
-    lineRef(l);
-    ls->plaintext_write_in_progress = true;
-    while (sbufGetLength(buf) > 0)
+    /* Retain one direct input under its own accounting. Reentrant input still
+     * enters the bounded FIFO and cannot overtake this head. */
+    if (UNLIKELY(! bufferbudgetTryReserve(&ls->direct_budget, buf, &ls->pending_reservation)))
     {
-        if (UNLIKELY(! tlsclientWritePlaintextChunk(t, l, buf)))
-        {
-            lineReuseBuffer(l, buf);
-            if (lineIsAlive(l) && tlsclientPlaintextStateIsActive(t, l))
-            {
-                LOGW("TlsClient: failed to encrypt application payload");
-                tlsclientCloseLineBidirectional(t, l);
-            }
-            lineUnref(l);
-            return;
-        }
-        if (UNLIKELY(! lineIsAlive(l) || ! tlsclientPlaintextStateIsActive(t, l)))
-        {
-            lineReuseBuffer(l, buf);
-            lineUnref(l);
-            return;
-        }
-        ls = lineGetState(l, t);
+        lineReuseBuffer(l, buf);
+        tlsclientCloseLineBidirectional(t, l);
+        return;
     }
-    lineReuseBuffer(l, buf);
-    ls->plaintext_write_in_progress = false;
+    ls->pending_plaintext = buf;
     discard tlsclientDrainPendingPlaintext(t, l);
-    lineUnref(l);
 }

@@ -1,0 +1,219 @@
+/* Real server ingress capture and authenticated endpoint publication. The normal
+ * lines belong to the fixture adapter; receive consumes every input buffer.
+ * CTest: waterwall.wireguard_server_endpoint_unit */
+#include "../../../../../tunnels/WireGuardServer/server.c"
+#include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/user_runtime.h"
+
+typedef struct fifo_s
+{
+    sbuf_t  *packets[16];
+    unsigned head, count;
+} fifo_t;
+static fifo_t   server_output, client_output;
+static unsigned delivered_count;
+static uint16_t output_port;
+static bool     capture(fifo_t *queue, sbuf_t *packet)
+{
+    twfRequire(queue->count < 16, "endpoint fixture output overflow");
+    queue->packets[(queue->head + queue->count++) % 16] = packet;
+    return true;
+}
+static sbuf_t *take(fifo_t *queue)
+{
+    twfRequire(queue->count != 0, "missing endpoint fixture packet");
+    sbuf_t *packet = queue->packets[queue->head];
+    queue->head    = (queue->head + 1) % 16;
+    --queue->count;
+    return packet;
+}
+static bool clientCapture(void *context, sbuf_t *packet, wireguard_peer_t *peer, const ip_addr_t *ip, uint16_t port)
+{
+    discard context;
+    discard peer;
+    discard ip;
+    discard port;
+    return capture(&client_output, packet);
+}
+static bool serverCapture(void *context, sbuf_t *packet, wireguard_peer_t *peer, const ip_addr_t *ip, uint16_t port)
+{
+    server_t *state = context;
+    discard   peer;
+    twfRequire(ipAddrCmp(ip, &state->bindings[0].ingress->ip), "server output lost its authenticated IP");
+    output_port = port;
+    return capture(&server_output, packet);
+}
+static void delivered(void *context, sbuf_t *packet, wireguard_peer_t *peer)
+{
+    discard context;
+    discard peer;
+    ++delivered_count;
+    reuseBuffer(packet);
+}
+static void established(tunnel_t *owner, line_t *line)
+{
+    discard owner;
+    discard line;
+}
+static void receiveOn(tunnel_t *server, line_t *line, sbuf_t *packet)
+{
+    server_line_t *ls       = lineGetState(line, server);
+    receive_t      received = {.ingress = ls->ingress};
+    receive(server, packet, &received);
+}
+static void exchange(tunnel_t *server, line_t *line, wireguard_device_t *client)
+{
+    ip_addr_t server_ip;
+    twfRequire(ipaddr_aton("192.0.2.2", &server_ip), "invalid server IP");
+    for (unsigned i = 0; i < 16 && (server_output.count != 0 || client_output.count != 0); ++i)
+    {
+        while (client_output.count != 0)
+            receiveOn(server, line, take(&client_output));
+        while (server_output.count != 0)
+            wireguardCommonReceive(client, take(&server_output), &server_ip, 26951);
+    }
+    twfRequire(server_output.count == 0 && client_output.count == 0, "endpoint exchange did not settle");
+}
+static sbuf_t *innerPacket(buffer_pool_t *pool)
+{
+    sbuf_t *packet = bufferpoolGetSmallBuffer(pool);
+    sbufSetLength(packet, 20);
+    sbufWriteZeros(packet, 20);
+    uint8_t *bytes = sbufGetMutablePtr(packet);
+    bytes[0]       = 0x45;
+    bytes[3]       = 20;
+    bytes[8]       = 64;
+    bytes[9]       = 253;
+    bytes[12]      = 10;
+    bytes[15]      = 1;
+    bytes[16]      = 10;
+    bytes[19]      = 2;
+    return packet;
+}
+static void requireEndpoint(server_t *state, line_t *line, uint16_t port, const char *message)
+{
+    server_line_t *ls = lineGetState(line, state->tunnel);
+    twfRequire(state->bindings[0].ingress == ls->ingress && state->bindings[0].usable &&
+                   state->engine.peers[0].port == port && ipAddrCmp(&state->engine.peers[0].ip, &ls->ingress->ip),
+               message);
+}
+int main(void)
+{
+    testCaseSet("wireguard_server_endpoint_test");
+    twfRequire(userTestRuntimeInitialize(), "crypto setup failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
+    twf_worker_env_t environment;
+    twfWorkerEnvSetup(&environment, 8192, 32);
+    tunnel_t *owner  = tunnelCreate(NULL, 0, 0);
+    owner->fnEstD    = established;
+    tunnel_t *server = tunnelCreate(NULL, sizeof(server_t), sizeof(server_line_t));
+    tunnelBind(owner, server);
+    tunnel_chain_t *chain = tunnelchainCreate(1);
+    server->chain         = chain;
+    server_t *state       = tunnelGetState(server);
+    state->tunnel         = server;
+    mutexInit(&state->bindings_lock);
+    wireguardDispatchInit(&state->dispatch);
+    state->ingress_heads      = memoryAllocateZero(sizeof(ingress_t *));
+    wireguard_device_t client = {0};
+    twfRequire(
+        wireguardCommonInit(&client,
+                            "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
+                            NULL,
+                            (wireguard_callbacks_t) {.output = clientCapture}) &&
+            wireguardCommonInit(
+                &state->engine,
+                "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+                state,
+                (wireguard_callbacks_t) {.output = serverCapture, .inner = delivered, .authenticated = authenticated}),
+        "engine setup failed");
+    cJSON *client_peer =
+        cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
+    cJSON *server_peer =
+        cJSON_Parse("{\"publickey\":\"dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=\",\"allowedips\":\"10.0.0.1/32\"}");
+    uint8_t index;
+    twfRequire(wireguardCommonAddConfiguredPeer(&client, client_peer, &index) &&
+                   wireguardCommonAddConfiguredPeer(&state->engine, server_peer, &index),
+               "peer setup failed");
+    cJSON_Delete(client_peer);
+    cJSON_Delete(server_peer);
+    state->bindings[0].occupied = true;
+    state->bindings[0].epoch    = 1;
+    twf_line_pool_t pool;
+    twfLinePoolSetup(&pool, server->lstate_size, 4);
+    line_t *lines[2];
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        lines[i] = twfLinePoolCreateLine(&pool);
+        lineRef(lines[i]);
+        addresscontextSetIpAddressPortProtocol(lineGetSourceAddressContext(lines[i]), "192.0.2.1", 26951, 17);
+        lineGetRoutingContext(lines[i])->peer_source_port = (uint16_t) (26960 + i);
+        initUp(server, lines[i]);
+        server_line_t *ls = lineGetState(lines[i], server);
+        twfRequire(ls->ingress != NULL && ls->ingress->port == 26960 + i,
+                   "ingress used the local listener port instead of the remote source port");
+    }
+    twfRequire(wireguardifStartHandshake(&client, &client.peers[0], true) == ERR_OK, "initiation failed");
+    receiveOn(server, lines[0], take(&client_output));
+    requireEndpoint(state, lines[0], 26960, "authenticated initiation learned the wrong endpoint");
+    /* A valid cookie can cause an exact response retry, but cannot authorize the
+     * different ingress from which it arrived. */
+    wireguard_peer_t      *peer = &state->engine.peers[0];
+    message_cookie_reply_t cookie;
+    uint8_t                source[6] = {192, 0, 2, 2, 0x69, 0x47};
+    twfRequire(
+        peer->pending_handshake.valid &&
+            wireguardCreateCookieReply(
+                &client, &cookie, peer->pending_handshake.mac1, peer->pending_handshake.sender, source, sizeof(source)),
+        "valid response cookie setup failed");
+    sbuf_t *cookie_packet = bufferpoolGetSmallBuffer(environment.pool);
+    sbufSetLength(cookie_packet, sizeof(cookie));
+    sbufWrite(cookie_packet, &cookie, sizeof(cookie));
+    receiveOn(server, lines[1], cookie_packet);
+    twfRequire(server_output.count == 2 && output_port == 26960, "valid cookie did not retry on original endpoint");
+    requireEndpoint(state, lines[0], 26960, "cookie alone roamed the server binding");
+    exchange(server, lines[0], &client);
+    wireguardCommonSendInner(&client, innerPacket(environment.pool));
+    sbuf_t *packet = take(&client_output);
+    sbuf_t *replay = sbufDuplicate(packet);
+    receiveOn(server, lines[0], packet);
+    twfRequire(delivered_count == 1, "authenticated packet was not delivered");
+    receiveOn(server, lines[1], replay);
+    requireEndpoint(state, lines[0], 26960, "replay roamed the server binding");
+    twfRequire(delivered_count == 1, "replay published a packet");
+    wireguardCommonSendInner(&client, innerPacket(environment.pool));
+    packet      = take(&client_output);
+    sbuf_t *bad = sbufDuplicate(packet);
+    sbufGetMutablePtr(bad)[sbufGetLength(bad) - 1] ^= 1;
+    receiveOn(server, lines[1], bad);
+    requireEndpoint(state, lines[0], 26960, "invalid authentication roamed the server binding");
+    twfRequire(delivered_count == 1, "invalid authentication published a packet");
+    receiveOn(server, lines[1], packet);
+    requireEndpoint(state, lines[1], 26961, "fresh authenticated data failed source-port roaming");
+    twfRequire(delivered_count == 2, "roaming packet was not delivered");
+    wireguardifSendKeepalive(&state->engine, peer);
+    twfRequire(output_port == 26961, "reply metadata retained the previous source port");
+    exchange(server, lines[1], &client);
+    ingressRelease(state->bindings[0].ingress);
+    state->bindings[0].ingress = NULL;
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        finishUp(server, lines[i]);
+        lineDestroy(lines[i]);
+        lineUnref(lines[i]);
+    }
+    twfRequire(atomic_load(&state->ingress_count) == 0 && state->ingress_heads[0] == NULL,
+               "borrowed ingress references did not settle");
+    twfLinePoolTeardown(&pool);
+    wireguardDeviceDestroy(&client);
+    wireguardDeviceDestroy(&state->engine);
+    memoryFree(state->ingress_heads);
+    mutexDestroy(&state->bindings_lock);
+    memoryFree(chain);
+    tunnelDestroy(server);
+    tunnelDestroy(owner);
+    twfWorkerEnvTeardown(&environment);
+    networkloggerDestroy();
+    userTestRuntimeCleanup();
+    return 0;
+}

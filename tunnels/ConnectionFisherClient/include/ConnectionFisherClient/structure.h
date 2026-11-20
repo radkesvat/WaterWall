@@ -1,5 +1,6 @@
 #pragma once
 
+#include "close_drain.h"
 #include "wwapi.h"
 
 typedef enum connectionfisherclient_role_e
@@ -11,7 +12,8 @@ typedef enum connectionfisherclient_role_e
 
 typedef struct connectionfisherclient_tstate_s
 {
-    uint32_t simultaneous_tries_perline;
+    uint32_t       simultaneous_tries_perline;
+    close_drain_t *drains[];
 } connectionfisherclient_tstate_t;
 
 typedef struct connectionfisherclient_lstate_s
@@ -34,6 +36,11 @@ typedef struct connectionfisherclient_lstate_s
     line_t                       *main_line;
     buffer_queue_t                pending_up;
     buffer_stream_t               read_stream;
+    close_drain_t                 close_drain;
+    tunnel_t                     *drain_tunnel;
+    line_t                       *drain_line;
+    unsigned                      handoff_depth;
+    bool                          reply_paused;
 } connectionfisherclient_lstate_t;
 
 enum
@@ -73,6 +80,11 @@ bool connectionfisherclientSendPing(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientSelectChild(tunnel_t *t, line_t *child_l);
 bool connectionfisherclientSyncMainSource(tunnel_t *t, line_t *main_l);
 bool connectionfisherclientFlushPendingToSelected(tunnel_t *t, line_t *main_l, line_t *child_l);
+bool connectionfisherclientForwardToChild(tunnel_t *t, line_t *child, sbuf_t *buf);
+void connectionfisherclientPumpClose(tunnel_t *t, line_t *child);
+void connectionfisherclientSetReplyPaused(tunnel_t *t, line_t *child, bool paused);
+void connectionfisherclientQuiesceDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
+void connectionfisherclientStopDrains(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void connectionfisherclientCloseMainLine(tunnel_t *t, line_t *main_l);
 void connectionfisherclientCloseMainLineFromUpstream(tunnel_t *t, line_t *main_l);
 void connectionfisherclientCloseChildLine(tunnel_t *t, line_t *child_l, bool force_close_main);

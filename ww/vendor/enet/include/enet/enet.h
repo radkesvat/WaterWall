@@ -5,6 +5,7 @@
 #ifndef __ENET_ENET_H__
 #define __ENET_ENET_H__
 
+#include <stdint.h>
 #include <stdlib.h>
 
 #ifdef _WIN32
@@ -162,6 +163,7 @@ typedef struct _ENetOutgoingCommand
    ENetListNode outgoingCommandList;
    enet_uint16  reliableSequenceNumber;
    enet_uint16  unreliableSequenceNumber;
+   enet_uint32  firstSentTime;
    enet_uint32  sentTime;
    enet_uint32  roundTripTimeout;
    enet_uint32  queueTime;
@@ -224,6 +226,8 @@ enum
    ENET_PEER_TIMEOUT_LIMIT                = 32,
    ENET_PEER_TIMEOUT_MINIMUM              = 5000,
    ENET_PEER_TIMEOUT_MAXIMUM              = 30000,
+   /* Half the time-comparison window, leaving room for delayed servicing. */
+   ENET_PEER_MAXIMUM_TIMEOUT              = 12 * 60 * 60 * 1000,
    ENET_PEER_PING_INTERVAL                = 500,
    ENET_PEER_UNSEQUENCED_WINDOWS          = 64,
    ENET_PEER_UNSEQUENCED_WINDOW_SIZE      = 1024,
@@ -248,7 +252,8 @@ typedef struct _ENetChannel
 typedef enum _ENetPeerFlag
 {
    ENET_PEER_FLAG_NEEDS_DISPATCH   = (1 << 0),
-   ENET_PEER_FLAG_CONTINUE_SENDING = (1 << 1)
+   ENET_PEER_FLAG_CONTINUE_SENDING = (1 << 1),
+   ENET_PEER_FLAG_TIMEOUT_STARTED = (1 << 2)
 } ENetPeerFlag;
 
 /**
@@ -275,7 +280,7 @@ typedef struct _ENetPeer
    enet_uint32   incomingBandwidthThrottleEpoch;
    enet_uint32   outgoingBandwidthThrottleEpoch;
    enet_uint32   incomingDataTotal;
-   enet_uint32   outgoingDataTotal;
+   uint64_t      outgoingDataTotal;
    enet_uint32   lastSendTime;
    enet_uint32   lastReceiveTime;
    enet_uint32   nextTimeout;
@@ -317,7 +322,7 @@ typedef struct _ENetPeer
    enet_uint16   outgoingUnsequencedGroup;
    enet_uint32   unsequencedWindow [ENET_PEER_UNSEQUENCED_WINDOW_SIZE / 32]; 
    enet_uint32   eventData;
-   size_t        totalWaitingData;
+   size_t        totalWaitingData;           /**< requested allocation bytes retained by queued receive packets, commands and fragment maps */
 } ENetPeer;
 
 /** An ENet packet compressor for compressing UDP packets before socket sends or receives.
@@ -393,7 +398,7 @@ typedef struct _ENetHost
    size_t               bandwidthLimitedPeers;
    size_t               duplicatePeers;              /**< optional number of allowed peers from duplicate IPs, defaults to ENET_PROTOCOL_MAXIMUM_PEER_ID */
    size_t               maximumPacketSize;           /**< the maximum allowable packet size that may be sent or received on a peer */
-   size_t               maximumWaitingData;          /**< the maximum aggregate amount of buffer space a peer may use waiting for packets to be delivered */
+   size_t               maximumWaitingData;          /**< receive allocation admission threshold, including payload, packet, command and fragment-map storage; one admitted packet may cross this threshold */
 } ENetHost;
 
 /**

@@ -49,7 +49,9 @@ struct enet_association_s
     bool                owned_init_entered; /* Init was sent on the line this node created */
     bool                carrier_finished;   /* the carrier's neighbour finished it, or was told it is finished */
     bool                carrier_established;
+    bool                application_established;
     bool                carrier_paused;
+    bool                application_paused;
 };
 
 static void endpointLinestateDestroy(enet_endpoint_lstate_t *ls)
@@ -116,35 +118,7 @@ static void associationPressure(void *user, bool paused)
     endpointSignal(a->tunnel, a->application, paused ? ts->output->application_pause : ts->output->application_resume);
 }
 
-static void serverCopyContext(line_t *service, line_t *carrier)
-{
-    addresscontextCopy(lineGetSourceAddressContext(service), lineGetSourceAddressContext(carrier));
-    addresscontextCopy(lineGetDestinationAddressContext(service), lineGetDestinationAddressContext(carrier));
-    lineGetRoutingContext(service)->local_listener_port = lineGetRoutingContext(carrier)->local_listener_port;
-    lineGetRoutingContext(service)->peer_source_port    = lineGetRoutingContext(carrier)->peer_source_port;
-    lineCopyUsers(service, carrier);
-    if (lineIsFallback(carrier))
-    {
-        lineMarkFallback(service);
-        if (lineHasCloseLingerReason(carrier, kLineCloseLingerPeerWriteShutdown))
-        {
-            lineRequestCloseLinger(service, kLineCloseLingerPeerWriteShutdown);
-        }
-    }
-    /* The service carries a reliable stream; the carrier stays UDP. */
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(service), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(service), IP_PROTO_TCP);
-    if (linePrefersOrdinaryReadUpstream(carrier))
-    {
-        linePreferOrdinaryReadUpstream(service);
-    }
-    if (linePrefersOrdinaryReadDownstream(carrier))
-    {
-        linePreferOrdinaryReadDownstream(service);
-    }
-}
-
-/* ENet admitted the peer. Create the owned service line and open it toward the next node. */
+/* ENet admitted the peer. Let the node prepare its owned service line, then publish and initialize it. */
 static void serverPromote(enet_association_t *a)
 {
     tunnel_t               *t  = a->tunnel;
@@ -154,8 +128,7 @@ static void serverPromote(enet_association_t *a)
         enetSessionAbort(a->session, kEnetSessionAborted);
         return;
     }
-    line_t *service = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), a->wid);
-    serverCopyContext(service, a->carrier);
+    line_t                 *service    = ts->output->create_application(t, a->carrier);
     enet_endpoint_lstate_t *service_ls = lineGetState(service, t);
     *service_ls                        = (enet_endpoint_lstate_t) {.association = a, .role = kEnetApplicationLine};
     a->application                     = service;
@@ -164,7 +137,8 @@ static void serverPromote(enet_association_t *a)
     enet_session_t *session = a->session;
     enetSessionRetain(session);
     lineRef(service);
-    a->owned_init_entered = true;
+    const bool pending_est = a->carrier_established;
+    a->owned_init_entered  = true;
     ts->output->init_owned(t, service);
     bool attached = lineIsAlive(service) && a->application == service;
     if (attached && a->carrier_paused)
@@ -173,7 +147,8 @@ static void serverPromote(enet_association_t *a)
         ts->output->application_pause(t, service);
         attached = lineIsAlive(service) && a->application == service;
     }
-    if (attached && a->carrier_established)
+    /* An Est first received during Init or Pause already reached this service. */
+    if (attached && pending_est)
     {
         ts->output->application_est(t, service);
     }
@@ -326,46 +301,29 @@ static enet_association_t *associationCreate(tunnel_t *t, wid_t wid, line_t *app
     return a;
 }
 
-static bool clientAdmit(tunnel_t *t, line_t *application)
+bool enetEndpointPrepareInit(tunnel_t *t, line_t *line)
+{
+    enet_endpoint_tstate_t *ts  = tunnelGetState(t);
+    const wid_t             wid = lineGetWID(line);
+    assert(lineIsOnCurrentWorker(line) && wid < ts->workers_count);
+    endpointLinestateDestroy(lineGetState(line, t));
+    return endpointAdmissionOpen(ts, wid);
+}
+
+bool enetEndpointStartClient(tunnel_t *t, line_t *application, line_t *carrier)
 {
     enet_endpoint_tstate_t *ts  = tunnelGetState(t);
     const wid_t             wid = lineGetWID(application);
-    assert(wid < ts->workers_count);
-    enet_endpoint_lstate_t *application_ls = lineGetState(application, t);
-    endpointLinestateDestroy(application_ls);
-    if (! endpointAdmissionOpen(ts, wid))
-    {
-        return false;
-    }
-
-    line_t *carrier = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
-    addresscontextCopy(lineGetSourceAddressContext(carrier), lineGetSourceAddressContext(application));
-    addresscontextCopy(lineGetDestinationAddressContext(carrier), lineGetDestinationAddressContext(application));
-    carrier->routing_context.local_listener_port = application->routing_context.local_listener_port;
-    carrier->routing_context.peer_source_port    = application->routing_context.peer_source_port;
-    lineCopyUsers(carrier, application);
-    carrier->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
-    carrier->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
-    carrier->fallback_mode          = application->fallback_mode;
-    if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
-    {
-        lineRequestCloseLinger(carrier, kLineCloseLingerPeerWriteShutdown);
-    }
-    /* The application carries a reliable stream; the carrier is UDP. */
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
-
+    assert(ts->role == kEnetClientEndpoint && lineGetWID(carrier) == wid);
     enet_association_t *a = associationCreate(t, wid, application, carrier);
     if (a == NULL)
     {
-        lineDestroy(carrier);
         return false;
     }
-    *application_ls                    = (enet_endpoint_lstate_t) {.association = a, .role = kEnetApplicationLine};
-    enet_endpoint_lstate_t *carrier_ls = lineGetState(carrier, t);
-    *carrier_ls                        = (enet_endpoint_lstate_t) {.association = a, .role = kEnetCarrierLine};
+    enet_endpoint_lstate_t *application_ls = lineGetState(application, t);
+    *application_ls                        = (enet_endpoint_lstate_t) {.association = a, .role = kEnetApplicationLine};
+    enet_endpoint_lstate_t *carrier_ls     = lineGetState(carrier, t);
+    *carrier_ls                            = (enet_endpoint_lstate_t) {.association = a, .role = kEnetCarrierLine};
 
     enet_session_t *session = a->session;
     enetSessionRetain(session);
@@ -382,34 +340,26 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
     return true;
 }
 
-void enetEndpointClientInit(tunnel_t *t, line_t *application)
-{
-    if (! clientAdmit(t, application))
-    {
-        const enet_endpoint_tstate_t *ts = tunnelGetState(t);
-        ts->output->application_finish(t, application);
-    }
-}
-
-void enetEndpointServerInit(tunnel_t *t, line_t *carrier)
+bool enetEndpointAttachServer(tunnel_t *t, line_t *carrier)
 {
     /* The incoming normal line belongs to the UDP source. The service line waits for ENet's connect event. */
-    enet_endpoint_tstate_t *ts  = tunnelGetState(t);
-    const wid_t             wid = lineGetWID(carrier);
-    assert(lineIsOnCurrentWorker(carrier) && wid < ts->workers_count);
-    enet_endpoint_lstate_t *ls = lineGetState(carrier, t);
-    endpointLinestateDestroy(ls);
-    enet_association_t *a = endpointAdmissionOpen(ts, wid) ? associationCreate(t, wid, NULL, carrier) : NULL;
+    assert(((enet_endpoint_tstate_t *) tunnelGetState(t))->role == kEnetServerEndpoint);
+    enet_association_t *a = associationCreate(t, lineGetWID(carrier), NULL, carrier);
     if (a == NULL)
     {
-        ts->output->carrier_finish(t, carrier);
-        return;
+        return false;
     }
     lineRef(carrier); /* physical reference only; the UDP owner destroys the line */
-    *ls = (enet_endpoint_lstate_t) {.association = a, .role = kEnetCarrierLine};
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
-    enetSessionStart(a->session);
+    enet_endpoint_lstate_t *ls = lineGetState(carrier, t);
+    *ls                        = (enet_endpoint_lstate_t) {.association = a, .role = kEnetCarrierLine};
+    return true;
+}
+
+void enetEndpointStartServer(tunnel_t *t, line_t *carrier)
+{
+    enet_endpoint_lstate_t *ls = lineGetState(carrier, t);
+    assert(ls->role == kEnetCarrierLine && ls->association != NULL);
+    enetSessionStart(ls->association->session);
 }
 
 void enetEndpointApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
@@ -438,8 +388,9 @@ void enetEndpointApplicationEst(tunnel_t *t, line_t *line)
     assert(ls->role == kEnetApplicationLine && ls->association != NULL);
     enet_association_t           *a  = ls->association;
     const enet_endpoint_tstate_t *ts = tunnelGetState(t);
-    if (ts->output->carrier_est != NULL && ! a->carrier_finished)
+    if (ts->output->carrier_est != NULL && ! a->carrier_finished && ! a->application_established)
     {
+        a->application_established = true;
         endpointSignal(t, a->carrier, ts->output->carrier_est);
     }
 }
@@ -451,6 +402,10 @@ void enetEndpointCarrierEst(tunnel_t *t, line_t *line)
     enet_association_t           *a  = ls->association;
     const enet_endpoint_tstate_t *ts = tunnelGetState(t);
     /* Transport readiness, not protocol readiness. A server remembers it for a service that does not exist yet. */
+    if (a->carrier_established)
+    {
+        return;
+    }
     a->carrier_established = true;
     if (a->session != NULL && a->application != NULL)
     {
@@ -467,6 +422,7 @@ void enetEndpointSetApplicationPaused(tunnel_t *t, line_t *line, bool paused)
     /* The stream's consumer is full or ready again: stop or restart datagram ingress at the UDP adapter. */
     if (! a->carrier_finished)
     {
+        a->application_paused = paused;
         endpointSignal(t, a->carrier, paused ? ts->output->carrier_pause : ts->output->carrier_resume);
     }
 }
@@ -509,6 +465,12 @@ void enetEndpointApplicationFinish(tunnel_t *t, line_t *line)
     else
     {
         enetSessionAppFinish(session);
+        /* A detached application cannot release its read hold. Admit ACKs for the remaining drain. */
+        if (enetSessionIsAlive(session) && a->application_paused && endpointAdmissionOpen(ts, a->wid))
+        {
+            a->application_paused = false;
+            endpointSignal(t, a->carrier, ts->output->carrier_resume);
+        }
     }
     enetSessionRelease(session);
 }
@@ -584,6 +546,7 @@ static void endpointOnDestroy(tunnel_t *t, const ww_lifecycle_context_t *context
 
 tunnel_t *enetEndpointCreate(node_t *node, enet_endpoint_role_t role, const enet_output_t *output)
 {
+    assert(role != kEnetServerEndpoint || output->create_application != NULL);
     tunnel_t *t = tunnelCreate(node, sizeof(enet_endpoint_tstate_t), sizeof(enet_endpoint_lstate_t));
     if (! t)
     {

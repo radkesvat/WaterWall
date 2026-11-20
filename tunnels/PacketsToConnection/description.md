@@ -1,9 +1,11 @@
 <!--
-Documentation version: 163
+Documentation version: 164
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketsToConnection.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketsToConnection.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketsToConnection
+
+## Overview
 
 `PacketsToConnection` is a packet-to-transport bridge built on lwIP.
 
@@ -17,7 +19,7 @@ TunDevice and PTC, so direct checksum and output capabilities remain available.
 Replies retain their existing connection owner. Affinity serializes admitted
 work but does not reconstruct packet order lost before admission.
 
-## Instance MTU
+### Instance MTU
 
 Optional integer `mtu` defaults to core `misc.mtu` at construction (core fallback
 1500). Its range is **68..65535 bytes**: raw IPv4 MTU installed on every lazy worker-local virtual interface.
@@ -27,7 +29,7 @@ or out-of-range values reject construction. An unsupported inherited default als
 fails; supply a supported node override. This is not measured path MTU or MTU negotiation.
 Existing lwIP IPv4 fragmentation follows this interface MTU.
 
-## What It Is
+### What It Is
 
 This node is for chains that start from packet traffic and then want to enter Waterwall's normal connection-oriented world.
 
@@ -38,7 +40,7 @@ Conceptually:
 
 It is closer to a small in-process transport stack bridge than to a framing adapter.
 
-## What It Is Not
+### What It Is Not
 
 - It is not a TUN device manager.
 - It does not create or configure routes or OS policy rules.
@@ -49,7 +51,7 @@ It is closer to a small in-process transport stack bridge than to a framing adap
 
 `PacketsToConnection` owns the lwIP transport bridge side.
 
-## Current Protocol Support
+### Current Protocol Support
 
 - IPv4: supported
 - TCP: supported
@@ -59,200 +61,42 @@ It is closer to a small in-process transport stack bridge than to a framing adap
 
 Unsupported packets are dropped conservatively.
 
-## Checksum Finalization Boundary
+## Typical placement
 
-`PacketsToConnection` is the final consumer of the packet buffer's checksum recalculation request. It takes
-and clears that request before any validation or drop path, normalizes shifted input into mutable aligned storage, and
-then repairs the supported checksums before typed parsing or lwIP ingress. A malformed, IPv6, stopping, or refused
-packet therefore cannot leak its request into the next unrelated packet on the worker line.
+Example packet-to-service chain:
 
-For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
+```text
+TunDevice <--> PacketsToConnection <--> TcpConnector
+```
 
-The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
-offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
-at device ingress or before this node when fragmented datagrams must be delivered.
-The first unsupported-fragment drop logs a warning; subsequent drops increment the
-instance counter, whose total is logged at destruction. Rejection releases the
-input resources, preserves the packet line and leaves other connections running.
-Malformed packet structure follows the existing validation/drop path.
+or:
 
-## Flow Model
+```text
+WireGuardServer <--> PacketsToConnection <--> HttpClient
+```
 
-### Packet ingress
+The key idea is that the previous side is packet-oriented, while the next side is normal Waterwall connection-oriented chaining.
 
-Upstream payload must be a full IPv4 packet.
+## Minimal practical example
 
-`PacketsToConnection` does not create one lwIP `netif` per destination IP.
+Node fragment; define the referenced neighbors and peers in the same deployment.
 
-Instead, it keeps a worker-local route context for each packet worker that sends packets into the tunnel. For IPv4, that route context owns one lwIP `netif` with `NETIF_FLAG_PRETEND` enabled.
+Feed this fragment from an IPv4 packet path and define `service-chain-entry` as the connection-side service or connector. Empty settings select the ordinary defaults without fake DNS. Return packets follow the packet side; this is a TCP/UDP bridge.
 
-The destination IP is preserved in the packet and in the lwIP PCB tuple, but it is not used as the key for creating separate route contexts. In the current source, the IPv4 route-context lookup is keyed by packet worker id.
+```json
+{
+  "name": "ptc",
+  "type": "PacketsToConnection",
+  "settings": {},
+  "next": "service-chain-entry"
+}
+```
 
-Each worker-local route is published only after its pretend netif, TCP wildcard
-listener, and UDP wildcard PCB have all been created successfully. Later packets
-reuse that complete route; listener setup is not repeated per packet.
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-The Waterwall lwIP pretend patch lets those wildcard PCBs accept packets for arbitrary destination addresses and ports on the pretend netif while still preserving the original local destination tuple.
+## Configuration
 
-### TCP flow creation
-
-When lwIP accepts a TCP connection:
-
-- `PacketsToConnection` creates a real Waterwall line
-- fills the line source/destination address context from the TCP tuple
-- schedules upstream `Init`
-- forwards later payload with upstream `Payload`
-
-Downstream payload from the next tunnel is written back into lwIP with `tcp_write()`.
-
-The TCP listener is not per destination port. It is bound as a pretend listener on the worker-local netif, and accepted TCP PCBs carry the original destination IP and port from the packet.
-
-### UDP flow creation
-
-UDP is tracked per worker-local route context and per 4-tuple:
-
-- source IPv4 address
-- destination IPv4 address
-- source port
-- destination port
-
-When the first datagram for a UDP flow arrives:
-
-- `PacketsToConnection` creates a real Waterwall line for that flow
-- fills source/destination address context
-- schedules a checked owner-worker Open operation that sends upstream `Init` and arms the one idle timer
-- forwards datagrams with upstream `Payload`
-
-Open is required control and is queued before the intentionally lossy payload operation. If Open admission is refused,
-the node first detaches the PCB, timer, and flow-map entry inside the owner engine, records the owned line in its
-preallocated terminal-reconciliation registry, and then requests orderly shutdown as escalation. Cleanup therefore does
-not depend on the refused queue or on Stop discovering a still-registered flow. A later payload refusal is still an
-ordinary UDP drop because the timer already bounds the flow.
-
-Downstream payload from the next tunnel is sent back through the connected UDP PCB, using the original local destination address and port as the packet source.
-
-UDP lines are closed by idle timeout, not by packet half-close semantics.
-
-Like TCP, the initial UDP listener is not per destination port. The pretend UDP path creates or reuses a connected per-flow UDP PCB carrying the original source and destination tuple, and `PacketsToConnection` maps that tuple to a Waterwall line.
-
-## Worker And Lifetime Model
-
-This tunnel sits on a shared packet line on the packet side and creates normal Waterwall lines behind it.
-
-Important internal rules:
-
-- the packet line is not closed during runtime
-- packet-line `Init` is a startup/bootstrap event, not a per-flow open
-- generated TCP/UDP Waterwall lines are owned by the packet worker that accepted the flow
-- lwIP callbacks hand work back to the owning line worker through the typed-result `lineScheduleTask()` and
-  `lineScheduleTaskWithBuf()` contract. Required control refusal makes the producer terminal on the owner engine; optional cancellation is deliberately null and cleanup stays on the owner.
-  Buffered delivery transfers its copied buffer on every result
-- UDP idle close uses one cancellable owner-worker timer. The timer owns exactly one line reference while armed,
-  activity resets the same timer, and close cancels it and drops the reference before line state is zeroed
-- packets emitted back to the packet side use the worker packet line for that packet worker
-- the worker-local netifs use the instance `mtu`, so a response larger than it leaves as IPv4 fragments
-  rather than as one oversized raw packet the packet topology could not carry. Fake-DNS replies go out through that
-  same netif rather than straight at the neighbour: echoed question names and answer records make reply sizes
-  variable, and replies can exceed small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes.
-  The reply is copied into a stack-owned `PBUF_RAM` and submitted as a UDP datagram
-  through `ip4_output_if()`, so lwIP constructs
-  the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
-  flags, per-fragment lengths, and checksums. That publication happens inside the owner engine, which is legal
-  because netif output only calls a certified enqueue-only TUN sink inline; arbitrary neighbours stay deferred
-- packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
-  `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
-  closes both gates in `onQuiesceRequest()` and waits for admitted callbacks in `onQuiesceWait()` before any component
-  stops, so an already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
-  refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
-  still receives its one explicit teardown `Finish` during the owner-worker drain
-- netif output copies each pbuf packet directly into one best-fit, padded sbuf. A reciprocal immediate TunDevice
-  that certifies enqueue-only packet delivery receives that same buffer inline on the owner packet worker;
-  other neighbours receive it through deferred delivery. No arbitrary callback can reenter stack input.
-  Quiesce closes output admission; canceled messages destroy their detached sbuf without borrowing a worker pool.
-  Fake-DNS mapping transactions and reverse-name copying use one node mutex shared across workers. No cache-entry
-  pointer escapes that scope. The mutex is released before stack output, neighbour callbacks or worker posts
-- top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
-  copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally verifies the IPv4 header and
-  any nonzero UDP checksum before it can answer or mutate its mapping cache, except
-  on an active direct TUN pair. Structural checks remain active in both modes
-- upstream packet input rejects IPv4 fragments before fake DNS, route/listener creation,
-  or lwIP input. Reassembled packets follow ordinary buffer ownership; no per-buffer
-  fragment settlement claim is needed
-- every generated TCP/UDP line is registered in a per-worker owner list until its one close path unlinks it.
-  `onWorkerStop` drains that worker's lines and detaches PCB, route-map, callback and UDP-idle producers in its engine; it
-  preserves whether next-side `Init` completed, destroys PTC line state, sends exactly one next-side teardown `Finish`
-  when required, and calls `lineDestroy()`. Configuration Stop waits for all worker drains; terminal worker
-  shutdown performs the same drain locally without relying on new message admission
-- Stop explicitly detaches every owned per-flow UDP PCB, wildcard UDP PCB, and TCP listener before removing its netif.
-  WaterWall's lwIP patch treats that as a raw-owner precondition and rejects `netif_remove()` if either raw owner is
-  still present; it never silently frees a pointer the tunnel could still retain. A failed conversion from a full TCP
-  PCB to a listener also closes or aborts that full PCB before the route is retried
-
-This keeps line destruction and tunnel state teardown on the normal Waterwall line side instead of relying on ad-hoc cross-worker message ownership.
-
-The internally created TCP/UDP lines are normal connection lines. They are separate from the persistent worker packet line and may be closed and destroyed during normal runtime.
-
-## Finish / Close Behavior
-
-When the network side closes a flow:
-
-- a connected TCP PCB moves to an instance-owned closer, even when the application queue is empty
-- the closer copies only the suffix `tcp_write()` has not accepted; bytes already copied into lwIP are never duplicated
-- receive credit is returned, peer data is consumed, and a TX-only `tcp_shutdown()` sends FIN after every accepted byte
-- this tunnel destroys its own line state
-- if upstream `Init` was already sent, upstream `Finish` is propagated
-- the internally created line is then destroyed by `PacketsToConnection`
-
-When the next tunnel sends downstream `Finish`:
-
-- `PacketsToConnection` transfers a connected TCP PCB to the same graceful closer
-- destroys its own line state
-- destroys the internally created line
-
-It does not reflect that downstream `Finish` back toward upstream.
-
-The closer has monotonic delivering, FIN-pending, and closing phases. Delivery and peer-close deadlines are bounded at
-30 and 60 seconds, and one instance may retain at most 4096 closers and 16 MiB of copied suffixes. Allocation, capacity,
-terminal write, or deadline failure resets that flow; Stop aborts all active closers before route/netif removal.
-
-That matches Waterwall's direction rules for internally created lines.
-
-The shared packet line is not destroyed by these flow closes. It remains alive until the tunnel chain is destroyed.
-
-## Pause / Resume
-
-### TCP
-
-TCP backpressure is integrated with Waterwall:
-
-- if lwIP cannot accept all downstream bytes, remaining data is queued
-- upstream is paused with `tunnelNextUpStreamPause()`
-- lwIP sent callbacks flush the queue, and `tcp_poll` supplies bounded progress when the first write accepted nothing
-- upstream is resumed with `tunnelNextUpStreamResume()` when writable again
-- acknowledgement records keep their totals and remaining-byte arithmetic at 32 bits, so one stream buffer may exceed
-  65535 bytes even though each individual lwIP sent callback reports a 16-bit count. Empty TCP buffers are consumed
-  without entering the write or acknowledgement queues
-
-For receive-side backpressure:
-
-- downstream `Pause` stops immediate `tcp_recved()`
-- downstream `Resume` releases the deferred receive credit
-
-### UDP
-
-UDP has no true stream backpressure model.
-
-Current behavior:
-
-- downstream `Pause` marks the flow paused
-- inbound UDP datagrams received while paused are dropped
-- downstream `Resume` clears the paused state
-- downstream application payloads are limited to the IPv4 UDP maximum of `65507` bytes; larger buffers are dropped
-  without narrowing through lwIP's 16-bit APIs, while an empty UDP payload remains a valid header-only datagram
-
-This is intentional and should be treated as a current limitation of the UDP path.
-
-## JSON Settings
+### JSON Settings
 
 `PacketsToConnection` currently supports:
 
@@ -335,7 +179,7 @@ remain available until capacity requires reuse. The supported TTL range remains
 new-name admission for a long time in a full cache. Clients must not keep using a
 fake address after its answer TTL, and downstream queueing should remain bounded.
 
-### Example
+#### Example
 
 ```json
 {
@@ -355,23 +199,9 @@ fake address after its answer TTL, and downstream queueing should remain bounded
 }
 ```
 
-## Typical Placement
+## Usage and troubleshooting
 
-Example packet-to-service chain:
-
-```text
-TunDevice <--> PacketsToConnection <--> TcpConnector
-```
-
-or:
-
-```text
-WireGuardDevice <--> PacketsToConnection <--> HttpClient
-```
-
-The key idea is that the previous side is packet-oriented, while the next side is normal Waterwall connection-oriented chaining.
-
-## Capacity
+### Capacity
 
 All `ConnectionToPackets` and `PacketsToConnection` instances share one growable
 lwIP allocator and its startup limits across the process. Configure these fields
@@ -437,7 +267,7 @@ Exhaustion refuses an attachment. Packet ingress still requires complete IPv4
 datagrams; larger pool limits do not enable fragment input or change reassembly
 policy.
 
-## Capacity API (`stack-stats`)
+### Capacity API (`stack-stats`)
 
 Both bridge nodes register the read-only `stack-stats` operation. Grant an
 APIServer client the exact configuration, node and operation permission. Use the
@@ -486,7 +316,7 @@ response limit, working-memory allowance and deadline. A malformed body returns
 can have an empty body. Use per-pool count refusals, shared byte refusals and port
 refusals to identify which resource needs attention before changing a limit.
 
-## Limitations
+### Limitations
 
 - IPv6 is not implemented
 - upstream packet input must be a complete IPv4 datagram, including traffic addressed
@@ -517,55 +347,32 @@ refusals to identify which resource needs attention before changing a limit.
 - this node assumes packet payload really is IP traffic and does not validate every malformed edge case beyond conservative basic checks
 - this node is not a packet-framing tunnel and does not add per-payload headers; its node declares no extra left-padding requirement
 
-## Difference From PacketsToStream
+## Advanced behavior
+
+### Checksum Finalization Boundary
+
+`PacketsToConnection` is the final consumer of the packet buffer's checksum recalculation request. It takes
+and clears that request before any validation or drop path, normalizes shifted input into mutable aligned storage, and
+then repairs the supported checksums before typed parsing or lwIP ingress. A malformed, IPv6, stopping, or refused
+packet therefore cannot leak its request into the next unrelated packet on the worker line.
+
+For a complete IPv4 TCP or UDP packet, finalization repairs the IPv4 header and transport checksum.
+
+The packet input accepts complete IPv4 datagrams. MF or a nonzero fragment
+offset causes a bounded drop before stack delivery; DF alone is allowed. Reassemble
+at device ingress or before this node when fragmented datagrams must be delivered.
+The first unsupported-fragment drop logs a warning; subsequent drops increment the
+instance counter, whose total is logged at destruction. Rejection releases the
+input resources, preserves the packet line and leaves other connections running.
+Malformed packet structure follows the existing validation/drop path.
+
+### Difference From PacketsToStream
 
 Use `PacketsToStream` when you only need to preserve packet boundaries over a stream transport.
 
 Use `PacketsToConnection` when you need lwIP to reconstruct transport flows and expose them as normal Waterwall lines.
 
-## Node Metadata
-
-Source-backed metadata:
-
-| Property | Value |
-| --- | --- |
-| node flags | `kNodeFlagSupportsTrustedPacketChecksums` |
-| `can_have_prev` | `true` |
-| `can_have_next` | `true` |
-| `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer3` |
-| `layer_group_next_node` | `kNodeLayer4` |
-| `required_padding_left` | `0` bytes |
-
-The checksum capability bit lets `PacketsToConnection` participate in the
-direct trusted-checksum path with an eligible adjacent Linux `TunDevice`.
-Receive trust activates automatically during pair setup; transmit checksum
-offload additionally requires negotiated support and ready resources.
-
-## Engine resources and lifecycle
-
-The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
-all bridge instances on that worker. There is no separate stack thread or protocol
-core mutex. PTC selects the flow worker from the current packet tuple; CTP preserves the application
-line's owner and queues return packets after tuple/generation lookup. Normal-line callbacks and arbitrary packet neighbours remain deferred, including
-same-worker delivery. Only PTC's immediate certified enqueue-only packet sink
-has the direct-delivery exception.
-
-Growable flow/payload pools share the process-wide capacity limits above. Each
-active engine adds bounded control tables and 17 timeout records; unused workers
-allocate no engine. CTP connected source-port reservations distinguish full wire
-tuples and stay held through PCB reclamation, including TIME_WAIT. Unconnected
-reservations retain conservative port exclusion. Generated IPv4 and IPv6 fragment
-IDs use separate shared sequences with their existing finite-width wrap behavior.
-Worker-local detached drain lists retain each node's aggregate 4,096-object and
-16 MiB allowance. Pool/quota locks never cover stack traversal or output.
-
-Worker quiescence detaches engine timers before normal-loop admission closes. Nodes
-remove their local stack roots during owner drain; runtime teardown then releases
-engines after detached messages settle and before loops and pools disappear. Shared
-pools, occupancy accounts and the process ISN secret finalize after all workers exit.
-
-## Direct TunDevice checksum policy
+### Direct TunDevice checksum policy
 
 A reciprocal immediate Linux `TunDevice -> PacketsToConnection` pair
 automatically trusts incoming IPv4 header and TCP/UDP checksums in raw,
@@ -590,3 +397,223 @@ fake DNS replies, is checksummed before IP fragmentation. In negotiated offload
 mode, TUN writes complete packets as `NEEDS_CSUM` with the correct pseudoheader
 seed; fragments retain ordinary metadata. Modes are immutable through quiescence
 and owner-worker drain.
+
+## Implementation details
+
+### Flow Model
+
+#### Packet ingress
+
+Upstream payload must be a full IPv4 packet.
+
+`PacketsToConnection` does not create one lwIP `netif` per destination IP.
+
+Instead, it keeps a worker-local route context for each packet worker that sends packets into the tunnel. For IPv4, that route context owns one lwIP `netif` with `NETIF_FLAG_PRETEND` enabled.
+
+The destination IP is preserved in the packet and in the lwIP PCB tuple, but it is not used as the key for creating separate route contexts. In the current source, the IPv4 route-context lookup is keyed by packet worker id.
+
+Each worker-local route is published only after its pretend netif, TCP wildcard
+listener, and UDP wildcard PCB have all been created successfully. Later packets
+reuse that complete route; listener setup is not repeated per packet.
+
+The Waterwall lwIP pretend patch lets those wildcard PCBs accept packets for arbitrary destination addresses and ports on the pretend netif while still preserving the original local destination tuple.
+
+#### TCP flow creation
+
+When lwIP accepts a TCP connection:
+
+- `PacketsToConnection` creates a real Waterwall line
+- fills the line source/destination address context from the TCP tuple
+- schedules upstream `Init`
+- forwards later payload with upstream `Payload`
+
+Downstream payload from the next tunnel is written back into lwIP with `tcp_write()`.
+
+The TCP listener is not per destination port. It is bound as a pretend listener on the worker-local netif, and accepted TCP PCBs carry the original destination IP and port from the packet.
+
+#### UDP flow creation
+
+UDP is tracked per worker-local route context and per 4-tuple:
+
+- source IPv4 address
+- destination IPv4 address
+- source port
+- destination port
+
+When the first datagram for a UDP flow arrives:
+
+- `PacketsToConnection` creates a real Waterwall line for that flow
+- fills source/destination address context
+- schedules a checked owner-worker Open operation that sends upstream `Init` and arms the one idle timer
+- forwards datagrams with upstream `Payload`
+
+Open is required control and is queued before the intentionally lossy payload operation. If Open admission is refused,
+the node first detaches the PCB, timer, and flow-map entry inside the owner engine, records the owned line in its
+preallocated terminal-reconciliation registry, and then requests orderly shutdown as escalation. Cleanup therefore does
+not depend on the refused queue or on Stop discovering a still-registered flow. A later payload refusal is still an
+ordinary UDP drop because the timer already bounds the flow.
+
+Downstream payload from the next tunnel is sent back through the connected UDP PCB, using the original local destination address and port as the packet source.
+
+UDP lines are closed by idle timeout, not by packet half-close semantics.
+
+Like TCP, the initial UDP listener is not per destination port. The pretend UDP path creates or reuses a connected per-flow UDP PCB carrying the original source and destination tuple, and `PacketsToConnection` maps that tuple to a Waterwall line.
+
+### Worker And Lifetime Model
+
+This tunnel sits on a shared packet line on the packet side and creates normal Waterwall lines behind it.
+
+Important internal rules:
+
+- the packet line is not closed during runtime
+- packet-line `Init` is a startup/bootstrap event, not a per-flow open
+- generated TCP/UDP Waterwall lines are owned by the packet worker that accepted the flow
+- lwIP callbacks hand work back to the owning line worker through the typed-result `lineScheduleTask()` and
+  `lineScheduleTaskWithBuf()` contract. Required control refusal makes the producer terminal on the owner engine; optional cancellation is deliberately null and cleanup stays on the owner.
+  Buffered delivery transfers its copied buffer on every result
+- UDP idle close uses one cancellable owner-worker timer. The timer owns exactly one line reference while armed,
+  activity resets the same timer, and close cancels it and drops the reference before line state is zeroed
+- packets emitted back to the packet side use the worker packet line for that packet worker
+- the worker-local netifs use the instance `mtu`, so a response larger than it leaves as IPv4 fragments
+  rather than as one oversized raw packet the packet topology could not carry. Fake-DNS replies go out through that
+  same netif rather than straight at the neighbour: echoed question names and answer records make reply sizes
+  variable, and replies can exceed small IPv4 MTUs. PTC accepts the core's legal minimum MTU of 68 bytes.
+  The reply is copied into a stack-owned `PBUF_RAM` and submitted as a UDP datagram
+  through `ip4_output_if()`, so lwIP constructs
+  the IPv4 header, allocates the shared identification value, and applies fragmentation with stack-owned offsets, MF
+  flags, per-fragment lengths, and checksums. That publication happens inside the owner engine, which is legal
+  because netif output only calls a certified enqueue-only TUN sink inline; arbitrary neighbours stay deferred
+- packet emission is protected by an admission gate held through the previous-neighbour callback, and normal-line
+  `Init`/`Payload`/`Resume`/`Finish` work uses a second gate held through the next-neighbour callback. Global shutdown
+  closes both gates in `onQuiesceRequest()` and waits for admitted callbacks in `onQuiesceWait()` before any component
+  stops, so an already-admitted callback finishes before its neighbour can stop and queued work that runs later is cancelled. A
+  refused next-side ordinary work recycles anything it owns and leaves teardown to the owner path; an initialized line
+  still receives its one explicit teardown `Finish` during the owner-worker drain
+- netif output copies each pbuf packet directly into one best-fit, padded sbuf. A reciprocal immediate TunDevice
+  that certifies enqueue-only packet delivery receives that same buffer inline on the owner packet worker;
+  other neighbours receive it through deferred delivery. No arbitrary callback can reenter stack input.
+  Quiesce closes output admission; canceled messages destroy their detached sbuf without borrowing a worker pool.
+  Fake-DNS mapping transactions and reverse-name copying use one node mutex shared across workers. No cache-entry
+  pointer escapes that scope. The mutex is released before stack output, neighbour callbacks or worker posts
+- top-level packet parsing reads only the version byte before normalizing cursor alignment. Shifted packet buffers are
+  copied to aligned sbuf storage before any typed IPv4/UDP access; fake-DNS additionally verifies the IPv4 header and
+  any nonzero UDP checksum before it can answer or mutate its mapping cache, except
+  on an active direct TUN pair. Structural checks remain active in both modes
+- upstream packet input rejects IPv4 fragments before fake DNS, route/listener creation,
+  or lwIP input. Reassembled packets follow ordinary buffer ownership; no per-buffer
+  fragment settlement claim is needed
+- every generated TCP/UDP line is registered in a per-worker owner list until its one close path unlinks it.
+  `onWorkerStop` drains that worker's lines and detaches PCB, route-map, callback and UDP-idle producers in its engine; it
+  preserves whether next-side `Init` completed, destroys PTC line state, sends exactly one next-side teardown `Finish`
+  when required, and calls `lineDestroy()`. Configuration Stop waits for all worker drains; terminal worker
+  shutdown performs the same drain locally without relying on new message admission
+- Stop explicitly detaches every owned per-flow UDP PCB, wildcard UDP PCB, and TCP listener before removing its netif.
+  WaterWall's lwIP patch treats that as a raw-owner precondition and rejects `netif_remove()` if either raw owner is
+  still present; it never silently frees a pointer the tunnel could still retain. A failed conversion from a full TCP
+  PCB to a listener also closes or aborts that full PCB before the route is retried
+
+This keeps line destruction and tunnel state teardown on the normal Waterwall line side instead of relying on ad-hoc cross-worker message ownership.
+
+The internally created TCP/UDP lines are normal connection lines. They are separate from the persistent worker packet line and may be closed and destroyed during normal runtime.
+
+### Finish / Close Behavior
+
+When the network side closes a flow:
+
+- a connected TCP PCB moves to an instance-owned closer, even when the application queue is empty
+- the closer copies only the suffix `tcp_write()` has not accepted; bytes already copied into lwIP are never duplicated
+- receive credit is returned, peer data is consumed, and a TX-only `tcp_shutdown()` sends FIN after every accepted byte
+- this tunnel destroys its own line state
+- if upstream `Init` was already sent, upstream `Finish` is propagated
+- the internally created line is then destroyed by `PacketsToConnection`
+
+When the next tunnel sends downstream `Finish`:
+
+- `PacketsToConnection` transfers a connected TCP PCB to the same graceful closer
+- destroys its own line state
+- destroys the internally created line
+
+It does not reflect that downstream `Finish` back toward upstream.
+
+The closer has monotonic delivering, FIN-pending, and closing phases. Delivery and peer-close deadlines are bounded at
+30 and 60 seconds, and one instance may retain at most 4096 closers and 16 MiB of copied suffixes. Allocation, capacity,
+terminal write, or deadline failure resets that flow; Stop aborts all active closers before route/netif removal.
+
+That matches Waterwall's direction rules for internally created lines.
+
+The shared packet line is not destroyed by these flow closes. It remains alive until the tunnel chain is destroyed.
+
+### Pause / Resume
+
+#### TCP
+
+TCP backpressure is integrated with Waterwall:
+
+- if lwIP cannot accept all downstream bytes, remaining data is queued
+- upstream is paused with `tunnelNextUpStreamPause()`
+- lwIP sent callbacks flush the queue, and `tcp_poll` supplies bounded progress when the first write accepted nothing
+- upstream is resumed with `tunnelNextUpStreamResume()` when writable again
+- acknowledgement records keep their totals and remaining-byte arithmetic at 32 bits, so one stream buffer may exceed
+  65535 bytes even though each individual lwIP sent callback reports a 16-bit count. Empty TCP buffers are consumed
+  without entering the write or acknowledgement queues
+
+For receive-side backpressure:
+
+- downstream `Pause` stops immediate `tcp_recved()`
+- downstream `Resume` releases the deferred receive credit
+
+#### UDP
+
+UDP has no true stream backpressure model.
+
+Current behavior:
+
+- downstream `Pause` marks the flow paused
+- inbound UDP datagrams received while paused are dropped
+- downstream `Resume` clears the paused state
+- downstream application payloads are limited to the IPv4 UDP maximum of `65507` bytes; larger buffers are dropped
+  without narrowing through lwIP's 16-bit APIs, while an empty UDP payload remains a valid header-only datagram
+
+This is intentional and should be treated as a current limitation of the UDP path.
+
+### Node Metadata
+
+Source-backed metadata:
+
+| Property | Value |
+| --- | --- |
+| node flags | `kNodeFlagSupportsTrustedPacketChecksums` |
+| `can_have_prev` | `true` |
+| `can_have_next` | `true` |
+| `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer3` |
+| `layer_group_next_node` | `kNodeLayer4` |
+| `required_padding_left` | `0` bytes |
+
+The checksum capability bit lets `PacketsToConnection` participate in the
+direct trusted-checksum path with an eligible adjacent Linux `TunDevice`.
+Receive trust activates automatically during pair setup; transmit checksum
+offload additionally requires negotiated support and ready resources.
+
+### Engine resources and lifecycle
+
+The runtime lazily creates one raw lwIP engine per ordinary event worker, shared by
+all bridge instances on that worker. There is no separate stack thread or protocol
+core mutex. PTC selects the flow worker from the current packet tuple; CTP preserves the application
+line's owner and queues return packets after tuple/generation lookup. Normal-line callbacks and arbitrary packet neighbours remain deferred, including
+same-worker delivery. Only PTC's immediate certified enqueue-only packet sink
+has the direct-delivery exception.
+
+Growable flow/payload pools share the process-wide capacity limits above. Each
+active engine adds bounded control tables and 17 timeout records; unused workers
+allocate no engine. CTP connected source-port reservations distinguish full wire
+tuples and stay held through PCB reclamation, including TIME_WAIT. Unconnected
+reservations retain conservative port exclusion. Generated IPv4 and IPv6 fragment
+IDs use separate shared sequences with their existing finite-width wrap behavior.
+Worker-local detached drain lists retain each node's aggregate 4,096-object and
+16 MiB allowance. Pool/quota locks never cover stack traversal or output.
+
+Worker quiescence detaches engine timers before normal-loop admission closes. Nodes
+remove their local stack roots during owner drain; runtime teardown then releases
+engines after detached messages settle and before loops and pools disappear. Shared
+pools, occupancy accounts and the process ISN secret finalize after all workers exit.

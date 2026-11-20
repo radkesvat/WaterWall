@@ -8,7 +8,7 @@ Raw-peer chains:
 
 - `normal-application` (`TcpListener`, port 26800) → `normal-http`
   (`HttpClient`, default drain timeout) → `normal-carrier` (`TcpConnector`).
-- `timed-application` (port 26802) → `timed-http` (1000 ms drain timeout) →
+- `timed-application` (port 26802) → `timed-http` (`stay-alive` enabled, 1000 ms drain timeout) →
   `timed-carrier`.
 - `upgrade-application` (port 26806) → `upgrade-client` (h2c upgrade) →
   `upgrade-carrier`.
@@ -25,15 +25,22 @@ Cases verify:
 - Later WINDOW_UPDATE grants deliver the exact accepted body, END_STREAM, and TCP
   EOF. Response DATA arriving after application Finish is discarded safely; the
   response's own END_STREAM does not cancel the remaining upload.
+- With `stay-alive` enabled, the peer receives the exact upload and END_STREAM.
+  It completes the response and receives a PING acknowledgment. A new application
+  uses a separate carrier. The first session still answers PING after its original
+  upload deadline has passed, and peer GOAWAY then produces TCP EOF.
 - Application Finish before the h2c handshake retains pending payload. Only after
-  Finish does the peer send its 101 response and HTTP/2 settings. The resulting
-  tunnel stream must deliver the exact body, END_STREAM, and EOF. The existing
-  upgrade stream cancellation is allowed separately from tunnel cancellation.
+  Finish does the peer send its 101 response and HTTP/2 settings. It acknowledges
+  the client's initial SETTINGS before granting the connection credit needed to
+  finish the upload. The resulting tunnel stream must deliver the exact body,
+  END_STREAM, and EOF. The peer allows the existing upgrade stream cancellation
+  and rejects tunnel stream cancellation.
 - Application Finish before the WebSocket extended-CONNECT response retains
   pending payload. After a successful response, independently decoded masked
   binary frames must reproduce the exact body, followed by a WebSocket close,
   HTTP/2 END_STREAM, and EOF.
-- Silent peers trigger the autonomous 1000 ms deadline. PING and one-byte window
+- With `stay-alive` enabled, silent peers still trigger the autonomous 1000 ms
+  deadline for an unfinished upload. PING and one-byte window
   grants every 100 ms cause replies and real upload progress but cannot extend
   that original deadline. Both cases require EOF between 0.6 and 2 seconds after
   application close, with the exact incomplete request prefix and no END_STREAM.
@@ -43,11 +50,11 @@ Cases verify:
 
 A separate production chain uses `pair-application` (port 26803) → `HttpClient`
 → `TcpConnector` → `TcpListener` (port 26804) → `HttpServer` → `TcpConnector`
-→ the probe's backend (port 26805). Closing the source after a 4 MiB write must
-still deliver every byte and then EOF to that backend. This also checks runtime
-survival after the cancellation cases.
+→ the probe's backend (port 26805). The backend acknowledges the first 4 MiB
+minus one byte. After reading that receipt, the source sends the final byte
+and closes immediately. The backend verifies the complete upload and EOF.
+This orders the bulk transfer and its control traffic before ordinary TCP close.
 
-The probe checks transport delivery, not an application-level acknowledgement.
 Native HTTP client fixtures separately exercise exact state, timer, and buffer
 cleanup. Socket operations are bounded by 10 seconds and log barriers by 5
 seconds. The case runner's overall deadline is 60 seconds.

@@ -714,11 +714,11 @@ bool testerclientVerifyChunk(tunnel_t *t, line_t *l, sbuf_t *buf, uint8_t chunk_
     return true;
 }
 
-void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate_t *ls)
+bool testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate_t *ls)
 {
-    if (ls->request_send_scheduled || ls->request_complete || ! ls->est_received)
+    if (ls->request_send_scheduled || ls->request_complete || ! ls->request_ready)
     {
-        return;
+        return true;
     }
 
     ls->request_send_scheduled             = true;
@@ -735,11 +735,10 @@ void testerclientScheduleRequestSend(tunnel_t *t, line_t *l, testerclient_lstate
         {
             testerclientFailOwnedLine(t, l, "failed to schedule request progress", true);
         }
+        return false;
     }
-    else
-    {
-        assert(result == kLineTaskSubmitAcceptedAsync);
-    }
+    assert(result == kLineTaskSubmitAcceptedAsync);
+    return true;
 }
 
 void testerclientRequestSendTask(tunnel_t *t, line_t *l)
@@ -748,7 +747,8 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
     buffer_pool_t         *pool = lineGetBufferPool(l);
     testerclient_tstate_t *ts   = tunnelGetState(t);
 
-    ls->request_send_scheduled = false;
+    /* Keep the sender reserved across Payload, which can synchronously deliver Resume. */
+    assert(ls->request_send_scheduled);
 
     const uint8_t chunk_count         = testerclientGetChunkCount(t);
     uint32_t      split_payloads_sent = 0;
@@ -794,7 +794,6 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
 
             if (split_payloads_sent >= ts->split_payload_burst)
             {
-                ls->request_send_scheduled = true;
                 if (ts->split_payload_delay_ms == 0)
                 {
                     const line_task_submit_result_e result = lineScheduleTask(l, testerclientRequestSendTask, t, NULL);
@@ -831,6 +830,7 @@ void testerclientRequestSendTask(tunnel_t *t, line_t *l)
     {
         ls->request_complete = true;
     }
+    ls->request_send_scheduled = false;
 }
 
 void testerclientWatchdogTask(tunnel_t *t, line_t *l)

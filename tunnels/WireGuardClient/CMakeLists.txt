@@ -1,0 +1,6 @@
+add_library(WireGuardClient STATIC client.c)
+target_include_directories(WireGuardClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(WireGuardClient PUBLIC WireGuardCommon)
+if(NOT APPLE)
+  target_precompile_headers(WireGuardClient REUSE_FROM ww)
+endif()

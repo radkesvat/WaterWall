@@ -123,13 +123,19 @@ void speedlimitCloseLineOnDrainFailure(speedlimit_lstate_t *state, sbuf_t *detac
 {
     tunnel_t *tunnel = state->tunnel;
     line_t   *line   = state->line;
-    lineRef(line);
     if (detached != NULL)
         lineReuseBuffer(line, detached);
     speedlimitLinestateDestroy(state);
+
+    /* The first callback can make the source finish this same line. */
+    state->close_phase = kSpeedLimitClosingBoth;
+    lineRef(line);
     tunnelNextUpStreamFinish(tunnel, line);
-    if (lineIsAlive(line))
+    if (lineIsAlive(line) && state->close_phase == kSpeedLimitClosingBoth)
+    {
+        state->close_phase = kSpeedLimitClosed;
         tunnelPrevDownStreamFinish(tunnel, line);
+    }
     lineUnref(line);
 }
 

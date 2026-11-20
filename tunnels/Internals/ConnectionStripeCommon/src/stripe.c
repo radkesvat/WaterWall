@@ -106,7 +106,8 @@ struct stripe_session_s
     buffer_queue_t              tx_queue;
     sbuf_t                     *tx_active;
     buffer_budget_reservation_t tx_reservation;
-    local_idle_item_t          *deadline;
+    local_idle_item_t          *setup_deadline;
+    local_idle_item_t          *drain_deadline;
     uint64_t                    tx_accepted;
     uint64_t                    tx_offset;
     uint64_t                    tx_index;
@@ -134,7 +135,6 @@ struct stripe_session_s
     bool                        pump_requested : 1;
     bool                        credit_dirty : 1;
     bool                        local_close : 1;
-    bool                        drain_started : 1;
     bool                        close_sent : 1;
     bool                        close_acked : 1;
     bool                        remote_close : 1;
@@ -182,13 +182,12 @@ static stripe_worker_t *stripeWorker(tunnel_t *t, wid_t wid)
     return &ts->workers[wid];
 }
 
-static local_idle_table_t *stripeTimers(tunnel_t *t, wid_t wid)
+static bool stripeTryInitTimers(stripe_worker_t *w, wid_t wid)
 {
-    stripe_worker_t *w = stripeWorker(t, wid);
     assert(! w->quiesced);
     if (! w->timers)
-        w->timers = localIdleTableCreate(getWorkerLoop(wid));
-    return w->timers;
+        w->timers = localIdleTableTryCreate(getWorkerLoop(wid));
+    return w->timers != NULL;
 }
 
 static void stripeUnlinkPending(stripe_line_t *ls)
@@ -248,7 +247,8 @@ static void stripeAbort(stripe_session_t *s, const char *reason)
     LOGD("ConnectionStripe%s: session closed: %s",
          stripeState(s->tunnel)->role == kStripeClientEndpoint ? "Client" : "Server",
          reason);
-    stripeRemoveDeadline(&s->deadline);
+    stripeRemoveDeadline(&s->setup_deadline);
+    stripeRemoveDeadline(&s->drain_deadline);
     stripe_worker_t *w = s->worker;
     stripe_map_t_erase(&w->sessions, s->id);
     if (s->prev)
@@ -293,8 +293,7 @@ static void stripeAbort(stripe_session_t *s, const char *reason)
 static void stripeSessionExpired(local_idle_item_t *item)
 {
     stripe_session_t *s = item->userdata;
-    stripeRemoveDeadline(&s->deadline);
-    stripeAbort(s, s->drain_started ? "drain deadline expired" : "setup deadline expired");
+    stripeAbort(s, item == s->drain_deadline ? "drain deadline expired" : "setup deadline expired");
 }
 
 static void stripePendingExpired(local_idle_item_t *item)
@@ -311,7 +310,7 @@ static stripe_session_t *stripeSessionCreate(tunnel_t *t, wid_t wid, stripe_id_t
 {
     stripe_state_t  *ts = stripeState(t);
     stripe_worker_t *w  = stripeWorker(t, wid);
-    if (w->quiesced || w->session_count >= ts->max_sessions)
+    if (w->quiesced || w->session_count >= ts->max_sessions || ! stripeTryInitTimers(w, wid))
         return NULL;
     stripe_session_t *s = memoryAllocateZero(sizeof(*s));
     s->tunnel           = t;
@@ -333,9 +332,9 @@ static stripe_session_t *stripeSessionCreate(tunnel_t *t, wid_t wid, stripe_id_t
         w->head->prev = s;
     w->head = s;
     ++w->session_count;
-    s->deadline = localidletableCreateItem(
-        stripeTimers(t, wid), (hash_t) (uintptr_t) s, s, stripeSessionExpired, ts->setup_timeout);
-    assert(s->deadline);
+    s->setup_deadline = localidletableCreateItem(
+        w->timers, (hash_t) (uintptr_t) &s->setup_deadline, s, stripeSessionExpired, ts->setup_timeout);
+    assert(s->setup_deadline);
     return s;
 }
 
@@ -344,6 +343,27 @@ static sbuf_t *stripeBuffer(stripe_session_t *s, size_t length)
     sbuf_t *buf = sbufCreateWithPadding(length, s->padding);
     sbufSetLength(buf, length);
     return buf;
+}
+
+/* Match stripeBuffer's exact allocation geometry without checking out storage.
+ * Lengths are bounded by validated settings or the DATA frame limit. */
+static size_t stripeCanonicalCharge(stripe_session_t *s, size_t length)
+{
+    size_t     capacity = 0, charge = 0;
+    const bool valid =
+        sbufTryComputeCapacity(length, s->padding, &capacity) && sbufTryComputeQueueCharge(capacity, &charge);
+    assert(valid);
+    discard valid;
+    return charge;
+}
+
+static sbuf_t *stripeCanonicalCopy(stripe_session_t *s, sbuf_t *source)
+{
+    const size_t length = sbufGetLength(source);
+    sbuf_t      *copy   = stripeBuffer(s, length);
+    sbufReadRangeToMemory(source, sbufGetMutablePtr(copy), length);
+    bufferpoolReuseBuffer(s->pool, source);
+    return copy;
 }
 
 static void stripeHeader(uint8_t *p, uint8_t type, uint32_t length, uint64_t offset, uint64_t aux)
@@ -432,16 +452,14 @@ static bool stripeStartDrain(stripe_session_t *s)
 {
     if (s->worker->quiesced || ! wloopNormalDispatchAllowed(getWorkerLoop(s->wid)))
         return false;
-    if (! s->drain_started)
+    if (! s->drain_deadline)
     {
-        s->drain_started = true;
-        stripeRemoveDeadline(&s->deadline);
-        s->deadline = localidletableCreateItem(stripeTimers(s->tunnel, s->wid),
-                                               (hash_t) (uintptr_t) s,
-                                               s,
-                                               stripeSessionExpired,
-                                               stripeState(s->tunnel)->drain_timeout);
-        assert(s->deadline);
+        s->drain_deadline = localidletableCreateItem(s->worker->timers,
+                                                     (hash_t) (uintptr_t) &s->drain_deadline,
+                                                     s,
+                                                     stripeSessionExpired,
+                                                     stripeState(s->tunnel)->drain_timeout);
+        assert(s->drain_deadline);
     }
     return true;
 }
@@ -501,11 +519,17 @@ static bool stripeTransmit(stripe_session_t *s)
     size_t length = min(sbufGetLength(s->tx_active), (size_t) kStripeMaxFrame);
     length        = (size_t) min((uint64_t) length, s->peer_window - (s->tx_offset - s->tx_ack_offset));
     assert(length != 0);
-    sbuf_t  *out = stripeBuffer(s, kStripeHeaderSize + length);
-    uint8_t *p   = sbufGetMutablePtr(out);
-    stripeHeader(p, kStripeData, (uint32_t) length, s->tx_offset, s->tx_index);
-    memoryCopy(p + kStripeHeaderSize, sbufGetRawPtr(s->tx_active), length);
-    sbufShiftRight(s->tx_active, length);
+    const bool use_pipe = tunnelGetChain(s->tunnel)->supports_splice && sbufIsSplice(s->tx_active) &&
+                          length > sbufGetResidentPrefixLength(s->tx_active);
+    sbuf_t *out = use_pipe ? bufferpoolGetSpliceBuffer(s->pool) : NULL;
+    if (out && sbufGetHeadroom(out) < s->padding)
+    {
+        bufferpoolReuseBuffer(s->pool, out);
+        out = NULL;
+    }
+    out = sbufMoveRangeTo(s->pool, s->tx_active, out, length, length, s->padding);
+    sbufShiftLeft(out, kStripeHeaderSize);
+    stripeHeader(sbufGetMutablePtr(out), kStripeData, (uint32_t) length, s->tx_offset, s->tx_index);
     bufferbudgetReservationSetBytes(&s->tx_reservation, sbufGetLength(s->tx_active));
     if (sbufGetLength(s->tx_active) == 0)
     {
@@ -610,7 +634,6 @@ void connectionstripeApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         stripeUnref(s);
         return;
     }
-    assert(! sbufIsSplice(buf));
     if (length > stripeState(t)->max_buffered || UINT64_MAX - s->tx_accepted < length)
     {
         bufferpoolReuseBuffer(s->pool, buf);
@@ -620,13 +643,16 @@ void connectionstripeApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
         stripeUnref(s);
         return;
     }
-    /* Canonical storage avoids retaining a large adapter allocation for one byte. */
-    sbuf_t *copy = stripeBuffer(s, length);
-    memoryCopy(sbufGetMutablePtr(copy), sbufGetRawPtr(buf), length);
-    bufferpoolReuseBuffer(s->pool, buf);
-    if (! bufferqueueTryPushBack(&s->tx_queue, &copy))
+    /* Keep suitable pipe input, but never retain a large allocation for a tiny
+     * payload. Queue charge is local policy, not kernel pipe memory. */
+    size_t                     charge;
+    const buffer_budget_cost_t used = bufferbudgetGetUsage(&s->tx_budget);
+    if (! sbufIsSplice(buf) || ! sbufTryGetQueueCharge(buf, &charge) || charge > stripeCanonicalCharge(s, length) ||
+        charge > stripeState(t)->max_buffered - used.charge)
+        buf = stripeCanonicalCopy(s, buf);
+    if (! bufferqueueTryPushBack(&s->tx_queue, &buf))
     {
-        bufferpoolReuseBuffer(s->pool, copy);
+        bufferpoolReuseBuffer(s->pool, buf);
         stripeAbort(s, "application queue byte or allocation-charge limit exceeded");
     }
     else
@@ -641,30 +667,43 @@ static bool stripeAcceptData(stripe_session_t *s, uint64_t offset, uint64_t inde
 {
     const size_t   length = sbufGetLength(body);
     const uint64_t window = stripeState(s->tunnel)->receive_window;
-    if (index == UINT64_MAX || index < s->rx_index || index - s->rx_index >= kStripeFrameWindow ||
-        offset < s->rx_offset || offset - s->rx_offset > window || length > window - (offset - s->rx_offset) ||
-        UINT64_MAX - offset < length || s->rx_bytes > window - length ||
-        (s->remote_close && (index >= s->rx_final_index || offset + length > s->rx_final_offset)))
-        return false;
+    if (index == UINT64_MAX || ! connectionstripeRecordGapFits(s->rx_index, s->rx_offset, index, offset) ||
+        index - s->rx_index >= kStripeFrameWindow || offset - s->rx_offset > window ||
+        length > window - (offset - s->rx_offset) || UINT64_MAX - offset < length || s->rx_bytes > window - length)
+        goto reject;
+    const uint64_t end_offset = offset + length;
+    if (s->remote_close &&
+        ! connectionstripeRecordGapFits(index + 1, end_offset, s->rx_final_index, s->rx_final_offset))
+        goto reject;
     stripe_record_t *slot = &s->records[index % kStripeFrameWindow];
     if (slot->body)
-        return false;
+        goto reject;
     for (unsigned i = 0; i < kStripeFrameWindow; ++i)
     {
         stripe_record_t *other = &s->records[i];
         if (! other->body)
             continue;
-        if ((other->index < index && other->offset + sbufGetLength(other->body) > offset) ||
-            (other->index > index && offset + length > other->offset))
-            return false;
+        if (other->index < index)
+        {
+            if (! connectionstripeRecordGapFits(
+                    other->index + 1, other->offset + sbufGetLength(other->body), index, offset))
+                goto reject;
+        }
+        else if (! connectionstripeRecordGapFits(index + 1, end_offset, other->index, other->offset))
+            goto reject;
     }
-    /* Pool frame extraction can retain a large tier. Reorder storage instead
-     * has a deterministic bound: window bytes plus 256 canonical allocations. */
-    sbuf_t *copy = stripeBuffer(s, length);
-    memoryCopy(sbufGetMutablePtr(copy), sbufGetRawPtr(body), length);
-    *slot = (stripe_record_t) {.body = copy, .offset = offset, .index = index};
+    /* Preserve a private pipe or a suitably sized ordinary extraction, with
+     * the same window-plus-record storage allowance as exact ordinary copies. */
+    size_t charge;
+    if (sbufGetHeadroom(body) < s->padding || ! sbufTryGetQueueCharge(body, &charge) ||
+        charge > stripeCanonicalCharge(s, length))
+        body = stripeCanonicalCopy(s, body);
+    *slot = (stripe_record_t) {.body = body, .offset = offset, .index = index};
     s->rx_bytes += length;
     return true;
+reject:
+    bufferpoolReuseBuffer(s->pool, body);
+    return false;
 }
 
 static bool stripeAcceptControl(stripe_session_t *s, uint8_t type, uint64_t offset, uint64_t aux)
@@ -678,7 +717,7 @@ static bool stripeAcceptControl(stripe_session_t *s, uint8_t type, uint64_t offs
             return false;
         s->peer_window = (uint32_t) offset;
         s->ready       = true;
-        stripeRemoveDeadline(&s->deadline);
+        stripeRemoveDeadline(&s->setup_deadline);
         return true;
     case kStripeWindow:
         if (! s->ready || aux < s->tx_ack_index || aux > s->tx_index || offset < s->tx_ack_offset ||
@@ -692,14 +731,16 @@ static bool stripeAcceptControl(stripe_session_t *s, uint8_t type, uint64_t offs
         s->tx_ack_offset = offset;
         return true;
     case kStripeClose:
-        if (! s->ready || s->remote_close || aux < s->rx_index || aux - s->rx_index > kStripeFrameWindow ||
-            offset < s->rx_offset || offset - s->rx_offset > ts->receive_window ||
-            (aux == s->rx_index && offset != s->rx_offset))
+        if (! s->ready || s->remote_close || ! connectionstripeRecordGapFits(s->rx_index, s->rx_offset, aux, offset) ||
+            offset - s->rx_offset > ts->receive_window)
             return false;
         for (unsigned i = 0; i < kStripeFrameWindow; ++i)
-            if (s->records[i].body &&
-                (s->records[i].index >= aux || s->records[i].offset + sbufGetLength(s->records[i].body) > offset))
+        {
+            const stripe_record_t *record = &s->records[i];
+            if (record->body && ! connectionstripeRecordGapFits(
+                                    record->index + 1, record->offset + sbufGetLength(record->body), aux, offset))
                 return false;
+        }
         s->remote_close    = true;
         s->rx_final_offset = offset;
         s->rx_final_index  = aux;
@@ -714,7 +755,9 @@ static bool stripeAcceptControl(stripe_session_t *s, uint8_t type, uint64_t offs
     }
 }
 
-static void stripeReadFrames(tunnel_t *t, line_t *line, sbuf_t *buf)
+static void stripeServerReady(stripe_session_t *s);
+
+static void stripeReadFrames(tunnel_t *t, line_t *line, sbuf_t *buf, bool completes_join)
 {
     stripe_line_t    *ls = lineGetState(line, t);
     stripe_session_t *s  = ls->session;
@@ -722,6 +765,10 @@ static void stripeReadFrames(tunnel_t *t, line_t *line, sbuf_t *buf)
     stripeRef(s);
     lineRef(line);
     splice_frame_admit_t result = spliceframereaderAdmit(&ls->reader, buf);
+    /* The final JOIN can carry the beginning of a frame. Claim its FIFO
+     * position before Init or READY can synchronously deliver its continuation. */
+    if (completes_join && (result == kSpliceFrameDrain || result == kSpliceFrameEmpty))
+        stripeServerReady(s);
     if (result == kSpliceFrameQueued || result == kSpliceFrameEmpty)
         goto done;
     if (result != kSpliceFrameDrain)
@@ -754,7 +801,6 @@ static void stripeReadFrames(tunnel_t *t, line_t *line, sbuf_t *buf)
         {
             sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, length);
             valid        = stripeAcceptData(s, offset, aux, body);
-            bufferpoolReuseBuffer(s->pool, body);
         }
         else
         {
@@ -785,7 +831,7 @@ static void stripeLineInit(tunnel_t *t, line_t *line, stripe_session_t *s, strip
                               kStripeHeaderSize,
                               stripeState(t)->max_buffered,
                               stripeState(t)->max_buffered,
-                              false);
+                              tunnelGetChain(t)->supports_splice);
 }
 
 static void stripeServerReady(stripe_session_t *s)
@@ -795,12 +841,11 @@ static void stripeServerReady(stripe_session_t *s)
     /* The complete group can retain a final server-first reply even if its
      * application finishes inside Init. Wire delivery remains behind Init. */
     s->ready = true;
-    stripeRemoveDeadline(&s->deadline);
+    stripeRemoveDeadline(&s->setup_deadline);
     line_t *app = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), s->wid);
     stripeLineInit(t, app, s, kStripeApplicationLine, 0);
     s->application = app;
-    lineCopyUsers(app, s->lanes[0]);
-    addresscontextCopy(lineGetSourceAddressContext(app), lineGetSourceAddressContext(s->lanes[0]));
+    lineCopyIngressContext(app, s->lanes[0]);
     lineRef(app);
     stripeState(t)->output->init_owned(t, app);
     if (! s->closed)
@@ -828,9 +873,8 @@ static void stripeServerJoin(tunnel_t *t, line_t *line, sbuf_t *buf)
         goto reject;
     }
     const size_t take = min(sbufGetLength(buf), (size_t) (kStripeJoinSize - ls->intro_have));
-    memoryCopy(ls->intro + ls->intro_have, sbufGetRawPtr(buf), take);
+    sbufReadRangeToMemory(buf, ls->intro + ls->intro_have, take);
     ls->intro_have += (uint16_t) take;
-    sbufShiftRight(buf, take);
     if (ls->intro_have != kStripeJoinSize)
     {
         lineReuseBuffer(line, buf);
@@ -860,7 +904,7 @@ static void stripeServerJoin(tunnel_t *t, line_t *line, sbuf_t *buf)
         sbuf_t        *replay = sbufCreateWithPadding(length, bufferpoolGetSmallBufferPadding(pool));
         sbufSetLength(replay, length);
         memoryCopy(sbufGetMutablePtr(replay), ls->intro, kStripeJoinSize);
-        memoryCopy(sbufGetMutablePtr(replay) + kStripeJoinSize, sbufGetRawPtr(buf), sbufGetLength(buf));
+        sbufReadRangeToMemory(buf, sbufGetMutablePtr(replay) + kStripeJoinSize, sbufGetLength(buf));
         bufferpoolReuseBuffer(pool, buf);
         const bool paused = ls->paused;
         stripeLineClear(t, line);
@@ -898,21 +942,12 @@ static void stripeServerJoin(tunnel_t *t, line_t *line, sbuf_t *buf)
         }
         s->peer_window = window;
     }
-    stripeRef(s);
-    lineRef(line);
     stripeUnlinkPending(ls);
     ls->session     = s;
     ls->index       = index;
     s->lanes[index] = line;
     ++s->joined;
-    if (s->joined == s->count)
-        stripeServerReady(s);
-    if (! s->closed && lineIsAlive(line) && ls->session == s)
-        stripeReadFrames(t, line, buf);
-    else
-        bufferpoolReuseBuffer(s->pool, buf);
-    lineUnref(line);
-    stripeUnref(s);
+    stripeReadFrames(t, line, buf, s->joined == s->count);
     return;
 reject:
     LOGD("ConnectionStripeServer: transport rejected: %s", rejection);
@@ -923,13 +958,12 @@ reject:
 
 void connectionstripeTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
-    assert(! sbufIsSplice(buf));
     stripe_line_t *ls = lineGetState(line, t);
     assert(ls->role == kStripeTransportLine);
     if (! ls->session)
         stripeServerJoin(t, line, buf);
     else
-        stripeReadFrames(t, line, buf);
+        stripeReadFrames(t, line, buf, false);
 }
 
 void connectionstripeClientInit(tunnel_t *t, line_t *app)
@@ -963,6 +997,8 @@ void connectionstripeClientInit(tunnel_t *t, line_t *app)
     {
         line_t *lane = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
         stripeLineInit(t, lane, s, kStripeTransportLine, i);
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(lane), IP_PROTO_TCP);
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(lane), IP_PROTO_TCP);
         s->lanes[i] = lane;
         ++s->joined;
         lineRef(lane);
@@ -997,7 +1033,7 @@ void connectionstripeServerInit(tunnel_t *t, line_t *line)
     stripe_worker_t *w   = stripeWorker(t, wid);
     stripeLineInit(t, line, NULL, kStripeTransportLine, 0);
     if (w->quiesced || ! wloopNormalDispatchAllowed(getWorkerLoop(wid)) ||
-        w->pending_count >= stripeState(t)->max_pending)
+        w->pending_count >= stripeState(t)->max_pending || ! stripeTryInitTimers(w, wid))
     {
         stripeLineClear(t, line);
         stripeState(t)->output->transport_finish(t, line);
@@ -1011,7 +1047,7 @@ void connectionstripeServerInit(tunnel_t *t, line_t *line)
     w->pending = ls;
     ++w->pending_count;
     ls->deadline = localidletableCreateItem(
-        stripeTimers(t, wid), (hash_t) (uintptr_t) ls, ls, stripePendingExpired, stripeState(t)->setup_timeout);
+        w->timers, (hash_t) (uintptr_t) ls, ls, stripePendingExpired, stripeState(t)->setup_timeout);
     assert(ls->deadline);
     stripeState(t)->output->est_borrowed(t, line);
 }
@@ -1034,7 +1070,7 @@ static void stripeFinish(tunnel_t *t, line_t *line, stripe_line_role_t role)
         stripeFinishLine(s, line, kStripeApplicationLine, kStripeFinishReceived);
         if (! s->closed)
         {
-            if (! s->ready)
+            if (! s->ready && s->tx_accepted == 0)
                 stripeAbort(s, "application finished before group readiness");
             else
             {
@@ -1184,9 +1220,9 @@ static bool stripeSettings(tunnel_t *t, node_t *node)
     cJSON_ArrayForEach(field, settings)
     {
         const char *key = field->string;
-        if (! key)
+        if (! key || (field->type & cJSON_NameHasEmbeddedNul) != 0)
         {
-            LOGF("ConnectionStripe: every setting must have a name");
+            LOGF("ConnectionStripe: every setting must have a name without embedded NUL bytes");
             return false;
         }
         bool known = stringCompare(key, client ? "connections" : "max-connections") == 0 ||

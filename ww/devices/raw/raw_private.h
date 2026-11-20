@@ -21,7 +21,7 @@ struct raw_device_s
 #endif
 #ifdef OS_LINUX
     /* Lifecycle-owner state; immutable while output is admitted. */
-    bool bypass_conntrack;
+    uint32_t configured_mark; // Zero selects an automatic mark on each start.
     bool notrack_rule_pending;
     char notrack_comment[48];
 #endif

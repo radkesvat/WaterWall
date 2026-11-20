@@ -44,6 +44,7 @@ foreach(fixture_target IN ITEMS
   packetstostream_bridge_affinity_test
   packetstostream_orderly_shutdown_test
   ping_flow_test
+  ping6_flow_test
   rawsocket_ipv4_boundary_test
   reverseserver_large_wait_test
   reverseserver_splice_test
@@ -94,7 +95,6 @@ foreach(fixture_target IN ITEMS
   vlessserver_no_splice_test
   vlessserver_splice_test
   widle_table_cancellation_test
-  wireguarddevice_orderly_shutdown_test
 )
   if(TARGET ${fixture_target})
     target_link_libraries(${fixture_target} PRIVATE ww_test_support)

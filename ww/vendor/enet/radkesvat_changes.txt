@@ -1,7 +1,35 @@
-No changes to the upstream ENet sources in this directory.
+Upstream base: lsalzman/enet at 5a9c537fd464b3c6d3c55e1d3bd47588faf71b42.
+
+Local source changes:
+- peer.c: zero-initialize newly allocated incoming fragment-reassembly storage
+  when data is NULL. Both reliable and unreliable fragment reception use this
+  path. This prevents unwritten gaps from exposing uninitialized memory without
+  changing enet_packet_create(NULL, ...) or adding fragment-coverage validation.
+  Matches radkesvat/enet commit 2a2312fa92c437abfb626140434230f19a6b490a.
+- peer.c: include packet/command structures and fragment bitmaps, in addition to
+  payload bytes, in totalWaitingData. Release the identical charge on delivery
+  and discard, validate fragment count before allocation, and reject size-sum
+  overflow. Preserve the existing admission threshold and its one-packet
+  overshoot. Allocator overhead and application-owned packets are not charged.
+- include/enet/enet.h: document the updated receive counter and threshold units.
+- peer.c, protocol.c, include/enet/enet.h: clamp peer timeout/ping settings to
+  ENET_PEER_MAXIMUM_TIMEOUT (12 hours); saturate retry durations and attempts;
+  preserve the timeoutLimit multiplier with a guarded shift. Check the maximum
+  timeout on service passes independently of retry expiration. Track a valid
+  zero-valued timeout origin in an existing flags bit and rebuild the origin
+  from sent commands and queued retransmissions after acknowledgements or
+  successful reliable-command removal (including the CONNECT handshake).
+  Each outgoing reliable command retains its first transmission timestamp for
+  the maximum deadline and its most recent timestamp for retries. Resetting
+  queues clears the cached origin.
+  Check timeouts only on the first send pass per peer in each send-function
+  invocation, avoiding repeated scans of an unreliable backlog per datagram.
+  Regular servicing remains required; blocking socket waits are unchanged.
+- host.c, include/enet/enet.h: accumulate queued outgoing bytes per peer and
+  calculate interval byte allowances and throttle ratios with 64-bit arithmetic.
 
 WaterWall-specific integration lives outside it:
 - tunnels/Internals/EnetCommon/src/platform.c replaces unix.c and win32.c in
   production builds.
-- tests/enet_vendor_source_policy_test.py pins every file to upstream commit
-  5a9c537fd464b3c6d3c55e1d3bd47588faf71b42.
+- tests/enet_vendor_source_policy_test.py pins every vendored file to the
+  upstream base plus the local source changes above.

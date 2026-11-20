@@ -1,15 +1,17 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/TcpListener.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/TcpListener.mdx, and all files must keep the same documentation version.
 -->
 
 # TcpListener Node
 
+## Overview
+
 `TcpListener` is a TCP server node. It listens for inbound TCP connections, creates a new line for each accepted client, and passes that line upstream to the next node in the chain.
 
 In practice, this node is used at the beginning of a chain.
 
-## What It Does
+### What It Does
 
 - Binds and listens on one TCP port, several explicit TCP ports, or a TCP port range.
 - Accepts incoming client connections.
@@ -20,40 +22,44 @@ In practice, this node is used at the beginning of a chain.
 
 This node is a chain head. Its upstream entry callbacks are disabled because connections are created by external clients, not by a previous tunnel.
 
-## Configuration Example
+
+## Typical placement
+
+```text
+client -> TcpListener -> ... -> TcpConnector -> remote service
+```
+
+This node begins a stream chain. `next` names a configured node that receives
+accepted client traffic; `TcpListener` supplies the socket, while protocol nodes
+and the final connector handle their own roles.
+
+## Minimal practical example
+
+This is a **node fragment**. Define `outbound` in the same config or replace
+`next` with the name of the node that should receive accepted TCP lines.
+
+### Local Test Listener
 
 ```json
 {
-  "name": "inbound-listener",
+  "name": "local-entry",
   "type": "TcpListener",
   "settings": {
-    "address": "0.0.0.0",
-    "port": [443, 80, 2083],
-    "nodelay": true,
-    "large-send-buffer": true,
-    "large-recv-buffer": true,
-    "interface": "eth0",
-    "fwmark": 10,
-    "balance-group": "public-443",
-    "balance-interval": 30000,
-    "initial-idle-timeout-ms": 60000,
-    "active-idle-timeout-ms": 600000,
-    "multiport-backend": "socket",
-    "whitelist": [
-      "192.168.1.0/24",
-      "2001:db8::/64"
-    ],
-    "blacklist": [
-      "192.168.1.50/32"
-    ]
+    "address": "127.0.0.1",
+    "port": 8080
   },
-  "next": "next-node-name"
+  "next": "outbound"
 }
 ```
 
-## Required JSON Fields
+This only accepts clients on the same machine.
 
-### Top-level fields
+
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -64,7 +70,7 @@ This node is a chain head. Its upstream entry callbacks are disabled because con
 - `next` `(string)`
   The next node that should receive accepted TCP lines.
 
-### `settings`
+#### `settings`
 
 - `address` `(string)`
   The bind address for the listener.
@@ -84,7 +90,7 @@ One of `port` or `port-range` is required.
 
   Older string-style examples such as `"40000-40100"` are not what the current code parses.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `nodelay` `(boolean)`
   Enables `TCP_NODELAY` on accepted sockets.
@@ -173,9 +179,50 @@ One of `port` or `port-range` is required.
   ["10.0.0.13/32", "2001:db8:bad::/64"]
   ```
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Accept path
+### Configuration Example
+
+```json
+{
+  "name": "inbound-listener",
+  "type": "TcpListener",
+  "settings": {
+    "address": "0.0.0.0",
+    "port": [443, 80, 2083],
+    "nodelay": true,
+    "large-send-buffer": true,
+    "large-recv-buffer": true,
+    "interface": "eth0",
+    "fwmark": 10,
+    "balance-group": "public-443",
+    "balance-interval": 30000,
+    "initial-idle-timeout-ms": 60000,
+    "active-idle-timeout-ms": 600000,
+    "multiport-backend": "socket",
+    "whitelist": [
+      "192.168.1.0/24",
+      "2001:db8::/64"
+    ],
+    "blacklist": [
+      "192.168.1.50/32"
+    ]
+  },
+  "next": "next-node-name"
+}
+```
+
+### Notes And Caveats
+
+- The parser expects `port` as a number or an array of explicit port numbers, or `port-range` as a two-item range array.
+- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
+- This node is designed to be used as an inbound entry point in the chain.
+
+## Implementation details
+
+### Detailed Behavior
+
+#### Accept path
 
 When a TCP client connects, `TcpListener`:
 
@@ -188,14 +235,14 @@ When a TCP client connects, `TcpListener`:
 
 The line's source context is populated from the accepted connection. The peer IP is recorded in `src_ctx`, the local port that accepted the connection is stored in `src_ctx.port` and `local_listener_port`, and the client's real TCP source port is stored separately in `peer_source_port`.
 
-### Data flow direction
+#### Data flow direction
 
 - Client to chain: socket read -> upstream payload to the next node
 - Chain to client: downstream payload -> socket write
 
 That means the next node should expect to receive traffic from accepted clients and should send responses back downstream.
 
-### Flow control and buffering
+#### Flow control and buffering
 
 `TcpListener` implements backpressure for slow client sockets:
 
@@ -215,7 +262,13 @@ connection through its line owner.
 
 This protects the process from unbounded buffering when the client is slow or stalled.
 
-### Idle timeout behavior
+On `Finish`, TcpListener hands accepted writes to WIO, retires its line and
+normally closes the socket fully, including while client reads are paused.
+Only a line marked for a confirmed fallback peer write shutdown can use bounded
+socket linger on supported Linux systems. The listener can then detach its
+socket, flush writes, shut down its write side and briefly read and discard client input.
+
+#### Idle timeout behavior
 
 Each accepted connection is tracked in an idle table.
 
@@ -233,17 +286,17 @@ These are generic TCP idle timers: activity extends the deadline without trackin
 independently enforces its handshake deadline, `60s` by default, and disarms it when entering fallback. HTTP header/body
 deadlines, response write timeouts, and NGINX lingering-close behavior are not implemented by these two settings.
 
-### Balance groups
+#### Balance groups
 
 If multiple listeners share the same `balance-group` and port, the socket manager selects one of them for a new client and remembers that choice using a hash of the client IP. During `balance-interval`, later connections from the same client IP stay pinned to the same listener.
 
-### Whitelist and blacklist matching
+#### Whitelist and blacklist matching
 
 If `whitelist` is present, only matching client IPs are accepted by this listener. If multiple listeners are registered on the same port, another listener may still receive the same connection if its filter matches and this listener's filter does not.
 
 If `blacklist` is present, matching client IPs are rejected by this listener. When both lists are configured, a client must match the whitelist, if any, and must not match the blacklist.
 
-### Multiport backend notes
+#### Multiport backend notes
 
 For `port-range`, the runtime can either:
 
@@ -255,19 +308,13 @@ If you want `iptables` specifically, set it explicitly.
 For `port` arrays, each element is treated as one explicit port. For example, `[443, 80, 2083]` listens only on those
 three ports, not on the whole range between `80` and `2083`.
 
-## Notes And Caveats
-
-- The parser expects `port` as a number or an array of explicit port numbers, or `port-range` as a two-item range array.
-- `fwmark` and device binding are platform-dependent. `fwmark` is not available on Windows.
-- This node is designed to be used as an inbound entry point in the chain.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` |
+| node flags | `kNodeFlagChainHead \| kNodeFlagSupportsSplice` |
 | `can_have_prev` | `false` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |

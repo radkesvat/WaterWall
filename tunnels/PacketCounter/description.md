@@ -1,14 +1,38 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketCounter.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketCounter.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketCounter Node
 
+## Overview
+
 `PacketCounter` is an endpoint IPv4 packet counter. It groups packets by source IP and selected protocol number,
 then writes a file report with per-IP totals, per-protocol counts, loss, and a text histogram.
 
-## Example
+## Typical placement
+
+Receive raw IPv4 packets from a capture/output node:
+
+```text
+RawSocket -> PacketCounter
+```
+
+Receive packets from a tunnel path:
+
+```text
+UdpListener -> WireGuardServer(mode=packet) -> PacketCounter
+```
+
+`PacketCounter` can consume packets from upstream or downstream callbacks. It
+can therefore be placed at the end of a packet chain, or at the start of a chain
+where packets arrive from its next-side peer.
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Example
 
 ```json
 {
@@ -27,7 +51,9 @@ then writes a file report with per-IP totals, per-protocol counts, loss, and a t
 }
 ```
 
-## Settings
+## Configuration
+
+### Settings
 
 - `source-ipv4-range`: required IPv4 CIDR range or list of ranges to track
 - `protocol-number`: required `TCP`, `UDP`, `ICMP`, `ALL`, integer 0–255, or a nonempty mixed array of names and integers; duplicates are invalid, and `ALL` is valid only alone (selecting 0–254)
@@ -35,7 +61,9 @@ then writes a file report with per-IP totals, per-protocol counts, loss, and a t
 - `report-after-ms`: optional positive report delay, default `1000`; set it longer than the sender duration plus any expected tunnel delay/reordering window
 - `output-file`: report path, default `packet-counter-report.txt`
 
-## Pairing With `PacketGenerator`
+## Usage and troubleshooting
+
+### Pairing With `PacketGenerator`
 
 - For any sender mode, including `ALL`, set receiver `expected-packets-per-ip` to sender `packets-per-ip`.
 - The receiver multiplies by the selected protocol count for expected totals, reports one total row per IP, and lists each selected protocol beneath it in array order (numeric order for `ALL`).
@@ -45,7 +73,9 @@ The report is written to the file only. PacketCounter does not use packet-line `
 It can be placed at the end of a packet chain, where it consumes upstream payload, or at the start of a packet chain,
 where it consumes downstream payload arriving from its next-side peer.
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed metadata:
 

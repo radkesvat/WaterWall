@@ -37,8 +37,7 @@
       "settings": {
         "sni": "tls.integration.test",
         "verify": true,
-        "ca-file": "server.crt",
-        "carrier-mode": "datagram"
+        "ca-file": "server.crt"
       }
     },
     {
@@ -62,8 +61,7 @@
       "next": "vless-server",
       "settings": {
         "cert-file": "server.crt",
-        "key-file": "server.key",
-        "carrier-mode": "datagram"
+        "key-file": "server.key"
       }
     },
     {

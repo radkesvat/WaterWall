@@ -1,9 +1,11 @@
 <!--
-Documentation version: 166
+Documentation version: 168
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/AuthenticationServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/AuthenticationServer.mdx, and all files must keep the same documentation version.
 -->
 
 # AuthenticationServer Node
+
+## Overview
 
 `AuthenticationServer` is a logical chain-end node for user database management.
 
@@ -11,7 +13,7 @@ It does not open sockets or perform direct network I/O. Instead, it keeps a `use
 database from JSON on startup, periodically writes the current state back to disk, and answers framed logical requests
 from `AuthenticationClient`.
 
-## What It Does
+### What It Does
 
 - acts as the upstream end of a logical request/response chain
 - loads users from `db-path` into an in-memory `users_t`
@@ -29,7 +31,7 @@ Available modules are `Authenticate`, `ping`, `GetUserBySHA256Hex`, `GetUserBySH
 `GetUserBySHA224Hex`, `GetUserBySHA224Base64`, `GetUserBySHA224`, `GetUserByPassword`, `AddNewUser`, `UpdateUser`,
 `GetUsersPage`, and `PushUserStats`.
 
-## Typical Placement
+## Typical placement
 
 `AuthenticationServer` is the last node in a logical authentication chain.
 
@@ -41,37 +43,42 @@ AuthenticationClient -> AuthenticationServer
 
 It must not have a `next` node.
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Prepare `users.json` in the documented database format and replace `long-random-secret` with the matching AuthenticationClient secret. A listener/transport must feed the framed control connection into this terminal node. `auth-clients` credentials authenticate control clients, not end users.
+
+The control protocol carries credentials and user passwords. Untrusted remote links require an authenticated encrypted transport with server identity verification; the direct in-process or loopback examples do not provide that protection.
 
 ```json
 {
   "name": "auth-db",
   "type": "AuthenticationServer",
-    "settings": {
-      "db-path": "users.json",
-      "file-save-rate-ms": 10000,
-      "normal-backups": "daily",
-      "normal-backups-path": "backups/",
-      "normal-backups-count-limit": 10,
-      "session-idle-timeout-ms": 600000,
-      "verbose": false,
-      "auth-clients": [
-        {
-          "name": "edge-1",
-          "secret": "long-random-secret",
-          "allow-stats-push": true,
-          "allow-user-pull": true,
-          "allow-user-write": false,
-          "session-idle-timeout-ms": 600000
-        }
-      ]
-    }
+  "settings": {
+    "db-path": "users.json",
+    "file-save-rate-ms": 10000,
+    "auth-clients": [
+      {
+        "name": "edge-1",
+        "secret": "long-random-secret",
+        "allow-stats-push": true,
+        "allow-user-pull": true,
+        "allow-user-write": false,
+        "session-idle-timeout-ms": 600000
+      }
+    ]
+  }
 }
 ```
 
-## Required JSON Fields
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -79,7 +86,7 @@ It must not have a `next` node.
 - `type` `(string)`
   Must be exactly `"AuthenticationServer"`.
 
-### `settings`
+#### `settings`
 
 - `db-path` `(string)`
   Path to an existing users JSON database file. For first start, create it with `{"users":[]}`; an absent or empty file does not create a new database automatically. The primary and `.backup` must be regular files, not symbolic links (or Windows reparse points).
@@ -130,7 +137,7 @@ accept only JSON Booleans and default to `false` when absent. Other types (inclu
 strings and numbers) and duplicate occurrences of these fields in the same object fail startup.
 Diagnostics identify the field and, for a producer permission, its array index.
 
-## Administrative Audit Log
+### Administrative Audit Log
 
 Omitting `audit-log` disables this feature. To enable it, add this object inside
 `settings`:
@@ -246,7 +253,7 @@ promise, no replay/recovery protocol and no tamper-evidence guarantee. Account
 API success retains its existing in-memory meaning; audit events are operational
 observations, not proof that a database save or client refresh completed.
 
-## Database Format
+### Database Format
 
 The database is parsed and exported through the existing Waterwall user helpers:
 
@@ -302,7 +309,7 @@ Saved databases are written as an object containing a `users` array.
 Normal backup files are not used for startup recovery. They are historical snapshots written for the program user only;
 the server still restores only from the existing `db-path.backup` recovery file.
 
-### Accepted User Database Layouts
+#### Accepted User Database Layouts
 
 `usersFeedJson()` accepts these input layouts:
 
@@ -333,7 +340,7 @@ In this example, `password` is still the authentication lookup key. The `id` is 
 unique and stable for that user so Waterwall can do safe, fast lookups and carry local runtime state across user-table
 refreshes.
 
-### User JSON Structure
+#### User JSON Structure
 
 A user object must contain a unique non-zero `id` and a password string. All other fields are optional:
 
@@ -387,7 +394,7 @@ A user object must contain a unique non-zero `id` and a password string. All oth
 The numeric fields accept JSON numbers when they fit in JSON's safe integer range. Larger values may be written and
 read as decimal strings.
 
-### `limit` Object
+#### `limit` Object
 
 `limit` can contain:
 
@@ -411,7 +418,7 @@ read as decimal strings.
 
 Zero or missing limit values mean unlimited.
 
-### `time` Object
+#### `time` Object
 
 `time` can contain:
 
@@ -423,7 +430,7 @@ Zero or missing limit values mean unlimited.
 The same time fields are also accepted at the top level of the user object. Values are milliseconds since Unix epoch,
 except `expire-after-first-usage-ms`, which is a duration after first usage.
 
-### `stats` Object
+#### `stats` Object
 
 `stats` can contain:
 
@@ -436,7 +443,7 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - `traffic`
   Object with `up`/`down` or `u`/`d`.
 
-### User Database Concerns
+#### User Database Concerns
 
 - Passwords are stored in the JSON database as plaintext because `userToJson()` exports the `password` field. Protect
   `db-path` and `db-path.backup` with filesystem permissions appropriate for secret material.
@@ -466,7 +473,7 @@ except `expire-after-first-usage-ms`, which is a duration after first usage.
 - Avoid editing both primary and backup files by hand while Waterwall is running. The periodic saver may overwrite
   manual edits with the current in-memory database state.
 
-### Synchronizable account admission
+#### Synchronizable account admission
 
 Every account accepted by startup import, producer creation/configuration updates or administrative
 create/update/password transactions must fit one complete synchronization page. The bound subtracts the nine-byte
@@ -489,7 +496,37 @@ growth allowance. Existing reserved capacity or other insertion paths can suppor
 boundary, not a table-size cap. These practical sizes depend on build/value geometry, not a guaranteed user-count
 limit or a new memory budget. Increase APIServer `handler_working_memory` when the create transaction needs more index-growth allowance; the bounded Allowed-IP update allowance remains 1 MiB. These request limits are independent of the producer snapshot allowance.
 
-## Save Behavior
+## Usage and troubleshooting
+
+### Configuration Example
+
+```json
+{
+  "name": "auth-db",
+  "type": "AuthenticationServer",
+    "settings": {
+      "db-path": "users.json",
+      "file-save-rate-ms": 10000,
+      "normal-backups": "daily",
+      "normal-backups-path": "backups/",
+      "normal-backups-count-limit": 10,
+      "session-idle-timeout-ms": 600000,
+      "verbose": false,
+      "auth-clients": [
+        {
+          "name": "edge-1",
+          "secret": "long-random-secret",
+          "allow-stats-push": true,
+          "allow-user-pull": true,
+          "allow-user-write": false,
+          "session-idle-timeout-ms": 600000
+        }
+      ]
+    }
+}
+```
+
+### Save Behavior
 
 Under the server state write lock, saving stages the proposed database in the primary directory, stages the
 previous committed primary as `db-path.backup`, publishes that backup, then atomically replaces `db-path`.
@@ -540,7 +577,7 @@ the dispatcher separately clear their owned secret copies at final release. Conf
 partial trees, transferred transport/handler buffers and OS copies remain outside these guarantees; neither files
 nor all process copies are erased.
 
-## Startup Recovery
+### Startup Recovery
 
 A valid primary is authoritative. A missing primary restores only from a fully valid, policy-compliant
 `db-path.backup`. Malformed JSON, truncated/empty files and structurally invalid account data first require complete
@@ -567,453 +604,7 @@ Native full JSON exports (`userToJson()`, `usersToJson()` and `usersUserToJson*(
 credential-bearing APIs. Callers own and must delete returned trees. Whole-table exports allocate and copy every
 account under a collection read lock; public status callers should use the existing redacted projections.
 
-## Logic Explanation
-
-The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
-Configuration mutations bump the former. Every newly accepted usage batch bumps the latter once, including a
-zero-byte first-use observation; an exact replay creates no additional commit. Independent point
-reads share the state read lock. Authentication, saves, mutations and producer snapshot/page operations hold its write lock.
-
-### Control Identity And Sessions
-
-Configured `auth-clients` names must be unique. Independent client processes must use distinct names. Sessions hold
-bearer tokens, permissions, idle time and an association with their authenticated configured identity. Idle expiry
-(default 600000 ms, swept on worker 0 every 60000 ms) and replacement remove sessions but preserve the identity's
-accounting checkpoint. A valid-token request refreshes activity, including permission-denied requests.
-
-Initial `Authenticate` accepts `name` and `secret` in a zero-token envelope and creates an opaque accounting epoch.
-Its Session response contains 128 bytes: a 64-byte token followed by a 64-byte epoch. Each is 32 OS-secure random
-bytes encoded as lowercase hexadecimal. A reconnecting running client includes `epoch` in Authenticate to resume it.
-A missing or superseded checkpoint returns `accounting-continuity-lost`; it is never silently initialized for a retry.
-Fresh enrollment without an epoch replaces the checkpoint and invalidates previous sessions for that identity.
-Only a failed name/secret match returns `authentication-failed`. After a valid match, capacity or token/epoch
-generation refusal returns `session-unavailable`. This transient error preserves any old session, epoch and
-checkpoint, and the client's already usable cache and pending accounting while it reconnects with bounded backoff.
-`Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`. Credential failures are counted process-locally and logged at most once per five seconds with the total count, without caller-controlled names or secrets; they do not occupy audit queue slots.
-
-### Usage Accounting
-
-A client retains one immutable delta batch across connection loss. Pushes identify users by durable nonzero `id`,
-independent of passwords. The payload has exactly this supported shape:
-
-```json
-{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0,"first-usage-at-ms":1792252800000}]}
-```
-
-`sequence` starts at 1 and advances without wrapping. Each batch has 1..4096 unique user IDs and both nonnegative
-`up` and `down` deltas and a nonzero `first-usage-at-ms` per entry. Both deltas may be zero for metadata-only reports;
-a valid next-sequence report is accepted even if its first-use minimum is unchanged. Integers are plain signed-64-bit-range
-integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
-The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up`, `down` and `first-usage-at-ms`, all required.
-Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, other timestamps and absolute
-traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than three
-nested containers and 36,871 lexical values. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
-The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
-
-Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
-An exact replay of the last sequence/digest is acknowledged before current-account validation. Exactly the next
-sequence validates every entry before any mutation, samples the accounting clock once, clamps each producer observation to that time, merges the smallest nonzero
-first-use instant and applies saturating traffic, then
-publishes its checkpoint. Older sequences, gaps, conflicting replay content, unknown IDs and duplicate IDs fail without
-partial application. Only the current epoch's session may report. Checkpoint storage is constant per configured identity;
-it contains no users-table snapshot or unbounded batch history.
-
-The Ok ACK JSON contains `epoch`, `sequence`, a 64-character hexadecimal `digest`, and `needs-pull: true`.
-The client validates all three batch identity fields, advances only the acknowledged subset's baseline, and pulls fresh
-authoritative totals and first-use time. Pull installation preserves local post-snapshot traffic as `G + (A - B)`.
-No full table is installed while a batch remains unresolved. Reconnect order is authenticate/resume, replay pending
-batch, validate ACK, then pull. Blocked pull/push requests coalesce until this ordering permits them.
-The client attempts a required pull after authentication or each ACK before ordinary reporting. A failed refresh may yield to new usage reporting against the unchanged installed baseline between traversals; no push overlaps active staging. A waiting push takes priority over ordinary periodic or explicit pulls.
-
-Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
-An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator
-reconciliation. With no uncertain batch, a client may enroll afresh and pull.
-
-An ACK confirms acceptance in server memory, not a disk save. Periodic/final database saving retains its normal
-semantics and does not save the producer checkpoint. A client restart can lose unreported usage; a server restart can
-lose acknowledged usage since its last successful save and loses its retry checkpoints. Shutdown does not guarantee
-final usage delivery. There is no accounting crash recovery or remote usage-reset operation.
-
-Traffic-serving nodes use AuthenticationClient handles and copy-out APIs; they never receive borrowed user pointers.
-Credential eligibility checks enabled state, expiry and cumulative traffic. Live connection/IP admission remains local
-to one client runtime; saved gauge values do not reserve or exhaust live capacity. The protocol has no encryption of
-its own. It carries producer credentials and full user records, including user credentials. Untrusted remote links
-require authenticated encryption with server identity verification. A supported composition is
-`AuthenticationClient -> TlsClient -> TcpConnector` with `TlsClient` settings `{"sni":"auth.example.com","verify":true}`,
-paired with `TcpListener -> TlsServer -> AuthenticationServer` using the server certificate and key. The loopback
-examples describe local deployment. A response MAC alone would not protect confidentiality.
-
-## Request And Response Framing
-
-Upstream payload bytes are buffered as a stream. The request envelope is:
-
-- 4-byte unsigned big-endian body size
-- 64-byte session token
-- request payload bytes
-
-The body size is the number of bytes after the size prefix, so it includes the 64-byte token plus the request payload.
-For an unauthenticated `Authenticate` request, the token is ignored and may be all zero bytes. Every other request
-requires a valid session token issued by `Authenticate`. If a message uses a valid session token, it must not contain an
-`Authenticate` frame.
-
-The request payload contains one or more request frames:
-
-- 1-byte request type
-- 4-byte (32-bit) correlation ID
-- 4-byte unsigned big-endian request data length
-- request data bytes
-
-The entire envelope is validated before any request executes, including a maximum of 64 frames. Frame 65 rejects
-all siblings without applying earlier mutations. A malformed envelope closes the borrowed logical connection;
-verbose mode provides bounded diagnostics without unconditional per-frame warnings.
-
-After the four-byte length and 64-byte token arrive, a currently valid token permits the ordinary message limit.
-Without one, frame payload is limited to 16 KiB, excluding the outer 68 bytes; an oversized declaration closes
-immediately without waiting for its body. Tokens are revalidated at dispatch. Large messages whose token was replaced
-or expired close without executing; small stale-token requests retain correlated `authentication-required` replies.
-The session at envelope entry governs all siblings: a successful Authenticate does not authorize sibling requests.
-
-Each module returns a response frame:
-
-- 1-byte response type
-- 4-byte (32-bit) correlation ID copied from the request
-- 4-byte unsigned big-endian response data length
-- response data bytes
-
-After all request frames in one message are processed, the server combines all response frames into a single response
-payload and sends it with the response envelope:
-
-- 4-byte unsigned big-endian body size
-- 8-byte unsigned big-endian configuration revision
-- 8-byte unsigned big-endian statistics revision
-- response frame bytes
-
-Both revisions start at `1` when the tunnel is created. Configuration-changing requests such as `AddNewUser` and
-`UpdateUser` increment the configuration revision. Traffic-stat updates increment the statistics revision when they
-accept a new batch, including a first-use-only or zero-traffic batch. Exact replay does not change either revision.
-
-This keeps the request/response transport extensible for additional request types.
-
-## Modules
-
-Modules live under `tunnels/AuthenticationServer/modules/`.
-
-Request types:
-
-- `1`: `ping`
-- `2`: `GetUserBySHA256Hex`
-- `3`: `GetUserBySHA256Base64`
-- `4`: `GetUserBySHA256`
-- `5`: `GetUserByPassword`
-- `6`: `AddNewUser`
-- `7`: `UpdateUser`
-- `9`: `GetUsersPage` (`GetAllUsers` C alias)
-- `10`: `Authenticate`
-- `11`: `PushUserStats`
-- `12`: `GetUserBySHA224Hex`
-- `13`: `GetUserBySHA224Base64`
-- `14`: `GetUserBySHA224`
-
-Response types:
-
-- `0`: ok
-- `1`: `pong`
-- `2`: user
-- `3`: users database
-- `4`: session token
-- `255`: error
-
-`Authenticate` is public. Every other module requires a valid session token. User lookup and full-table pull modules
-also require `allow-user-pull`; user create/update modules require `allow-user-write`; `PushUserStats` requires
-`allow-stats-push`. Neither write permission implies the other. Opcode `8` is unsupported and receives the ordinary
-`unknown-request-type` error.
-
-### Authenticate Module
-
-Request data is `{"name":"edge-1","secret":"long-random-secret"}` for fresh enrollment, or the same object
-with `"epoch":"<64 hexadecimal bytes>"` for resumption. The outer token is zero. Success returns type `4` and
-128 bytes: token then epoch, 64 hexadecimal bytes each. Later requests carry the token in their envelope.
-Authenticate data is at most 16,375 bytes, with strict quiet JSON parsing, depth two and eight lexical values.
-Only nonempty string `name`/`secret` and optional valid `epoch` are accepted; duplicate/unknown keys, trailing bytes,
-invalid encoding and decoded NUL are refused. After a failed Authenticate, admission closes before handing off its
-correlated response. Pause/Resume can finish that queued response; further input closes the line.
-Malformed credentials fail, authenticated-envelope enrollment returns `already-authenticated`, and failed resumption
-returns `accounting-continuity-lost`.
-
-### Ping Module
-
-The `ping` module expects request data equal to `ping` and returns response data equal to `pong`. The response preserves
-the original 4-byte (32-bit) correlation ID.
-
-If ping receives other request data, it returns an error response frame with the same correlation ID.
-
-### GetUserBySHA256Hex Module
-
-The `GetUserBySHA256Hex` module expects request data containing exactly 64 hexadecimal characters, representing a
-SHA-256 digest. Uppercase and lowercase hex are accepted.
-
-If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the hex input is malformed or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserBySHA256Base64 Module
-
-The `GetUserBySHA256Base64` module expects request data containing a standard padded base64 string that decodes to a
-32-byte SHA-256 digest. For a SHA-256 digest this is normally 44 base64 characters.
-
-If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the base64 input is malformed or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserBySHA256 Module
-
-The `GetUserBySHA256` module expects request data containing exactly the raw 32 bytes of a SHA-256 digest.
-
-If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserBySHA224Hex Module
-
-The `GetUserBySHA224Hex` module expects request data containing exactly 56 hexadecimal characters, representing a
-SHA-224 digest. Uppercase and lowercase hex are accepted.
-
-If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the hex input is malformed or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserBySHA224Base64 Module
-
-The `GetUserBySHA224Base64` module expects request data containing a standard padded base64 string that decodes to a
-28-byte SHA-224 digest. For a SHA-224 digest this is normally 40 base64 characters.
-
-If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the base64 input is malformed or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserBySHA224 Module
-
-The `GetUserBySHA224` module expects request data containing exactly the raw 28 bytes of a SHA-224 digest.
-
-If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
-the full serialized user JSON object.
-
-If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same
-correlation ID.
-
-### GetUserByPassword Module
-
-The `GetUserByPassword` module expects request data containing the exact plaintext password lookup key without a trailing
-NUL. The payload must be non-empty and must not contain embedded NUL bytes. Its limit is the existing producer
-request-data cap (16 MiB), subject also to the enclosing message geometry; there is no separate 1,024-byte password cap.
-Exact Unicode/whitespace bytes are retained. API body and prepared old-password working limits remain separate.
-
-For `Socks5Server`, that lookup key is the SOCKS username, a literal `:`, and the SOCKS password. For example, SOCKS
-credentials `alice` and `alice-secret` are looked up as `alice:alice-secret`.
-
-If a user with that password exists, the module returns response type `2` and response data containing the full
-serialized user JSON object.
-
-If the password payload is malformed or no user matches the password, it returns an error response frame with the same
-correlation ID.
-
-All password and digest lookup modules admit the complete compact JSON size before copying the matched user's strings.
-The JSON must fit the 16 MiB response payload limit minus its 9-byte frame header. A record one byte over that limit
-returns `response-too-large`; it is never truncated. Invalid stored string encoding returns `user-json-serialize-failed`.
-The collection remains locked through the bounded copy so a concurrent removal cannot invalidate the selected account.
-
-### AddNewUser Module
-
-The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
-format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
-
-The module validates the complete payload before constructing credentials: UTF-8 must
-be valid, object keys must be unique after decoding, raw/decoded NUL is forbidden,
-and only JSON whitespace may follow the object. Before tree allocation, nesting is limited to four containers and lexical values to 256 (including object keys). Malformed input leaves users,
-configuration revisions and database files unchanged. Valid Unicode password bytes
-and the `password`/`pass` aliases retain their normal meaning. It then checks that
-the user can be created and that the new user's id, name, and password hashes do not
-conflict with existing users. If validation passes, the user
-is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence. Bulk administrative imports should use the bounded `create-user` management operation when periodic persistence is sufficient; producer `AddNewUser` intentionally retains its per-account save-before-ack durability.
-If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
-
-On success it returns response type `0` and response data equal to `user-added`.
-
-If validation or saving fails, it returns an error response frame with the same correlation ID. If the file save fails
-after the in-memory add succeeds, the module attempts to remove that user from memory and returns
-`database-save-failed`.
-
-`storage-unavailable` reports rejected user storage/index capacity or failure to initialize the native locks for a
-copied user. Heap exhaustion terminates the process instead of producing an error response.
-
-### UpdateUser Module
-
-`UpdateUser` takes a configuration patch with a required nonzero exact unsigned 64-bit `id`. For example:
-
-```json
-{"id":42,"name":"Alice"}
-```
-
-If an administrator read 100 bytes and a batch added 10 more, this name edit leaves 110 bytes intact. No password or
-full exported user is submitted. Omitted fields, including siblings inside nested objects, retain their stored values:
-
-```json
-{"id":42,"limit":{"traffic":{"total":1073741824}},"time":{"expire-after-first-usage-ms":86400000}}
-```
-
-This changes only total traffic quota and the expiry duration; upload/download quotas, other limits, absolute expiry,
-creation/first-use time and all counters stay intact.
-
-| Editable leaf | Type |
-| --- | --- |
-| `name`, `email`, `notes`, `wireguard-allowed-ips` | String; empty string clears it under existing index/CIDR rules |
-| `gid` | Exact unsigned 64-bit integer |
-| `enabled` | JSON boolean |
-| `record-stat-interval-ms` | Exact nonnegative integer through INT_MAX; no reporting scheduler is introduced |
-| `limit.traffic.up`, `.down`, `.total` | Exact unsigned 64-bit integers |
-| `limit.bandwidth.up`, `.down` | Exact unsigned 64-bit integers |
-| `limit.ips`, `.devices`, `.connections-in`, `.connections-out` | Exact unsigned 64-bit integers |
-| `time.expire-at-ms`, `.expire-after-first-usage-ms` | Exact unsigned 64-bit integers |
-
-Dotted paths mean nested objects. Zero clears the corresponding limit/expiry. Integer tokens through INT64_MAX and
-decimal strings through UINT64_MAX are supported; negatives, fractions, decimal/exponent tokens and overflow reject.
-At least one editable leaf is required. Null, empty supplied containers, unknown/case-variant/alias keys, duplicate
-decoded keys, malformed UTF-8, raw/escaped NUL, excessive nesting and trailing non-whitespace data reject the whole
-patch. Parsing admits at most four nested containers and 64 lexical values, including object keys, before allocating a JSON tree. `stats`, passwords/hashes/credentials, alternate IDs, runtime/client-view fields, creation time and first-use time
-are forbidden, including their top-level aliases. A valid field alongside a forbidden one does not apply.
-
-Name and Allowed-IP indexes are prepared before commit. Unknown ID, duplicate name, invalid/overlapping CIDR and
-expected capacity refusal change no account fields, logical indexes, revisions or accounting checkpoint. Successful
-patches return type `0`, `user-updated`, and increment only `config_revision` exactly once under server write
-serialization. They edit memory without immediately saving it. Independent patches preserve one another's omitted
-fields; for the same field, the latest accepted value wins. No expected-revision precondition is required.
-
-### Statistics Ownership
-
-Account traffic counters and traffic limits use charged quota bytes. AuthenticationClient applies its configured
-`traffic-multiplier` to new measured bytes before reporting; AuthenticationServer never applies another multiplier.
-Other producers and database imports must also supply charged usage. At the default multiplier of `1`, charged and
-measured bytes are equal. Aggregates from different rates cannot be converted back to actual network traffic; speed
-and other nontraffic statistics keep their own units.
-
-| Value | Owner and current rule |
-| --- | --- |
-| Cumulative charged upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
-| First-use timestamp | Earliest nonzero accounting observation from authorized producers, clamped to accounting receipt time. Config patches preserve it. |
-| Creation timestamp | Creation/import metadata, preserved by ordinary edits. |
-| Limits, enabled flag, expiry policy | Account configuration changed through explicit patch leaves. |
-| Active outbound connections and IP reservations | Local runtime admission state, retained/released locally; no global count is supplied. |
-| Stored/imported IP, device, connection and speed statistics | No reliable live global occupancy view and no admission source. This protocol adds no reporting of these gauges. |
-
-Future connection telemetry needs producer scope, sample order and expiry: a later snapshot replaces an earlier one,
-so repeated samples must not be added like traffic. Speed needs a measurement window/time and freshness; stale/missing
-samples are not measured zero and compatible producer windows are required before aggregation. Distinct-IP telemetry
-needs an identity set, observation window and cross-producer deduplication; adding client counts cannot produce a
-global distinct count. Device reporting needs defined device identity and collection. Reset requires a separate policy
-for delayed usage and distributed cutoffs; no reset operation is provided here.
-
-### GetUsersPage Module
-
-Request `9` (`GetUsersPage`, also named `GetAllUsers` in the C interface) returns one bounded credential-bearing page.
-There is no whole-table fallback. Every request needs the current producer token, `allow-user-pull`, and its exact
-acknowledged accounting checkpoint. Sequence and digest are zero at enrollment:
-
-```json
-{"epoch":"<64 hex characters>","sequence":"0","digest":"0000000000000000000000000000000000000000000000000000000000000000"}
-```
-
-A continuation adds `"cursor":"<64 lowercase hex characters>"` and `"total":"130"`. The cursor encodes the 16-byte
-server instance ID, captured 64-bit configuration revision and 64-bit next collection position, in that order. It refers to the current session's retained snapshot and grants no permission. The request is at most 1024 bytes, uses strict quiet JSON with depth two and
-16 values, rejects unknown/duplicate fields, and uses canonical unsigned decimal strings for sequence and total.
-
-Each response has type `3` and this schema (all unsigned 64-bit metadata are decimal strings):
-
-```json
-{
-  "instance":"<32 lowercase hex characters>",
-  "epoch":"<64 hex characters>",
-  "sequence":"0",
-  "digest":"<64 hex characters>",
-  "config-revision":"1",
-  "stats-revision":"1",
-  "server-time-ms":"1767225600000",
-  "accounting-time-ms":"1767225600000",
-  "total":"0",
-  "position":"0",
-  "count":"0",
-  "cursor":"<64 lowercase hex characters>",
-  "complete":true,
-  "validated":false,
-  "users":[]
-}
-```
-
-The `users` array contains exactly `count` complete user records, including credentials. Ordinary pages target 256 KiB
-of complete encoded response and at most 128 users. A first record larger than that target occupies a page by itself,
-up to the existing 16 MiB hard response framing limit after all metadata/frame overhead. `user-too-large` rejects a
-record that cannot fit; fields are never truncated. Size admission precedes copying arbitrary-length row strings, and
-the first request captures an immutable encoded table under the server write lock. Capture is O(N) and blocks other server state work until complete. Sessions acquiring the same configuration and statistics revision share it; active traversals keep their records across later edits. Aggregate storage, including capture scratch, is bounded by `snapshot-max-bytes`. The management API's `list-users` continues using live revision-bound cursors.
-
-A last data page has `complete:true`, `validated:false` and a terminal cursor. The client must then send that cursor,
-the same total/checkpoint and `"validate":true`. The server returns a small `complete:true,validated:true` response,
-with `position == total`, `count:"0"` and an empty `users` array. An empty table has one empty complete data page and
-uses the same final validation. Validation acknowledges no usage.
-
-Configuration and statistics edits do not invalidate an acquired snapshot. Wrong totals or positions return
-`invalid_cursor`; absent, expired or replaced snapshots and a changed session checkpoint return `stale_cursor`.
-Epoch/sequence/digest contradictions return `accounting-continuity-lost`. Snapshot acquisition can return
-`snapshot-resource-limit` without disturbing other sessions. The client serves its old cache until final validation
-and atomic install. Final validation releases that session's snapshot reference.
-
-Every page carries the snapshot's fixed configuration and statistics revisions. The outer response envelope still
-reports live store revisions, which may be newer; snapshot metadata is the traversal basis. Wall/accounting samples
-are fresh for each response, so a slow traversal does not extend account expiry. Per-page deadlines and a renewable
-idle lease allow a progressing traversal to continue across concurrent administrative edits.
-
-Page operations acquire the envelope's exclusive state lock for snapshot/reference work and release it before
-transport callbacks. The 64-frame cap, entry-session authorization, token revalidation and bounded response queue
-remain in force. Anonymous envelopes without Authenticate use only a shared lock to produce refusals. If responses
-would exhaust the combined 16 MiB payload, oversized frames become correlated `response-too-large` errors while
-space is reserved for every sibling response; earlier mutation acknowledgements remain deliverable.
-
-`server-time-ms` and positive `accounting-time-ms` are response-only values. Absolute dates use the wall sample; the
-accounting clock advances from its construction wall/monotonic anchor without rebasing on later wall corrections.
-The client preserves each page's clock pair and receipt time when installing that page's users.
-
-### PushUserStats Module
-
-The payload is the immutable `epoch` / `sequence` / `users` delta batch described above. The complete batch is
-validated before mutation. Before tree allocation it permits depth three and at most 36,871 lexical values: seven root values plus nine per entry for the 4,096-entry maximum, counting keys. Success returns type `0` and JSON identifying the accepted epoch, sequence and exact
-payload digest, with `needs-pull: true`. Replaying the last identical batch returns the same accounting confirmation
-without applying it again, even if an account has since changed or disappeared. Permission, epoch, sequence and
-input failures return a correlated Error response. A next batch containing absent account IDs receives an Error whose JSON body has `error:"usage-accounts-missing"`, the exact attempted `epoch`, decimal-string `sequence`, request SHA-256 `digest`, current `checkpoint-sequence`/`checkpoint-digest`, and a nonempty `missing-ids` array of decimal strings. This proves that no entry in that exact attempt was applied. The client validates the proof before releasing its immutable attempt, retains every usage obligation, refreshes membership and may rebuild at the same next sequence. An exact replay of an already accepted batch is still acknowledged before checking account existence.
-
-## Lifecycle Behavior
-
-On upstream `Init`, `AuthenticationServer` initializes its per-line buffer state and sends downstream `Est` toward the
-previous tunnel.
-
-Producer envelopes execute store mutations before reads under their selected state lock. Correlate replies by ID;
-response order need not match input order. On upstream payload, it buffers bytes, extracts every complete outer message, processes each contained request frame,
-and sends one combined response message downstream with `tunnelPrevDownStreamPayload()`.
-
-On upstream `Finish`, it destroys only its own per-line state. It does not call `lineDestroy()` because it did not
-create the line.
-
-If the server itself has to terminate a logical connection, such as for a malformed oversized frame, it destroys its
-own line state first and then sends `tunnelPrevDownStreamFinish()`.
-
-## Notes And Caveats
+### Notes And Caveats
 
 - The current authenticated outer message payload limit is 16 MiB; unauthenticated payload is limited to 16 KiB.
 - The current request data limit is 16 MiB.
@@ -1043,11 +634,11 @@ own line state first and then sends `tunnelPrevDownStreamFinish()`.
 - This node does not require left padding and does not prepend in-place.
 - This node is not a packet tunnel and does not use packet-line semantics.
 
-## Management API
+### Management API
 
 The server explicitly registers read-only `status`, `get-user` and `list-users`,
 and writable `update-user`, `create-user` and `change-user-password`, for
-[APIServer](APIServer.mdx). Each operation takes an `application/json` body and
+[APIServer](../APIServer/description.md). Each operation takes an `application/json` body and
 returns UTF-8 JSON. Configure an independent operator token and exact permissions
 on the gateway, for example:
 
@@ -1080,7 +671,7 @@ binding the server instance to that revision, and is an optimistic edit
 precondition rather than an authentication credential. A list page has one token
 for the page. The existing 64-character pagination cursor remains separate.
 
-### `status`
+#### `status`
 
 The body is exactly `{}`. A successful body has this shape:
 
@@ -1123,7 +714,7 @@ is the existing commit boundary; optional history-backup failures and subsequent
 directory-sync warnings do not turn it into a failed save or strengthen its
 power-loss guarantee.
 
-### `get-user`
+#### `get-user`
 
 Request `{"id":"42"}`. The result contains `config_revision`, `stats_revision`,
 `accounting_time_ms`, `edit_token` and `user`. The `user` field contains exactly:
@@ -1152,7 +743,7 @@ A missing valid ID returns `not_found`. Complete details are never truncated:
 a permitted record that exceeds the bounded operation returns `record_too_large`;
 malformed stored UTF-8 returns `invalid_record_encoding`.
 
-### `list-users`
+#### `list-users`
 
 `{}` starts a traversal with a default limit of 50. `{"limit":1}` selects an
 integer limit from 1 through 100; continue with
@@ -1197,7 +788,7 @@ page. No successful page skips unreturned records. If one summary cannot fit,
 return `response_too_large`. Timeout/contention discards partial work rather than
 returning a partial-success cursor.
 
-### `update-user`
+#### `update-user`
 
 An editor needs explicit `get-user` and `update-user` permissions. Monitoring
 permissions stay read-only; producer credentials and `allow-user-write` do not
@@ -1293,7 +884,7 @@ Never automatically fetch a fresh token and replay the old patch. Request IDs
 provide correlation, not deduplication, and there is no persistent idempotency or
 recovery record. The example client performs no automatic write retries.
 
-### `create-user`
+#### `create-user`
 
 Creation requires its own exact `create-user` gateway permission. An editor's
 `update-user` permission, producer credentials and protocol `allow-user-write`
@@ -1421,7 +1012,7 @@ reassign an ID to another person/account; uniqueness covers the current
 collection, without a persistent history of all previously used IDs or a
 cross-crash exactly-once guarantee. The example client never retries writes.
 
-### `change-user-password`
+#### `change-user-password`
 
 This administrator operation needs its own exact APIServer permission. A password
 administrator normally receives only `get-user` and `change-user-password` for
@@ -1532,7 +1123,7 @@ On conflict, reread and reconsider again. Never automatically fetch a token,
 replay a write or generate a different recovery password. Request IDs remain
 correlation only, with no retry-result cache or replay shortcut.
 
-### Bounded snapshots and errors
+#### Bounded snapshots and errors
 
 Reads run on the calling event worker, acquiring the server, collection, user
 configuration and statistics read locks without waiting. Contention returns
@@ -1548,7 +1139,7 @@ Operation failures have a nonzero node result code and a small body such as
 `invalid_request`, `not_found`, `invalid_cursor`, `stale_cursor`, `busy`, `timeout`,
 `record_too_large`, `response_too_large` and `invalid_record_encoding`, as
 applicable. Gateway authentication, permission, timeout and encoded-envelope
-errors retain the [APIServer](APIServer.mdx) contract. Retries and restarting a
+errors retain the [APIServer](../APIServer/description.md) contract. Retries and restarting a
 stale traversal are caller-controlled.
 
 A failed mandatory refresh may yield to usage reporting against the unchanged installed baseline between traversals.
@@ -1557,7 +1148,457 @@ ledger, allow installation of the authoritative table, and reattach if that dura
 dropped or reported against an absent account. An unresolved immutable batch still blocks publication unless its exact
 no-commit refusal is validated. There is no client crash recovery or durable usage journal.
 
-## User Database Performance
+## Advanced behavior
+
+### Logic Explanation
+
+The server owns one authoritative table and store-level `config_revision` / `stats_revision` counters, initially 1.
+Configuration mutations bump the former. Every newly accepted usage batch bumps the latter once, including a
+zero-byte first-use observation; an exact replay creates no additional commit. Independent point
+reads share the state read lock. Authentication, saves, mutations and producer snapshot/page operations hold its write lock.
+
+#### Control Identity And Sessions
+
+Configured `auth-clients` names must be unique. Independent client processes must use distinct names. Sessions hold
+bearer tokens, permissions, idle time and an association with their authenticated configured identity. Idle expiry
+(default 600000 ms, swept on worker 0 every 60000 ms) and replacement remove sessions but preserve the identity's
+accounting checkpoint. A valid-token request refreshes activity, including permission-denied requests.
+
+Initial `Authenticate` accepts `name` and `secret` in a zero-token envelope and creates an opaque accounting epoch.
+Its Session response contains 128 bytes: a 64-byte token followed by a 64-byte epoch. Each is 32 OS-secure random
+bytes encoded as lowercase hexadecimal. A reconnecting running client includes `epoch` in Authenticate to resume it.
+A missing or superseded checkpoint returns `accounting-continuity-lost`; it is never silently initialized for a retry.
+Fresh enrollment without an epoch replaces the checkpoint and invalidates previous sessions for that identity.
+Only a failed name/secret match returns `authentication-failed`. After a valid match, capacity or token/epoch
+generation refusal returns `session-unavailable`. This transient error preserves any old session, epoch and
+checkpoint, and the client's already usable cache and pending accounting while it reconnects with bounded backoff.
+`Authenticate` inside an already authenticated envelope is rejected with `already-authenticated`. Credential failures are counted process-locally and logged at most once per five seconds with the total count, without caller-controlled names or secrets; they do not occupy audit queue slots.
+
+#### Usage Accounting
+
+A client retains one immutable delta batch across connection loss. Pushes identify users by durable nonzero `id`,
+independent of passwords. The payload has exactly this supported shape:
+
+```json
+{"epoch":"<64 hexadecimal bytes>","sequence":1,"users":[{"id":42,"up":10,"down":0,"first-usage-at-ms":1792252800000}]}
+```
+
+`sequence` starts at 1 and advances without wrapping. Each batch has 1..4096 unique user IDs and both nonnegative
+`up` and `down` deltas and a nonzero `first-usage-at-ms` per entry. Both deltas may be zero for metadata-only reports;
+a valid next-sequence report is accepted even if its first-use minimum is unchanged. Integers are plain signed-64-bit-range
+integer tokens or decimal strings through UINT64_MAX. Decimal/exponent number tokens are rejected by integer readers.
+The root permits only `epoch`, `sequence` and `users`; each entry permits only `id`, `up`, `down` and `first-usage-at-ms`, all required.
+Unknown or duplicate decoded keys reject the entire request, including nontraffic statistics, other timestamps and absolute
+traffic totals. The complete byte span must be valid JSON/UTF-8 with no trailing data, raw/escaped NUL or more than three
+nested containers and 36,871 lexical values. These checks do not impose host-configuration file-size limits; authentication payload budgets apply.
+The authenticated configured identity supplies the checkpoint key; payload fields cannot choose another identity.
+
+Under one state write lock, the server validates epoch and sequence and hashes the exact payload bytes with SHA-256.
+An exact replay of the last sequence/digest is acknowledged before current-account validation. Exactly the next
+sequence validates every entry before any mutation, samples the accounting clock once, clamps each producer observation to that time, merges the smallest nonzero
+first-use instant and applies saturating traffic, then
+publishes its checkpoint. Older sequences, gaps, conflicting replay content, unknown IDs and duplicate IDs fail without
+partial application. Only the current epoch's session may report. Checkpoint storage is constant per configured identity;
+it contains no users-table snapshot or unbounded batch history.
+
+The Ok ACK JSON contains `epoch`, `sequence`, a 64-character hexadecimal `digest`, and `needs-pull: true`.
+The client validates all three batch identity fields, advances only the acknowledged subset's baseline, and pulls fresh
+authoritative totals and first-use time. Pull installation preserves local post-snapshot traffic as `G + (A - B)`.
+No full table is installed while a batch remains unresolved. Reconnect order is authenticate/resume, replay pending
+batch, validate ACK, then pull. Blocked pull/push requests coalesce until this ordering permits them.
+The client attempts a required pull after authentication or each ACK before ordinary reporting. A failed refresh may yield to new usage reporting against the unchanged installed baseline between traversals; no push overlaps active staging. A waiting push takes priority over ordinary periodic or explicit pulls.
+
+Epoch/checkpoint state is runtime-only. Accounting continuity across process crashes or restarts is not provided.
+An unresolved batch whose continuity is lost stays identifiable and stops automatic synchronization for operator
+reconciliation. With no uncertain batch, a client may enroll afresh and pull.
+
+An ACK confirms acceptance in server memory, not a disk save. Periodic/final database saving retains its normal
+semantics and does not save the producer checkpoint. A client restart can lose unreported usage; a server restart can
+lose acknowledged usage since its last successful save and loses its retry checkpoints. Shutdown does not guarantee
+final usage delivery. There is no accounting crash recovery or remote usage-reset operation.
+
+Traffic-serving nodes use AuthenticationClient handles and copy-out APIs; they never receive borrowed user pointers.
+Credential eligibility checks enabled state, expiry and cumulative traffic. Live connection/IP admission remains local
+to one client runtime; saved gauge values do not reserve or exhaust live capacity. The protocol has no encryption of
+its own. It carries producer credentials and full user records, including user credentials. Untrusted remote links
+require authenticated encryption with server identity verification. A supported composition is
+`AuthenticationClient -> TlsClient -> TcpConnector` with `TlsClient` settings `{"sni":"auth.example.com","verify":true}`,
+paired with `TcpListener -> TlsServer -> AuthenticationServer` using the server certificate and key. The loopback
+examples describe local deployment. A response MAC alone would not protect confidentiality.
+
+### Request And Response Framing
+
+Upstream payload bytes are buffered as a stream. The request envelope is:
+
+- 4-byte unsigned big-endian body size
+- 64-byte session token
+- request payload bytes
+
+The body size is the number of bytes after the size prefix, so it includes the 64-byte token plus the request payload.
+For an unauthenticated `Authenticate` request, the token is ignored and may be all zero bytes. Every other request
+requires a valid session token issued by `Authenticate`. If a message uses a valid session token, it must not contain an
+`Authenticate` frame.
+
+The request payload contains one or more request frames:
+
+- 1-byte request type
+- 4-byte (32-bit) correlation ID
+- 4-byte unsigned big-endian request data length
+- request data bytes
+
+The entire envelope is validated before any request executes, including a maximum of 64 frames. Frame 65 rejects
+all siblings without applying earlier mutations. A malformed envelope closes the borrowed logical connection;
+verbose mode provides bounded diagnostics without unconditional per-frame warnings.
+
+After the four-byte length and 64-byte token arrive, a currently valid token permits the ordinary message limit.
+Without one, frame payload is limited to 16 KiB, excluding the outer 68 bytes; an oversized declaration closes
+immediately without waiting for its body. Tokens are revalidated at dispatch. Large messages whose token was replaced
+or expired close without executing; small stale-token requests retain correlated `authentication-required` replies.
+The session at envelope entry governs all siblings: a successful Authenticate does not authorize sibling requests.
+
+Each module returns a response frame:
+
+- 1-byte response type
+- 4-byte (32-bit) correlation ID copied from the request
+- 4-byte unsigned big-endian response data length
+- response data bytes
+
+After all request frames in one message are processed, the server combines all response frames into a single response
+payload and sends it with the response envelope:
+
+- 4-byte unsigned big-endian body size
+- 8-byte unsigned big-endian configuration revision
+- 8-byte unsigned big-endian statistics revision
+- response frame bytes
+
+Both revisions start at `1` when the tunnel is created. Configuration-changing requests such as `AddNewUser` and
+`UpdateUser` increment the configuration revision. Traffic-stat updates increment the statistics revision when they
+accept a new batch, including a first-use-only or zero-traffic batch. Exact replay does not change either revision.
+
+This keeps the request/response transport extensible for additional request types.
+
+### Modules
+
+Modules live under `tunnels/AuthenticationServer/modules/`.
+
+Request types:
+
+- `1`: `ping`
+- `2`: `GetUserBySHA256Hex`
+- `3`: `GetUserBySHA256Base64`
+- `4`: `GetUserBySHA256`
+- `5`: `GetUserByPassword`
+- `6`: `AddNewUser`
+- `7`: `UpdateUser`
+- `9`: `GetUsersPage` (`GetAllUsers` C alias)
+- `10`: `Authenticate`
+- `11`: `PushUserStats`
+- `12`: `GetUserBySHA224Hex`
+- `13`: `GetUserBySHA224Base64`
+- `14`: `GetUserBySHA224`
+
+Response types:
+
+- `0`: ok
+- `1`: `pong`
+- `2`: user
+- `3`: users database
+- `4`: session token
+- `255`: error
+
+`Authenticate` is public. Every other module requires a valid session token. User lookup and full-table pull modules
+also require `allow-user-pull`; user create/update modules require `allow-user-write`; `PushUserStats` requires
+`allow-stats-push`. Neither write permission implies the other. Opcode `8` is unsupported and receives the ordinary
+`unknown-request-type` error.
+
+#### Authenticate Module
+
+Request data is `{"name":"edge-1","secret":"long-random-secret"}` for fresh enrollment, or the same object
+with `"epoch":"<64 hexadecimal bytes>"` for resumption. The outer token is zero. Success returns type `4` and
+128 bytes: token then epoch, 64 hexadecimal bytes each. Later requests carry the token in their envelope.
+Authenticate data is at most 16,375 bytes, with strict quiet JSON parsing, depth two and eight lexical values.
+Only nonempty string `name`/`secret` and optional valid `epoch` are accepted; duplicate/unknown keys, trailing bytes,
+invalid encoding and decoded NUL are refused. After a failed Authenticate, admission closes before handing off its
+correlated response. Pause/Resume can finish that queued response; further input closes the line.
+Malformed credentials fail, authenticated-envelope enrollment returns `already-authenticated`, and failed resumption
+returns `accounting-continuity-lost`.
+
+#### Ping Module
+
+The `ping` module expects request data equal to `ping` and returns response data equal to `pong`. The response preserves
+the original 4-byte (32-bit) correlation ID.
+
+If ping receives other request data, it returns an error response frame with the same correlation ID.
+
+#### GetUserBySHA256Hex Module
+
+The `GetUserBySHA256Hex` module expects request data containing exactly 64 hexadecimal characters, representing a
+SHA-256 digest. Uppercase and lowercase hex are accepted.
+
+If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the hex input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserBySHA256Base64 Module
+
+The `GetUserBySHA256Base64` module expects request data containing a standard padded base64 string that decodes to a
+32-byte SHA-256 digest. For a SHA-256 digest this is normally 44 base64 characters.
+
+If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the base64 input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserBySHA256 Module
+
+The `GetUserBySHA256` module expects request data containing exactly the raw 32 bytes of a SHA-256 digest.
+
+If a user with that SHA-256 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserBySHA224Hex Module
+
+The `GetUserBySHA224Hex` module expects request data containing exactly 56 hexadecimal characters, representing a
+SHA-224 digest. Uppercase and lowercase hex are accepted.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the hex input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserBySHA224Base64 Module
+
+The `GetUserBySHA224Base64` module expects request data containing a standard padded base64 string that decodes to a
+28-byte SHA-224 digest. For a SHA-224 digest this is normally 40 base64 characters.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the base64 input is malformed or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserBySHA224 Module
+
+The `GetUserBySHA224` module expects request data containing exactly the raw 28 bytes of a SHA-224 digest.
+
+If a user with that SHA-224 password digest exists, the module returns response type `2` and response data containing
+the full serialized user JSON object.
+
+If the raw digest size is wrong or no user matches the digest, it returns an error response frame with the same
+correlation ID.
+
+#### GetUserByPassword Module
+
+The `GetUserByPassword` module expects request data containing the exact plaintext password lookup key without a trailing
+NUL. The payload must be non-empty and must not contain embedded NUL bytes. Its limit is the existing producer
+request-data cap (16 MiB), subject also to the enclosing message geometry; there is no separate 1,024-byte password cap.
+Exact Unicode/whitespace bytes are retained. API body and prepared old-password working limits remain separate.
+
+For `Socks5Server`, that lookup key is the SOCKS username, a literal `:`, and the SOCKS password. For example, SOCKS
+credentials `alice` and `alice-secret` are looked up as `alice:alice-secret`.
+
+If a user with that password exists, the module returns response type `2` and response data containing the full
+serialized user JSON object.
+
+If the password payload is malformed or no user matches the password, it returns an error response frame with the same
+correlation ID.
+
+All password and digest lookup modules admit the complete compact JSON size before copying the matched user's strings.
+The JSON must fit the 16 MiB response payload limit minus its 9-byte frame header. A record one byte over that limit
+returns `response-too-large`; it is never truncated. Invalid stored string encoding returns `user-json-serialize-failed`.
+The collection remains locked through the bounded copy so a concurrent removal cannot invalidate the selected account.
+
+#### AddNewUser Module
+
+The `AddNewUser` module expects request data containing a JSON object for one user, using the AuthenticationServer user
+format described above. The submitted user must contain a non-zero unique `id`/`user-id`.
+
+The module validates the complete payload before constructing credentials: UTF-8 must
+be valid, object keys must be unique after decoding, raw/decoded NUL is forbidden,
+and only JSON whitespace may follow the object. Before tree allocation, nesting is limited to four containers and lexical values to 256 (including object keys). Malformed input leaves users,
+configuration revisions and database files unchanged. Valid Unicode password bytes
+and the `password`/`pass` aliases retain their normal meaning. It then checks that
+the user can be created and that the new user's id, name, and password hashes do not
+conflict with existing users. If validation passes, the user
+is added to the in-memory database and the users file is saved immediately through the private atomic commit sequence. Bulk administrative imports should use the bounded `create-user` management operation when periodic persistence is sufficient; producer `AddNewUser` intentionally retains its per-account save-before-ack durability.
+If that immediate save fails, the module attempts to roll back the in-memory add and returns a save error.
+
+On success it returns response type `0` and response data equal to `user-added`.
+
+If validation or saving fails, it returns an error response frame with the same correlation ID. If the file save fails
+after the in-memory add succeeds, the module attempts to remove that user from memory and returns
+`database-save-failed`.
+
+`storage-unavailable` reports rejected user storage/index capacity or failure to initialize the native locks for a
+copied user. Heap exhaustion terminates the process instead of producing an error response.
+
+#### UpdateUser Module
+
+`UpdateUser` takes a configuration patch with a required nonzero exact unsigned 64-bit `id`. For example:
+
+```json
+{"id":42,"name":"Alice"}
+```
+
+If an administrator read 100 bytes and a batch added 10 more, this name edit leaves 110 bytes intact. No password or
+full exported user is submitted. Omitted fields, including siblings inside nested objects, retain their stored values:
+
+```json
+{"id":42,"limit":{"traffic":{"total":1073741824}},"time":{"expire-after-first-usage-ms":86400000}}
+```
+
+This changes only total traffic quota and the expiry duration; upload/download quotas, other limits, absolute expiry,
+creation/first-use time and all counters stay intact.
+
+| Editable leaf | Type |
+| --- | --- |
+| `name`, `email`, `notes`, `wireguard-allowed-ips` | String; empty string clears it under existing index/CIDR rules |
+| `gid` | Exact unsigned 64-bit integer |
+| `enabled` | JSON boolean |
+| `record-stat-interval-ms` | Exact nonnegative integer through INT_MAX; no reporting scheduler is introduced |
+| `limit.traffic.up`, `.down`, `.total` | Exact unsigned 64-bit integers |
+| `limit.bandwidth.up`, `.down` | Exact unsigned 64-bit integers |
+| `limit.ips`, `.devices`, `.connections-in`, `.connections-out` | Exact unsigned 64-bit integers |
+| `time.expire-at-ms`, `.expire-after-first-usage-ms` | Exact unsigned 64-bit integers |
+
+Dotted paths mean nested objects. Zero clears the corresponding limit/expiry. Integer tokens through INT64_MAX and
+decimal strings through UINT64_MAX are supported; negatives, fractions, decimal/exponent tokens and overflow reject.
+At least one editable leaf is required. Null, empty supplied containers, unknown/case-variant/alias keys, duplicate
+decoded keys, malformed UTF-8, raw/escaped NUL, excessive nesting and trailing non-whitespace data reject the whole
+patch. Parsing admits at most four nested containers and 64 lexical values, including object keys, before allocating a JSON tree. `stats`, passwords/hashes/credentials, alternate IDs, runtime/client-view fields, creation time and first-use time
+are forbidden, including their top-level aliases. A valid field alongside a forbidden one does not apply.
+
+Name and Allowed-IP indexes are prepared before commit. Unknown ID, duplicate name, invalid/overlapping CIDR and
+expected capacity refusal change no account fields, logical indexes, revisions or accounting checkpoint. Successful
+patches return type `0`, `user-updated`, and increment only `config_revision` exactly once under server write
+serialization. They edit memory without immediately saving it. Independent patches preserve one another's omitted
+fields; for the same field, the latest accepted value wins. No expected-revision precondition is required.
+
+#### Statistics Ownership
+
+Account traffic counters and traffic limits use charged quota bytes. AuthenticationClient applies its configured
+`traffic-multiplier` to new measured bytes before reporting; AuthenticationServer never applies another multiplier.
+Other producers and database imports must also supply charged usage. At the default multiplier of `1`, charged and
+measured bytes are equal. Aggregates from different rates cannot be converted back to actual network traffic; speed
+and other nontraffic statistics keep their own units.
+
+| Value | Owner and current rule |
+| --- | --- |
+| Cumulative charged upload/download bytes | Server aggregate; remote changes use accepted deduplicated batches. Config patches preserve it. |
+| First-use timestamp | Earliest nonzero accounting observation from authorized producers, clamped to accounting receipt time. Config patches preserve it. |
+| Creation timestamp | Creation/import metadata, preserved by ordinary edits. |
+| Limits, enabled flag, expiry policy | Account configuration changed through explicit patch leaves. |
+| Active outbound connections and IP reservations | Local runtime admission state, retained/released locally; no global count is supplied. |
+| Stored/imported IP, device, connection and speed statistics | No reliable live global occupancy view and no admission source. This protocol adds no reporting of these gauges. |
+
+Future connection telemetry needs producer scope, sample order and expiry: a later snapshot replaces an earlier one,
+so repeated samples must not be added like traffic. Speed needs a measurement window/time and freshness; stale/missing
+samples are not measured zero and compatible producer windows are required before aggregation. Distinct-IP telemetry
+needs an identity set, observation window and cross-producer deduplication; adding client counts cannot produce a
+global distinct count. Device reporting needs defined device identity and collection. Reset requires a separate policy
+for delayed usage and distributed cutoffs; no reset operation is provided here.
+
+#### GetUsersPage Module
+
+Request `9` (`GetUsersPage`, also named `GetAllUsers` in the C interface) returns one bounded credential-bearing page.
+There is no whole-table fallback. Every request needs the current producer token, `allow-user-pull`, and its exact
+acknowledged accounting checkpoint. Sequence and digest are zero at enrollment:
+
+```json
+{"epoch":"<64 hex characters>","sequence":"0","digest":"0000000000000000000000000000000000000000000000000000000000000000"}
+```
+
+A continuation adds `"cursor":"<64 lowercase hex characters>"` and `"total":"130"`. The cursor encodes the 16-byte
+server instance ID, captured 64-bit configuration revision and 64-bit next collection position, in that order. It refers to the current session's retained snapshot and grants no permission. The request is at most 1024 bytes, uses strict quiet JSON with depth two and
+16 values, rejects unknown/duplicate fields, and uses canonical unsigned decimal strings for sequence and total.
+
+Each response has type `3` and this schema (all unsigned 64-bit metadata are decimal strings):
+
+```json
+{
+  "instance":"<32 lowercase hex characters>",
+  "epoch":"<64 hex characters>",
+  "sequence":"0",
+  "digest":"<64 hex characters>",
+  "config-revision":"1",
+  "stats-revision":"1",
+  "server-time-ms":"1767225600000",
+  "accounting-time-ms":"1767225600000",
+  "total":"0",
+  "position":"0",
+  "count":"0",
+  "cursor":"<64 lowercase hex characters>",
+  "complete":true,
+  "validated":false,
+  "users":[]
+}
+```
+
+The `users` array contains exactly `count` complete user records, including credentials. Ordinary pages target 256 KiB
+of complete encoded response and at most 128 users. A first record larger than that target occupies a page by itself,
+up to the existing 16 MiB hard response framing limit after all metadata/frame overhead. `user-too-large` rejects a
+record that cannot fit; fields are never truncated. Size admission precedes copying arbitrary-length row strings, and
+the first request captures an immutable encoded table under the server write lock. Capture is O(N) and blocks other server state work until complete. Sessions acquiring the same configuration and statistics revision share it; active traversals keep their records across later edits. Aggregate storage, including capture scratch, is bounded by `snapshot-max-bytes`. The management API's `list-users` continues using live revision-bound cursors.
+
+A last data page has `complete:true`, `validated:false` and a terminal cursor. The client must then send that cursor,
+the same total/checkpoint and `"validate":true`. The server returns a small `complete:true,validated:true` response,
+with `position == total`, `count:"0"` and an empty `users` array. An empty table has one empty complete data page and
+uses the same final validation. Validation acknowledges no usage.
+
+Configuration and statistics edits do not invalidate an acquired snapshot. Wrong totals or positions return
+`invalid_cursor`; absent, expired or replaced snapshots and a changed session checkpoint return `stale_cursor`.
+Epoch/sequence/digest contradictions return `accounting-continuity-lost`. Snapshot acquisition can return
+`snapshot-resource-limit` without disturbing other sessions. The client serves its old cache until final validation
+and atomic install. Final validation releases that session's snapshot reference.
+
+Every page carries the snapshot's fixed configuration and statistics revisions. The outer response envelope still
+reports live store revisions, which may be newer; snapshot metadata is the traversal basis. Wall/accounting samples
+are fresh for each response, so a slow traversal does not extend account expiry. Per-page deadlines and a renewable
+idle lease allow a progressing traversal to continue across concurrent administrative edits.
+
+Page operations acquire the envelope's exclusive state lock for snapshot/reference work and release it before
+transport callbacks. The 64-frame cap, entry-session authorization, token revalidation and bounded response queue
+remain in force. Anonymous envelopes without Authenticate use only a shared lock to produce refusals. If responses
+would exhaust the combined 16 MiB payload, oversized frames become correlated `response-too-large` errors while
+space is reserved for every sibling response; earlier mutation acknowledgements remain deliverable.
+
+`server-time-ms` and positive `accounting-time-ms` are response-only values. Absolute dates use the wall sample; the
+accounting clock advances from its construction wall/monotonic anchor without rebasing on later wall corrections.
+The client preserves each page's clock pair and receipt time when installing that page's users.
+
+#### PushUserStats Module
+
+The payload is the immutable `epoch` / `sequence` / `users` delta batch described above. The complete batch is
+validated before mutation. Before tree allocation it permits depth three and at most 36,871 lexical values: seven root values plus nine per entry for the 4,096-entry maximum, counting keys. Success returns type `0` and JSON identifying the accepted epoch, sequence and exact
+payload digest, with `needs-pull: true`. Replaying the last identical batch returns the same accounting confirmation
+without applying it again, even if an account has since changed or disappeared. Permission, epoch, sequence and
+input failures return a correlated Error response. A next batch containing absent account IDs receives an Error whose JSON body has `error:"usage-accounts-missing"`, the exact attempted `epoch`, decimal-string `sequence`, request SHA-256 `digest`, current `checkpoint-sequence`/`checkpoint-digest`, and a nonempty `missing-ids` array of decimal strings. This proves that no entry in that exact attempt was applied. The client validates the proof before releasing its immutable attempt, retains every usage obligation, refreshes membership and may rebuild at the same next sequence. An exact replay of an already accepted batch is still acknowledged before checking account existence.
+
+## Implementation details
+
+### Lifecycle Behavior
+
+On upstream `Init`, `AuthenticationServer` initializes its per-line buffer state and sends downstream `Est` toward the
+previous tunnel.
+
+Producer envelopes execute store mutations before reads under their selected state lock. Correlate replies by ID;
+response order need not match input order. On upstream payload, it buffers bytes, extracts every complete outer message, processes each contained request frame,
+and sends one combined response message downstream with `tunnelPrevDownStreamPayload()`.
+
+On upstream `Finish`, it destroys only its own per-line state. It does not call `lineDestroy()` because it did not
+create the line.
+
+If the server itself has to terminate a logical connection, such as for a malformed oversized frame, it destroys its
+own line state first and then sends `tunnelPrevDownStreamFinish()`.
+
+### User Database Performance
 
 - SHA-256 is the canonical plaintext-password lookup key. A password lookup
   derives SHA-256 once and resolves through the SHA-256 hash index; there is no
@@ -1571,7 +1612,7 @@ no-commit refusal is validated. There is no client crash recovery or durable usa
 - `Ping` and credential lookups share the server state read lock and may execute concurrently. Producer snapshot/page operations, authentication, user mutations and statistics mutations take the state write lock for
   the whole envelope. Mixed envelopes use the strongest lock required by their module descriptors.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

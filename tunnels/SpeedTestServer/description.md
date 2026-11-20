@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedTestServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SpeedTestServer.mdx, and all files must keep the same documentation version.
 -->
 
 # SpeedTestServer Node
+
+## Overview
 
 `SpeedTestServer` is the chain-end peer for `SpeedTestClient`. It accepts speed-test frames from upstream, validates
 upload data, optionally sends download data back downstream, and returns final sender/receiver reports to the client.
@@ -11,18 +13,7 @@ upload data, optionally sends download data back downstream, and returns final s
 It is a normal connection-oriented tunnel. It does not create lines, it does not own line destruction, and it is not a
 packet-line tunnel.
 
-## What It Does
-
-- acts as a chain end for a `SpeedTestClient` flow
-- initializes per-line state during upstream `Init`
-- immediately sends downstream `Est` so the client can start the test
-- accepts the client's `HELLO` and replies with `ACK`
-- checks upload frame structure, with optional payload-pattern verification
-- optionally sends download `DATA` frames to the client
-- sends final `REPORT` frames for completed upload and download directions
-- closes the downstream side after the test is complete or after a protocol failure
-
-## Typical Placement
+## Typical placement
 
 `SpeedTestServer` must be the last node in its chain. It receives speed-test traffic from a listener or from any protocol
 decapsulation stack in front of it:
@@ -39,7 +30,11 @@ The client side should normally be:
 - `SpeedTestClient -> TlsClient -> TcpConnector`
 - `SpeedTestClient -> EncryptionClient -> TcpConnector`
 
-## TCP Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### TCP Example
 
 Server side:
 
@@ -96,7 +91,40 @@ Matching client side:
 ]
 ```
 
-## UDP Example
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
+
+- `name` `(string)`
+  A user-chosen name for this node.
+
+- `type` `(string)`
+  Must be exactly `"SpeedTestServer"`.
+
+`SpeedTestServer` is a chain end and must not have a `next` node.
+
+### Optional `settings`
+
+- `report-interval-ms` `(integer)`
+  Fallback interval log cadence before a client `HELLO` is received. After `HELLO`, the client's requested report
+  interval is used for that line.
+  Default: `1000`
+
+- `json-summary` `(boolean)`
+  Default value for JSON-style per-stream summaries. A client `HELLO` with `json-summary` enabled can also request this
+  per line.
+  Default: `false`
+
+- `quiet` `(boolean)`
+  Suppresses SpeedTestServer runtime logs, including accepted-stream, interval, final summary, and per-stream failure
+  messages. Fatal configuration or invalid-chain diagnostics may still be logged.
+  Default: `false`
+
+## Usage and troubleshooting
+
+### UDP Example
 
 Server side:
 
@@ -149,112 +177,7 @@ Matching client side:
 ]
 ```
 
-## Required JSON Fields
-
-### Top-level fields
-
-- `name` `(string)`
-  A user-chosen name for this node.
-
-- `type` `(string)`
-  Must be exactly `"SpeedTestServer"`.
-
-`SpeedTestServer` is a chain end and must not have a `next` node.
-
-## Optional `settings`
-
-- `report-interval-ms` `(integer)`
-  Fallback interval log cadence before a client `HELLO` is received. After `HELLO`, the client's requested report
-  interval is used for that line.
-  Default: `1000`
-
-- `json-summary` `(boolean)`
-  Default value for JSON-style per-stream summaries. A client `HELLO` with `json-summary` enabled can also request this
-  per line.
-  Default: `false`
-
-- `quiet` `(boolean)`
-  Suppresses SpeedTestServer runtime logs, including accepted-stream, interval, final summary, and per-stream failure
-  messages. Fatal configuration or invalid-chain diagnostics may still be logged.
-  Default: `false`
-
-## Detailed Behavior
-
-### Init and establishment
-
-On upstream `Init`, `SpeedTestServer`:
-
-- initializes its per-line state
-- creates a splice-aware stream buffer for TCP-mode framing
-- sends downstream `Est` to the previous tunnel
-
-The downstream `Est` is the signal used by `SpeedTestClient` to begin its HELLO and data schedule.
-
-### HELLO and ACK
-
-The first client frame must be a `HELLO`. It configures the server's per-line behavior:
-
-- `tcp` or `udp` mode
-- upload, download, or bidirectional direction
-- duration and warmup
-- report interval
-- payload size
-- target bandwidth
-- total stream count and stream id
-
-After accepting the `HELLO`, the server sends an `ACK` downstream. In UDP mode, duplicate `HELLO` frames are answered
-with another `ACK` so a lost ACK does not leave the client waiting forever.
-
-### Upload receive path
-
-When upload is enabled, upstream `DATA` frames are counted. If the client enables `verify-payload`,
-their bodies are also validated against its deterministic pattern.
-
-The server tracks:
-
-- bytes
-- packets
-- valid packets
-- lost packets
-- duplicate packets
-- out-of-order packets
-- validation errors
-- jitter estimate
-
-When the client sends upload `END`, the server sends a receiver `REPORT` downstream.
-
-### Download send path
-
-When download is enabled, the server schedules downstream `DATA` frames after `HELLO` is accepted. It uses the same
-payload size, warmup, duration, and optional target bandwidth requested by the client.
-
-At the end of the download interval, the server sends:
-
-- download `END`
-- sender `REPORT`
-
-The line closes only after every requested direction has finished and every required report has been sent.
-
-### Stream and datagram framing
-
-In TCP mode, incoming bytes are accumulated in a `splice_stream_t` and decoded as speed-test frames. Oversized or
-malformed frame lengths fail the line instead of allowing unbounded buffering.
-
-In UDP mode, each WaterWall payload buffer must contain exactly one speed-test frame. The server does not treat UDP
-payloads as a byte stream.
-
-### Finish behavior
-
-If upstream closes before a complete test, the server destroys only its own per-line state. It does not destroy the
-`line_t`, because that line was created by the listener or another upstream adapter.
-
-When the server completes or fails a test itself, it:
-
-- sends any final protocol bytes that are still required
-- destroys its own line state
-- forwards downstream `Finish`
-
-## Notes And Caveats
+### Notes And Caveats
 
 - `SpeedTestServer` is only useful with a matching `SpeedTestClient`.
 - It is a chain end and its downstream entry callbacks are intentionally disabled.
@@ -263,7 +186,9 @@ When the server completes or fails a test itself, it:
 - The server trusts the client to choose the test shape, but validates payload sizes and frame types before buffering or
   processing them.
 
-## Payload verification and splice
+## Advanced behavior
+
+### Payload verification and splice
 
 `verify-payload` on `SpeedTestClient` defaults to `false` and selects the policy
 for both endpoints through the HELLO flags. Set it to `true` to generate and check
@@ -286,7 +211,96 @@ bytes, compacting before refusing excess storage. This is a queue accounting bou
 not a limit on total process or kernel memory. Send tasks respect Pause and yield
 after at most 32 frames; pacing uses scheduled tasks rather than blocking sleeps.
 
-## Node Metadata
+## Implementation details
+
+### What It Does
+
+- acts as a chain end for a `SpeedTestClient` flow
+- initializes per-line state during upstream `Init`
+- immediately sends downstream `Est` to report readiness of the server endpoint
+- accepts the client's `HELLO` and replies with `ACK`
+- checks upload frame structure, with optional payload-pattern verification
+- optionally sends download `DATA` frames to the client
+- sends final `REPORT` frames for completed upload and download directions
+- closes the downstream side after the test is complete or after a protocol failure
+
+### Detailed Behavior
+
+#### Init and establishment
+
+On upstream `Init`, `SpeedTestServer`:
+
+- initializes its per-line state
+- creates a splice-aware stream buffer for TCP-mode framing
+- sends downstream `Est` to the previous tunnel
+
+The speed-test exchange begins when the server receives the client's `HELLO`.
+
+#### HELLO and ACK
+
+The first client frame must be a `HELLO`. It configures the server's per-line behavior:
+
+- `tcp` or `udp` mode
+- upload, download, or bidirectional direction
+- duration and warmup
+- report interval
+- payload size
+- target bandwidth
+- total stream count and stream id
+
+After accepting the `HELLO`, the server sends an `ACK` downstream. In UDP mode, duplicate `HELLO` frames are answered
+with another `ACK` so a lost ACK does not leave the client waiting forever.
+
+#### Upload receive path
+
+When upload is enabled, upstream `DATA` frames are counted. If the client enables `verify-payload`,
+their bodies are also validated against its deterministic pattern.
+
+The server tracks:
+
+- bytes
+- packets
+- valid packets
+- lost packets
+- duplicate packets
+- out-of-order packets
+- validation errors
+- jitter estimate
+
+When the client sends upload `END`, the server sends a receiver `REPORT` downstream.
+
+#### Download send path
+
+When download is enabled, the server schedules downstream `DATA` frames after `HELLO` is accepted. It uses the same
+payload size, warmup, duration, and optional target bandwidth requested by the client.
+
+At the end of the download interval, the server sends:
+
+- download `END`
+- sender `REPORT`
+
+The line closes only after every requested direction has finished and every required report has been sent.
+
+#### Stream and datagram framing
+
+In TCP mode, incoming bytes are accumulated in a `splice_stream_t` and decoded as speed-test frames. Oversized or
+malformed frame lengths fail the line instead of allowing unbounded buffering.
+
+In UDP mode, each WaterWall payload buffer must contain exactly one speed-test frame. The server does not treat UDP
+payloads as a byte stream.
+
+#### Finish behavior
+
+If upstream closes before a complete test, the server destroys only its own per-line state. It does not destroy the
+`line_t`, because that line was created by the listener or another upstream adapter.
+
+When the server completes or fails a test itself, it:
+
+- sends any final protocol bytes that are still required
+- destroys its own line state
+- forwards downstream `Finish`
+
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 161
+Documentation version: 162
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/Socks5Server.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/Socks5Server.mdx, and all files must keep the same documentation version.
 -->
 
 # Socks5Server Node
+
+## Overview
 
 `Socks5Server` is a server-side SOCKS5 middle tunnel for Waterwall.
 
@@ -14,37 +16,7 @@ explicit no-auth mode, then either:
 - opens a normal Waterwall upstream connection for `CONNECT`, or
 - creates a UDP relay association tied to the accepted TCP control connection for `UDP ASSOCIATE`
 
-This tunnel is written to fit normal Waterwall chain rules:
-
-- TCP-only service normally starts at `TcpListener`; service with UDP support normally starts at `TcpUdpListener`
-- the next node still performs the real outbound transport work
-- line state is created during `Init`
-- finishes destroy local state before propagating the real Waterwall close
-- in authenticated mode, `Socks5Server` creates and inserts its own internal `UserController` between itself and the
-  configured next node
-
-## Cached Account Admission
-
-With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
-and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
-No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
-admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
-accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
-multiple disconnected clients; they are not global reservations.
-
-## What It Does
-
-- Implements SOCKS5 method negotiation.
-- Supports username/password authentication through `AuthenticationClient`.
-- Supports `CONNECT`.
-- Supports `UDP ASSOCIATE` with dynamic endpoint allocation via `UdpListener` / `TcpUdpListener`.
-- Rejects `BIND`.
-- Holds TCP payload until the SOCKS5 `CONNECT` request is accepted.
-- Accepts UDP datagrams only for a live, accepted TCP control association.
-- Forwards UDP payloads through the configured next node using the requested destination context.
-- Wraps returned UDP payload back into SOCKS5 UDP datagrams.
-
-## Typical Placement
+## Typical placement
 
 TCP-only SOCKS5 server:
 
@@ -73,7 +45,99 @@ Important:
 - `UDP ASSOCIATE` does not create a downstream TCP stream.
 - UDP payload is only accepted when the sender matches a live, accepted TCP control association.
 
-## Complete SOCKS5 TCP/UDP Topology Example
+
+## Minimal practical example
+
+This is a **node fragment** for a local TCP-only service. Precede it with a
+`TcpListener` bound to loopback, and configure `outbound` to follow the requested
+destination. Use authentication before accepting remote clients.
+
+### No-auth example
+
+```json
+{
+  "name": "socks-server",
+  "type": "Socks5Server",
+  "settings": {
+    "no-auth": true,
+    "connect": true,
+    "udp": false
+  },
+  "next": "outbound"
+}
+```
+
+Exactly one authentication mode must be selected: either `auth-client-node-name` or `no-auth: true`.
+
+
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
+
+- `name` `(string)`
+  A user-chosen name for this node.
+
+- `type` `(string)`
+  Must be exactly `"Socks5Server"`.
+
+#### `settings`
+
+- `auth-client-node-name` `(string)`
+  Name of an existing `AuthenticationClient` node in the same config file. Required unless `no-auth` is explicitly `true`.
+
+- `no-auth` `(boolean)`
+  Enables SOCKS5 no-authentication mode when `auth-client-node-name` is not set.
+  Default: `false`
+
+However:
+
+- exactly one authentication mode must be selected: either `auth-client-node-name` or `no-auth: true`
+- at least one of `connect` or `udp` must be enabled
+- when `udp` is enabled, `ipv4` is required
+- when `udp` is enabled, the finalized preceding path must expose a dynamic UDP provider; normally this means starting
+  the service with `TcpUdpListener`
+
+### Optional `settings` Fields
+
+- `connect` `(boolean)`
+  Enables SOCKS5 `CONNECT`.
+  Default: `true`
+
+- `udp` `(boolean)`
+  Enables SOCKS5 `UDP ASSOCIATE`.
+  Default: `false`
+
+- `ipv4` `(string)`
+  Required when `udp` is enabled.
+
+  This is the reachable IPv4 address placed in the SOCKS5 UDP associate reply as `BND.ADDR`; it is not the listener bind
+  address.
+  The reply port is dynamically allocated: `Socks5Server` requests a dynamic, dedicated bound UDP endpoint from the preceding `UdpListener` (or `TcpUdpListener`), and returns the assigned ephemeral port to the client.
+
+- `verbose` `(boolean)`
+  Enables extra debug logging.
+
+- `sweep-interval-ms` `(integer)`
+  Optional setting forwarded to the internal `UserController` in authenticated mode.
+  Default: `1000`
+
+## Usage and troubleshooting
+
+### Chaining to a protocol server
+
+TCP `CONNECT` can feed a protocol server directly in the same WaterWall chain.
+
+```text
+TcpListener -> Socks5Server -> TrojanServer -> TcpConnector
+```
+
+Set `next` to the protocol server instance. With `TrojanServer`, `VlessServer`, or `VmessServer`, the client sends that
+server's protocol header through the SOCKS stream. The protocol server can use its header to select the final outbound
+destination.
+
+### Complete SOCKS5 TCP/UDP Topology Example
 
 ```json
 {
@@ -132,60 +196,35 @@ For authenticated mode, replace `no-auth` with `auth-client-node-name`. That nam
 `AuthenticationClient` in the same file. `Socks5Server` uses that existing node and inserts its own internal
 `UserController` before `outbound`.
 
-## Required JSON Fields
+### Notes And Caveats
 
-### Top-level fields
+- `BIND` is currently rejected with `command not supported`.
+- SOCKS5 UDP fragmentation is not reassembled; packets with `FRAG != 0` are ignored.
+- `TcpListener -> Socks5Server` is a TCP-only topology. Use `TcpUdpListener` when `udp: true`; do not send SOCKS UDP
+  datagrams to the configured static listener port.
+- SOCKS5 usernames and passwords are converted into one AuthenticationClient password lookup key with a literal `:`
+  separator. Embedded NUL bytes are rejected because AuthenticationClient password lookup uses C strings.
+- Dynamic UDP relay ports require a reachable firewall/NAT path; permitting only the TCP control port is insufficient.
+- `required_padding_left` is set for the worst-case SOCKS5 UDP header so the tunnel can prepend UDP headers without
+  breaking Waterwall buffer-padding assumptions.
 
-- `name` `(string)`
-  A user-chosen name for this node.
+## Advanced behavior
 
-- `type` `(string)`
-  Must be exactly `"Socks5Server"`.
+### What It Does
 
-### `settings`
+- Implements SOCKS5 method negotiation.
+- Supports username/password authentication through `AuthenticationClient`.
+- Supports `CONNECT`.
+- Supports `UDP ASSOCIATE` with dynamic endpoint allocation via `UdpListener` / `TcpUdpListener`.
+- Rejects `BIND`.
+- Holds TCP payload until the SOCKS5 `CONNECT` request is accepted.
+- Accepts UDP datagrams only for a live, accepted TCP control association.
+- Forwards UDP payloads through the configured next node using the requested destination context.
+- Wraps returned UDP payload back into SOCKS5 UDP datagrams.
 
-- `auth-client-node-name` `(string)`
-  Name of an existing `AuthenticationClient` node in the same config file. Required unless `no-auth` is explicitly `true`.
+### Detailed Behavior
 
-- `no-auth` `(boolean)`
-  Enables SOCKS5 no-authentication mode when `auth-client-node-name` is not set.
-  Default: `false`
-
-However:
-
-- exactly one authentication mode must be selected: either `auth-client-node-name` or `no-auth: true`
-- at least one of `connect` or `udp` must be enabled
-- when `udp` is enabled, `ipv4` is required
-- when `udp` is enabled, the finalized preceding path must expose a dynamic UDP provider; normally this means starting
-  the service with `TcpUdpListener`
-
-## Optional `settings` Fields
-
-- `connect` `(boolean)`
-  Enables SOCKS5 `CONNECT`.
-  Default: `true`
-
-- `udp` `(boolean)`
-  Enables SOCKS5 `UDP ASSOCIATE`.
-  Default: `false`
-
-- `ipv4` `(string)`
-  Required when `udp` is enabled.
-
-  This is the reachable IPv4 address placed in the SOCKS5 UDP associate reply as `BND.ADDR`; it is not the listener bind
-  address.
-  The reply port is dynamically allocated: `Socks5Server` requests a dynamic, dedicated bound UDP endpoint from the preceding `UdpListener` (or `TcpUdpListener`), and returns the assigned ephemeral port to the client.
-
-- `verbose` `(boolean)`
-  Enables extra debug logging.
-
-- `sweep-interval-ms` `(integer)`
-  Optional setting forwarded to the internal `UserController` in authenticated mode.
-  Default: `1000`
-
-## Detailed Behavior
-
-### Control-line behavior
+#### Control-line behavior
 
 When a TCP line reaches `Socks5Server`:
 
@@ -212,11 +251,16 @@ important.
 
 For `CONNECT`:
 
-- the requested destination is copied into `line->routing_context.dest_ctx`
+- the requested destination is copied into `lineGetDestinationAddressContext(line)`
 - the transport protocol is set to TCP
 - upstream `Init` is sent to the next tunnel
-- authenticated upstream payload can proceed after adjacent Init, including before Est
-- downstream Est is forwarded immediately; the SOCKS5 success reply then precedes backend response bytes
+- once next `Init` returns on a live control line, the SOCKS5 success reply is sent once before any backend response bytes
+- a next-side `Finish` before the reply takes the SOCKS5 failure path. After success, next-side `Finish` closes the stream
+- after success, ready payload drains in FIFO order, including bytes received during `Init`
+- downstream `Est` is forwarded immediately, including repeats
+
+CONNECT success reports stream admission by WaterWall. The next tunnel may still be dialing a socket or waiting for
+protocol bytes that determine the final destination.
 
 For `UDP ASSOCIATE`:
 
@@ -239,7 +283,7 @@ If the dedicated bind, endpoint activation, or reply allocation fails, only that
 general-failure reply; existing associations remain intact. The returned endpoint must be reachable through any firewall
 or NAT policy. Static/fixed-port UDP listener traffic is not accepted as a SOCKS association.
 
-### UDP association security model
+#### UDP association security model
 
 This tunnel does not allow the UDP port to behave like an open proxy.
 
@@ -266,7 +310,7 @@ Association state is worker-local and uses an opaque dynamic-endpoint identity.
 It stores copied metadata rather than a usable pointer to the TCP control line,
 and a closing control line removes only its current matching association.
 
-### UDP payload behavior
+#### UDP payload behavior
 
 When a UDP datagram from an accepted association arrives:
 
@@ -281,13 +325,13 @@ When a reply comes back from the next tunnel:
 - the source address in that header identifies the remote endpoint associated with that reply
 - the wrapped datagram is sent back toward the previous node
 
-### Outbound UDP processing
+#### Outbound UDP processing
 
 The client-facing association remains separate from outbound processing and
 uses the normal layer-4 callback contract. Association-owned outbound state is
 released when the control line closes.
 
-### Finish behavior
+#### Finish behavior
 
 The implementation follows normal Waterwall finish ordering:
 
@@ -297,19 +341,28 @@ The implementation follows normal Waterwall finish ordering:
 - association-owned outbound state is released before close
 - re-entrant callbacks are protected so the tunnel does not read line state after shutdown paths
 
-## Notes And Caveats
+## Implementation details
 
-- `BIND` is currently rejected with `command not supported`.
-- SOCKS5 UDP fragmentation is not reassembled; packets with `FRAG != 0` are ignored.
-- `TcpListener -> Socks5Server` is a TCP-only topology. Use `TcpUdpListener` when `udp: true`; do not send SOCKS UDP
-  datagrams to the configured static listener port.
-- SOCKS5 usernames and passwords are converted into one AuthenticationClient password lookup key with a literal `:`
-  separator. Embedded NUL bytes are rejected because AuthenticationClient password lookup uses C strings.
-- Dynamic UDP relay ports require a reachable firewall/NAT path; permitting only the TCP control port is insufficient.
-- `required_padding_left` is set for the worst-case SOCKS5 UDP header so the tunnel can prepend UDP headers without
-  breaking Waterwall buffer-padding assumptions.
+This tunnel is written to fit normal Waterwall chain rules:
 
-## Splice Support
+- TCP-only service normally starts at `TcpListener`; service with UDP support normally starts at `TcpUdpListener`
+- the next node receives the requested destination and can select or open the outbound path
+- line state is created during `Init`
+- finishes destroy local state before propagating the real Waterwall close
+- in authenticated mode, `Socks5Server` creates and inserts its own internal `UserController` between itself and the
+  configured next node
+
+
+### Cached Account Admission
+
+With AuthenticationClient, admission uses its last valid RAM table and clock basis during ordinary network outages
+and re-authentication. Cached enabled status, expiry, traffic quota and local connection/IP reservations still apply.
+No initial cache, stopping, terminal accounting-continuity failure or explicit client credential rejection blocks new
+admission. Only validated authorization clears that rejection; existing authorized traffic keeps cached enforcement and
+accounting. Offline administrative changes apply after refresh. Local allowances can overshoot aggregate limits across
+multiple disconnected clients; they are not global reservations.
+
+### Splice Support
 
 Socks5Server supports splice-backed TCP CONNECT payloads. Complete client
 deliveries are materialized with `sbufEnsureOrdinary()` until the TCP setup phase
@@ -329,7 +382,7 @@ The internal UserController remains splice-capable; AuthenticationClient is a
 lookup dependency rather than a payload hop. Actual splice activation requires
 an eligible finalized chain and `misc.splice`.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

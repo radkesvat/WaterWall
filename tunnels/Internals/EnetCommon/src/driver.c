@@ -6,6 +6,9 @@
 #include <assert.h>
 #include <string.h>
 
+_Static_assert((uint32_t) kEnetDriverPeerTimeoutMax == (uint32_t) ENET_PEER_MAXIMUM_TIMEOUT,
+               "ENet timeout limit must match the driver");
+
 /* Bytes accepted before the native handshake finished. The payload follows this header in the same allocation. */
 typedef struct enet_driver_pending_s
 {
@@ -257,6 +260,8 @@ enet_driver_t *enetDriverCreate(const enet_driver_config_t *config, const enet_d
     assert(enet_driver_allocate != NULL);
     assert(config->host_mtu >= kEnetDriverHostMtuMin && config->host_mtu <= kEnetDriverHostMtuMax);
     assert(config->receive_buffer_limit / 2U >= (uint32_t) kEnetDriverMaxMessage);
+    assert(config->no_recv_timeout_ms > 0 && config->no_recv_timeout_ms <= kEnetDriverPeerTimeoutMax);
+    assert(config->ping_interval_ms > 0 && config->ping_interval_ms < config->no_recv_timeout_ms);
 
     enet_driver_t *driver = enet_malloc(sizeof(*driver));
     memset(driver, 0, sizeof(*driver));
@@ -400,8 +405,9 @@ void enetDriverInput(enet_driver_t *driver, const uint8_t *datagram, size_t leng
         return;
     }
     enet_platform_transport_t *previous = enetDriverEnter(driver, now_ms);
-    /* A sender that honours ENet's window has at most 65,536 bytes in flight, so the doubled limit always leaves
-     * room for the missing command, and retention stays below two and a half times receive_buffer_limit. */
+    /* Reserve room for the missing command above the ordinary admission threshold. A packet's payload is at most
+     * half the limit; its fragment map and packet/command structures keep its full charge below one limit.
+     * ENet may cross the doubled threshold by one admitted packet's payload plus that bookkeeping. */
     driver->host->maximumWaitingData = enetDriverCarriesNextCommand(driver, datagram, length)
                                            ? (size_t) driver->config.receive_buffer_limit * 2U
                                            : (size_t) driver->config.receive_buffer_limit;

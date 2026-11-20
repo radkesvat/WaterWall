@@ -9,9 +9,10 @@ void connectionfisherclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t 
     if (ls->role == kConnectionFisherClientRoleMain)
     {
         if (ls->selected_child != NULL && ! ls->selecting_child && ! ls->pumping_up &&
+            ! ((connectionfisherclient_lstate_t *) lineGetState(ls->selected_child, t))->next_paused &&
             bufferqueueGetEntryCount(&ls->pending_up) == 0)
         {
-            discard lineCallWithRefWithBuf(ls->selected_child, tunnelNextUpStreamPayload, t, buf);
+            discard connectionfisherclientForwardToChild(t, ls->selected_child, buf);
             return;
         }
 

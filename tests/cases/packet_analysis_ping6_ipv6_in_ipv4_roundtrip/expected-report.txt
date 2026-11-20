@@ -1,0 +1,8 @@
+received-total-packets: 6
+lost-total-packets: 0
+198.51.100.0 | total | 3 | 3 | 0
+198.51.100.0 | 41 | 3 | 3 | 0
+198.51.100.1 | total | 3 | 3 | 0
+198.51.100.1 | 41 | 3 | 3 | 0
+source-ip | protocol-number | expected | received | lost | loss-percent | histogram
+| [################################]

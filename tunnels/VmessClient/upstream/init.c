@@ -46,5 +46,5 @@ void vmessclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    tunnelNextUpStreamInit(t, l);
+    vmessclientStartNext(t, l, l);
 }

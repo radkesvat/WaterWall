@@ -251,8 +251,6 @@ int __wrap_poll(struct pollfd *fds, nfds_t count, int timeout_ms)
 bool __wrap_rawLinuxNotrackInstall(raw_device_t *rdev)
 {
     require(rdev->writer.current == NULL, "NOTRACK was installed after writer publication");
-    if (! rdev->bypass_conntrack)
-        return true;
     rdev->notrack_rule_pending = true;
     const bool result          = ! fail_next_notrack_install;
     fail_next_notrack_install  = false;
@@ -556,7 +554,6 @@ static void testNotrackLifecycle(void)
     resetFixture();
     raw_device_t rdev;
     deviceInit(&rdev, "raw-notrack");
-    rdev.bypass_conntrack     = true;
     fail_next_notrack_install = true;
     require(! rawdeviceBringUp(&rdev), "failed NOTRACK install published raw writer");
     require(! rdev.notrack_rule_pending && rdev.writer.current == NULL &&
@@ -621,7 +618,6 @@ static void testStopWaitsForNativeWrite(int error)
     resetFixture();
     raw_device_t rdev;
     deviceInit(&rdev, "raw-native-stop");
-    rdev.bypass_conntrack = true;
     require(rawdeviceBringUp(&rdev), "native stop fixture start failed");
     const injected_send_t expected[] = {{error == 0 ? 1 : -1, error, 1, 0}};
     armSends(expected, ARRAY_SIZE(expected));

@@ -90,7 +90,7 @@
   add_library(mismatched_abi_node_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/legacy_node_library.c)
   target_compile_definitions(
     mismatched_abi_node_library
-    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=8
+    PRIVATE FIXTURE_NODE_TYPE="MismatchedAbiFixture" FIXTURE_ABI_VERSION=9
   )
   set_target_properties(mismatched_abi_node_library PROPERTIES PREFIX "")
   add_library(external_node_abi_v3_library SHARED ${WATERWALL_UNIT_SOURCE_ROOT}/core/lifecycle_v2_node_library.c)
@@ -649,7 +649,7 @@
 
     waterwall_add_native_executable(wloop_stop_request_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/event/wloop_stop_request_test.c)
   target_link_libraries(wloop_stop_request_test PRIVATE ww_test_support)
-    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=send" "-Wl,--wrap=wloopInvokeWriteCallback")
+    target_link_options(wloop_stop_request_test PRIVATE "-Wl,--wrap=epoll_ctl" "-Wl,--wrap=send" "-Wl,--wrap=wloopInvokeWriteCallback")
     target_link_libraries(wloop_stop_request_test PRIVATE ww)
     add_dependencies(waterwall_unit_tests wloop_stop_request_test)
 
@@ -904,7 +904,8 @@
       WW_EVENT_MEMORY_TEST_SEAM=1
     )
     target_link_libraries(line_task_scheduling_test PRIVATE ww)
-    target_link_options(line_task_scheduling_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer")
+    target_link_options(line_task_scheduling_test PRIVATE "-Wl,--wrap=sbufDestroy" "-Wl,--wrap=bufferpoolReuseBuffer"
+      "-Wl,--wrap=gettimeofday")
   add_dependencies(waterwall_unit_tests line_task_scheduling_test)
 
     add_waterwall_unit_test(

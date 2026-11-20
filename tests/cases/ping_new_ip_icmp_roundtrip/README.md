@@ -27,3 +27,10 @@ Generated core settings, logs and mutable inputs belong to the private run direc
 Contract exercised: Verifies a direct `TesterClient -> PingClient -> PingServer -> TesterServer` packet chain in both directions,
   including fresh IPv4/ICMP Echo Requests and one-time inner-packet delivery with `send-replies` omitted at both
   endpoints, exercising the default without generated replies.
+
+The carrier reuses the actual IPv4 header and inserts Echo framing plus a final
+saved-protocol byte, for nine bytes of overhead. A complete 1491-byte native
+packet produces a 1500-byte carrier; 1492 bytes is refused. Both codec entry
+points reject fragments, so real adapters explicitly reassemble before these
+nodes. Address rewriting/restoration belongs to the chain; direct codec pairs
+preserve their native tuple. These are fixture expectations, not MTU discovery.

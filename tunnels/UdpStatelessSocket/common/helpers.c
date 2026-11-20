@@ -203,8 +203,7 @@ static void udpstatelesssocketWriteOwnerPeer(tunnel_t *t, sbuf_t *buf, const soc
     if (result.retire)
     {
         udpstatelesssocketReleaseWrittenBuffer(buf, detached_from_origin_worker);
-        io->error = result.error;
-        wioClose(io);
+        wioCloseWithError(io, result.error);
         return;
     }
 

@@ -19,12 +19,15 @@ typedef enum enet_endpoint_role_e
     kEnetServerEndpoint,
 } enet_endpoint_role_t;
 
-/* Immutable node-owned output mapping, borrowed for the tunnel's lifetime. Each callback uses the normal tunnel
- * dispatch helpers, so the callback direction stays visible in the node. Payload transfers its buffer on every
- * return. Common code holds references across callouts and owns state cleanup and lineDestroy(); Finish callbacks
- * only notify the adjacent node. carrier_est is NULL in the client, which consumes Est on its application line. */
+/* Immutable node-owned setup and output mapping, borrowed for the tunnel's lifetime. Flow callbacks use normal
+ * tunnel dispatch helpers, so callback direction stays visible in the node. Payload transfers its buffer on every
+ * return. Common code holds references across callouts and owns attached-line cleanup and destruction; Finish
+ * callbacks only notify the adjacent node. carrier_est is NULL in the client, which consumes application Est. */
 typedef struct enet_output_s
 {
+    /* Server only: create an owned application line and copy the carrier context. No outward callbacks here;
+     * common code publishes the association before sending Init. Creation uses the runtime's fatal OOM policy. */
+    line_t *(*create_application)(tunnel_t *t, line_t *carrier);
     TunnelFlowRoutineInit    init_owned; /* starts the line this node creates */
     TunnelFlowRoutineEst     application_est;
     TunnelFlowRoutinePayload application_payload;
@@ -42,10 +45,20 @@ typedef struct enet_output_s
  * flow callbacks on the result. Returns NULL after logging when a setting is invalid. */
 tunnel_t *enetEndpointCreate(node_t *node, enet_endpoint_role_t role, const enet_output_t *output);
 
-/* Node callbacks name the exact line role. These functions own admission, pressure composition, close order and
- * reentrant cleanup. */
-void enetEndpointClientInit(tunnel_t *t, line_t *application);
-void enetEndpointServerInit(tunnel_t *t, line_t *carrier);
+/* Clears the borrowed line's state and checks admission on its worker. Call at the start of the node's Init,
+ * before creating or attaching lines. Neither this nor a failed attachment makes outward callbacks. */
+bool enetEndpointPrepareInit(tunnel_t *t, line_t *line);
+/* After PrepareInit succeeds, attach the prepared client carrier, publish both lines, send its Init and start
+ * the session if still alive. False leaves the carrier owned by the caller for cleanup; true transfers it to
+ * the association even if reentrant callbacks already closed both lines. Touch neither line after success. */
+bool enetEndpointStartClient(tunnel_t *t, line_t *application, line_t *carrier);
+/* After PrepareInit succeeds, attach the server's borrowed carrier and retain its physical reference. Success
+ * makes no outward callbacks: finish preparing its context, then call StartServer and touch no state afterwards. */
+bool enetEndpointAttachServer(tunnel_t *t, line_t *carrier);
+void enetEndpointStartServer(tunnel_t *t, line_t *carrier);
+
+/* Node callbacks name the exact line role. These functions own pressure composition, close order and reentrant
+ * cleanup. */
 void enetEndpointApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf);
 void enetEndpointCarrierPayload(tunnel_t *t, line_t *line, sbuf_t *buf);
 void enetEndpointApplicationEst(tunnel_t *t, line_t *line);

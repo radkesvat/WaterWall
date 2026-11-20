@@ -14,7 +14,7 @@ static bool authenticationclientUsersLoaded(tunnel_t *t);
 
 bool authenticationclientRequestMayBeSentLocked(authenticationclient_tstate_t *ts, uint8_t request_type)
 {
-    if (UNLIKELY(ts->stopping || ts->continuity_error || ! ts->connected || ts->write_paused ||
+    if (UNLIKELY(ts->stopping || ts->continuity_error || ! ts->write_admitted || ts->write_paused ||
                  ts->pending_count >= ts->max_pending_requests ||
                  (wloopNowMonotonicMS(getWorkerLoop(0)) < authenticationclientRetryNotBeforeLocked(ts)) ||
                  ts->control_line == NULL))
@@ -171,7 +171,7 @@ void authenticationclientPingTimerCallback(wtimer_t *timer)
 
     authenticationclient_tstate_t *ts            = tunnelGetState(t);
     bool                           authenticated = false;
-    bool                           connected     = false;
+    bool                           write_admitted = false;
 
     if (UNLIKELY(authenticationclientCloseTimedOutControlLine(t)))
     {
@@ -179,18 +179,18 @@ void authenticationclientPingTimerCallback(wtimer_t *timer)
     }
 
     mutexLock(&ts->control_mutex);
-    connected     = ts->connected;
-    authenticated = ts->authenticated;
+    write_admitted = ts->write_admitted;
+    authenticated  = ts->authenticated;
     mutexUnlock(&ts->control_mutex);
 
     if (ts->verbose)
     {
-        LOGD("AuthenticationClient: ping timer tick connected=%s authenticated=%s",
-             boolToTrueFalse(connected),
+        LOGD("AuthenticationClient: ping timer tick write-admitted=%s authenticated=%s",
+             boolToTrueFalse(write_admitted),
              boolToTrueFalse(authenticated));
     }
 
-    if (UNLIKELY(! connected))
+    if (UNLIKELY(! write_admitted))
     {
         authenticationclientScheduleReconnect(t);
         return;

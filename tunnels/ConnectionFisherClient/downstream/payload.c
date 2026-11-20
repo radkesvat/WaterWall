@@ -26,7 +26,8 @@ void connectionfisherclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_
     if (ls->main_line == NULL || ! lineIsAlive(ls->main_line))
     {
         lineReuseBuffer(l, buf);
-        connectionfisherclientCloseChildLine(t, l, false);
+        if (! closeDrainIsActive(&ls->close_drain))
+            connectionfisherclientCloseChildLine(t, l, false);
         return;
     }
 

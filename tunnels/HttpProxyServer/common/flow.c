@@ -113,8 +113,9 @@ void hpsUpdatePressure(hps_session_t *s)
                     (d == kHpsUpstream && (s->upload_stopped || s->phase == kHpsError));
         if (! want && n > hpsSettings(s)->max_pending / 2 && dir->read_paused)
             want = true;
+        const bool tunnel_mode = s->phase == kHpsConnect || s->phase == kHpsRelay || s->phase == kHpsFallback;
         if (want == dir->read_paused ||
-            (d == kHpsDownstream && (! s->child || (s->phase != kHpsFallback && ! s->child_established))))
+            (d == kHpsDownstream && (! s->child || (! tunnel_mode && ! s->child_established))))
             continue;
         dir->read_paused = want;
         line_t *line     = d == kHpsUpstream ? s->client : s->child;
@@ -159,8 +160,16 @@ static bool flush(hps_session_t *s, hps_direction_t d)
         return false;
     sbuf_t *b   = dir->output;
     dir->output = NULL;
-    if (d == kHpsDownstream && (s->phase == kHpsError || s->phase == kHpsRelay || ! s->response_header))
-        s->final_committed = true;
+    if (d == kHpsDownstream)
+    {
+        if (s->phase == kHpsConnect)
+        {
+            assert(s->child && lineIsAlive(s->child) && ! s->child_initializing);
+            s->phase = kHpsRelay;
+        }
+        if (s->phase == kHpsError || s->phase == kHpsRelay || ! s->response_header)
+            s->final_committed = true;
+    }
     hpsDeliverPayload(s, d, b);
     return true;
 }
@@ -168,10 +177,11 @@ static bool flush(hps_session_t *s, hps_direction_t d)
 static bool admitDeferred(hps_session_t *s, hps_direction_t d)
 {
     hps_direction_state_t *dir = &s->directions[d];
-    if (! dir->deferred || dir->paused || s->phase == kHpsError || s->phase == kHpsFallback || s->phase == kHpsRelay)
+    if (! dir->deferred || dir->paused || s->phase == kHpsError || s->phase == kHpsConnect || s->phase == kHpsRelay ||
+        s->phase == kHpsFallback)
         return false;
-    if (d == kHpsUpstream && (s->upload_stopped || s->phase == kHpsConnect ||
-                              (s->phase == kHpsExchange && (! s->child_established || dir->body.kind == kHpsBodyDone))))
+    if (d == kHpsUpstream &&
+        (s->upload_stopped || (s->phase == kHpsExchange && (! s->child_established || dir->body.kind == kHpsBodyDone))))
         return false;
     size_t room = hpsSettings(s)->max_pending - hpsPendingBytes(s);
     if ((d == kHpsUpstream ? s->phase == kHpsRequest : s->response_header) && room > 1024)
@@ -278,11 +288,11 @@ void hpsPump(hps_session_t *s)
         }
         if (! hpsIsActive(s))
             break;
-        if (s->phase == kHpsConnect && s->child_established)
+        if (s->phase == kHpsConnect && s->child && ! s->child_initializing && ! down->output)
         {
             char success[] = "HTTP/1.1 200 Connection Established\r\n\r\n";
             success[7]     = s->http10 ? '0' : '1';
-            s->phase       = kHpsRelay;
+            /* Keep CONNECT pending until flush hands off the success response. */
             if (! hpsQueueOutput(s, kHpsDownstream, success, stringLength(success)))
                 hpsFail(s, 503);
             s->again = true;

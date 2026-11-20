@@ -131,6 +131,13 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
         {
             failAndCloseD(t, l, ls);
         }
+        else if (ls->service_read_paused)
+        {
+            /* WINDOW_UPDATE may be waiting behind the retired service's
+             * read hold. Resume can finish or cancel this drain inline. */
+            ls->service_read_paused = false;
+            tunnelPrevDownStreamResume(t, l);
+        }
         lineUnref(l);
         return;
     }
@@ -139,11 +146,6 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     // tunnel that keeps the line alive). In that case prev is already finished and must not
     // receive a reflected Finish; we still own the single state destruction here.
     bool prev_already_finished = ls->prev_finished;
-
-    if (ls->runtime_proto == kHttpServerRuntimeHttp2)
-    {
-        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
-    }
 
     ls->prev_finished = true;
     httpserverLinestateDestroy(ls);

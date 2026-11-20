@@ -4,6 +4,8 @@
 #include "interface.h"
 #include "wwapi.h"
 
+typedef struct usercontroller_lstate_s usercontroller_lstate_t;
+
 typedef struct usercontroller_direction_s
 {
     traffic_shaper_t shaper;
@@ -49,8 +51,16 @@ typedef struct usercontroller_tstate_s
     bool                                   verbose;
 } usercontroller_tstate_t;
 
-typedef struct usercontroller_lstate_s
+struct usercontroller_lstate_s
 {
+    enum
+    {
+        kUserControllerClosed,
+        kUserControllerOpen,
+        kUserControllerFlushingToPrev,
+        kUserControllerFlushingToNext,
+        kUserControllerNotifyingOwner
+    } phase;
     user_handle_t handle;            // copy of the authenticated user handle (empty when anonymous)
     user_ip_key_t ip_key;            // connecting peer IP, used to release the IP slot on close
     bool          managed;           // true once we reserved a connection slot for this line
@@ -60,7 +70,7 @@ typedef struct usercontroller_lstate_s
     usercontroller_payload_mode_t payload_mode;
     buffer_budget_t               budget;
     usercontroller_direction_t    directions[2]; // upstream, downstream; user direction is resolved separately
-} usercontroller_lstate_t;
+};
 
 enum
 {
@@ -76,9 +86,11 @@ WW_EXPORT api_result_t usercontrollerTunnelApi(tunnel_t *instance, sbuf_t *messa
 void usercontrollerTunnelOnPrepair(tunnel_t *t);
 void usercontrollerTunnelOnStart(tunnel_t *t);
 void usercontrollerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context);
+void usercontrollerTunnelOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void usercontrollerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 
 void usercontrollerTunnelUpStreamInit(tunnel_t *t, line_t *l);
+void usercontrollerTunnelDownStreamEst(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamEst(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamFinish(tunnel_t *t, line_t *l);
 void usercontrollerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
@@ -91,8 +103,7 @@ void usercontrollerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void usercontrollerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void usercontrollerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
-void usercontrollerLinestateInitialize(usercontroller_lstate_t *ls, bool started_from_next);
-void usercontrollerLinestateDestroy(usercontroller_lstate_t *ls);
+void usercontrollerLinestateDestroy(tunnel_t *tunnel, line_t *line);
 bool usercontrollerResolvePayloadMode(tunnel_t *t, line_t *l, usercontroller_payload_mode_t *mode);
 
 void usercontrollerTunnelstateDestroy(usercontroller_tstate_t *ts);
@@ -112,3 +123,11 @@ const char *usercontrollerAdmissionReason(user_admission_result_t result);
 void        usercontrollerLogAdmissionRejected(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls,
                                                user_admission_result_t result);
 void        usercontrollerLogActiveClose(tunnel_t *t, line_t *l, const usercontroller_lstate_t *ls, const char *reason);
+
+static inline usercontroller_lstate_t *usercontrollerGetLineState(tunnel_t *tunnel, line_t *line)
+{
+    return lineGetState(line, tunnel);
+}
+
+void usercontrollerOpenLine(tunnel_t *tunnel, line_t *line, bool from_next);
+void usercontrollerFlushAccepted(tunnel_t *t, line_t *l, bool upstream);

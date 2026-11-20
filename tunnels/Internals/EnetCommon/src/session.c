@@ -239,7 +239,7 @@ static bool sessionExpire(enet_session_t *s, uint64_t now)
 static bool sessionWrite(enet_session_t *s, const sbuf_t *payload, uint64_t now)
 {
     const enet_driver_state_t state = enetDriverState(s->driver);
-    if (sbufGetLength(payload) == 0 || (state != kEnetDriverStateConnecting && state != kEnetDriverStateConnected))
+    if (state != kEnetDriverStateConnecting && state != kEnetDriverStateConnected)
     {
         return true;
     }
@@ -388,14 +388,19 @@ static void sessionDrive(enet_session_t *s)
 static void sessionSubmit(enet_session_t *s, sbuf_t *buffer, bool wire)
 {
     enetSessionRetain(s);
-    if (s->dead || s->quiesced || (! wire && s->closing))
+    const size_t length = sbufGetLength(buffer);
+    /* Ignored input does no protocol work and must leave the armed service deadline alone. */
+    if (s->dead || s->quiesced || (! wire && s->closing) || length == 0 || (wire && length > kEnetDriverHostMtuMax))
     {
         bufferpoolReuseBuffer(s->config.pool, buffer);
     }
     else
     {
         enet_work_t event = {.buffer = buffer, .wire = wire};
-        if (! bufferbudgetTryReserve(&s->budget, buffer, &event.reservation))
+        /* The outer drive consumes and recycles its input before flushing callbacks. Only pre-start
+         * or reentrant submissions keep their buffer while another operation completes. */
+        const bool must_wait = ! s->started || s->driving;
+        if (must_wait && ! bufferbudgetTryReserve(&s->budget, buffer, &event.reservation))
         {
             const buffer_budget_cost_t used   = bufferbudgetGetUsage(&s->budget);
             const buffer_budget_cost_t limits = bufferbudgetGetLimits(&s->budget);

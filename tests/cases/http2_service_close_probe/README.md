@@ -1,6 +1,6 @@
 # HTTP/2 service close probe
 
-Closes the service side right after a large response and checks that the client still receives all of it.
+Checks service closure with a flow-control-blocked HTTP/2 response and exact bulk delivery through a production pair.
 
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
@@ -11,7 +11,10 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `http-server`: `HttpServer` (HTTP/2) → `service`
 - `service`: `TcpConnector` (the probe's service)
 
-The probe's service reads a short request, writes a 16 MiB response and closes at once, so `HttpServer` receives `Finish` with response data still queued.
+In each production-pair round, the service reads a short request and writes a 16 MiB response.
+The client acknowledges receipt of all but the final byte through the same chain. The service then
+writes the final byte and immediately closes. The client requires the exact response and EOF.
+The receipt keeps outstanding bulk flow-control updates from racing ordinary TCP close.
 
 Two focused cases connect directly to `carrier-in` with a raw HTTP/2 client. A
 1 KiB receive window leaves a 128 KiB response blocked after the service closes.

@@ -1,9 +1,17 @@
 # EnetServer
 
+## Overview
+
 `EnetServer` accepts native ENet connections that arrive over a UDP path and
 gives each one its own stream toward the next node. It is the remote side of
 `EnetClient`. The wire format is unmodified ENet 1.3.18: reliable, ordered
 packets on one channel.
+
+ENet provides neither encryption nor authentication. Use security nodes on the
+stream side, before `EnetClient` and after `EnetServer`, when those properties
+are needed.
+
+## Typical placement
 
 ```text
 Client: TcpListener -> EnetClient -> UdpConnector
@@ -16,7 +24,7 @@ the previous node and sends a reliable byte stream to the next node. Payload
 boundaries are not preserved: the next node receives the same bytes in the same
 order.
 
-## Transport placement
+### Transport placement
 
 - Before `EnetServer`: a path that keeps datagram boundaries and gives every
   remote peer its own line. In practice that is `UdpListener`, directly or
@@ -26,12 +34,16 @@ order.
 - Every carrier line holds at most one ENet connection. The stream line toward
   `next` is created when ENet has accepted the connection, not when the first
   datagram arrives. It carries the carrier's source and destination addresses
-  and is marked as a stream.
+  and is marked as a stream. If the carrier reports readiness before the service
+  line exists, the service receives that `Est` after its `Init`. Each side receives
+  the other side's transport readiness once per association.
 - The remote side is `EnetClient`, or any ENet 1.3 application that uses the
   library defaults (no checksum, no compression) and exchanges reliable packets
   on channel 0.
 
-## Configuration
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
 
 ```json
 {
@@ -44,6 +56,8 @@ order.
 }
 ```
 
+## Configuration
+
 ### Top-level fields
 
 | Field | Requirement |
@@ -51,7 +65,7 @@ order.
 | `name` | Required node name, unique within the configuration. |
 | `type` | Exactly `"EnetServer"`. |
 | `next` | Required name of the node that receives the streams. |
-| `settings` | Optional object. Every setting has a default. |
+| `settings` | Omit this field or supply a JSON object. An empty object selects all defaults. |
 
 ### Settings
 
@@ -61,10 +75,10 @@ outside the range rejects startup with a message that names the setting.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `send-mtu` | core `misc.mtu` | IPv4 packet budget for outgoing datagrams, from `604` to `65535`. See [Sending MTU](#sending-mtu). |
-| `no-recv-timeout-ms` | `30000` | Liveness timeout `T`, from `1` to `2147483647`. A connection whose packets stay unacknowledged ends between `T` and about `2T`. A carrier without an accepted connection is finished after `T`. |
+| `no-recv-timeout-ms` | `30000` | Maximum unanswered-command duration `T`, from `1` to `43200000` (12 hours). Expiration is checked on protocol service passes, independently of retry timing. A carrier without an accepted connection is finished after `T`. |
 | `ping-interval-ms` | `10000` | Silence after which ENet sends a ping, from `1`. It must be smaller than `no-recv-timeout-ms`. |
 | `send-buffer-limit` | `524288` | Accepted but unacknowledged bytes above which the next node is paused, from `4096` to `134217728`. |
-| `receive-buffer-limit` | `1048576` | Limit for received data that waits behind a missing packet, from `131072` to `268435456`. The largest accepted ENet packet is half of it. |
+| `receive-buffer-limit` | `1048576` | Admission threshold for queued ENet receive allocations, including payload and bookkeeping, from `131072` to `268435456`. The largest accepted packet payload is half of it. |
 | `carrier-queue-limit` | `256` | Datagrams that one ENet call may hand to the previous node, from `1` to `65535`. |
 | `close-drain-timeout-ms` | `30000` | How long a closing connection may wait for the peer to acknowledge the remaining bytes, from `1` to `2147483647`. |
 | `incoming-bandwidth` | `0` | ENet's incoming bandwidth in bytes per second, from `0` to `4294967295`. `0` means unlimited. |
@@ -79,7 +93,9 @@ reliable window and its packet throttle; they are not an exact rate limit. A
 nonzero value below `1048576` lowers the window: 4,096 bytes for each 65,536
 bytes per second, and never less than 4,096 bytes.
 
-## Sending MTU
+## Usage and troubleshooting
+
+### Sending MTU
 
 `send-mtu` is an IPv4 packet budget, with the same meaning as in `KcpServer`.
 ENet's datagram limit is:
@@ -102,7 +118,7 @@ This is not path-MTU discovery. An IPv6 header needs 20 more bytes than the
 fixed IPv4 allowance, and tunnels before this node add their own bytes. Lower
 `send-mtu` to leave room for them.
 
-## Throughput and other native limits
+### Throughput and other native limits
 
 These limits come from the ENet protocol. They cannot be removed without giving
 up native compatibility.
@@ -118,10 +134,14 @@ up native compatibility.
   four times as much, and one stream that `ConnectionStripeServer` joined from
   eight ENet connections carried 76 to 83 Mbit/s on the same path.
 - **A dead peer is found through missing acknowledgements.** An idle connection
-  sends a ping after `ping-interval-ms`. A peer that stops answering is detected
-  between `T` and about `2T` after the first unanswered packet, where `T` is
-  `no-recv-timeout-ms`. With the defaults, a frozen peer was detected 33 to 35
-  seconds after that packet.
+  sends a ping after `ping-interval-ms`. Each unanswered reliable command has
+  a deadline of `no-recv-timeout-ms` from its first transmission. The first
+  service pass at or after the oldest such deadline closes the connection, even
+  if ENet retried the command or received ACKs for later commands. Active work
+  is serviced every 10 ms, subject to event-loop scheduling delay. On an idle connection,
+  allow the ping interval before that unanswered-command timer starts.
+  Timeout and ping settings above 12 hours are rejected; the separate
+  `close-drain-timeout-ms` setting retains its documented range.
 - **A connection is bound to its carrier.** If the client's UDP source address
   changes, the previous node opens a new carrier, and the old connection times
   out.
@@ -131,7 +151,7 @@ up native compatibility.
   `no-recv-timeout-ms`. Use security nodes on the stream side, before
   `EnetClient` and after `EnetServer`, when those properties are needed.
 
-## Flow control and memory
+### Flow control and memory
 
 - The next node is paused while more than `send-buffer-limit` bytes are accepted
   but not yet acknowledged by the peer, and resumed at or below half of that. A
@@ -143,22 +163,29 @@ up native compatibility.
 - When the next node pauses the upstream direction, `EnetServer` pauses the
   previous node, which stops datagram intake. That also stops acknowledgements:
   a pause longer than the liveness timeout can end the connection.
-- At `receive-buffer-limit` ENet stops acknowledging data that arrives ahead of
-  a missing packet, and the peer sends it again later. The missing packet itself
-  is still accepted, so a loss cannot lock the stream. Acknowledged bytes are
-  never discarded, and one connection holds less than two and a half times the
-  limit. A received ENet packet larger than half of the limit is never
-  acknowledged, so that connection ends by the peer's timeout.
+- An immediately processed stream write can exceed 2 MiB and follows the
+  ordinary send limits. Input that must wait for startup or a running callback
+  shares a queue capped at 2 MiB of payload and 8 MiB of buffer allocation
+  charge. Exceeding either queue limit closes the connection.
+- At `receive-buffer-limit` ENet stops admitting new queued messages. Refused
+  reliable data is not acknowledged, so the peer can send it again later.
+  To make room for loss recovery, the driver doubles the threshold for a datagram
+  carrying the next missing reliable command. The native receive queue stays
+  below twice the limit plus one admitted packet's payload and bookkeeping.
+  The charge includes packet and command structures and fragment bitmaps, even
+  for empty messages. It excludes allocator overhead, other ENet allocations and
+  buffers already delivered to WaterWall. A packet payload larger than half the
+  limit is never acknowledged, so that connection ends by the peer's timeout.
 - Datagrams above `carrier-queue-limit` in one ENet call are dropped and ENet
   sends them again after its timeout. The connection stays open.
 
-## Close and timeouts
+### Close and timeouts
 
 - When the next node finishes the stream, `EnetServer` accepts no more bytes,
   lets ENet deliver every byte it already accepted, and then disconnects
   natively. The previous node receives Finish on the carrier only after that.
-  Bytes that arrive from the peer after the next node's Finish are discarded: a
-  Finish closes both directions of the stream.
+  If the stream paused carrier reads, Finish releases the hold so acknowledgements
+  can arrive during the drain. The node discards incoming stream bytes after Finish.
 - `close-drain-timeout-ms` after that Finish the node stops waiting, sends one
   disconnect and closes. It logs a warning with the number of unacknowledged
   bytes. A close that finished earlier is not proof of delivery either: ENet
@@ -173,7 +200,7 @@ up native compatibility.
   is finished. No stream line is created for it.
 - At shutdown every connection ends without waiting for a drain.
 
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | Checks |
 | --- | --- |
@@ -183,7 +210,9 @@ up native compatibility.
 | Log line `the send limit refused a payload` | The next node kept sending after Pause. Check the nodes after `EnetServer`, or raise `send-buffer-limit`. |
 | Log line `close delivery unconfirmed at the fixed deadline` | The peer did not acknowledge the last bytes within `close-drain-timeout-ms`. Check loss on the path, or raise the timeout for slow paths. |
 
-## Node Metadata
+## Implementation details
+
+### Node Metadata
 
 Source-backed values from `instance/node.c`:
 

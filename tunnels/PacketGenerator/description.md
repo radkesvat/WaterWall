@@ -1,39 +1,30 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/PacketGenerator.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/PacketGenerator.mdx, and all files must keep the same documentation version.
 -->
 
 # PacketGenerator Node
 
+## Overview
+
 `PacketGenerator` is a layer-3 IPv4 packet generator. It pre-builds packets at startup and sends them across the worker
 packet lines during the configured duration.
 
-## Core Behavior
+## Typical placement
 
-- chain head only
-- accepts one or more IPv4 source ranges and one destination IPv4 address
-- `packets-per-ip` repeats each source IP `N` times, default `1`
-- `ALL` mode still emits `255` protocol variants per repeat
-- source ranges are processed in order and are not interleaved
-- prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
-- does not close or finish worker packet lines after sending
-- stops a worker's timer and send loop if the downstream side finishes that worker packet line
+### WireGuard Placement
 
-## WireGuard Placement
-
-To send generated packets through a WireGuard packet path, connect separate
-chain-head branches with paired `Bridge` nodes:
+Generated packets can enter the client directly:
 
 ```text
-PacketGenerator -> Bridge A
-UdpStatelessSocket -> WireGuardDevice -> Bridge B
+PacketGenerator -> WireGuardClient -> UdpConnector
 ```
 
-Pair `Bridge A` and `Bridge B`. Both `PacketGenerator` and
-`UdpStatelessSocket` are chain-head-only, so neither can follow
-`WireGuardDevice` in one linear chain.
+## Minimal practical example
 
-## Example
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Example
 
 ```json
 {
@@ -53,7 +44,9 @@ Pair `Bridge A` and `Bridge B`. Both `PacketGenerator` and
 }
 ```
 
-## Settings
+## Configuration
+
+### Settings
 
 - `source-ipv4-range`: required IPv4 CIDR range or list of ranges
 - `packets-per-ip`: optional positive integer, default `1`
@@ -63,7 +56,9 @@ Pair `Bridge A` and `Bridge B`. Both `PacketGenerator` and
 - `dest-port`: required for `TCP`, `UDP`, or `ALL`
 - `src-port`: required for `TCP`, `UDP`, or `ALL`
 
-## Note
+## Usage and troubleshooting
+
+### Note
 
 When `protocol-number` is `ALL`, the total packets per source IP become `packets-per-ip * 255`.
 PacketGenerator materializes its packet store before sending, so large ranges and high repeat counts must fit under the
@@ -74,7 +69,20 @@ For a matching PacketCounter, set `protocol-number` to the expected protocol sel
 calculates its per-IP total and reports each protocol separately. Its protocol selection also
 accepts arrays such as `[6, 17]` or `["TCP", "UDP"]`.
 
-## Node Metadata
+## Implementation details
+
+### Core Behavior
+
+- chain head only
+- accepts one or more IPv4 source ranges and one destination IPv4 address
+- `packets-per-ip` repeats each source IP `N` times, default `1`
+- `ALL` mode still emits `255` protocol variants per repeat
+- source ranges are processed in order and are not interleaved
+- prebuilt packet storage is capped at `8 GiB` and also must fit in the platform `size_t` address space
+- does not close or finish worker packet lines after sending
+- stops a worker's timer and send loop if the downstream side finishes that worker packet line
+
+### Node Metadata
 
 Source-backed metadata:
 

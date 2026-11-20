@@ -1,6 +1,6 @@
-/* Actual Encryption constructors and packet callbacks: explicit L3 selection,
- * unchanged L4 default, long passwords, both directions, independent packets,
- * and bad-input drops that leave the chain-owned packet line alive.
+/* Actual Encryption constructors and packet callbacks: credential and crypto
+ * diagnostics, explicit L3 selection, L4 defaults, both directions, independent
+ * packets, and bad-input drops that leave the chain-owned packet line alive.
  * CTest: waterwall.encryption_packet_nodes_unit. */
 #include "EncryptionClient/interface.h"
 #include "EncryptionCommon/packet.h"
@@ -14,12 +14,12 @@
 static sbuf_t        *received;
 static buffer_pool_t *packet_pool;
 static unsigned       deliveries;
+static char           last_log[512];
 
-static void quietLog(int level, const char *text, int length)
+static void captureLog(int level, const char *text, int length)
 {
     discard level;
-    discard text;
-    discard length;
+    snprintf(last_log, sizeof(last_log), "%.*s", length, text);
 }
 
 static tunnel_t *createNode(bool server, const char *settings)
@@ -117,6 +117,53 @@ static void testSettings(void)
     }
 }
 
+static void expectStartupError(bool server, const char *settings, const char *diagnostic)
+{
+    last_log[0] = '\0';
+    require(createNode(server, settings) == NULL, "invalid Encryption configuration started");
+    require(strstr(last_log, server ? "EncryptionServer: " : "EncryptionClient: ") != NULL &&
+                strstr(last_log, diagnostic) != NULL,
+            last_log);
+}
+
+static void testUninitializedCrypto(void)
+{
+    for (unsigned role = 0; role < 2; ++role)
+        expectStartupError(role != 0,
+                           "{\"password\":\"secret\",\"kdf-iterations\":2}",
+                           "failed to derive base key: invalid crypto state");
+}
+
+static void testCredentialLimits(void)
+{
+    for (unsigned role = 0; role < 2; ++role)
+    {
+        const bool server = role != 0;
+        expectStartupError(server,
+                           "{\"password\":\"012345678901234567890123456789012\",\"kdf-iterations\":2}",
+                           "'password' must be at most 32 bytes in stream mode");
+        expectStartupError(
+            server,
+            "{\"password\":\"secret\",\"salt\":\"012345678901234567890123456789012\",\"kdf-iterations\":1}",
+            "'salt' must be at most 32 bytes");
+        expectStartupError(server,
+                           "{\"packet-mode\":true,\"password\":\"secret\","
+                           "\"salt\":\"012345678901234567890123456789012\",\"kdf-iterations\":2}",
+                           "'salt' must be at most 32 bytes");
+
+        tunnel_t *t = createNode(server,
+                                 "{\"password\":\"01234567890123456789012345678901\","
+                                 "\"salt\":\"01234567890123456789012345678901\",\"kdf-iterations\":2}");
+        require(t != NULL, "32-byte stream credentials were rejected");
+        destroyNode(t);
+
+        t = createNode(server,
+                       "{\"password\":\"012345678901234567890123456789012\",\"salt\":\"\",\"kdf-iterations\":1}");
+        require(t != NULL, "one-round stream configuration with a long password and empty salt was rejected");
+        destroyNode(t);
+    }
+}
+
 static void testCallbacks(void)
 {
     const char      *settings = "{\"packet-mode\":true,\"algorithm\":\"xchacha20-poly1305\","
@@ -195,12 +242,14 @@ int main(void)
     checkSumInit();
     require(globalstateInitializeSecureRandom() && frandGlobalInit(), "random initialization failed");
     frandInit();
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
     logger_t *logger = loggerCreate();
     require(logger != NULL, "logger allocation failed");
-    loggerSetHandler(logger, quietLog);
+    loggerSetHandler(logger, captureLog);
     setNetworkLogger(logger);
+    TEST_RUN_CASE(testUninitializedCrypto);
+    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
     TEST_RUN_CASE(testSettings);
+    TEST_RUN_CASE(testCredentialLimits);
     TEST_RUN_CASE(testCallbacks);
     networkloggerDestroy();
     wCryptoGlobalCleanup();

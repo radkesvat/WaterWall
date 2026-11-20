@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 196
+EXPECTED_TOTAL_ABORTS = 200
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +59,19 @@ _REQUEST_SHUTDOWN_RE = _call_re("requestProgramShutdown")
 # expected count is the authority on how many aborts that function must keep.
 
 MANIFEST = [
+    ("tunnels/Internals/WireGuardCommon/src/input.c", "wireguardCommonDecrypt", 1,
+     ("WireGuard: best-fit decryption buffer has",), "runtime decryption buffer geometry invariant"),
+    ("tunnels/WireGuardClient/client.c", "finishDown", 1,
+     ("WireGuardClient: Finish reached a normal line outside its carrier inventory",), "owned carrier inventory invariant"),
+    ("tunnels/WireGuardClient/client.c", "finishUp", 1,
+     ("WireGuardClient: unexpected Finish on packet input",), "persistent packet line invariant"),
+    ("tunnels/WireGuardServer/server.c", "candidate", 1,
+     ("WireGuardServer: binding epoch exhausted",), "non-reusable authorization epoch invariant"),
+    ("tunnels/WireGuardServer/server.c", "finishDown", 1,
+     ("WireGuardServer: unexpected Finish on inner packet line",), "persistent packet line invariant"),
+    ("tunnels/AuthenticationClient/common/table.c", "installStaging", 2,
+     ("AuthenticationClient: installed account generation exhausted", "AuthenticationClient: invalid runtime migration state"),
+     "installed authorization generation and runtime migration invariants"),
     ("ww/net/adapter.c", "disabledPayloadRoutine", 1,
      ("Illegal call to payload routine on Adapter",),
      "shared adapter edge guard: impossible payload callback"),
@@ -194,10 +207,13 @@ MANIFEST = [
     ("tunnels/ReverseClient/downstream/payload.c", "reverseclientTunnelDownStreamPayload", 1,
      ("ReverseClient: failed to remove an idle pair while activating it",),
      "runtime flow-callback invariant: ReverseClient downstream payload remove starved table"),
-    ("tunnels/HalfDuplexServer/upstream/fin.c", "halfduplexserverTunnelUpStreamFinish", 3,
+    ("tunnels/HalfDuplexServer/common/close.c", "waitingUpload", 1,
+     ("HalfDuplexServer: waiting upload missing from its rendezvous table",),
+     "runtime flow-callback invariant: HalfDuplexServer upload map membership"),
+    ("tunnels/HalfDuplexServer/upstream/fin.c", "halfduplexserverTunnelUpStreamFinish", 2,
      ("HalfDuplexServer: Thread safety is done incorrectly",
       "HalfDuplexServer: Unexpected"),
-     "runtime flow-callback invariant: HalfDuplexServer finish map membership and state"),
+     "runtime flow-callback invariant: HalfDuplexServer finish download map membership and state"),
     ("tunnels/HalfDuplexServer/upstream/payload.c", "checkWaitingLimit", 1,
      ("HalfDuplexServer: Thread safety is done incorrectly",),
      "runtime flow-callback invariant: HalfDuplexServer payload map membership"),
@@ -348,9 +364,6 @@ MANIFEST = [
     ("tunnels/TesterClient/instance/start.c", "testerclientStartWorker", 1,
      ("TesterClient: packet line died during packet-mode init",),
      "worker-task invariant: TesterClient start packet line died"),
-    ("tunnels/WireGuardDevice/instance/start.c", "wireguarddeviceQueueWorkerPacketInit", 1,
-     ("WireGuardDevice: worker packet line died during packet-side init",),
-     "worker-task invariant: WireGuardDevice start packet line died"),
     ("tunnels/Internals/KcpCommon/src/session.c", "sendRecord", 1,
      ("Kcp: KCP refused a validated record (length %d, result %d)",),
      "session output invariant: KCP refused a validated record"),
@@ -466,10 +479,6 @@ MANIFEST = [
     ("tunnels/TesterServer/downstream/resume.c", "testerserverTunnelDownStreamResume", 1,
      ("TesterServer: downStreamResume disabled",),
      "impossible flow-callback stub: TesterServer downstream resume in stream mode"),
-    ("tunnels/WireGuardDevice/common/helpers.c", "wireguarddeviceHandleTransportLineFinish", 2,
-     ("WireGuardDevice: unexpected Finish on worker packet line %u",
-      "WireGuardDevice: Finish reached invalid transport-line storage or worker %u"),
-     "runtime line-role/storage invariant: WireGuardDevice packet-line Finish or invalid transport registry access"),
     ("ww/base/quiescence_gate.c", "quiescenceGateAbortUnderflow", 1,
      ("quiescenceGateLeave: gate state count underflow",),
      "runtime reference invariant: quiescence-gate leave underflow"),
@@ -498,8 +507,8 @@ MANIFEST = [
     ("ww/instance/worker_messages.c", "sendWorkerMessageForceQueueTransactional", 1,
      ("sendWorkerMessageForceQueueTransactional: queued message mismatch during refusal rollback",),
      "runtime queue invariant: transactional worker-message rollback identity"),
-    ("ww/instance/worker_messages.c", "workerTimedMessageDetachFromOwner", 1,
-     ("runTimedTask: worker message queue detached during %s",),
+    ("ww/instance/worker_messages.c", "runTimedTask", 1,
+     ("runTimedTask: worker message queue detached during deadline completion",),
      "runtime queue invariant: timed worker-message owner detachment"),
     ("ww/managers/signal_manager.c", "windowsHandlerGateLeave", 1,
      ("windowsHandlerGateLeave: Windows control-handler gate count underflow",),

@@ -21,6 +21,11 @@ enum
 {
     kCaptureSize = 5 * 1024 * 1024
 };
+enum
+{
+    kInitEstWithPayload = 13,
+    kInitQuiesce
+};
 typedef struct client_fixture_s
 {
     twf_worker_env_t       env;
@@ -216,6 +221,16 @@ static void act(unsigned boundary)
         twfRequire(bufferbudgetGetUsage(&ls->upstream_budget).charge <= kVmessClientMaxOrderCharge,
                    "compacted allocation charge exceeded retention limit");
     }
+    if (action == kInitEstWithPayload)
+    {
+        f.boundary = 2;
+        f.action   = 1;
+        tunnelDownStreamEst(f.client, f.carrier);
+        vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
+        twfRequire(! ls->first_payload.started, "nested Est started the deadline before next Init returned");
+    }
+    if (action == kInitQuiesce)
+        twfRequire(wloopRequestQuiesce(f.env.loop), "fixture failed to quiesce during next Init");
 }
 static void ownerFinish(tunnel_t *t, line_t *l)
 {
@@ -494,19 +509,18 @@ static void timing(void)
 {
     for (unsigned udp = 0; udp < 2; ++udp)
     {
+        twfSetCase("first-payload window expires without Est");
         cJSON *settings = configuration("aes-128-gcm", udp);
         cJSON_AddNumberToObject(settings, "first-payload-timeout-ms", 10);
+        initial_action = 6; // Pause during next Init.
         begin(settings, udp);
-        tunnelDownStreamPause(f.client, f.carrier);
-        tunnelDownStreamEst(f.client, f.carrier);
-        vmessclient_lstate_t *ls       = lineGetState(f.carrier, f.client);
-        uint64_t              deadline = ls->first_payload.deadline_us;
-        tunnelDownStreamEst(f.client, f.carrier);
-        twfRequire(ls->first_payload.deadline_us == deadline, "duplicate Est reset original deadline");
+        initial_action           = 0;
+        vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
+        twfRequire(ls->first_payload.timer != NULL && f.up_calls == 0, "live Init did not arm one idle timer");
         pump(25);
         twfRequire(udp ? f.up_size == 0 : f.up_size != 0, "idle header pressure semantics changed");
         tunnelDownStreamResume(f.client, f.carrier);
-        twfRequire(f.up_calls == 1, "idle request missing or repeated");
+        twfRequire(f.up_calls == 1 && f.est_count == 0, "idle request did not send exactly once without Est");
         readRequest();
         twfRequire(f.up_size == f.request_size, "idle request contains body");
         pump(30);
@@ -514,23 +528,50 @@ static void timing(void)
         reply("greeting");
         twfRequire(f.down_size == 8 && memoryCompare(f.down, "greeting", 8) == 0, "server-first greeting missing");
         end();
+
+        twfSetCase("zero first-payload window sends immediately after next Init");
         settings = configuration("aes-128-gcm", udp);
         cJSON_AddNumberToObject(settings, "first-payload-timeout-ms", 0);
         begin(settings, udp);
-        f.boundary = 2;
-        f.action   = 1;
-        tunnelDownStreamEst(f.client, f.carrier);
+        readRequest();
+        twfRequire(f.up_calls == 1 && f.up_size == f.request_size && f.est_count == 0,
+                   "zero timeout did not send one idle request without Est");
+        end();
+
+        twfSetCase("nested Est payload wins the zero first-payload window");
+        settings = configuration("aes-128-gcm", udp);
+        cJSON_AddNumberToObject(settings, "first-payload-timeout-ms", 0);
+        initial_action = kInitEstWithPayload;
+        begin(settings, udp);
+        initial_action = 0;
         expectTx("nested", 6);
-        twfRequire(f.up_calls == 1, "zero timeout split available first payload");
+        twfRequire(f.up_calls == 1 && f.est_count == 1 && wloopNTimers(f.env.loop) == 0,
+                   "zero timeout split the first payload or armed a timer after request submission");
+        end();
+
+        twfSetCase("quiescence during next Init prevents idle output");
+        settings = configuration("aes-128-gcm", udp);
+        cJSON_AddNumberToObject(settings, "first-payload-timeout-ms", 0);
+        initial_action = kInitQuiesce;
+        begin(settings, udp);
+        initial_action = 0;
+        ls             = lineGetState(f.carrier, f.client);
+        twfRequire(lineIsAlive(f.application) && ! ls->first_payload.started && f.up_calls == 0,
+                   "quiescence started the first-payload window");
         end();
     }
     for (unsigned udp = 0; udp < 2; ++udp)
     {
         twfSetCase("first-payload rearm refusal closes the association");
         begin(configuration("aes-128-gcm", udp), udp);
-        tunnelDownStreamEst(f.client, f.carrier);
         vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
         twfRequire(ls->first_payload.timer != NULL, "rearm refusal case did not arm a timer");
+        wtimer_t      *timer    = ls->first_payload.timer;
+        const uint64_t deadline = ls->first_payload.deadline_us;
+        tunnelDownStreamEst(f.client, f.carrier);
+        tunnelDownStreamEst(f.client, f.carrier);
+        twfRequire(ls->first_payload.timer == timer && ls->first_payload.deadline_us == deadline,
+                   "late or repeated Est rearmed the first-payload window");
         refuse_first_payload_reset = true;
         wtimerTestMakePendingOneShot(ls->first_payload.timer);
         discard wloopProcessEvents(f.env.loop, 0);
@@ -541,7 +582,6 @@ static void timing(void)
     }
     fixture_wid = 1;
     begin(configuration("aes-128-gcm", true), true);
-    tunnelDownStreamEst(f.client, f.carrier);
     vmessclient_lstate_t *ls = lineGetState(f.carrier, f.client);
     twfRequire(ls->first_payload.timer != NULL && ls->first_payload.timer->loop == f.env.loop &&
                    ls->first_payload.timer->loop->wid == 1,

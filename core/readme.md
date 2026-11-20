@@ -1,9 +1,11 @@
 <!--
-Documentation version: 163
+Documentation version: 165
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/01-getting-started/tutorial-part1.mdx, and both English files must keep the same documentation version. User-facing behavior changes should also update WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/01-getting-started/tutorial-part1.mdx.
 -->
 
 # Core Settings
+
+## Overview
 
 `core.json` is the startup configuration file read by the Waterwall executable.
 It configures process-wide behavior: which node config files are loaded, where
@@ -48,17 +50,20 @@ paths inside `core.json`, including entries in `configs`, therefore remain
 relative to the directory where Waterwall was started rather than to the
 selected core file's directory.
 
-## Structural Example
+
+`core.json` must be strict JSON without `//` comments. Comment stripping and
+variable substitution apply to node config files, not the core settings parser.
+
+## Minimal Practical `core.json`
+
+This is a complete core file. Create the listed `config.json` with a node chain
+before launching; paths are relative to your working directory. See the
+[working TCP forward](../WaterWall-Docs/docs/01-getting-started/tutorial-part3.mdx#simple-tcp-forward).
 
 ```json
 {
   "log": {
     "path": "log/",
-    "internal": {
-      "loglevel": "INFO",
-      "file": "internal.log",
-      "console": true
-    },
     "core": {
       "loglevel": "INFO",
       "file": "core.log",
@@ -73,6 +78,11 @@ selected core file's directory.
       "loglevel": "INFO",
       "file": "dns.log",
       "console": true
+    },
+    "internal": {
+      "loglevel": "INFO",
+      "file": "internal.log",
+      "console": true
     }
   },
   "misc": {
@@ -83,30 +93,7 @@ selected core file's directory.
     "libs-path": "libs/"
   },
   "dns": {
-    "domain-strategy": "prefer-ipv4",
-    "timeout-ms": 1000,
-    "max-timeout-ms": 5000,
-    "tries": 5,
-    "query-cache-max-ttl": 1800,
-    "ndots": 1,
-    "udp-port": 53,
-    "tcp-port": 53,
-    "socket-send-buffer-size": 262144,
-    "socket-receive-buffer-size": 262144,
-    "edns-packet-size": 1232,
-    "udp-max-queries": 0,
-    "flags": ["edns", "stayopen", "dns0x20"],
-    "rotate": true,
-    "domains": ["example.com"],
-    "lookups": "bf",
-    "resolvconf-path": "/etc/resolv.conf",
-    "hosts-path": "/etc/hosts",
-    "sortlist": "10.0.0.0/8",
-    "servers": ["1.1.1.1", "8.8.8.8"],
-    "server-failover": {
-      "retry-chance": 10,
-      "retry-delay-ms": 5000
-    }
+    "domain-strategy": "prefer-ipv4"
   },
   "configs": [
     "config.json"
@@ -114,11 +101,52 @@ selected core file's directory.
 }
 ```
 
-All top-level sections except `configs` are optional, but production configs
-should usually keep `misc` explicit so the worker count, MTU, library path, and
-memory profile are intentional.
 
-## Top-Level Options
+## Verify the setup
+
+Run from the directory containing `core.json` after creating the node file:
+
+```bash
+./Waterwall
+```
+
+Use the [installation check](../WaterWall-Docs/docs/01-getting-started/installation.mdx#minimal-test-chain) to exercise
+the listener and connector. Startup errors and the `core`, `network`, and `dns`
+logs identify configuration, connection, and resolver problems.
+
+## What to Tune First
+
+Start with only these values:
+
+| Goal | Field |
+| --- | --- |
+| Run the right chains | [`configs`](#configs) |
+| Control CPU usage | [`misc.workers`](#misc) |
+| Choose server/client memory behavior | [`misc.ram-profile`](#ram-profile) |
+| Make logs useful | [`log.network.loglevel`](#log), [`log.dns.loglevel`](#log) |
+| Prefer IPv4 or IPv6 | [`dns.domain-strategy`](#dnsdomain-strategy) |
+| Use known resolvers | [`dns.servers`](#search-and-source-options) |
+
+Leave advanced DNS options alone until you have a specific reason to change
+them. The defaults are intentionally conservative for ordinary deployments.
+
+## Common Startup Mistakes
+
+| Mistake | Result | Fix |
+| --- | --- | --- |
+| `core.json` contains `//` comments | JSON parse error | Remove comments from `core.json`. |
+| `configs` is missing or empty | Startup fails | Add at least one config file path. |
+| A `configs` path is relative to the wrong directory | Config file cannot be read | Start WaterWall from the intended working directory or use correct paths. |
+| `domain-strategy` is at the root | Startup fails | Move it to `dns.domain-strategy`. |
+| `dns` is not an object | Startup fails | Use an object or omit `dns`. |
+| `dns.flags` has an unknown name | Startup fails | Use one of the documented flag names. |
+| `misc.ram-profile` has a typo | Startup fails | Use `server`, `client`, `client-larger`, `minimal`, or `ultralow`. |
+| Too many workers | Value is reduced to `254` | Use a realistic worker count. |
+
+
+## Configuration
+
+### Top-Level Options
 
 | Option | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -130,7 +158,7 @@ memory profile are intentional.
 `domain-strategy` is not valid as a top-level option. Configure it as
 `dns.domain-strategy`.
 
-## `configs`
+### `configs`
 
 `configs` must be a non-empty array. Each string is a config file path that the
 node manager will parse after the core runtime is initialized.
@@ -149,7 +177,7 @@ Example:
 The paths are passed to the config loader as written. In normal deployments they
 are relative to the process working directory.
 
-## `log`
+### `log`
 
 The `log` object controls the four process loggers:
 
@@ -237,7 +265,7 @@ Example:
 
 Omitted logger objects use their defaults.
 
-## `misc`
+### `misc`
 
 The `misc` object controls process-wide runtime settings.
 
@@ -351,7 +379,7 @@ the usual arrangement. Failures are reported in the core log. Waterwall does
 not install kernels, persist settings in `/etc/sysctl.conf`, or replace
 queueing disciplines already attached to network interfaces.
 
-### `tcp-tune`
+#### `tcp-tune`
 
 `tcp-tune` defaults to `true` on native Linux and `false` on other platforms,
 including Android and Cygwin. Omitted or empty `misc` blocks use the same default.
@@ -391,7 +419,7 @@ on exit. WaterWall does not persist them in `/etc/sysctl.conf`.
 RawSocket's separate tuning batch, controlled by `skip-sysctl`, tunes backlogs and
 other TCP parameters. The `tcp_mem` tuning belongs to the core `tcp-tune` phase.
 
-### Userspace stack capacity (`lwip-*`)
+#### Userspace stack capacity (`lwip-*`)
 
 `ConnectionToPackets` and `PacketsToConnection` share these limits across every
 worker and node instance in the process. Configure them in `core.json` before
@@ -458,7 +486,7 @@ references describe the operation and its API limits.
 it does not enlarge the allocator budget. `tcp-tune` controls native kernel
 settings. A `TunDevice -> PacketsToConnection` chain still uses these lwIP limits.
 
-### `ram-profile`
+#### `ram-profile`
 
 String values:
 
@@ -485,7 +513,7 @@ The profile also selects defaults for memory-sensitive node settings. In particu
 `detached-buffer-limit` and `detached-child-limit` values scale from the S1 minimum to the L2 maximum; explicit node
 settings still override them. See the Mux node references for the exact limits.
 
-## `dns`
+### `dns`
 
 The `dns` object configures the shared c-ares based async resolver used by
 workers, plus Waterwall's default domain address selection strategy for connector
@@ -496,7 +524,7 @@ If `dns` is omitted or empty, the resolver uses Waterwall's c-ares defaults and
 The default flags are `["edns", "stayopen"]`, enabling EDNS and reuse of idle
 DNS connections.
 
-### `dns.domain-strategy`
+#### `dns.domain-strategy`
 
 `domain-strategy` controls how connector nodes choose an address when a domain
 resolves to IPv4 and/or IPv6 records.
@@ -547,7 +575,7 @@ Do not place `domain-strategy` directly in the root object:
 
 That form is rejected. Use `dns.domain-strategy`.
 
-### Resolver Timing and Cache Options
+#### Resolver Timing and Cache Options
 
 | Option | Type | Default | Validation | Description |
 | --- | --- | --- | --- | --- |
@@ -588,7 +616,7 @@ Example:
 }
 ```
 
-### Resolver Behavior Options
+#### Resolver Behavior Options
 
 | Option | Type | Validation | Description |
 | --- | --- | --- | --- |
@@ -601,7 +629,7 @@ Example:
 | `udp-max-queries` | integer | greater than or equal to `0` | Maximum number of UDP queries allowed by c-ares. |
 | `rotate` | boolean | boolean | Enables or disables c-ares server rotation. |
 
-### Search and Source Options
+#### Search and Source Options
 
 | Option | Type | Validation | Description |
 | --- | --- | --- | --- |
@@ -634,7 +662,7 @@ Example:
 | `"bf"` | Try DNS, then hosts file. |
 | `"fb"` | Try hosts file, then DNS. |
 
-### `dns.flags`
+#### `dns.flags`
 
 When `flags` is omitted, WaterWall enables `["edns", "stayopen"]`. `stayopen`
 keeps idle UDP and TCP DNS connections available for later queries. This applies
@@ -702,7 +730,7 @@ Supported flag names:
 
 When object syntax is used, `true` enables a flag and `false` leaves it disabled.
 
-### `dns.server-failover`
+#### `dns.server-failover`
 
 `server-failover` is an object passed to c-ares server failover options.
 
@@ -724,12 +752,19 @@ Example:
 }
 ```
 
-## Minimal Practical `core.json`
+## Advanced examples
+
+### Structural Example
 
 ```json
 {
   "log": {
     "path": "log/",
+    "internal": {
+      "loglevel": "INFO",
+      "file": "internal.log",
+      "console": true
+    },
     "core": {
       "loglevel": "INFO",
       "file": "core.log",
@@ -744,11 +779,6 @@ Example:
       "loglevel": "INFO",
       "file": "dns.log",
       "console": true
-    },
-    "internal": {
-      "loglevel": "INFO",
-      "file": "internal.log",
-      "console": true
     }
   },
   "misc": {
@@ -759,7 +789,30 @@ Example:
     "libs-path": "libs/"
   },
   "dns": {
-    "domain-strategy": "prefer-ipv4"
+    "domain-strategy": "prefer-ipv4",
+    "timeout-ms": 1000,
+    "max-timeout-ms": 5000,
+    "tries": 5,
+    "query-cache-max-ttl": 1800,
+    "ndots": 1,
+    "udp-port": 53,
+    "tcp-port": 53,
+    "socket-send-buffer-size": 262144,
+    "socket-receive-buffer-size": 262144,
+    "edns-packet-size": 1232,
+    "udp-max-queries": 0,
+    "flags": ["edns", "stayopen", "dns0x20"],
+    "rotate": true,
+    "domains": ["example.com"],
+    "lookups": "bf",
+    "resolvconf-path": "/etc/resolv.conf",
+    "hosts-path": "/etc/hosts",
+    "sortlist": "10.0.0.0/8",
+    "servers": ["1.1.1.1", "8.8.8.8"],
+    "server-failover": {
+      "retry-chance": 10,
+      "retry-delay-ms": 5000
+    }
   },
   "configs": [
     "config.json"
@@ -767,7 +820,11 @@ Example:
 }
 ```
 
-## DNS-Tuned `core.json`
+All top-level sections except `configs` are optional, but production configs
+should usually keep `misc` explicit so the worker count, MTU, library path, and
+memory profile are intentional.
+
+### DNS-Tuned `core.json`
 
 ```json
 {

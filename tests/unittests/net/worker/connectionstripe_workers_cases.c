@@ -7,6 +7,12 @@
 #ifdef WW_TEST_CONNECTIONSTRIPE_WORKERS
 #include "ConnectionStripeCommon/stripe.h"
 #include "ConnectionStripeServer/interface.h"
+#include "fixtures/protocols/splice_source.h"
+
+enum
+{
+    kStripeWorkerFirstPeerPort = 53000
+};
 
 static const uint64_t     stripe_worker_seed = UINT64_C(0xd45701a59960ab23);
 static _Thread_local bool force_stripe_worker_seed;
@@ -26,7 +32,9 @@ typedef struct stripe_worker_fixture_s
     address_context_t expected_source;
     uint8_t           id[16];
     wid_t             target;
-    atomic_uint       inits, ready, finishes, application_finishes;
+    atomic_uint       inits, ready, finishes, application_finishes, delivered;
+    unsigned          representation;
+    bool              trailing;
 } stripe_worker_fixture_t;
 
 static stripe_worker_fixture_t sw;
@@ -40,10 +48,13 @@ static void stripeWorkerTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     require(t == sw.transport && line == sw.lanes[0] && lineIsOnCurrentWorker(line),
             "Stripe READY used the wrong lane or worker");
-    require(sbufGetLength(buf) == kStripeHeaderSize && sbufGetRawPtr(buf)[0] == kStripeReady,
-            "Stripe worker fixture received an unexpected control");
+    require(! sbufIsSplice(buf) && sbufGetLength(buf) == kStripeHeaderSize,
+            "Stripe worker fixture received an unexpected control representation");
+    const uint8_t type = sbufGetRawPtr(buf)[0];
+    require(type == kStripeReady || type == kStripeWindow, "Stripe worker fixture received an unexpected control");
     lineReuseBuffer(line, buf);
-    atomicAddExplicit(&sw.ready, 1, memory_order_release);
+    if (type == kStripeReady)
+        atomicAddExplicit(&sw.ready, 1, memory_order_release);
 }
 
 static void stripeWorkerTransportFinish(tunnel_t *t, line_t *line)
@@ -63,6 +74,10 @@ static void stripeWorkerApplicationInit(tunnel_t *t, line_t *line)
             "Stripe lane-zero migration lost the source IP before application Init");
     require(source->port == sw.expected_source.port && source->proto_tcp == sw.expected_source.proto_tcp,
             "Stripe lane-zero migration lost the source port or protocol");
+    const routing_context_t *route = lineGetRoutingContext(line);
+    require(route->local_listener_port == sw.expected_source.port &&
+                route->peer_source_port == kStripeWorkerFirstPeerPort,
+            "Stripe lane-zero migration lost the observed listener or peer port");
     sw.application = line;
     atomicAddExplicit(&sw.inits, 1, memory_order_release);
 }
@@ -72,6 +87,41 @@ static void stripeWorkerApplicationFinish(tunnel_t *t, line_t *line)
     require(t == sw.backend && line == sw.application && lineIsOnCurrentWorker(line),
             "Stripe application Finish used the wrong line or worker");
     atomicAddExplicit(&sw.application_finishes, 1, memory_order_release);
+}
+
+static void stripeWorkerApplicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    require(t == sw.backend && line == sw.application && lineIsOnCurrentWorker(line) && lineGetWID(line) == sw.target,
+            "Stripe migrated DATA used the wrong application or worker");
+    uint8_t bytes[5];
+    require(sbufGetLength(buf) == sizeof(bytes), "Stripe JOIN replay lost its trailing DATA length");
+    sbufReadRangeToMemory(buf, bytes, sizeof(bytes));
+    require(memoryEqual(bytes, "hello", sizeof(bytes)), "Stripe JOIN replay corrupted its trailing DATA");
+    lineReuseBuffer(line, buf);
+    atomicAddExplicit(&sw.delivered, 1, memory_order_release);
+}
+
+static sbuf_t *stripeWorkerInput(worker_t *worker, const uint8_t *bytes, size_t length)
+{
+#if WW_HAVE_SPLICE
+    if (sw.representation != 0)
+    {
+        const size_t prefix = sw.representation == 2 ? min(length, (size_t) 7) : 0;
+        sbuf_t      *buf    = testSpliceSourceBuffer(32, (uint32_t) (length - prefix));
+        require(write(sbufSpliceMetadata(buf).pipefd[1], bytes + prefix, length - prefix) ==
+                    (ssize_t) (length - prefix),
+                "Stripe worker source pipe population failed");
+        buf->capacity = buf->initial_headroom + length - prefix;
+        sbufSetLength(buf, length - prefix);
+        sbufShiftLeft(buf, prefix);
+        memoryCopy(sbufGetMutablePtr(buf), bytes, prefix);
+        return buf;
+    }
+#endif
+    sbuf_t *buf = bufferpoolGetBestFit(worker->buffer_pool, length, 0);
+    sbufSetLength(buf, length);
+    memoryCopy(sbufGetMutablePtr(buf), bytes, length);
+    return buf;
 }
 
 static void stripeWorkerCreateLane(worker_t *worker, void *arg1, void *arg2, void *arg3)
@@ -87,18 +137,29 @@ static void stripeWorkerCreateLane(worker_t *worker, void *arg1, void *arg2, voi
         require(addresscontextSetIpAddressPortProtocol(
                     lineGetSourceAddressContext(line), "198.51.100.22", 32000, IPPROTO_TCP),
                 "Stripe alternate source address setup failed");
+    routing_context_t *route   = lineGetRoutingContext(line);
+    route->local_listener_port = route->src_ctx.port;
+    route->peer_source_port    = (uint16_t) (kStripeWorkerFirstPeerPort + index);
     tunnelUpStreamInit(sw.wrapper, line);
-    uint8_t intro[kStripeJoinSize] = {0};
-    intro[0]                       = kStripeJoin;
-    intro[7]                       = 24;
+    uint8_t intro[kStripeJoinSize + kStripeHeaderSize + 5] = {0};
+    intro[0]                                               = kStripeJoin;
+    intro[7]                                               = 24;
     memoryCopy(intro + kStripeHeaderSize, sw.id, sizeof(sw.id));
-    intro[41]   = (uint8_t) index;
-    intro[43]   = 2;
-    intro[46]   = 64; /* 16384-byte receive window, big endian. */
-    sbuf_t *buf = bufferpoolGetBestFit(worker->buffer_pool, sizeof(intro), 0);
-    sbufSetLength(buf, sizeof(intro));
-    memoryCopy(sbufGetMutablePtr(buf), intro, sizeof(intro));
-    tunnelUpStreamPayload(sw.wrapper, line, buf);
+    intro[41]           = (uint8_t) index;
+    intro[43]           = 2;
+    intro[46]           = 64; /* 16384-byte receive window, big endian. */
+    const bool trailing = index == 0 && sw.trailing;
+    if (trailing)
+    {
+        intro[kStripeJoinSize]     = kStripeData;
+        intro[kStripeJoinSize + 7] = 5;
+        memoryCopy(intro + kStripeJoinSize + kStripeHeaderSize, "hello", 5);
+    }
+    const size_t length = trailing ? sizeof(intro) : kStripeJoinSize;
+    const size_t split  = sw.representation == 0 ? 0 : 19;
+    if (split)
+        tunnelUpStreamPayload(sw.wrapper, line, stripeWorkerInput(worker, intro, split));
+    tunnelUpStreamPayload(sw.wrapper, line, stripeWorkerInput(worker, intro + split, length - split));
     atomicStoreExplicit((atomic_bool *) arg1, true, memory_order_release);
 }
 
@@ -148,71 +209,78 @@ static void stripeWorkerWait(atomic_uint *value, unsigned target)
 
 void testConnectionStripeWorkers(void)
 {
-    for (unsigned ipv6 = 0; ipv6 < 2; ++ipv6)
-        for (wid_t target = 0; target < 2; ++target)
-            for (unsigned order = 0; order < 2; ++order)
-            {
-                memoryZero(&sw, sizeof(sw));
-                atomic_init(&sw.inits, 0);
-                atomic_init(&sw.ready, 0);
-                atomic_init(&sw.finishes, 0);
-                atomic_init(&sw.application_finishes, 0);
-                sw.target = target;
-                require(addresscontextSetIpAddressPortProtocol(
-                            &sw.expected_source, ipv6 ? "2001:db8::45" : "127.0.0.1", 23456, IPPROTO_TCP),
-                        "Stripe expected source address setup failed");
-                bool found = false;
-                for (unsigned id = 0; id < 65536 && ! found; ++id)
+    for (unsigned representation = 0; representation < (WW_HAVE_SPLICE ? 3U : 1U); ++representation)
+        for (unsigned ipv6 = 0; ipv6 < 2; ++ipv6)
+            for (wid_t target = 0; target < 2; ++target)
+                for (unsigned order = 0; order < 2; ++order)
                 {
-                    sw.id[0] = (uint8_t) id;
-                    sw.id[1] = (uint8_t) (id >> 8);
-                    found = calcHashBytesSeed(sw.id, sizeof(sw.id), stripe_worker_seed) % getWorkersCount() == target;
+                    memoryZero(&sw, sizeof(sw));
+                    atomic_init(&sw.inits, 0);
+                    atomic_init(&sw.ready, 0);
+                    atomic_init(&sw.finishes, 0);
+                    atomic_init(&sw.application_finishes, 0);
+                    atomic_init(&sw.delivered, 0);
+                    sw.target         = target;
+                    sw.representation = representation;
+                    sw.trailing       = order == 1;
+                    require(addresscontextSetIpAddressPortProtocol(
+                                &sw.expected_source, ipv6 ? "2001:db8::45" : "127.0.0.1", 23456, IPPROTO_TCP),
+                            "Stripe expected source address setup failed");
+                    bool found = false;
+                    for (unsigned id = 0; id < 65536 && ! found; ++id)
+                    {
+                        sw.id[0] = (uint8_t) id;
+                        sw.id[1] = (uint8_t) (id >> 8);
+                        found =
+                            calcHashBytesSeed(sw.id, sizeof(sw.id), stripe_worker_seed) % getWorkersCount() == target;
+                    }
+                    require(found, "Stripe fixture could not select its session worker");
+                    node_t server_node       = {.next = (char *) "backend"};
+                    force_stripe_worker_seed = true;
+                    sw.wrapper               = connectionstripeserverTunnelCreate(&server_node);
+                    force_stripe_worker_seed = false;
+                    require(sw.wrapper != NULL, "Stripe worker server creation failed");
+                    sw.server    = *(tunnel_t **) tunnelGetState(sw.wrapper);
+                    sw.transport = tunnelCreate(NULL, 0, 0);
+                    sw.backend   = tunnelCreate(NULL, 0, 0);
+                    tunnelBind(sw.transport, sw.wrapper);
+                    tunnelBind(sw.wrapper, sw.server);
+                    tunnelBind(sw.server, sw.backend);
+                    sw.wrapper->lstate_offset     = 0;
+                    sw.server->lstate_offset      = sw.wrapper->lstate_size;
+                    sw.transport->fnEstD          = stripeWorkerEst;
+                    sw.transport->fnPayloadD      = stripeWorkerTransportPayload;
+                    sw.transport->fnFinD          = stripeWorkerTransportFinish;
+                    sw.backend->fnInitU           = stripeWorkerApplicationInit;
+                    sw.backend->fnFinU            = stripeWorkerApplicationFinish;
+                    sw.backend->fnPayloadU        = stripeWorkerApplicationPayload;
+                    sw.chain                      = tunnelchainCreate(getWorkersCount());
+                    sw.chain->sum_line_state_size = sw.wrapper->lstate_size + sw.server->lstate_size;
+                    sw.wrapper->chain = sw.server->chain = sw.chain;
+                    tunnelchainFinalize(sw.chain);
+                    sw.wrapper->onStart(sw.wrapper);
+                    for (unsigned arrived = 0; arrived < 2; ++arrived)
+                    {
+                        unsigned index = arrived ^ order;
+                        stripeWorkerCall(index == 0 ? 1 - target : target,
+                                         (WorkerMessageCallback) stripeWorkerCreateLane,
+                                         (void *) (uintptr_t) index);
+                    }
+                    stripeWorkerWait(&sw.inits, 1);
+                    stripeWorkerWait(&sw.ready, 1);
+                    stripeWorkerWait(&sw.delivered, sw.trailing ? 1 : 0);
+                    stripeWorkerCall(1 - target, (WorkerMessageCallback) stripeWorkerCloseLane, NULL);
+                    stripeWorkerWait(&sw.finishes, 2);
+                    stripeWorkerWait(&sw.application_finishes, 1);
+                    stripeWorkerCall(1, (WorkerMessageCallback) stripeWorkerDrain, NULL);
+                    stripeWorkerCall(0, (WorkerMessageCallback) stripeWorkerDrain, NULL);
+                    stripeWorkerCall(1, (WorkerMessageCallback) pipeQueueBarrier, NULL);
+                    discard wloopProcessEvents(getWorkerLoop(0), 0);
+                    require(masterpoolGetCheckedOut(sw.chain->masterpool_line_pool) == 0, "Stripe worker lines leaked");
+                    tunnelchainDestroy(sw.chain);
+                    pipetunnelDestroy(sw.wrapper, testShutdownContext());
+                    tunnelDestroy(sw.transport);
+                    tunnelDestroy(sw.backend);
                 }
-                require(found, "Stripe fixture could not select its session worker");
-                node_t server_node       = {.next = (char *) "backend"};
-                force_stripe_worker_seed = true;
-                sw.wrapper               = connectionstripeserverTunnelCreate(&server_node);
-                force_stripe_worker_seed = false;
-                require(sw.wrapper != NULL, "Stripe worker server creation failed");
-                sw.server    = *(tunnel_t **) tunnelGetState(sw.wrapper);
-                sw.transport = tunnelCreate(NULL, 0, 0);
-                sw.backend   = tunnelCreate(NULL, 0, 0);
-                tunnelBind(sw.transport, sw.wrapper);
-                tunnelBind(sw.wrapper, sw.server);
-                tunnelBind(sw.server, sw.backend);
-                sw.wrapper->lstate_offset     = 0;
-                sw.server->lstate_offset      = sw.wrapper->lstate_size;
-                sw.transport->fnEstD          = stripeWorkerEst;
-                sw.transport->fnPayloadD      = stripeWorkerTransportPayload;
-                sw.transport->fnFinD          = stripeWorkerTransportFinish;
-                sw.backend->fnInitU           = stripeWorkerApplicationInit;
-                sw.backend->fnFinU            = stripeWorkerApplicationFinish;
-                sw.chain                      = tunnelchainCreate(getWorkersCount());
-                sw.chain->sum_line_state_size = sw.wrapper->lstate_size + sw.server->lstate_size;
-                sw.wrapper->chain = sw.server->chain = sw.chain;
-                tunnelchainFinalize(sw.chain);
-                sw.wrapper->onStart(sw.wrapper);
-                for (unsigned arrived = 0; arrived < 2; ++arrived)
-                {
-                    unsigned index = arrived ^ order;
-                    stripeWorkerCall(index == 0 ? 1 - target : target,
-                                     (WorkerMessageCallback) stripeWorkerCreateLane,
-                                     (void *) (uintptr_t) index);
-                }
-                stripeWorkerWait(&sw.inits, 1);
-                stripeWorkerWait(&sw.ready, 1);
-                stripeWorkerCall(1 - target, (WorkerMessageCallback) stripeWorkerCloseLane, NULL);
-                stripeWorkerWait(&sw.finishes, 2);
-                stripeWorkerWait(&sw.application_finishes, 1);
-                stripeWorkerCall(1, (WorkerMessageCallback) stripeWorkerDrain, NULL);
-                stripeWorkerCall(0, (WorkerMessageCallback) stripeWorkerDrain, NULL);
-                stripeWorkerCall(1, (WorkerMessageCallback) pipeQueueBarrier, NULL);
-                discard wloopProcessEvents(getWorkerLoop(0), 0);
-                require(masterpoolGetCheckedOut(sw.chain->masterpool_line_pool) == 0, "Stripe worker lines leaked");
-                tunnelchainDestroy(sw.chain);
-                pipetunnelDestroy(sw.wrapper, testShutdownContext());
-                tunnelDestroy(sw.transport);
-                tunnelDestroy(sw.backend);
-            }
 }
 #endif

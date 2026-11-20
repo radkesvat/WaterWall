@@ -2,7 +2,7 @@
 #define PING_COMMON_PING_WIRE_H_
 
 /*
- * Ping wire v2 is deliberately a narrow IPv4/ICMP Echo codec.  It owns the
+ * The Ping codec inserts Echo framing into an existing IPv4 packet.  It owns the
  * deterministic packet mechanics shared by PingClient and PingServer; those
  * nodes retain callback direction, buffer ownership, and configuration work.
  */
@@ -16,7 +16,7 @@ enum
 {
     kPingWireIpv4HeaderLength         = IP_HLEN,
     kPingWireIcmpHeaderLength         = sizeof(struct icmp_echo_hdr),
-    kPingWireEncapsulationOverhead    = kPingWireIpv4HeaderLength + kPingWireIcmpHeaderLength,
+    kPingWireEncapsulationOverhead    = kPingWireIcmpHeaderLength + 1,
     kPingWireMaxInnerPacketLength     = kMaxAllowedPacketLength - kPingWireEncapsulationOverhead,
     kPingWirePayloadDigestLength      = 16,
     kPingWireOutstandingCapacity      = 1024,
@@ -25,18 +25,14 @@ enum
     kPingWireReplyPerturbationMaximum = 31,
 };
 
-_Static_assert(kPingWireIpv4HeaderLength == 20, "Ping wire v2 requires a 20-byte IPv4 header");
-_Static_assert(kPingWireEncapsulationOverhead == 28, "Ping wire v2 padding contract changed unexpectedly");
+_Static_assert(kPingWireIpv4HeaderLength == 20, "IPv4 minimum header length changed unexpectedly");
+_Static_assert(kPingWireEncapsulationOverhead == 9, "Ping padding contract changed unexpectedly");
 _Static_assert(kPingWireOutstandingCapacity < UINT16_MAX,
                "Ping outstanding capacity must remain below one 16-bit sequence space");
 
 typedef struct ping_wire_config_s
 {
-    uint32_t local_ipv4;
-    uint32_t peer_ipv4;
     uint16_t identifier;
-    uint8_t  ttl;
-    uint8_t  tos;
 } ping_wire_config_t;
 
 typedef struct ping_wire_envelope_s
@@ -44,12 +40,14 @@ typedef struct ping_wire_envelope_s
     /* Static diagnostic text on a rejected carrier; NULL on successful classification. */
     const char    *error_reason;
     const uint8_t *icmp_payload;
-    const uint8_t *inner_ipv4;
     uint32_t       source_ipv4;
     uint32_t       destination_ipv4;
     uint16_t       total_length;
     uint16_t       icmp_payload_length;
-    uint16_t       inner_ipv4_length;
+    uint16_t       ip_header_length;
+    uint16_t       echo_offset; /* Distinct from IPv4 IHL when an IPv6 base header is present. */
+    uint16_t       native_body_length;
+    uint8_t        native_protocol;
     uint16_t       identifier;
     uint16_t       sequence;
     uint8_t        tos;
@@ -62,9 +60,9 @@ typedef enum ping_wire_inbound_kind_e
 {
     /* Not a complete valid IPv4 packet, or a complete carrier with a bad checksum. */
     kPingWireInboundMalformed = 0,
-    /* A valid IPv4 packet that is not addressed to this Ping endpoint. */
+    /* A valid IPv4 packet with another visible protocol. */
     kPingWireInboundUnrelated,
-    /* Addressed as carrier traffic, but not a valid v2 Echo envelope. */
+    /* Selected as carrier traffic, but not a valid Echo envelope. */
     kPingWireInboundInvalidCarrier,
     kPingWireInboundEchoRequest,
     kPingWireInboundEchoReply,
@@ -72,8 +70,6 @@ typedef enum ping_wire_inbound_kind_e
 
 typedef struct ping_wire_outstanding_entry_s
 {
-    uint32_t source_ipv4;
-    uint32_t destination_ipv4;
     uint16_t identifier;
     uint16_t sequence;
     uint16_t payload_length;
@@ -130,22 +126,32 @@ typedef struct ping_wire_reply_id_generator_s
     atomic_ullong last_reply_ms;
 } ping_wire_reply_id_generator_t;
 
-/* Validate one exact IPv4 packet (including an inner fragment). */
+/* Validate exact IPv4 geometry; codec admission separately rejects fragments. */
 WW_EXPORT bool pingwireIsExactIpv4Packet(const uint8_t *packet, uint32_t length);
 
 /* Validate exact IPv4 framing; return a static failure reason or NULL on success. */
 WW_EXPORT const char *pingwireIpv4PacketError(const uint8_t *packet, uint32_t length);
 
+/* The same validation, also filling the view of an accepted packet. */
+WW_EXPORT const char *pingwireIpv4PacketErrorWithView(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view);
+
 /* Resolve an explicit identifier or accept one injected random candidate. */
 WW_EXPORT bool pingwireSelectIdentifier(bool random, uint16_t configured, uint16_t random_candidate,
                                         uint16_t *identifier_out);
 
-/* Parse one inbound carrier relative to the local endpoint's configured tuple. */
+/* Shared native geometry, including permitted UDP padding and opaque protocols. */
+WW_EXPORT bool pingwireNativeShape(const uint8_t *body, uint16_t length, uint8_t protocol);
+
+/* Parse the selected visible protocol; the chain owns address/peer selection. */
 WW_EXPORT ping_wire_inbound_kind_t pingwireParseInbound(const uint8_t *packet, uint32_t length,
                                                         const ping_wire_config_t *config,
                                                         ping_wire_envelope_t     *envelope_out);
 
-/* Build a fresh type-8 Echo Request around one exact inner IPv4 packet. */
+/* Pure admission check, then native repair before a node reserves sequence state. */
+WW_EXPORT const char *pingwireEchoRequestError(const sbuf_t *buf);
+WW_EXPORT const char *pingwirePrepareEchoRequest(sbuf_t *buf);
+
+/* Insert a fresh Echo header and final protocol trailer into one native packet. */
 WW_EXPORT bool pingwireEchoRequestPreflight(const sbuf_t *buf);
 WW_EXPORT bool pingwireBuildEchoRequest(sbuf_t *buf, const ping_wire_config_t *config, uint16_t sequence);
 
@@ -153,8 +159,20 @@ WW_EXPORT bool pingwireBuildEchoRequest(sbuf_t *buf, const ping_wire_config_t *c
 WW_EXPORT bool pingwireBuildEchoReply(sbuf_t *buf, const ping_wire_config_t *config,
                                       const ping_wire_envelope_t *request, uint16_t ipv4_identification);
 
-/* Strip a validated Echo Request's fixed IPv4+ICMP carrier envelope in place. */
+/* Remove Echo framing/trailer and restore native checksum address contributions. */
 WW_EXPORT bool pingwireStripEchoRequest(sbuf_t *buf, const ping_wire_envelope_t *request);
+
+/* Shared Ping/Ping6 Echo mechanics. The checksum seed includes any pseudo-header. */
+WW_EXPORT ping_wire_inbound_kind_t pingwireParseEcho(const uint8_t *packet, uint32_t length, uint8_t protocol,
+                                                     uint8_t request_type, uint8_t reply_type, uint32_t checksum_seed,
+                                                     ping_wire_envelope_t *envelope_out);
+WW_EXPORT bool pingwireBuildRequest(sbuf_t *buf, uint16_t identifier, uint16_t sequence, uint8_t protocol,
+                                    uint8_t request_type, uint32_t checksum_seed);
+WW_EXPORT bool pingwireBuildReply(sbuf_t *buf, const ping_wire_envelope_t *request, uint16_t ipv4_identification,
+                                  uint8_t protocol, uint8_t request_type, uint8_t reply_type, uint32_t checksum_seed);
+WW_EXPORT bool pingwireStripRequest(sbuf_t *buf, const ping_wire_envelope_t *request, uint8_t request_type);
+WW_EXPORT bool pingwireRecalculateEchoChecksums(sbuf_t *buf, uint8_t protocol, uint32_t checksum_seed);
+WW_EXPORT bool pingwireRecalculateCarrierChecksums(sbuf_t *buf);
 
 /* Construct/destroy one node-wide synchronized bounded correlation tracker. */
 WW_EXPORT ping_wire_tracker_t *pingwireTrackerCreate(void);
@@ -163,15 +181,21 @@ WW_EXPORT void                 pingwireTrackerDestroy(ping_wire_tracker_t *track
 /* Register a locally emitted request before it is forwarded to a peer. */
 WW_EXPORT bool pingwireOutstandingRecord(ping_wire_tracker_t *tracker,
                                          const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE], uint16_t identifier,
-                                         uint16_t sequence, uint32_t reply_source_ipv4, uint32_t reply_destination_ipv4,
-                                         const uint8_t *payload, uint16_t payload_length);
+                                         uint16_t sequence, const uint8_t *payload, uint16_t payload_length);
 
-/* Consume only an exact, correlated Echo Reply. */
+/* Consume only an exact, correlated Echo Reply of the caller's wire type. */
+WW_EXPORT bool pingwireOutstandingConsumeForType(ping_wire_tracker_t        *tracker,
+                                                 const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                                 const ping_wire_envelope_t *reply, uint8_t expected_type);
 WW_EXPORT bool pingwireOutstandingConsume(ping_wire_tracker_t        *tracker,
                                           const uint8_t               digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
                                           const ping_wire_envelope_t *reply);
 
-/* Record a peer request once; duplicate requests remain eligible for a reply. */
+/* Record a peer request of the caller's wire type; duplicates remain eligible for a reply. */
+WW_EXPORT ping_wire_replay_result_t pingwireReplayMarkForType(ping_wire_tracker_t *tracker,
+                                                              const uint8_t digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
+                                                              const ping_wire_envelope_t *request,
+                                                              uint8_t                     expected_type);
 WW_EXPORT ping_wire_replay_result_t pingwireReplayMark(ping_wire_tracker_t *tracker,
                                                        const uint8_t        digest_key[WCRYPTO_BLAKE2S_MAX_KEY_SIZE],
                                                        const ping_wire_envelope_t *request);

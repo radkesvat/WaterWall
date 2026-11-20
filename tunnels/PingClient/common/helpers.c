@@ -38,18 +38,29 @@ static void pingclientDrop(tunnel_t *t, line_t *l, sbuf_t *buf, const char *dire
     lineReuseBuffer(l, buf);
 }
 
-static const char *pingclientConsumeInputChecksum(sbuf_t *buf)
+static const char *pingclientConsumeCarrierChecksum(pingclient_tstate_t *state, sbuf_t *buf)
 {
-    const bool  requested = packettunnelTakeChecksumRequest(buf);
-    const char *error     = pingwireIpv4PacketError(sbufGetRawPtr(buf), sbufGetLength(buf));
+    discard            state;
+    ipv4_packet_view_t carrier = {0};
+    const char        *error   = pingwireIpv4PacketErrorWithView(sbufGetRawPtr(buf), sbufGetLength(buf), &carrier);
     if (error != NULL)
     {
         return error;
     }
-    if (requested && ! calcFullPacketChecksum(sbufGetMutablePtr(buf), sbufGetLength(buf)))
+    if (carrier.fragmented)
     {
-        return "requested IPv4/transport checksum repair failed";
+        return "fragmented IPv4 datagram requires adapter reassembly before Ping";
     }
+    if (! sbufGetRecalculateChecksum(buf) || carrier.protocol != IP_PROTO_ICMP)
+    {
+        return NULL;
+    }
+    /* Repair only the visible carrier, never the normalized native payload. */
+    if (! pingwireRecalculateCarrierChecksums(buf))
+    {
+        return "invalid carrier geometry for visible checksum repair";
+    }
+    sbufSetRecalculateChecksum(buf, false);
     return NULL;
 }
 
@@ -58,21 +69,10 @@ void pingclientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingclient_tstate_t *state = tunnelGetState(t);
     pingclientValidatePacketLine(t, l);
 
-    const char *input_error = pingclientConsumeInputChecksum(buf);
+    const char *input_error = pingwirePrepareEchoRequest(buf);
     if (input_error != NULL)
     {
         pingclientDrop(t, l, buf, "outgoing", input_error);
-        return;
-    }
-
-    if (sbufGetLength(buf) > kPingWireMaxInnerPacketLength)
-    {
-        pingclientDrop(t, l, buf, "outgoing", "IPv4 packet exceeds maximum inner size");
-        return;
-    }
-    if (sbufGetHeadroom(buf) < kPingWireEncapsulationOverhead)
-    {
-        pingclientDrop(t, l, buf, "outgoing", "insufficient left headroom to prepend IPv4/ICMP headers");
         return;
     }
 
@@ -83,16 +83,12 @@ void pingclientEncapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
         abortProgramNow(1);
     }
 
-    const uint8_t *payload        = sbufGetRawPtr(buf) + kPingWireEncapsulationOverhead;
-    const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - kPingWireEncapsulationOverhead);
-    if (! pingwireOutstandingRecord(state->tracker,
-                                    state->digest_key,
-                                    state->wire.identifier,
-                                    sequence,
-                                    state->wire.peer_ipv4,
-                                    state->wire.local_ipv4,
-                                    payload,
-                                    payload_length))
+    const uint8_t *packet         = sbufGetRawPtr(buf);
+    const uint16_t payload_offset = (uint16_t) ((packet[0] & 15U) * 4U + kPingWireIcmpHeaderLength);
+    const uint8_t *payload        = packet + payload_offset;
+    const uint16_t payload_length = (uint16_t) (sbufGetLength(buf) - payload_offset);
+    if (! pingwireOutstandingRecord(
+            state->tracker, state->digest_key, state->wire.identifier, sequence, payload, payload_length))
     {
         pingclientDrop(t, l, buf, "outgoing", "failed to hash/register the outgoing Echo Request");
         return;
@@ -106,10 +102,17 @@ void pingclientDecapsulatePacket(tunnel_t *t, line_t *l, sbuf_t *buf)
     pingclient_tstate_t *state = tunnelGetState(t);
     pingclientValidatePacketLine(t, l);
 
-    const char *input_error = pingclientConsumeInputChecksum(buf);
+    const char *input_error = pingclientConsumeCarrierChecksum(state, buf);
     if (input_error != NULL)
     {
         pingclientDrop(t, l, buf, "incoming", input_error);
+        return;
+    }
+
+    if (sbufGetRecalculateChecksum(buf))
+    {
+        /* Unrelated traffic keeps its bytes and pending repair intent. */
+        tunnelPrevDownStreamPayload(t, l, buf);
         return;
     }
 

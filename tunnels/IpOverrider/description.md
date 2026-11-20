@@ -1,25 +1,17 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/IpOverrider.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/IpOverrider.mdx, and all files must keep the same documentation version.
 -->
 
 # IpOverrider Node
 
+## Overview
+
 `IpOverrider` rewrites packet IP addresses as traffic passes through the chain. A single instance can now apply independent overrides for upstream and downstream traffic, and for source and destination IP fields within each direction.
 
 This node is a layer-3 packet tunnel. It does not create connections or sockets. It only inspects packets already flowing through the chain and rewrites configured address fields in place.
 
-## What It Does
-
-- Rewrites IPv4 source addresses on upstream traffic when configured.
-- Rewrites IPv4 destination addresses on upstream traffic when configured.
-- Rewrites IPv4 source addresses on downstream traffic when configured.
-- Rewrites IPv4 destination addresses on downstream traffic when configured.
-- Applies one node-level `only120` size gate before any configured rewrite.
-- Applies one node-level `chance` gate before any configured rewrite.
-- Updates IPv4 header and TCP/UDP pseudo-header checksums incrementally after a rewrite.
-
-## Typical Placement
+## Typical placement
 
 `IpOverrider` is useful anywhere in a packet-oriented chain where you want to modify IP headers before handing traffic to the next stage.
 
@@ -29,7 +21,14 @@ Common uses include:
 - applying different rewrite behavior to upstream and downstream packet flow
 - testing or simulating NAT-like address changes inside a WaterWall chain
 
-## Configuration Example
+
+## Minimal practical example
+
+The JSON below is a **node fragment**, not a complete config file.
+Replace the packet addresses and `next` name for your own explicit mapping.
+Both directions are independent; this node does not infer inverse NAT rules.
+
+### Configuration Example
 
 ```json
 {
@@ -57,25 +56,12 @@ Common uses include:
 }
 ```
 
-## Legacy Configuration Example
 
-The old single-operation format is still accepted:
+## Configuration
 
-```json
-{
-  "name": "ip-rewrite-old",
-  "type": "IpOverrider",
-  "settings": {
-    "direction": "up",
-    "mode": "dest-ip",
-    "ipv4": "198.51.100.10"
-  }
-}
-```
+### Required JSON Fields
 
-## Required JSON Fields
-
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -83,7 +69,7 @@ The old single-operation format is still accepted:
 - `type` `(string)`
   Must be exactly `"IpOverrider"`.
 
-### `settings`
+#### `settings`
 
 The current implementation supports two configuration styles:
 
@@ -117,7 +103,7 @@ For the legacy format, required fields are:
 - `ipv4` or `ipv6` `(string)`
   The replacement IP address for the selected rule.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 The root `settings` object may include:
 
@@ -130,9 +116,46 @@ Both options belong directly inside `settings` in the new and legacy formats.
 `chance` or `only120` inside a nested source or destination rule is invalid;
 move it to `settings.chance` or `settings.only120`.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Direction and field selection
+### Legacy Configuration Example
+
+The old single-operation format is still accepted:
+
+```json
+{
+  "name": "ip-rewrite-old",
+  "type": "IpOverrider",
+  "settings": {
+    "direction": "up",
+    "mode": "dest-ip",
+    "ipv4": "198.51.100.10"
+  }
+}
+```
+
+### Notes And Caveats
+
+- The current runtime rewrite path only modifies IPv4 packets.
+- IPv6 addresses are parsed and stored, but IPv6 header rewriting is not enabled yet.
+- A single tunnel instance can now replace what previously required multiple chained `IpOverrider` nodes.
+- The legacy `direction` plus `mode` configuration is still supported for backward compatibility.
+
+## Implementation details
+
+### What It Does
+
+- Rewrites IPv4 source addresses on upstream traffic when configured.
+- Rewrites IPv4 destination addresses on upstream traffic when configured.
+- Rewrites IPv4 source addresses on downstream traffic when configured.
+- Rewrites IPv4 destination addresses on downstream traffic when configured.
+- Applies one node-level `only120` size gate before any configured rewrite.
+- Applies one node-level `chance` gate before any configured rewrite.
+- Updates IPv4 header and TCP/UDP pseudo-header checksums incrementally after a rewrite.
+
+### Detailed Behavior
+
+#### Direction and field selection
 
 The new configuration format lets one `IpOverrider` instance hold up to four independent rewrite rules:
 
@@ -145,7 +168,7 @@ When a packet flows upstream, only the configured upstream rules are checked. Wh
 
 If both source and destination rules are configured for the same direction, both are applied to the same packet in that direction.
 
-### `chance`
+#### `chance`
 
 `chance` controls how often the complete node action runs. It is evaluated once
 per eligible packet, not separately for each source or destination rule:
@@ -180,7 +203,7 @@ In this example, both upstream fields are rewritten together for approximately
 }
 ```
 
-### `only120`
+#### `only120`
 
 `only120` is a size gate for the complete node action. When it is `true`, all
 configured rewrites run together for IPv4 packets whose total IP length is
@@ -205,7 +228,7 @@ configured rewrites run together for IPv4 packets whose total IP length is
 }
 ```
 
-### Combining `only120` and `chance`
+#### Combining `only120` and `chance`
 
 For every upstream or downstream packet, `IpOverrider` evaluates its root-level
 gates before checking any source or destination rule:
@@ -221,7 +244,7 @@ When either gate skips the node action, the packet is forwarded unchanged,
 IPv4 address-array cursors are not advanced, and this node does not request
 checksum recalculation.
 
-### Packet flow behavior
+#### Packet flow behavior
 
 `IpOverrider` does not terminate the chain and does not buffer packets.
 
@@ -230,18 +253,11 @@ checksum recalculation.
 
 If no rule exists for a given direction, packets in that direction simply pass through unchanged.
 
-### Checksum behavior
+#### Checksum behavior
 
 When an IPv4 address rewrite is applied, `IpOverrider` updates the IPv4 header checksum incrementally in place. For TCP and enabled UDP packets, it also applies the corresponding IPv4 pseudo-header checksum delta. A disabled (zero) UDP checksum remains zero. The node does not request a full-packet checksum recalculation for its own rewrite, and preserves any pre-existing checksum recalculation request.
 
-## Notes And Caveats
-
-- The current runtime rewrite path only modifies IPv4 packets.
-- IPv6 addresses are parsed and stored, but IPv6 header rewriting is not enabled yet.
-- A single tunnel instance can now replace what previously required multiple chained `IpOverrider` nodes.
-- The legacy `direction` plus `mode` configuration is still supported for backward compatibility.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

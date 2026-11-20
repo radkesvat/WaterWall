@@ -1,9 +1,11 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/ObfuscatorServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/ObfuscatorServer.mdx, and all files must keep the same documentation version.
 -->
 
 # ObfuscatorServer Node
+
+## Overview
 
 `ObfuscatorServer` is the server-side peer of `ObfuscatorClient`. It restores upstream payload from the transport before forwarding to the next node, and encodes downstream replies before forwarding to the previous node.
 
@@ -16,16 +18,7 @@ transport at `next`; `ObfuscatorServer` faces its transport at the previous node
 A `Bridge` reverses callback direction, so two legs whose `next` sides face a
 paired Bridge both use `ObfuscatorClient`.
 
-## What It Does
-
-- Reads payload from the previous node.
-- Removes optional TLS-like framing and applies XOR before sending upstream plaintext to the next node.
-- Applies XOR and adds optional TLS-like framing to downstream replies returning from the next node.
-- Passes init, est, finish, pause, and resume events through unchanged.
-
-In the current implementation, the only supported method is XOR.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -35,7 +28,11 @@ A common layout is:
 
 A typical TCP deployment uses `TcpListener -> ObfuscatorServer -> TcpConnector` on the server. The client uses `TcpListener -> ObfuscatorClient -> TcpConnector` and connects to that server listener.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -51,9 +48,11 @@ A typical TCP deployment uses `TcpListener -> ObfuscatorServer -> TcpConnector` 
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -64,7 +63,7 @@ A typical TCP deployment uses `TcpListener -> ObfuscatorServer -> TcpConnector` 
 - `next` `(string)`
   The next node that should receive the upstream transformed payload.
 
-### `settings`
+#### `settings`
 
 - `method` `(string)`
   Obfuscation method to use.
@@ -93,13 +92,34 @@ A typical TCP deployment uses `TcpListener -> ObfuscatorServer -> TcpConnector` 
   - `"ipv4"`: if the payload starts with a valid IPv4 packet, leave only the IPv4 header clear
   - `"transport"`: if the payload starts with a valid IPv4 TCP/UDP packet, leave the IPv4 header and the TCP/UDP header clear
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 There are no additional tunnel-specific optional settings in the current implementation beyond `tls_record_header` and `skip`.
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### XOR behavior
+### Notes And Caveats
+
+- `ObfuscatorServer` is intended to be paired with `ObfuscatorClient` using the same `method` and `xor_key`.
+- Current support is limited to `method: "xor"`.
+- This tunnel does not provide cryptographic protection.
+- `xor_key` is stored as a single byte in the current implementation, so values outside `0..255` are effectively truncated.
+- Exact packet lines retain the one-packet/one-record limit and oversized-datagram drop policy.
+
+## Implementation details
+
+### What It Does
+
+- Reads payload from the previous node.
+- Removes optional TLS-like framing and applies XOR before sending upstream plaintext to the next node.
+- Applies XOR and adds optional TLS-like framing to downstream replies returning from the next node.
+- Passes init, est, finish, pause, and resume events through unchanged.
+
+In the current implementation, the only supported method is XOR.
+
+### Detailed Behavior
+
+#### XOR behavior
 
 For each payload buffer:
 
@@ -110,7 +130,7 @@ Because XOR is symmetrical, the same code path is valid for obfuscation and de-o
 
 When `skip` is enabled and the payload does not parse as a valid IPv4 packet, the tunnel falls back to XORing the whole payload buffer.
 
-### Optional TLS-like record header
+#### Optional TLS-like record header
 
 When `tls_record_header` is enabled:
 
@@ -120,7 +140,7 @@ When `tls_record_header` is enabled:
 
 This only imitates the post-handshake TLS record shape. It is not a real TLS handshake or encryption layer.
 
-### Event forwarding behavior
+#### Event forwarding behavior
 
 `ObfuscatorServer` forwards non-payload events in their original direction:
 
@@ -130,7 +150,7 @@ This only imitates the post-handshake TLS record shape. It is not a real TLS han
 With TLS-like framing, normal stream Init initializes receive state and records the source side; Finish releases it.
 Pause/Resume always relay transparently and do not gate encoding or decoding.
 
-### Implementation details
+#### Implementation details
 
 Like the client side, the server-side XOR helper uses optimized chunked implementations when possible:
 
@@ -140,15 +160,7 @@ Like the client side, the server-side XOR helper uses optimized chunked implemen
 
 This is a performance detail only.
 
-## Notes And Caveats
-
-- `ObfuscatorServer` is intended to be paired with `ObfuscatorClient` using the same `method` and `xor_key`.
-- Current support is limited to `method: "xor"`.
-- This tunnel does not provide cryptographic protection.
-- `xor_key` is stored as a single byte in the current implementation, so values outside `0..255` are effectively truncated.
-- Exact packet lines retain the one-packet/one-record limit and oversized-datagram drop policy.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

@@ -1,18 +1,11 @@
 <!--
-Documentation version: 153
+Documentation version: 154
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HeaderServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HeaderServer.mdx, and all files must keep the same documentation version.
 -->
 
 # HeaderServer
 
-`HeaderServer` publishes its continuing-path state before calling the next Init, so a synchronous transport Est is
-forwarded promptly, including repeated notifications. Input submitted reentrantly from Init, Est or initial replay stays behind the original
-accepted bytes. This temporary ordering FIFO is bounded to 2 MiB / 1,024 buffers and is drained within the current
-synchronous dispatch; it is empty on the ordinary direct path. Overflow closes the borrowed line through its owner.
-
-After next Init and the initial FIFO replay finish, the node destroys and zeros its line state and permanently
-bypasses itself. Constant-port mode bypasses immediately after applying the port, before forwarding Init.
-Pause/Resume are transparent and repeatable once the next side is initialized; they do not gate the initial replay.
+## Overview
 
 `HeaderServer` is the server-side reader for small connection metadata headers.
 It can do four different jobs:
@@ -25,7 +18,7 @@ It can do four different jobs:
 It is a normal layer-4 stream tunnel. It does not create sockets, packet lines,
 or `line_t` objects.
 
-## Typical Placement
+## Typical placement
 
 WaterWall destination-port metadata:
 
@@ -49,9 +42,13 @@ TcpListener -> HeaderServer -> TcpConnector
 Use PROXY mode only behind a trusted sender. A raw internet client can forge a
 PROXY header unless a proxy or a private transport boundary prevents that.
 
-## Practical Examples
+## Minimal practical example
 
-### Restore the original listener port from HeaderClient
+The first example contains the client and server node arrays. Add each array to its own configuration and replace the deployment addresses before use.
+
+### Practical Examples
+
+#### Restore the original listener port from HeaderClient
 
 This is the classic WaterWall pair. The first instance listens on multiple
 public ports but sends everything to one relay port. The relay restores the
@@ -81,6 +78,48 @@ The matching client-side `HeaderClient` should use:
 }
 ```
 
+## Configuration
+
+### Required JSON Fields
+
+Top-level fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `name` | string | User-chosen node name. Must be unique inside the config file. |
+| `type` | string | Must be exactly `"HeaderServer"`. |
+| `settings` | object | Required. Must contain `override`. |
+| `next` | string | Required. The next layer-4 stream node receives the routed line. |
+
+Required `settings` fields:
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `override` | number or string | Selects which field is overridden and which header, if any, is consumed. |
+
+`HeaderServer` must also have a previous node in the chain. It is not a chain
+head or chain end.
+
+### settings.override
+
+Accepted values:
+
+| Value | Meaning |
+| --- | --- |
+| `"dest_context->port"` | Read the 2-byte WaterWall upstream header and set `dest_ctx.port`. |
+| `"line->dest_ctx->port"` | Compatibility alias for `"dest_context->port"`. |
+| `"dest_context->protocol"` | Read the 1-byte WaterWall TCP/UDP header and replace only `dest_ctx.protocol`. |
+| `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
+| `"proxy-protocol->source-fields"` | Read PROXY protocol v1 or v2, then set `src_ctx.ip` and `src_ctx.port`. |
+| `1` through `65535` | Set this constant destination port during upstream `Init`. |
+
+Startup fails if `override` is missing, is not one of the accepted strings, or
+is a number outside `1` through `65535`.
+
+## Usage and troubleshooting
+
+### More examples
+
 ### Restore only TCP/UDP identity
 
 Use this when the sender provides only the protocol and the destination address
@@ -108,7 +147,7 @@ UDP over a TCP carrier still requires separate datagram framing, such as the
 ### Read source IP and port from PROXY protocol
 
 Use this when the previous real peer sends HAProxy PROXY protocol and the next
-WaterWall nodes should see the original client as `line->routing_context.src_ctx`.
+WaterWall nodes should see the original client as `lineGetSourceAddressContext(line)`.
 
 ```json
 {
@@ -161,50 +200,41 @@ no header should be consumed.
 Do not place a header-writing `HeaderClient` before numeric mode unless you
 intentionally want that header to remain in the application payload.
 
-## Required JSON Fields
+### Limits and Padding
 
-Top-level fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `name` | string | User-chosen node name. Must be unique inside the config file. |
-| `type` | string | Must be exactly `"HeaderServer"`. |
-| `settings` | object | Required. Must contain `override`. |
-| `next` | string | Required. The next layer-4 stream node receives the routed line. |
-
-Required `settings` fields:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `override` | number or string | Selects which field is overridden and which header, if any, is consumed. |
-
-`HeaderServer` must also have a previous node in the chain. It is not a chain
-head or chain end.
-
-## settings.override
-
-Accepted values:
-
-| Value | Meaning |
+| Value | Size |
 | --- | --- |
-| `"dest_context->port"` | Read the 2-byte WaterWall upstream header and set `dest_ctx.port`. |
-| `"line->dest_ctx->port"` | Compatibility alias for `"dest_context->port"`. |
-| `"dest_context->protocol"` | Read the 1-byte WaterWall TCP/UDP header and replace only `dest_ctx.protocol`. |
-| `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
-| `"proxy-protocol->source-fields"` | Read PROXY protocol v1 or v2, then set `src_ctx.ip` and `src_ctx.port`. |
-| `1` through `65535` | Set this constant destination port during upstream `Init`. |
+| WaterWall port header | `2 bytes` |
+| WaterWall protocol header | `1 byte` |
+| minimum accepted WaterWall header port | `10` |
+| PROXY protocol v1 header | up to `108 bytes` |
+| PROXY protocol v2 base header | `16 bytes` |
+| PROXY protocol v2 required TCP4 address block | `12 bytes` |
+| `required_padding_left` | `0 bytes` |
 
-Startup fails if `override` is missing, is not one of the accepted strings, or
-is a number outside `1` through `65535`.
+The server only consumes headers. It does not prepend bytes and therefore does
+not require left padding.
 
-## WaterWall Port Header Mode
+### Notes and Caveats
+
+- Use WaterWall port-header mode with `HeaderClient.data = "src_context->port"`.
+- Use protocol-header mode with `HeaderClient.data = "src_context->protocol"` or `"dest_context->protocol"`; UDP over TCP needs separate datagram framing.
+- Use PROXY source-fields mode with a trusted PROXY sender.
+- PROXY source-fields mode is IPv4-only.
+- PROXY source-fields mode updates only `src_ctx`; it does not rewrite `dest_ctx`.
+- While waiting for a header, `HeaderServer` has not initialized the next tunnel yet.
+- It should not be used as packet-line shared state.
+
+## Advanced behavior
+
+### WaterWall Port Header Mode
 
 When `override` is `"dest_context->port"` or `"line->dest_ctx->port"`,
 `HeaderServer` waits for the first 2 upstream bytes. Those bytes are decoded as
 a big-endian port and written to:
 
 ```text
-line->routing_context.dest_ctx.port
+lineGetDestinationAddressContext(line)->port
 ```
 
 Upstream `Init` is intentionally delayed until the header is decoded. Payload
@@ -214,14 +244,14 @@ across payload callbacks.
 Decoded ports below `10` are rejected to preserve the tunnel's existing
 conservative close behavior.
 
-## WaterWall Protocol Header Mode
+### WaterWall Protocol Header Mode
 
 When `override` is `"dest_context->protocol"` or
 `"line->dest_ctx->protocol"`, `HeaderServer` waits for one upstream byte. It
 consumes `6` as TCP or `17` as UDP and replaces only:
 
 ```text
-line->routing_context.dest_ctx.protocol
+addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), protocol)
 ```
 
 The marker is read once per normal layer-4 line. All source metadata and the
@@ -233,7 +263,7 @@ without initializing `next`.
 This is internal routing metadata, with no IP address, port, or PROXY protocol
 fields. It does not encode UDP datagram boundaries.
 
-## PROXY Protocol Source-Fields Mode
+### PROXY Protocol Source-Fields Mode
 
 When `override` is `"proxy-protocol->source-fields"`, the first upstream bytes
 must be a valid HAProxy PROXY protocol v1 or v2 header. If the header is missing,
@@ -258,9 +288,9 @@ Rejected headers include:
 Only these fields are applied:
 
 ```text
-line->routing_context.src_ctx.ip_address = PROXY source IPv4
-line->routing_context.src_ctx.port       = PROXY source port
-line->routing_context.src_ctx.protocol   = TCP
+lineGetSourceAddressContext(line)->ip_address = PROXY source IPv4
+lineGetSourceAddressContext(line)->port       = PROXY source port
+lineGetSourceAddressContext(line)->proto_tcp  = true
 ```
 
 Destination fields, TLVs, and every other PROXY field are consumed but ignored.
@@ -269,7 +299,7 @@ IPv6 is not supported in this mode. `peer_source_port` is not rewritten.
 PROXY v1 is capped at `108` bytes. PROXY v2 consumes the full v2 record length,
 including any TLVs, but requires the fixed TCP4 address block to be present.
 
-## Constant Override Mode
+### Constant Override Mode
 
 When `override` is a number, `HeaderServer` does not read or strip any payload
 header.
@@ -277,13 +307,26 @@ header.
 During upstream `Init`, it sets:
 
 ```text
-line->routing_context.dest_ctx.port = configured port
+lineGetDestinationAddressContext(line)->port = configured port
 ```
 
 Then it immediately forwards upstream `Init` to `next`. All upstream payload is
 forwarded unchanged.
 
-## Direction Behavior
+## Implementation details
+
+### Startup ordering and bypass
+
+`HeaderServer` publishes its continuing-path state before calling the next Init, so a synchronous transport Est is
+forwarded promptly, including repeated notifications. Input submitted reentrantly from Init, Est or initial replay stays behind the original
+accepted bytes. This temporary ordering FIFO is bounded to 2 MiB logical bytes / 8 MiB queue charge and is drained within the current
+synchronous dispatch; it is empty on the ordinary direct path. Overflow closes the borrowed line through its owner.
+
+After next Init and the initial FIFO replay finish, the node destroys and zeros its line state and permanently
+bypasses itself. Constant-port mode bypasses immediately after applying the port, before forwarding Init.
+Pause/Resume are transparent and repeatable once the next side is initialized; they do not gate the initial replay.
+
+### Direction Behavior
 
 | Direction | Delayed header modes |
 | --- | --- |
@@ -301,7 +344,7 @@ upstream and downstream callbacks are forwarded directionally.
 
 `UpStreamEst` and `DownStreamInit` are disabled callbacks for this node.
 
-## Finish Behavior
+### Finish Behavior
 
 After bypass, Finish travels directly to the next active node in its direction.
 The following cleanup applies while header routing or initial replay is active.
@@ -318,32 +361,19 @@ been initialized, and closes the previous side.
 
 The tunnel does not call `lineDestroy()` because it does not create the line.
 
-## Limits and Padding
+### Splice Support
 
-| Value | Size |
-| --- | --- |
-| WaterWall port header | `2 bytes` |
-| WaterWall protocol header | `1 byte` |
-| minimum accepted WaterWall header port | `10` |
-| PROXY protocol v1 header | up to `108 bytes` |
-| PROXY protocol v2 base header | `16 bytes` |
-| PROXY protocol v2 required TCP4 address block | `12 bytes` |
-| `required_padding_left` | `0 bytes` |
+`HeaderServer` advertises `kNodeFlagSupportsSplice`. While waiting for a WaterWall
+port/protocol header or a PROXY protocol header, it materializes the entire received
+payload with `sbufEnsureOrdinary()` before passing it to BufferStream. This also
+preserves any application bytes coalesced with the header. Once header routing
+is complete, both directions and the bounded initial-reentry queue preserve
+opaque splice buffers. Constant-port mode needs no payload inspection.
 
-The server only consumes headers. It does not prepend bytes and therefore does
-not require left padding.
+It does not request ordinary reads during temporary header parsing: read
+preferences last for the whole line and would also disable later splice reads.
 
-## Notes and Caveats
-
-- Use WaterWall port-header mode with `HeaderClient.data = "src_context->port"`.
-- Use protocol-header mode with `HeaderClient.data = "src_context->protocol"` or `"dest_context->protocol"`; UDP over TCP needs separate datagram framing.
-- Use PROXY source-fields mode with a trusted PROXY sender.
-- PROXY source-fields mode is IPv4-only.
-- PROXY source-fields mode updates only `src_ctx`; it does not rewrite `dest_ctx`.
-- While waiting for a header, `HeaderServer` has not initialized the next tunnel yet.
-- It should not be used as packet-line shared state.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 
@@ -356,15 +386,3 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayer4` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |
-
-## Splice Support
-
-`HeaderServer` advertises `kNodeFlagSupportsSplice`. While waiting for a WaterWall
-port/protocol header or a PROXY protocol header, it materializes the entire received
-payload with `sbufEnsureOrdinary()` before passing it to BufferStream. This also
-preserves any application bytes coalesced with the header. Once header routing
-is complete, both directions and the bounded initial-reentry queue preserve
-opaque splice buffers. Constant-port mode needs no payload inspection.
-
-It does not request ordinary reads during temporary header parsing: read
-preferences last for the whole line and would also disable later splice reads.

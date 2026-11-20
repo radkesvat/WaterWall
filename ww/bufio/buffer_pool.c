@@ -757,7 +757,7 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
 }
 
 /*
- * Rounds a requested pool buffer size the same way sbufCreateWithPadding() will.
+ * Rounds a positive ordinary tier size the same way sbufCreateWithPadding() will.
  *
  * This used to be open-coded here as a second copy of the cache-line round-up,
  * and that copy wrapped: a size within kCpuLineCacheSizeMin1 of UINT32_MAX
@@ -771,7 +771,7 @@ void bufferpoolUpdateAllocationPaddings(buffer_pool_t *pool, uint16_t large_buff
 static bool bufferpoolTryRoundBufferSize(uint32_t requested, uint32_t *rounded_out)
 {
     size_t rounded = 0;
-    if (! sbufTryComputeCapacity(requested, 0, &rounded))
+    if (requested == 0 || ! sbufTryComputeCapacity(requested, 0, &rounded))
     {
         return false;
     }

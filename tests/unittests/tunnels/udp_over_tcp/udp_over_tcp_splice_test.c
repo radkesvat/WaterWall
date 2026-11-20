@@ -40,6 +40,7 @@ static bool             measuring, require_splice, close_output, inject_encode, 
 static bool             pause_output, startup_payload, startup_pause, close_init, fail_queue;
 static bool             inject_large_decode;
 static unsigned         decode_overflow;
+static uint8_t          expected_source_protocol;
 static sbuf_t          *expected_identity;
 
 ssize_t __real_read(int fd, void *destination, size_t bytes);
@@ -146,11 +147,20 @@ static void est(tunnel_t *t, line_t *l)
 static void init(tunnel_t *t, line_t *l)
 {
     ++inits;
-#ifdef TEST_UOT_SERVER
+    const address_context_t *source = lineGetSourceAddressContext(l);
+    twfRequire(source->proto_tcp == (expected_source_protocol == IP_PROTO_TCP) &&
+                   source->proto_udp == (expected_source_protocol == IP_PROTO_UDP) && ! source->proto_icmp &&
+                   ! source->proto_packet,
+               "UdpOverTcp changed the borrowed line's source protocol");
     const address_context_t *destination = lineGetDestinationAddressContext(l);
+#ifdef TEST_UOT_SERVER
     twfRequire(destination->proto_udp && ! destination->proto_tcp && ! destination->proto_icmp &&
                    ! destination->proto_packet,
                "backend Init did not receive UDP destination protocol");
+#else
+    twfRequire(destination->proto_tcp && ! destination->proto_udp && ! destination->proto_icmp &&
+                   ! destination->proto_packet,
+               "carrier Init did not receive TCP destination protocol");
 #endif
     if (close_init)
     {
@@ -247,6 +257,7 @@ static void capturePlain(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 static void setup(uint8_t source_protocol)
 {
+    expected_source_protocol = source_protocol;
     wire_length = plain_length = measured_reads = 0;
     wire_calls = plain_calls = inits = finishes = pauses = resumes = 0;
     measuring = require_splice = close_output = inject_encode = inject_decode = pause_output = false;

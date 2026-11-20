@@ -372,20 +372,25 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
     require(strcmp(file, "iptables") == 0, "fixture unexpectedly invoked a host tuning command");
     memoryZero(out, sizeof(*out));
     out->exit_code = 0;
-    if (strcmp(argv[3], "-S") == 0)
+    const size_t operation = 5;
+    if (strcmp(argv[operation], "-S") == 0)
     {
         require(installed_rules == 0, "queue selection overlapped a live rule inventory");
-        out->output     = stringDuplicate("-P INPUT ACCEPT\n");
+        out->output     = stringDuplicate(strcmp(argv[4], "raw") == 0 ? "-P PREROUTING ACCEPT\n" : "-P INPUT ACCEPT\n");
         out->output_len = stringLength(out->output);
         return true;
     }
     require(options->progress == captureReaderService && options->progress_context != NULL,
             "firewall mutation lost inactive queue service");
     options->progress(options->progress_context);
-    require(strcmp(argv[4], "INPUT") == 0 && strcmp(argv[12], "NFQUEUE") == 0, "fixture expected a Capture queue rule");
-    const char *comment  = argv[10];
-    const bool  steering = argv[16] != NULL;
-    if (strcmp(argv[3], "-I") == 0)
+    const size_t extra = 6;
+    require(strcmp(argv[operation + 1], "PREROUTING") == 0 && strcmp(argv[12 + extra], "NFQUEUE") == 0,
+            "fixture expected a Capture queue rule");
+    require(strcmp(argv[4], "raw") == 0 && strcmp(argv[11], "--dst-type") == 0 && strcmp(argv[12], "LOCAL") == 0,
+            "early capture lost local-unicast scope");
+    const char *comment  = argv[10 + extra];
+    const bool  steering = argv[16 + extra] != NULL;
+    if (strcmp(argv[operation], "-I") == 0)
     {
         if (steering && ++steering_inserts == failed_steering_insert)
         {
@@ -402,7 +407,7 @@ bool __wrap_procRunArgvWithDeadline(const char *file, const char *const argv[], 
         ++installed_rules;
         return true;
     }
-    require(strcmp(argv[3], "-D") == 0, "unexpected firewall operation");
+    require(strcmp(argv[operation], "-D") == 0, "unexpected firewall operation");
     for (unsigned i = 0; i < rule_count; ++i)
     {
         if (rules[i].installed && strcmp(rules[i].comment, comment) == 0)
@@ -508,7 +513,7 @@ static capture_device_t *createDeviceWithPolicy(device_fragment_policy_t policy)
     require(ipaddr_aton("192.0.2.0", &range.ip) && ipaddr_aton("255.255.255.0", &range.mask), "invalid fixture CIDR");
     const capture_protocol_filter_t filter = {0};
     capture_device_t               *device =
-        caputredeviceCreate("capture-lifecycle-test", &range, 1, true, false, &filter, NULL, deliverPacket, policy);
+        caputredeviceCreate("capture-lifecycle-test", &range, 1, true, &filter, NULL, deliverPacket, policy);
     require(device != NULL, "public Capture construction failed");
     return device;
 }

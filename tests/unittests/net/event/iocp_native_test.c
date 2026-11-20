@@ -30,10 +30,12 @@
 //   * destroying a loop with operations still posted drains the kernel before
 //     freeing memory;
 //   * read-stop suppresses a receive that IOCP already dequeued;
+//   * TCP flow-control Pause preserves a completed receive and EOF until Resume;
 //   * ConnectEx and callback-driven wioFree keep the pending cursor valid;
 //   * ConnectEx accepts a socket that was already bound to a source address;
 //   * async DNS polls and reads c-ares sockets without IOCP readiness callbacks;
 //   * TCP writes use one active WSASend and preserve queued data across callbacks;
+//   * full TCP reads promote the next posted buffer before a callback restarts reading;
 //   * direct datagram and TCP writes stop at normal-admission closure;
 //   * per-IO and loop-wide operation accounting returns to a clean baseline.
 //
@@ -63,6 +65,7 @@ int main(void)
 #include "wloop_internal.h"
 #include "wsocket.h"
 
+#include <process.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
@@ -85,6 +88,13 @@ typedef struct env_s
     uint32_t                   saved_workers_count;
 } env_t;
 
+enum
+{
+    kTestSmallBufferSize  = 128,
+    kTestMediumBufferSize = 512,
+    kTestLargeBufferSize  = 8192
+};
+
 static void envSetup(env_t *env)
 {
     env->large_master  = masterpoolCreateWithCapacity(64);
@@ -96,11 +106,12 @@ static void envSetup(env_t *env)
                                         env->medium_master,
                                         env->small_master,
                                         64,
-                                        8192,
-                                        MEDIUM_BUFFER_SIZE_RAM_HIGH,
-                                        1024,
+                                        kTestLargeBufferSize,
+                                        kTestMediumBufferSize,
+                                        kTestSmallBufferSize,
                                         8192,
                                         8192);
+    require(env->buffer_pool != NULL, "test buffer pool creation failed");
     env->wio_pool      = threadsafegenericpoolCreateWithDefaultAllocatorAndCapacity(env->wio_master, sizeof(wio_t), 64);
     env->wio_pools[0]  = env->wio_pool;
     env->wio_pools[1]  = env->wio_pool;
@@ -975,6 +986,73 @@ static void testReadStopAfterDequeue(env_t *env)
     wioClose(server);
     closesocket(client);
     require(pumpUntilLiveOperations(loop, 0, 500), "read-stop test operations did not drain");
+    wloopDestroy(&loop);
+}
+
+static void pauseAfterRead(wio_t *io, sbuf_t *buf)
+{
+    read_stop_state_t *st = weventGetUserdata(io);
+    require(sbufGetLength(buf) == 1, "paused TCP read delivered an unexpected byte count");
+    st->byte = *(const char *) sbufGetRawPtr(buf);
+    ++st->reads;
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+    wioPauseTcpRead(io);
+}
+
+static void testTcpReadPause(env_t *env, bool close_while_paused)
+{
+    wloop_t          *loop   = createRunningTestLoop(env, 0);
+    read_stop_state_t st     = {0};
+    wio_t            *server = wloopCreateTcpServer(loop, "127.0.0.1", 0, readStopAccept);
+    require(server != NULL, "TCP Pause listener failed");
+    weventSetUserData(server, &st);
+    SOCKET client = connectClient(boundPort(server));
+    for (int i = 0; i < 200 && st.conn == NULL; ++i)
+        wloopProcessEvents(loop, 10);
+    require(st.conn != NULL, "TCP Pause connection failed");
+    wioSetCallBackRead(st.conn, pauseAfterRead);
+
+    require(send(client, "a", 1, 0) == 1, "first TCP Pause send failed");
+    for (int i = 0; i < 200 && st.conn->iocp_completed_head == NULL; ++i)
+        require(iowatcherPollEvents(loop, 10) >= 0, "TCP Pause poll failed");
+    require(st.conn->iocp_completed_head != NULL, "receive did not complete before TCP Pause");
+    wioPauseTcpRead(st.conn);
+    wloopProcessEvents(loop, 0);
+    require(st.reads == 0 && wioGetIocpLiveRecords(st.conn) == 1 && st.conn->iocp_held_recv != NULL,
+            "Pause failed to retain exactly one completed receive");
+
+    if (! close_while_paused)
+    {
+        require(send(client, "b", 1, 0) == 1 && shutdown(client, SD_SEND) == 0, "TCP Pause tail/EOF failed");
+        for (int n = 1; n <= 2; ++n)
+        {
+            require(wioRead(st.conn) == 0 && wioRead(st.conn) == 0, "TCP Resume failed");
+            for (int i = 0; i < 200 && st.reads < n; ++i)
+                wloopProcessEvents(loop, 10);
+            require(st.reads == n && st.byte == "ab"[n - 1], "TCP Resume reordered or lost bytes");
+            require(wioGetIocpLiveRecords(st.conn) == 0, "reposted a read after callback Pause");
+        }
+
+        require(wioRead(st.conn) == 0, "could not post TCP EOF read");
+        wioPauseTcpRead(st.conn);
+        for (int i = 0; i < 200 && st.conn->iocp_held_recv == NULL; ++i)
+            wloopProcessEvents(loop, 10);
+        require(st.conn->iocp_held_recv != NULL && ! wioHasReadEOF(st.conn) && wioIsOpened(st.conn),
+                "TCP EOF was lost or delivered before Resume");
+        require(wioRead(st.conn) == 0, "could not resume held TCP EOF");
+        for (int i = 0; i < 200 && wioIsOpened(st.conn); ++i)
+            wloopProcessEvents(loop, 10);
+        require(wioIsClosed(st.conn) && wioHasReadEOF(st.conn) && st.reads == 2,
+                "held EOF was not delivered after both bytes");
+    }
+    else
+    {
+        wioClose(st.conn);
+        require(st.reads == 0 && wioGetIocpLiveRecords(st.conn) == 0, "closing retained a paused receive");
+    }
+    wioClose(server);
+    closesocket(client);
+    require(pumpUntilLiveOperations(loop, 0, 500), "TCP Pause left live IOCP operations");
     wloopDestroy(&loop);
 }
 
@@ -2128,6 +2206,13 @@ static void testCloseDrainsWriteQueue(env_t *env)
     }
     require(st.conn != NULL, "close-drain connection was not accepted");
 
+    require(wioRead(st.conn) == 0 && shutdown(client, SD_SEND) == 0, "failed to request close-drain peer EOF");
+    for (int i = 0; i < 200 && st.conn->iocp_completed_head == NULL; ++i)
+    {
+        require(iowatcherPollEvents(loop, 10) >= 0, "failed to dequeue close-drain peer EOF");
+    }
+    require(st.conn->iocp_completed_head != NULL, "peer EOF was not ready before close-drain setup");
+
     st.initial_bytes  = forceQueuedSend(st.conn, env->buffer_pool, 'A', SEND_TEST_CHUNK_SIZE);
     st.expected_bytes = st.initial_bytes;
     wioSetCallBackWrite(st.conn, closeDrainWrite);
@@ -2138,6 +2223,9 @@ static void testCloseDrainsWriteQueue(env_t *env)
     require(st.closes == 0, "queued graceful close callback fired before draining");
     require(! write_queue_empty(&st.conn->write_queue), "queued graceful close discarded the software write queue");
     require(st.conn->close_timer != NULL, "queued graceful close did not arm its timeout");
+
+    require(wloopProcessEvents(loop, 0) >= 0 && wioHasReadEOF(st.conn) && wioIsOpened(st.conn),
+            "peer EOF interrupted an active graceful drain");
 
     setSocketNonblocking(client);
     size_t received_bytes = 0;
@@ -2540,40 +2628,51 @@ static void testConnectTimerLifecycle(env_t *env)
 }
 
 // ---------------------------------------------------------------------------
-// Test 15: restarting a one-shot read from inside its callback must never leave
-// two uncancelled WSARecv operations on one connection.
+// Test 15: a callback-driven one-shot restart must post a single WSARecv
+// using the capacity selected by the receive that just completed.
 // ---------------------------------------------------------------------------
 
-enum
+static const struct
 {
-    READ_RESTART_EXPECTED_READS = 3
+    uint32_t capacity;
+    uint32_t length;
+} read_restart_steps[] = {
+    {kTestSmallBufferSize, kTestSmallBufferSize},
+    {kTestMediumBufferSize, kTestMediumBufferSize},
+    {kTestLargeBufferSize, 1},
+    {kTestLargeBufferSize, 1},
 };
 
 typedef struct read_restart_state_s
 {
     wio_t *conn;
-    int    reads;
-    int    surplus_receives;
-    char   bytes[READ_RESTART_EXPECTED_READS + 1];
+    size_t reads;
 } read_restart_state_t;
+
+static void requireReadRestartCapacity(const read_restart_state_t *st)
+{
+    const woverlapped_t *record = st->conn->iocp_posted_head;
+    require(record != NULL && record->kind == WOVERLAPPED_RECV, "read-restart did not post a receive record");
+    require(record->buf.len == read_restart_steps[st->reads].capacity, "read-restart posted the wrong TCP buffer tier");
+}
 
 static void readRestartRead(wio_t *io, sbuf_t *buf)
 {
     read_restart_state_t *st = weventGetUserdata(io);
-    require(st->reads < READ_RESTART_EXPECTED_READS, "read-restart received more callbacks than bytes were sent");
-    st->bytes[st->reads] = *(const char *) sbufGetRawPtr(buf);
-    st->reads++;
+    require(st->reads < ARRAY_SIZE(read_restart_steps), "read-restart received an extra callback");
+    require(sbufGetLength(buf) == read_restart_steps[st->reads].length,
+            "read-restart changed the queued receive length");
+    for (size_t i = 0; i < sbufGetLength(buf); ++i)
+        require(sbufGetRawPtr(buf)[i] == (uint8_t) ('1' + st->reads),
+                "read-restart changed or reordered payload bytes");
+    ++st->reads;
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
 
-    if (st->reads < READ_RESTART_EXPECTED_READS)
+    if (st->reads < ARRAY_SIZE(read_restart_steps))
     {
-        // wioReadCallBack already stopped the one-shot read; restarting here must
-        // post exactly one replacement receive.
         require(wioReadOnce(io) == 0, "read-restart could not restart the one-shot read");
-        if (liveUncancelledReceives(io) != 1)
-        {
-            st->surplus_receives++;
-        }
+        require(liveUncancelledReceives(io) == 1, "callback-driven restart did not post exactly one WSARecv");
+        requireReadRestartCapacity(st);
     }
 }
 
@@ -2583,7 +2682,6 @@ static void readRestartAccept(wio_t *connio)
     require(st->conn == NULL, "read-restart test accepted more than one connection");
     st->conn = connio;
     wioSetCallBackRead(connio, readRestartRead);
-    require(wioReadOnce(connio) == 0, "read-restart could not start the one-shot read");
 }
 
 static void testReadRestartFromCallback(env_t *env)
@@ -2598,10 +2696,29 @@ static void testReadRestartFromCallback(env_t *env)
 
     SOCKET client = connectClient(boundPort(server));
     for (int i = 0; i < 200 && st.conn == NULL; ++i)
-    {
         wloopProcessEvents(loop, 10);
-    }
     require(st.conn != NULL, "read-restart connection was not accepted");
+
+    // Stage both full receives at the peer before posting the first WSARecv.
+    char payload[kTestSmallBufferSize + kTestMediumBufferSize];
+    memorySet(payload, '1', kTestSmallBufferSize);
+    memorySet(payload + kTestSmallBufferSize, '2', kTestMediumBufferSize);
+    for (size_t sent = 0; sent < sizeof(payload);)
+    {
+        const int progress = send(client, payload + sent, (int) (sizeof(payload) - sent), 0);
+        require(progress > 0, "read-restart full payload send failed");
+        sent += (size_t) progress;
+    }
+    u_long queued = 0;
+    for (int spin = 0; spin < 500 && queued < sizeof(payload); ++spin)
+    {
+        require(ioctlsocket(wioGetFD(st.conn), FIONREAD, &queued) == 0, "read-restart could not inspect queued input");
+        if (queued < sizeof(payload))
+            wloopProcessEvents(loop, 10);
+    }
+    require(queued == sizeof(payload), "read-restart full payload did not arrive before reading");
+    require(wioReadOnce(st.conn) == 0, "read-restart could not start the one-shot read");
+    requireReadRestartCapacity(&st);
 
     // Repeated read starts must be idempotent, matching the readiness backend.
     require(liveUncancelledReceives(st.conn) == 1, "the one-shot start did not post exactly one receive");
@@ -2609,33 +2726,23 @@ static void testReadRestartFromCallback(env_t *env)
     require(liveUncancelledReceives(st.conn) == 1, "a repeated wioReadStart posted a second WSARecv");
     require(wioGetIocpLiveRecords(st.conn) == 1, "a repeated wioReadStart allocated a second receive record");
 
-    for (int i = 0; i < READ_RESTART_EXPECTED_READS; ++i)
-    {
-        const char payload = (char) ('1' + i);
-        const int  before  = st.reads;
-        require(send(client, &payload, 1, 0) == 1, "read-restart send failed");
-        for (int spin = 0; spin < 500 && st.reads == before; ++spin)
-        {
-            wloopProcessEvents(loop, 10);
-        }
-        require(st.reads == before + 1, "read-restart callback did not run for every byte");
+    for (int spin = 0; spin < 500 && st.reads < 2; ++spin)
+        wloopProcessEvents(loop, 10);
+    require(st.reads == 2, "read-restart did not deliver both full receives");
 
-        if (i + 1 < READ_RESTART_EXPECTED_READS)
-        {
-            require(liveUncancelledReceives(st.conn) == 1,
-                    "a callback-driven read restart left more than one uncancelled receive");
-            require(wioGetIocpLiveRecords(st.conn) == 1, "the completed receive record was reposted as well");
-            require(wioIsOpened(st.conn), "read-restart closed the connection");
-        }
+    for (size_t i = 2; i < ARRAY_SIZE(read_restart_steps); ++i)
+    {
+        require(wioIsOpened(st.conn) && liveUncancelledReceives(st.conn) == 1 && wioGetIocpLiveRecords(st.conn) == 1,
+                "callback restart left the wrong number of receives after dispatch");
+        const char byte = (char) ('1' + i);
+        require(send(client, &byte, 1, 0) == 1, "read-restart short send failed");
+        for (int spin = 0; spin < 500 && st.reads == i; ++spin)
+            wloopProcessEvents(loop, 10);
+        require(st.reads == i + 1, "read-restart did not deliver the short receive");
     }
 
-    require(st.reads == READ_RESTART_EXPECTED_READS, "read-restart ran the wrong number of callbacks");
-    require(st.surplus_receives == 0, "a callback-posted receive coexisted with another uncancelled receive");
-    require(strncmp(st.bytes, "123", READ_RESTART_EXPECTED_READS) == 0,
-            "read-restart bytes were lost, duplicated or reordered");
     require(liveUncancelledReceives(st.conn) == 0, "the final one-shot read left a receive posted");
     require(wioGetIocpLiveRecords(st.conn) == 0, "the final one-shot read left a receive record live");
-
     wioClose(st.conn);
     wioClose(server);
     closesocket(client);
@@ -2848,8 +2955,31 @@ static void testDestroyWithPending(env_t *env)
     // diagnostic deadline so a stuck operation cannot block forever.
 }
 
-int main(void)
+static int detachAssociatedSocket(void)
 {
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+        return 2;
+    env_t env;
+    envSetup(&env);
+    wloop_t *loop = wloopCreate(0, env.buffer_pool, 0);
+    if (loop == NULL)
+        return 2;
+    wio_t *io = wioCreateSocket(loop, "127.0.0.1", 0, WIO_TYPE_TCP, WIO_CLIENT_SIDE);
+    if (io == NULL || wioAdd(io, NULL, WW_READ) != 0 || wioDel(io, WW_READ) != 0 || ! io->iocp_associated ||
+        io->events != 0 || io->pending || wioGetIocpLiveRecords(io) != 0)
+        return 2;
+
+    // The stopped socket has no pending operation, but is still bound to the source completion port.
+    wioDetach(io);
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "--detach-associated") == 0)
+        return detachAssociatedSocket();
+
     WSADATA wsa;
     require(WSAStartup(MAKEWORD(2, 2), &wsa) == 0, "WSAStartup failed");
 
@@ -2858,6 +2988,12 @@ int main(void)
 
     env_t env;
     envSetup(&env);
+
+    wchar_t executable[MAX_PATH];
+    DWORD   length = GetModuleFileNameW(NULL, executable, ARRAY_SIZE(executable));
+    require(length > 0 && length < ARRAY_SIZE(executable), "cannot locate IOCP handoff test executable");
+    require(_wspawnl(_P_WAIT, executable, L"iocp_native_test", L"--detach-associated", (wchar_t *) NULL) == 1,
+            "handoff accepted a socket already associated with the source completion port");
 
     testDirectStreamWriteAdmission(&env);
     testDirectDatagramWriteAdmission(&env);
@@ -2870,6 +3006,8 @@ int main(void)
     testCloseListenerFromAccept(&env);
     testReadCallbackCloses(&env);
     testReadStopAfterDequeue(&env);
+    testTcpReadPause(&env, false);
+    testTcpReadPause(&env, true);
     testPendingFreeAndDescriptorReuse(&env);
     testConnectCallbackFreeAndFamilies(&env);
     testConnectWithPreBoundSocket(&env);

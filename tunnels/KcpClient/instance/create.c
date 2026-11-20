@@ -14,6 +14,7 @@ static bool kcpclientParseSettings(kcpclient_tstate_t *ts, node_t *node)
         .kcp_no_congestion_control = kKcpClientKcpNoCongestionControlDefault != 0,
         .kcp_interval_ms           = kKcpClientKcpIntervalDefault,
         .kcp_resend                = kKcpClientKcpResendDefault,
+        .kcp_ack_batch             = kKcpClientKcpAckBatchDefault,
         .kcp_send_window           = kKcpClientKcpSendWindowDefault,
         .kcp_recv_window           = kKcpClientKcpRecvWindowDefault,
         .kcp_initial_cwnd          = kKcpClientKcpInitialCwndDefault,
@@ -74,6 +75,14 @@ static bool kcpclientParseSettings(kcpclient_tstate_t *ts, node_t *node)
         LOGF("JSON Error: KcpClient->settings KCP windows must be positive");
         return false;
     }
+
+    int64_t ack_batch = ts->kcp_ack_batch;
+    if (jsonGetObjectIntegerInRange(settings, "kcp-ack-batch", 0, ts->kcp_recv_window, &ack_batch) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: KcpClient->settings->kcp-ack-batch must be an integer in 0..kcp-recv-window");
+        return false;
+    }
+    ts->kcp_ack_batch = (int) ack_batch;
 
     if (ts->kcp_initial_cwnd < 1 || ts->kcp_initial_cwnd > ts->kcp_send_window)
     {

@@ -1,9 +1,11 @@
 <!--
-Documentation version: 152
+Documentation version: 153
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/SpeedTestClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/SpeedTestClient.mdx, and all files must keep the same documentation version.
 -->
 
 # SpeedTestClient Node
+
+## Overview
 
 `SpeedTestClient` is a synthetic chain-head bandwidth test tunnel. It creates normal WaterWall lines, sends framed
 speed-test traffic into the next tunnel, validates frames received back from the server, and prints interval and final
@@ -12,18 +14,7 @@ throughput reports.
 It is meant for measuring a WaterWall chain or transport path. It does not open sockets itself and it is not a packet
 line tunnel. Pair it with `SpeedTestServer` on the other side of a TCP or UDP transport.
 
-## What It Does
-
-- acts as a chain head and creates the test lines itself
-- starts `connection-count` independent normal lines during tunnel startup
-- sends an upstream `Init` to the next tunnel for each generated line
-- waits for downstream `Est` before sending speed-test frames
-- sends a protocol `HELLO`, optional upload `DATA`, `END`, and expects server reports
-- optionally receives download `DATA` from the server and checks payload bytes when verification is enabled
-- prints interval sender/receiver reports and an aggregate final summary
-- exits WaterWall when all streams complete unless `terminate-on-complete=false`
-
-## Typical Placement
+## Typical placement
 
 `SpeedTestClient` must be the first node in its chain. It sends generated traffic upstream to the configured transport:
 
@@ -39,7 +30,11 @@ The remote side should normally be:
 - `TcpListener -> TlsServer -> SpeedTestServer`
 - `TcpListener -> EncryptionServer -> SpeedTestServer`
 
-## TCP Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### TCP Example
 
 Client side:
 
@@ -97,61 +92,11 @@ Server side:
 ]
 ```
 
-## UDP Example
+## Configuration
 
-Client side:
+### Required JSON Fields
 
-```json
-[
-  {
-    "name": "speedtest-client",
-    "type": "SpeedTestClient",
-    "settings": {
-      "mode": "udp",
-      "direction": "upload",
-      "duration-ms": 10000,
-      "warmup-ms": 1000,
-      "report-interval-ms": 1000,
-      "payload-size": 3800,
-      "udp-target-bits-per-sec": 10000000,
-      "terminate-on-complete": true
-    },
-    "next": "speedtest-udp-out"
-  },
-  {
-    "name": "speedtest-udp-out",
-    "type": "UdpConnector",
-    "settings": {
-      "address": "198.51.100.10",
-      "port": 9001
-    }
-  }
-]
-```
-
-Server side:
-
-```json
-[
-  {
-    "name": "speedtest-udp-listener",
-    "type": "UdpListener",
-    "settings": {
-      "address": "0.0.0.0",
-      "port": 9001
-    },
-    "next": "speedtest-server"
-  },
-  {
-    "name": "speedtest-server",
-    "type": "SpeedTestServer"
-  }
-]
-```
-
-## Required JSON Fields
-
-### Top-level fields
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -162,7 +107,7 @@ Server side:
 - `next` `(string)`
   The next node that should receive the generated speed-test lines.
 
-## Optional `settings`
+### Optional `settings`
 
 - `mode` `(string)`
   Transport framing mode. Supported values:
@@ -240,57 +185,61 @@ Server side:
   Exits WaterWall after all streams finish. Exit code is `0` when all streams succeeded and `1` if any stream failed.
   Default: `true`
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### Startup and line creation
+### UDP Example
 
-On start, `SpeedTestClient` schedules one startup task per requested stream. Each task:
+Client side:
 
-- chooses a worker by `stream_id % workers_count`
-- creates a normal WaterWall line on that worker
-- initializes this tunnel's per-line state
-- sends upstream `Init` to the next tunnel
-- arms a watchdog for the configured timeout
+```json
+[
+  {
+    "name": "speedtest-client",
+    "type": "SpeedTestClient",
+    "settings": {
+      "mode": "udp",
+      "direction": "upload",
+      "duration-ms": 10000,
+      "warmup-ms": 1000,
+      "report-interval-ms": 1000,
+      "payload-size": 3800,
+      "udp-target-bits-per-sec": 10000000,
+      "terminate-on-complete": true
+    },
+    "next": "speedtest-udp-out"
+  },
+  {
+    "name": "speedtest-udp-out",
+    "type": "UdpConnector",
+    "settings": {
+      "address": "198.51.100.10",
+      "port": 9001
+    }
+  }
+]
+```
 
-The tunnel owns those generated lines and destroys them after the test completes or fails.
+Server side:
 
-### Establishment and HELLO
+```json
+[
+  {
+    "name": "speedtest-udp-listener",
+    "type": "UdpListener",
+    "settings": {
+      "address": "0.0.0.0",
+      "port": 9001
+    },
+    "next": "speedtest-server"
+  },
+  {
+    "name": "speedtest-server",
+    "type": "SpeedTestServer"
+  }
+]
+```
 
-After downstream `Est`, the client sends a `HELLO` frame that tells the server:
-
-- protocol mode
-- requested direction
-- duration and warmup
-- report interval
-- payload size
-- target bandwidth
-- total stream count
-- payload verification policy
-- stream id
-
-In UDP mode, the client waits for the server `ACK` before sending data. While waiting, it retransmits `HELLO` at a short
-interval so a lost datagram does not stall the test.
-
-### Data and reports
-
-Upload data is sent upstream as `DATA` frames. Download data is received downstream from the server. When `verify-payload=true`, payload bytes use a
-deterministic pattern keyed by stream id, sequence number, and direction; otherwise bodies are zero-filled.
-
-The receiver tracks:
-
-- bytes
-- packets
-- valid packets
-- lost packets
-- duplicate packets
-- out-of-order packets
-- validation errors
-- jitter estimate
-
-At the end of each direction, the sender sends an `END` frame. The server sends final `REPORT` frames for upload and/or
-download. The client completes a stream only after all expected final reports are received.
-
-## Notes And Caveats
+### Notes And Caveats
 
 - `SpeedTestClient` creates normal connection lines. It does not use packet lines.
 - UDP mode measures datagram delivery. Loss, duplicates, and reordering are reported instead of hidden.
@@ -299,7 +248,9 @@ download. The client completes a stream only after all expected final reports ar
   header.
 - The tunnel is a benchmark/test generator, not an application proxy.
 
-## Payload verification and splice
+## Advanced behavior
+
+### Payload verification and splice
 
 `verify-payload` on `SpeedTestClient` defaults to `false` and selects the policy
 for both endpoints through the HELLO flags. Set it to `true` to generate and check
@@ -322,7 +273,71 @@ bytes, compacting before refusing excess storage. This is a queue accounting bou
 not a limit on total process or kernel memory. Send tasks respect Pause and yield
 after at most 32 frames; pacing uses scheduled tasks rather than blocking sleeps.
 
-## Node Metadata
+## Implementation details
+
+### What It Does
+
+- acts as a chain head and creates the test lines itself
+- starts `connection-count` independent normal lines during tunnel startup
+- sends an upstream `Init` to the next tunnel for each generated line
+- sends a protocol `HELLO`, optional upload `DATA`, `END`, and expects server reports
+- optionally receives download `DATA` from the server and checks payload bytes when verification is enabled
+- prints interval sender/receiver reports and an aggregate final summary
+- exits WaterWall when all streams complete unless `terminate-on-complete=false`
+
+### Detailed Behavior
+
+#### Startup and line creation
+
+On start, `SpeedTestClient` schedules one startup task per requested stream. Each task:
+
+- chooses a worker by `stream_id % workers_count`
+- creates a normal WaterWall line on that worker
+- initializes this tunnel's per-line state
+- sends upstream `Init` to the next tunnel
+- arms a watchdog for the configured timeout
+
+The tunnel owns those generated lines and destroys them after the test completes or fails.
+
+#### Startup and HELLO
+
+After the next tunnel's `Init` returns on a live line, the client sends
+`HELLO` as soon as its send side is unpaused. The local warmup and measurement
+window starts with the first `HELLO` submission. The frame carries the test settings.
+
+- protocol mode
+- requested direction
+- duration and warmup
+- report interval
+- payload size
+- target bandwidth
+- total stream count
+- payload verification policy
+- stream id
+
+In UDP mode, the client waits for the server `ACK` before sending data. While waiting, it retransmits `HELLO` at a short
+interval so a lost datagram does not stall the test.
+
+#### Data and reports
+
+Upload data is sent upstream as `DATA` frames. Download data is received downstream from the server. When `verify-payload=true`, payload bytes use a
+deterministic pattern keyed by stream id, sequence number, and direction; otherwise bodies are zero-filled.
+
+The receiver tracks:
+
+- bytes
+- packets
+- valid packets
+- lost packets
+- duplicate packets
+- out-of-order packets
+- validation errors
+- jitter estimate
+
+At the end of each direction, the sender sends an `END` frame. The server sends final `REPORT` frames for upload and/or
+download. The client completes a stream only after all expected final reports are received.
+
+### Node Metadata
 
 Source-backed metadata:
 

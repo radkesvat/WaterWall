@@ -194,8 +194,162 @@ static void caseTrafficCannotExtendDeadline(bool fec)
     teardown();
 }
 
+typedef struct ack_batch_counts_s
+{
+    unsigned sender, receiver, dropped;
+} ack_batch_counts_t;
+
+/* Moves 512 KiB in one direction with both nodes at one kcp-ack-batch, after dropping the first
+ * `drops` data datagrams, and counts the datagrams each side emits until the sender holds no
+ * unacknowledged segment. */
+static ack_batch_counts_t extraAckBatchTransfer(bool fec, unsigned direction, unsigned ack_batch, unsigned drops)
+{
+    enum
+    {
+        kTransferBytes = 512U * 1024
+    };
+    char extra[40];
+    snprintf(extra, sizeof(extra), ",\"kcp-ack-batch\":%u", ack_batch);
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, 3000, 3000, 1500, 1500, extra);
+    endpoint_t *ep = openApp();
+    established(ep);
+    fixture.drop_kind             = fec ? kTouFec : kTouKcp;
+    fixture.drop_direction        = direction;
+    fixture.drop_remaining        = drops;
+    const unsigned sender_start   = fixture.emitted[direction];
+    const unsigned receiver_start = fixture.emitted[1 - direction];
+    sendBytes(ep, direction, kTransferBytes);
+    tou_session_t *sender = direction ? ep->server_session : ep->client_session;
+    for (unsigned time = 0;
+         time < 2000 && (ep->received[direction] < kTransferBytes || touSessionKcp(sender)->nsnd_buf != 0);
+         time += 10)
+        advance(10);
+    require(ep->received[direction] == kTransferBytes, "batched ACKs stalled the transfer");
+    require(touSessionKcp(sender)->nsnd_buf == 0, "batched ACKs left sent segments unacknowledged");
+    const ack_batch_counts_t counts = {
+        fixture.emitted[direction] - sender_start, fixture.emitted[1 - direction] - receiver_start, fixture.dropped};
+    teardown();
+    return counts;
+}
+
+static void caseAckBatch(bool fec, unsigned direction)
+{
+    testCaseSet(direction ? "kcp-ack-batch groups download ACKs" : "kcp-ack-batch groups upload ACKs");
+    const ack_batch_counts_t every    = extraAckBatchTransfer(fec, direction, 1, 0);
+    const ack_batch_counts_t batched  = extraAckBatchTransfer(fec, direction, 32, 0);
+    const ack_batch_counts_t interval = extraAckBatchTransfer(fec, direction, 0, 0);
+    require(every.receiver * 10 >= every.sender * 9, "kcp-ack-batch 1 no longer acknowledges each input datagram");
+    require(batched.receiver * 16 <= every.receiver, "kcp-ack-batch 32 did not group ACKs into fewer datagrams");
+    require(interval.receiver <= batched.receiver, "kcp-ack-batch 0 flushed ACKs before the interval update");
+    require(batched.sender == every.sender && interval.sender == every.sender,
+            "batched ACKs caused retransmissions on a lossless path");
+    const ack_batch_counts_t lossy = extraAckBatchTransfer(fec, direction, 32, 8);
+    require(lossy.dropped == 8 && lossy.sender > batched.sender,
+            "kcp-ack-batch 32 did not retransmit the dropped data datagrams");
+}
+
+static void caseAckBatchFirstClose(bool fec, unsigned ack_batch, bool draining)
+{
+    testCaseSet(draining ? "kcp-ack-batch acknowledges first CLOSE while sending data drains"
+                         : "kcp-ack-batch acknowledges first CLOSE before entering retention");
+    const unsigned close_ms = 5;
+    char           extra[40];
+    snprintf(extra, sizeof(extra), ",\"kcp-ack-batch\":%u", ack_batch);
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, close_ms, close_ms, 1500, 1500, extra);
+    endpoint_t *ep = openApp();
+    established(ep);
+
+    advance(1);
+    if (draining)
+        sendBytes(ep, 1, 1);
+    const ikcpcb *receiver = touSessionKcp(ep->server_session);
+    const ikcpcb *sender   = touSessionKcp(ep->client_session);
+    const IUINT32 now      = (IUINT32) (clock_us / 1000);
+    require(ikcp_waitsnd(receiver) == (draining ? 1 : 0), "receiver has unexpected queued data before CLOSE");
+    require(receiver->ackcount == 0 && ikcp_check(receiver, now) - now > close_ms &&
+                ikcp_check(sender, now) - now > close_ms,
+            "first CLOSE would not exercise a partial ACK batch between interval ticks");
+
+    closeApp(ep);
+    flushDirection(0);
+    require(fixture.close_transmissions == 1 && ep->service_finishes == 1, "fixture did not deliver the first CLOSE");
+    flushDirection(1);
+    require(touSessionCloseConfirmed(ep->client_session), "first CLOSE ACK did not confirm before any retry");
+    if (draining)
+    {
+        /* The peer sent data with the CLOSE ACK. The sender owes a data ACK as its CLOSE settles. */
+        flushDirection(0);
+        require(ikcp_waitsnd(receiver) == 0, "entering retention left the peer's data ACK pending");
+    }
+    teardown();
+}
+
+static void caseAckBatchRetention(bool fec)
+{
+    testCaseSet("kcp-ack-batch still acknowledges each duplicate CLOSE during ACK-only retention");
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, 3000, 3000, 1500, 1500, ",\"kcp-ack-batch\":32");
+    endpoint_t *ep = openApp();
+    established(ep);
+    sendBytes(ep, 0, 4096);
+    closeApp(ep);
+    pump(1800);
+    require(ep->received[0] == 4096 && ep->service_finishes == 1 && touSessionCloseConfirmed(ep->client_session) &&
+                fixture.saved_close != NULL,
+            "batched close did not confirm before the retention check");
+    require(touSessionIsAlive(ep->server_session), "CLOSE receiver left ACK-only retention early");
+    /* The update timer no longer runs here, so only input can flush. Two copies at one instant put
+     * the second inside the interval that the first one's flush started. */
+    const unsigned before = fixture.emitted[1];
+    deliver((packet_t) {copyPacket(fixture.saved_close), ep, 0});
+    deliver((packet_t) {copyPacket(fixture.saved_close), ep, 0});
+    require(fixture.emitted[1] - before >= 2, "a duplicate CLOSE in ACK-only retention got no ACK");
+    teardown();
+}
+
+static void caseAckBatchDuplicateCloseDuringDrain(bool fec, unsigned ack_batch)
+{
+    testCaseSet("duplicate CLOSE is acknowledged while reverse data is still in flight");
+    char extra[40];
+    snprintf(extra, sizeof(extra), ",\"kcp-ack-batch\":%u", ack_batch);
+    fixture_t fixture;
+    setupWithSettings(&fixture, fec, 5, 5, 1500, 1500, extra);
+    endpoint_t *ep = openApp();
+    established(ep);
+    advance(1);
+    sendBytes(ep, 1, 1);
+
+    fixture.drop_close_ack = true;
+    closeApp(ep);
+    flushDirection(0);
+    flushDirection(1);
+    require(fixture.dropped_close_ack && fixture.saved_close && ! touSessionCloseConfirmed(ep->client_session),
+            "fixture did not lose the first CLOSE acknowledgment");
+    require(touSessionKcp(ep->server_session)->nsnd_buf == 1 && ep->service_finishes == 1,
+            "receiver must still have one reverse data segment to drain after CLOSE");
+
+    /* Deliver the network duplicate at the same instant, before any KCP timer can flush it. */
+    deliver((packet_t) {copyPacket(fixture.saved_close), ep, 0});
+    flushDirection(1);
+    require(touSessionCloseConfirmed(ep->client_session), "duplicate CLOSE during drain got no immediate ACK");
+    teardown();
+}
+
 static void kcpExtraCases(void)
 {
+    for (unsigned fec = 0; fec < 2; ++fec)
+    {
+        caseAckBatchFirstClose(fec != 0, 0, false);
+        caseAckBatchFirstClose(fec != 0, 32, false);
+        caseAckBatchFirstClose(fec != 0, 32, true);
+        caseAckBatchRetention(fec != 0);
+        caseAckBatchDuplicateCloseDuringDrain(fec != 0, 0);
+        caseAckBatchDuplicateCloseDuringDrain(fec != 0, 32);
+        for (unsigned direction = 0; direction < 2; ++direction)
+            caseAckBatch(fec != 0, direction);
+    }
     casePendingChallengeBound();
     caseTrafficCannotExtendDeadline(false);
     caseTrafficCannotExtendDeadline(true);

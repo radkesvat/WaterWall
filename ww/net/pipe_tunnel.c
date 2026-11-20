@@ -316,9 +316,9 @@ static void cleanupQueuedPipeMessage(void *arg1, void *arg2, void *arg3, worker_
 
 static bool pipeMessageLineIsUsable(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload)
 {
-    const bool attached = line_to == pair->borrowed_line
-                              ? atomicLoadExplicit(&pair->borrowed_attached, memory_order_acquire)
-                              : atomicLoadExplicit(&pair->owned_attached, memory_order_acquire);
+    const bool borrowed = line_to == pair->borrowed_line;
+    const bool attached =
+        atomicLoadExplicit(borrowed ? &pair->borrowed_attached : &pair->owned_attached, memory_order_acquire);
     const bool alive    = lineIsAlive(line_to);
     const bool terminal = atomicLoadExplicit(&pair->terminal, memory_order_acquire);
 
@@ -331,9 +331,16 @@ static bool pipeMessageLineIsUsable(pipe_pair_t *pair, line_t *line_to, sbuf_t *
         }
     }
 
-    atomicStoreExplicit(&pair->terminal, true, memory_order_release);
+    // A message queued before this exact side sent Finish cannot be delivered
+    // there. Its surviving peer still has ordered payload and Finish to dispatch.
+    const bool retired_normally =
+        ! attached && atomicLoadExplicit(borrowed ? &pair->prev_finished : &pair->next_finished, memory_order_acquire);
+    const bool reconcile = terminal || ! retired_normally;
+    if (reconcile)
+        atomicStoreExplicit(&pair->terminal, true, memory_order_release);
     pipeDiscardPayload(payload);
-    pipeReconcileLine(pair, line_to);
+    if (reconcile)
+        pipeReconcileLine(pair, line_to);
     lineUnref(line_to);
     pipePairUnref(pair);
     return false;
@@ -994,8 +1001,7 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     pipe_pair_t *pair = memoryAllocateZero(sizeof(*pair));
 
     line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
-    lineCopyUsers(owned, line);
-    addresscontextCopy(lineGetSourceAddressContext(owned), lineGetSourceAddressContext(line));
+    lineCopyIngressContext(owned, line);
 
     /* Stage all metadata without publishing either line state. */
     *pair = (pipe_pair_t) {

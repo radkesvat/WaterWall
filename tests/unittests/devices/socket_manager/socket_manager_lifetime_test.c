@@ -359,6 +359,12 @@ static void caseEndpointRetirement(twf_worker_env_t *env)
     require(wwStartupSucceeded(wwStartupContextEnd(&setup)), "endpoint retirement setup failed");
 }
 
+static WTHREAD_ROUTINE(cancelQueuedAccept)
+{
+    workerMessagesCleanupPending(userdata);
+    return 0;
+}
+
 static void caseDeliverySettlement(twf_worker_env_t *env)
 {
     ww_startup_context_t setup = {0};
@@ -406,8 +412,13 @@ static void caseDeliverySettlement(twf_worker_env_t *env)
         if (queued)
         {
             require(g_watched_closes == 0, "queued WIO was settled before cancellation");
+            require(io->io_slot == -1 && ! wioExists(env->loop, g_watched_fd) && wioGetFD(io) == g_watched_fd,
+                    "handoff must drop source table membership while keeping the accepted descriptor open");
             workerMessagesCloseAdmission(&env->worker);
-            workerMessagesCleanupPending(&env->worker);
+            wthread_t cleanup;
+            require(threadCreate(&cleanup, cancelQueuedAccept, &env->worker) == kWThreadErrorNone,
+                    "could not start off-worker cancellation");
+            require(threadJoin(cleanup) == 0, "could not join accepted socket cleanup");
         }
         require(g_watched_closes == 1 && g_deliveries == 0, "TCP dispatch did not settle once on refusal/cancellation");
         g_watched_fd = -1;

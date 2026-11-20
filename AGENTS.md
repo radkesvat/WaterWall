@@ -58,9 +58,9 @@ implementations, and `tests/` native/integration coverage. `CMakePresets.json` a
 `WaterWall-Docs/docs/05-devguides/`; node settings in
 `WaterWall-Docs/docs/02-noderefs/`.
 
-Before substantive work, read every routing-table source matching the scope;
-the guide's `must` and `never` statements join this policy. Read newly applicable
-sources before continuing when scope expands.
+Before substantive work and when scope expands, read matching sources and applicable
+[`reference/`](WaterWall-Docs/docs/05-devguides/reference/) contracts.
+The guide's `must`/`never` rules join this policy.
 
 | Trigger | Required sources |
 | --- | --- |
@@ -127,6 +127,9 @@ These guardrails do not replace the mandatory guide reading:
 14. Memory-manager OOM is fatal; never add recovery or orderly shutdown.
     Preserve geometry, budget, fixed-resource and I/O refusals. See
     [Part 5](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx#heap-allocation-failure).
+15. [Send startup bytes](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx#startup-without-est)
+    after live next `Init` as flow control permits. Justify each `Est` gate and
+    verify the event can arrive without the held bytes.
 
 ## 4. Implementation Workflow
 
@@ -182,14 +185,8 @@ These guardrails do not replace the mandatory guide reading:
 
 ## 6. Build, Format, Test, And Validate
 
-Part 6 defines commands, lanes and timings. Use CMake presets and project scripts,
-not hand-built compiler commands. Prefer the `linux` production tree; never mix
-it with `linux-gcc-x64` in one validation flow.
-
-```bash
-cmake --preset linux
-cmake --build --preset linux -j8
-```
+Use CMake presets and project scripts. Prefer the `linux` production tree and
+keep it separate from `linux-gcc-x64`. Part 6 documents targets and lanes.
 
 ### Required C formatting
 
@@ -208,21 +205,21 @@ clang-format --dry-run -Werror --style=file path/to/changed_file.c
 
 ### Validation policy
 
-- Start with the smallest direct check. Expand to the functional lane for shared
-  tunnel/network behavior and to routine production lanes plus native units for
-  shared-core, lifecycle/concurrency, multi-subsystem, or uncertain-scope changes.
-- Speed and stress lanes are opt-in; run them when requested or directly validating
-  their workloads. Run source-only policy checks once across configurations for
-  the same source revision. See Part 6 for lane selection.
-- When native Linux units are relevant, normally exercise the focused coverage in
-  both `linux-unit-debug` and `linux-unit-release`. Prefer Debug first during
-  behavioral iteration because assertions and guardrails are active, but never use
-  it as a substitute for optimized `NDEBUG` Release behavior. Broad/shared changes
-  run the complete unit suite in both configurations.
-- Documentation and clearly non-behavioral changes may need only inspection or
-  relevant link/policy checks. Tests are expected for new observable behavior,
-  meaningful edge cases, changed contracts, and reproducible bugs likely to regress;
-  do not manufacture tests when existing coverage already proves the result.
+- Run all focused tests that exercise the changed behavior, affected callers
+  and relevant failure paths. The change determines how many tests to select.
+  Stop once that coverage passes. For prose, inspect the diff and verify
+  changed links or command examples.
+- Add focused regression coverage for new behavior, changed contracts and
+  meaningful edge cases when existing tests leave them uncovered.
+- For native units, select the relevant CTest cases together. The runner builds
+  their targets. Use Debug for assertions and Release for optimized or `NDEBUG`
+  paths. Exercise both when the change affects both paths.
+- Leave routine full suites to CI. Run a whole lane or unit suite locally only on
+  explicit request or when a concrete risk spans its cases and a focused selection
+  cannot cover it. For shared code, trace affected callers to select those cases.
+  See [Part 6](WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx#choosing-validation-and-regression-coverage).
+- Speed and stress lanes are opt-in for their workloads. Run relevant source-only
+  policy checks once per source revision.
 - Deterministic integration cases use the namespace harness and loopback only, never
   public DNS or host-network port availability.
 - For syntax diagnostics, reuse `build/linux/compile_commands.json`; syntax-only
@@ -257,6 +254,5 @@ does not limit ordinary product review or an explicitly requested infrastructure
 - Prefer existing tests and small fixtures. If new evidence machinery materially
   exceeds the product change or adds a framework, stop unless explicitly authorized.
   Keep bulky generated artifacts outside source history unless requested.
-- Once correctness checks pass and the terminal candidate disposition is recorded,
-  run broad validation once on the final retained production set and stop reviewing
+- Apply §6 to the final retained production changes once, then stop reviewing
   incidental acceptance machinery.

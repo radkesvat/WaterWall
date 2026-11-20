@@ -354,16 +354,25 @@ static void testOpaqueFlowModeResolution(void)
         const char                         *type;
         const char                         *name;
         device_opaque_flow_mode_t           expected;
-    } cases[] = {{kPacketLifecycleAnchorPublishUpstream, "PingServer", "decoder", kDeviceOpaqueFlowPeer},
-                 {kPacketLifecycleAnchorPublishDownstream, "PingClient", "decoder", kDeviceOpaqueFlowPeer},
-                 {kPacketLifecycleAnchorPublishUpstream, "PingClient", "PingServer", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishDownstream, "PingServer", "PingClient", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishUpstream, "IpManipulator", "PingServer", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishDownstream, "IpManipulator", "PingClient", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishUpstream, "RawSocket", "PingServer", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishDownstream, "RawSocket", "PingClient", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishUpstream, "PingServerWrapper", "PingServer", kDeviceOpaqueFlowPrefix},
-                 {kPacketLifecycleAnchorPublishDownstream, "PingClientWrapper", "PingClient", kDeviceOpaqueFlowPrefix}};
+    } cases[] = {
+        {kPacketLifecycleAnchorPublishUpstream, "PingServer", "decoder", kDeviceOpaqueFlowPeer},
+        {kPacketLifecycleAnchorPublishDownstream, "PingClient", "decoder", kDeviceOpaqueFlowPeer},
+        {kPacketLifecycleAnchorPublishUpstream, "Ping6Server", "decoder", kDeviceOpaqueFlowPeer},
+        {kPacketLifecycleAnchorPublishDownstream, "Ping6Client", "decoder", kDeviceOpaqueFlowPeer},
+        {kPacketLifecycleAnchorPublishUpstream, "Ping6Client", "Ping6Server", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "Ping6Server", "Ping6Client", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "IpManipulator", "Ping6Server", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "IpManipulator", "Ping6Client", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "Ping6ServerWrapper", "Ping6Server", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "Ping6ClientWrapper", "Ping6Client", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "PingClient", "PingServer", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "PingServer", "PingClient", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "IpManipulator", "PingServer", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "IpManipulator", "PingClient", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "RawSocket", "PingServer", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "RawSocket", "PingClient", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishUpstream, "PingServerWrapper", "PingServer", kDeviceOpaqueFlowPrefix},
+        {kPacketLifecycleAnchorPublishDownstream, "PingClientWrapper", "PingClient", kDeviceOpaqueFlowPrefix}};
     for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
     {
         node_t    peer_node       = {.name = (char *) cases[i].name, .type = (char *) cases[i].type};
@@ -391,6 +400,11 @@ static void testOpaqueFlowModeResolution(void)
         require(packettunnelResolveOpaqueFlowMode(device, kDeviceOpaqueFlowAuto, &reason) == cases[i].expected &&
                     reason != NULL && reason[0] != '\0',
                 "auto selected wrong mode for receive direction and exact immediate type");
+        if (cases[i].expected == kDeviceOpaqueFlowPrefix)
+        {
+            require(stringCompare(reason, "no direct Ping decoder in receive direction") == 0,
+                    "non-decoder auto mode changed its legacy diagnostic reason");
+        }
         for (device_opaque_flow_mode_t explicit_mode = kDeviceOpaqueFlowPrefix;
              explicit_mode <= kDeviceOpaqueFlowSpread;
              ++explicit_mode)

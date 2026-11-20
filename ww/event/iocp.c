@@ -79,6 +79,15 @@ int iowatcherDelEvent(wloop_t *loop, int fd, int events)
     return 0;
 }
 
+int wioIocpRequeueReceive(woverlapped_t *record)
+{
+    iocp_ctx_t *ctx = record->io->loop->iowatcher;
+    assert(record->kind == WOVERLAPPED_RECV && record->error == 0);
+    if (! PostQueuedCompletionStatus(ctx->iocp, record->bytes, 0, &record->ovlp))
+        return (int) GetLastError();
+    return 0;
+}
+
 int iowatcherPollEvents(wloop_t *loop, int timeout)
 {
     if (loop->iowatcher == NULL)

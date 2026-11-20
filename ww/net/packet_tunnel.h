@@ -103,8 +103,8 @@ bool packettunnelReadFragmentPolicy(const cJSON *settings, device_fragment_polic
 bool packettunnelReadOpaqueFlowMode(const cJSON *settings, device_opaque_flow_mode_t *mode);
 
 /* Exclusive startup, after lifecycle-anchor binding. Inspect only the physical
- * publication neighbour: upstream PingServer and downstream PingClient decode.
- * Explicit modes are unchanged. The returned mode is always effective, never auto.
- * The reason points to static diagnostic text. */
+ * publication neighbour: upstream PingServer or Ping6Server and downstream
+ * PingClient or Ping6Client decode. Explicit modes are unchanged. The returned
+ * mode is always effective, never auto. The reason points to static diagnostic text. */
 device_opaque_flow_mode_t packettunnelResolveOpaqueFlowMode(tunnel_t *t, device_opaque_flow_mode_t requested,
                                                             const char **reason);

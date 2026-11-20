@@ -66,6 +66,29 @@ static void clientPayload(void *user, sbuf_t *payload)
 static void clientPeerClose(void *user)
 {
     kcpclientDetachApplication(user, true);
+    kcpclientReleaseReadHold(user);
+}
+
+void kcpclientReleaseReadHold(void *user)
+{
+    kcpclient_session_t *session   = user;
+    const bool           held      = session->application_read_hold;
+    session->application_read_hold = false;
+
+    line_t *transport = session->transport;
+    if (transport == NULL || ! lineIsAlive(transport))
+        return;
+
+    kcpclient_tstate_t *ts   = tunnelGetState(session->tunnel);
+    wloop_t            *loop = getWorkerLoop(session->wid);
+    lineRef(transport);
+    if (held && ! atomicLoadRelaxed(&ts->stopping) && ! ts->workers[session->wid].quiescing &&
+        wloopNormalDispatchAllowed(loop))
+        tunnelNextUpStreamResume(session->tunnel, transport);
+    if (lineIsAlive(transport) && session->transport == transport &&
+        (atomicLoadRelaxed(&ts->stopping) || ts->workers[session->wid].quiescing || ! wloopNormalDispatchAllowed(loop)))
+        touSessionAbort(session->driver, kTouAborted);
+    lineUnref(transport);
 }
 
 static void clientPressure(void *user, bool paused)
@@ -144,20 +167,17 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
         return false;
 
     line_t *transport = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
-    addresscontextCopy(lineGetSourceAddressContext(transport), lineGetSourceAddressContext(application));
-    addresscontextCopy(lineGetDestinationAddressContext(transport), lineGetDestinationAddressContext(application));
-    transport->routing_context.local_listener_port = application->routing_context.local_listener_port;
-    transport->routing_context.peer_source_port    = application->routing_context.peer_source_port;
-    lineCopyUsers(transport, application);
+    lineCopyContext(transport, application);
+    address_context_t *destination = lineGetDestinationAddressContext(transport);
+    addresscontextSetDestinationPinned(destination, false);
+    addresscontextSetResolverDns(destination, false);
     transport->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
     transport->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
     transport->fallback_mode          = application->fallback_mode;
     if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
         lineRequestCloseLinger(transport, kLineCloseLingerPeerWriteShutdown);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(transport), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(transport), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
 
     kcpclient_session_t *session = memoryAllocateZero(sizeof(*session));
     session->tunnel              = t;
@@ -173,6 +193,7 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
                  .kcp_no_congestion_control = ts->kcp_no_congestion_control,
                  .kcp_interval_ms           = ts->kcp_interval_ms,
                  .kcp_resend                = ts->kcp_resend,
+                 .kcp_ack_batch             = ts->kcp_ack_batch,
                  .kcp_send_window           = ts->kcp_send_window,
                  .kcp_recv_window           = ts->kcp_recv_window,
                  .kcp_initial_cwnd          = ts->kcp_initial_cwnd,

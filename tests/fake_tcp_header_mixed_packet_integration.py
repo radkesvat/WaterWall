@@ -335,7 +335,7 @@ def run(binary, directory, encrypted=False):
         assert not set(TUN_NAMES) & {item["ifname"] for item in json.loads(command("ip", "-j", "link", "show"))}, \
             "TUN interface survived peer shutdown"
         assert "WWCAP" not in iptables("-S", "INPUT"), "capture rules survived shutdown"
-        assert "WWCAP_NOTRACK" not in iptables("-t", "raw", "-S", "PREROUTING")
+        assert "WWCAP" not in iptables("-t", "raw", "-S", "PREROUTING"), "early capture rules survived shutdown"
         assert "WWRAW_NOTRACK" not in iptables("-t", "raw", "-S", "OUTPUT")
 
 

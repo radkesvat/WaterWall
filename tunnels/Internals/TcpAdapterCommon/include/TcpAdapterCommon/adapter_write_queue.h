@@ -7,7 +7,7 @@ enum
 {
     kAwqMaxRetained    = 1U << 24,
     kAwqPauseThreshold = 1U << 12,
-    // Ordinary TCP read buffers retain 64–128 KiB even for a small payload.
+    // A short read can still retain the full allocation from a promoted TCP read tier.
     kAwqPauseChargeThreshold = 1U << 20
 };
 

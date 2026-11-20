@@ -1,26 +1,17 @@
 <!--
-Documentation version: 156
+Documentation version: 159
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/KcpClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/KcpClient.mdx, and all files must keep the same documentation version.
 -->
 
 # KcpClient Node
 
+## Overview
+
 `KcpClient` carries a TCP-like byte stream over a UDP path by running KCP internally. It accepts stream data from the previous node, feeds it into KCP, and sends the resulting packets through the next node.
 
 In practice, this node is used together with `KcpServer` on the remote side.
 
-## What It Does
-
-- Accepts stream payload from the previous node.
-- Encodes that stream into KCP segments.
-- Adds a 1-byte internal frame flag to KCP payloads.
-- Sends the resulting datagrams through the next node.
-- Receives datagrams back from the next node, feeds them into KCP, and reconstructs the stream.
-- Uses periodic ping frames and an idle timeout to detect dead peers.
-
-This node expects the next side of the chain to preserve packet boundaries. In practice that means a UDP-capable transport path.
-
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -32,7 +23,11 @@ A common layout is:
 
 This pair is useful when you want stream semantics on top of a datagram path.
 
-## Configuration Example
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -50,9 +45,11 @@ This pair is useful when you want stream semantics on top of a datagram path.
 }
 ```
 
-## Required JSON Fields
+## Configuration
 
-### Top-level fields
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -63,11 +60,11 @@ This pair is useful when you want stream semantics on top of a datagram path.
 - `next` `(string)`
   The next node that should carry the UDP-style packet traffic.
 
-### `settings`
+#### `settings`
 
 There are no required tunnel-specific settings.
 
-## Optional `settings` Fields
+### Optional `settings` Fields
 
 - `send-mtu` `(integer)`
   IPv4-based outgoing packet budget in bytes: `118..65535` without FEC, or `126..65535` with FEC. Receiving uses independent protocol limits.
@@ -97,6 +94,12 @@ There are no required tunnel-specific settings.
   KCP fast-resend threshold.
   Default: `2`
 
+- `kcp-ack-batch` `(integer)`
+  Each peer chooses its own threshold in the range `0..kcp-recv-window`. `1` flushes after every valid input datagram. A larger value flushes when that many ACKs are pending. `0` leaves ordinary data ACKs for the next `kcp-interval-ms` update.
+  Batching packs ACKs into fewer datagrams and can save CPU on bulk transfers. An ACK can wait up to one update interval, which increases measured RTT. Fast retransmit can also take longer because KCP counts duplicate acknowledgments once per received datagram. With batching enabled, ACK-only input can leave newly unblocked data waiting for the next update.
+  The receiver immediately acknowledges a keepalive PING, including a retransmission. On the first peer CLOSE, it retires the application and immediately sends the ACK. It also acknowledges duplicate CLOSE packets immediately while outgoing data drains. During ACK-only retention, every valid input triggers a flush.
+  Default: `1`
+
 - `kcp-no-congestion-control` `(boolean)`
   Disables KCP congestion control for higher-throughput UDP paths.
   Default: `true`
@@ -106,7 +109,7 @@ There are no required tunnel-specific settings.
   Default: `8192`
 
 - `kcp-recv-window` `(number)`
-  KCP receive window in segments.
+  Local KCP receive window in segments. The available window advertised to the peer is capped at 65535 segments.
   Default: `8192`
 
 - `kcp-initial-cwnd` `(number)`
@@ -122,7 +125,7 @@ There are no required tunnel-specific settings.
   Default: `0`
 
 - `ping-interval-ms` `(number)`
-  Time without received packets before sending an internal ping.
+  Time since the last valid session packet before sending an internal ping.
   Default: `10000`
 
 - `close-drain-timeout-ms` `(integer)`
@@ -130,14 +133,36 @@ There are no required tunnel-specific settings.
   Both peers negotiate the smaller setting; increasing it requires both endpoints to allow it.
 
 - `no-recv-timeout-ms` `(number)`
-  Time without received packets before closing the line. Must be greater than `ping-interval-ms`.
+  Time since the last valid session packet before closing the session. Must be greater than `ping-interval-ms`.
   Default: `30000`
 
-## Detailed Behavior
+## Usage and troubleshooting
 
-### KCP transport model
+### Notes And Caveats
 
-During application Init, the client borrows that application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. Application context is TCP; transport context is UDP. Actual transport Est is relayed promptly to the attached application, independently of handshake readiness.
+- `KcpClient` is intended to be paired with `KcpServer`.
+- FEC must be enabled on both peers with matching shard settings.
+- The next node should preserve datagram boundaries.
+- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
+
+## Implementation details
+
+### What It Does
+
+- Accepts stream payload from the previous node.
+- Encodes that stream into KCP segments.
+- Adds a 1-byte internal frame flag to KCP payloads.
+- Sends the resulting datagrams through the next node.
+- Receives datagrams back from the next node, feeds them into KCP, and reconstructs the stream.
+- Uses periodic ping frames and an idle timeout to detect dead peers.
+
+This node expects the next side of the chain to preserve packet boundaries. In practice that means a UDP-capable transport path.
+
+### Detailed Behavior
+
+#### KCP transport model
+
+During application Init, the client borrows the application line and creates a separate owned UDP transport line on the same worker. It copies routing contexts, listener/source ports, credentials and read policy before transport Init. The carrier clears the destination pin and resolver-DNS marker so a connector can select its configured KCP peer. Copied addresses and ports remain available for dynamic routing. Both carrier protocols are set to UDP, and the application context is preserved. The first transport Est is delivered promptly to the attached application, independently of handshake readiness.
 
 The peers establish a fresh session through HELLO, CHALLENGE, CONFIRM and READY. Independent 128-bit client/server nonces identify every KCP/FEC datagram before decoding. Handshake messages carry the close interval and exact FEC settings. The client retries its current request every 250 ms within the original `no-recv-timeout-ms` deadline. The server initializes a distinct service line only after fresh confirmation. Delayed traffic cannot reset an established session or recreate an old service. These identifiers provide no authentication or encryption.
 
@@ -147,7 +172,7 @@ Stream payload arriving from the previous node is split into chunks small enough
 
 The remote `KcpServer` performs the reverse operation and exposes the reconstructed stream again.
 
-### Internal frame flags
+#### Internal frame flags
 
 Inside the KCP payload, this tunnel uses a 1-byte flag:
 
@@ -164,13 +189,14 @@ flag and closes the affected connection, as does an unknown flag or a completed
 KCP message larger than the local receive buffer. Incomplete KCP messages wait
 for their remaining fragments.
 
-### Default KCP settings
+#### Default KCP settings
 
 The implementation exposes KCP tuning in JSON. The higher-throughput defaults are:
 
 - `kcp-nodelay = true`
 - `kcp-interval-ms = 10`
 - `kcp-resend = 2`
+- `kcp-ack-batch = 1`
 - `kcp-no-congestion-control = true`
 - `kcp-send-window = 8192`
 - `kcp-recv-window = 8192`
@@ -180,7 +206,7 @@ The implementation exposes KCP tuning in JSON. The higher-throughput defaults ar
 - `ping-interval-ms = 10000`
 - `no-recv-timeout-ms = 30000`
 
-### Sending MTU
+#### Sending MTU
 
 Optional integer `send-mtu` inherits core `misc.mtu` at construction (the core fallback
 is 1500). The supported range is **118..65535 without FEC**, or **126..65535 with
@@ -218,7 +244,7 @@ more bytes than the fixed IPv4 allowance, so a 1500 budget can permit a 1520-byt
 IPv6 packet. IPv4 options, IPv6 extension headers and later wrappers need extra
 operator headroom. No family-dependent adjustment occurs.
 
-### Optional FEC layer
+#### Optional FEC layer
 
 When `fec` is enabled, the tunnel wraps each outbound KCP datagram in a Reed-Solomon FEC packet and emits parity packets after each configured data-shard block.
 
@@ -231,7 +257,7 @@ On receive, it:
 
 When `fec` is disabled, the session envelope directly contains one KCP datagram.
 
-### Data flow direction
+#### Data flow direction
 
 - Stream to UDP/KCP side: previous node -> `KcpClient` -> next node
 - UDP/KCP side back to stream: next node -> `KcpClient` -> previous node
@@ -240,7 +266,7 @@ On the send side, `KcpClient` breaks the stream into KCP-friendly chunks and for
 
 On the receive side, it feeds incoming packet payloads into KCP, drains completed KCP data, strips the 1-byte flag, and forwards reconstructed stream payload downstream to the previous node.
 
-### Close and timeout behavior
+#### Close and timeout behavior
 
 Application Finish immediately detaches and clears the borrowed application state. Its owner may destroy that line as soon as Finish returns. The owned transport and stable session continue draining previously accepted KCP output for the negotiated interval `D = min(client setting, server setting)`.
 
@@ -250,16 +276,19 @@ On peer CLOSE, preceding inbound data is delivered before application Finish, th
 
 A peer-only responder remains until first CLOSE receipt plus D. A locally acknowledged CLOSE at A retains an ACK-capable responder until A + D, including simultaneous close. Expired local sending preserves an earlier peer-ACK obligation. Retention is at most 2D from the first closing event: with defaults, at most 30 seconds to send and 60 seconds total. ACK-only retention uses a deadline timer and input-triggered ACK flushes, with expired PUSH output filtered before FEC.
 
-`no-recv-timeout-ms` independently detects silence during ordinary operation; fixed close deadlines govern closing. Transport Finish, fatal protocol failure and process shutdown abort immediately. Worker quiescence detaches timer roots, and worker Stop drains all owned transports without waiting for graceful close. KCP acknowledgment confirms peer transport receipt, not remote application consumption or persistence. This protocol does not provide TCP half-close.
+During ordinary operation, ping and receive-idle deadlines run from the last valid session packet and are independent of the KCP update interval. Expiry takes precedence if both are due. Fixed close deadlines govern closing. Transport Finish, fatal protocol failure and process shutdown abort immediately. Worker quiescence detaches timer roots, and worker Stop drains all owned transports without waiting for graceful close. KCP acknowledgment confirms peer transport receipt, not remote application consumption or persistence. This protocol does not provide TCP half-close.
 
-### Backpressure behavior
+#### Backpressure behavior
 
 The client combines its local KCP backlog pressure with carrier pressure before
 notifying the previous application stream. The application remains paused while
 either reason is active. Carrier Pause/Resume notifications, including repeats,
 are relayed only when the local KCP hold is absent. Local pressure transitions
 notify the application only while the carrier is not paused; neither reason can
-release the other's hold. Application-side Pause/Resume still maps to the carrier.
+release the other's hold. Application-side Pause/Resume controls reads on the
+carrier. After local Finish or peer CLOSE starts closing and detaches the
+application, the client releases that application's hold so the live carrier
+can receive ACKs during the drain.
 
 After admitting the complete input and settling KCP packet output, the node
 compares queued and unacknowledged KCP segments with `kcp-send-buffer-limit`.
@@ -275,14 +304,7 @@ continue while the application is paused. KCP windows, timers and the receive
 timeout remain in force. Every payload still needs KCP/FEC processing, so the
 node cannot bypass itself.
 
-## Notes And Caveats
-
-- `KcpClient` is intended to be paired with `KcpServer`.
-- FEC must be enabled on both peers with matching shard settings.
-- The next node should preserve datagram boundaries.
-- `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

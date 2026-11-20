@@ -29,6 +29,8 @@ typedef tcpconnector_tstate_t adapter_tstate_t;
 #include "loggers/network_logger.h"
 #include "splice_buffer.h"
 
+#include <linux/sockios.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -518,7 +520,7 @@ static void progressResume(tunnel_t *t, line_t *line)
                "write progress resumed before all retained allocation charges were released");
     ++progress_fixture->resumes;
 }
-static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
+static void progressSetupWithSockets(tcp_progress_fixture_t *fixture, bool with_resolver, const int sockets[2])
 {
     memoryZero(fixture, sizeof(*fixture));
     progress_fixture = fixture;
@@ -545,13 +547,8 @@ static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
 #endif
     tunnelchainFinalize(fixture->chain);
     adapter->chain = fixture->chain;
-    int sockets[2];
-    twfRequire(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sockets) == 0, "progress socketpair failed");
-    int send_size = 4096;
-    twfRequire(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &send_size, sizeof(send_size)) == 0,
-               "failed to limit fixture socket send buffer");
-    fixture->peer = sockets[1];
-    fixture->io   = wioGet(fixture->env.loop, sockets[0]);
+    fixture->peer  = sockets[1];
+    fixture->io    = wioGet(fixture->env.loop, sockets[0]);
     twfRequire(fixture->io != NULL && ! wioIsClosed(fixture->io), "progress WIO adoption failed");
 #ifdef TCP_PAUSE_TEST_LISTENER
     tunnelBind(adapter, neighbor);
@@ -611,6 +608,16 @@ static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
     lineRef(fixture->line);
     pause_calls = 0;
 }
+
+static void progressSetup(tcp_progress_fixture_t *fixture, bool with_resolver)
+{
+    int sockets[2];
+    twfRequire(socketpair(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0, sockets) == 0, "progress socketpair failed");
+    const int send_size = 4096;
+    twfRequire(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &send_size, sizeof(send_size)) == 0,
+               "failed to limit fixture socket send buffer");
+    progressSetupWithSockets(fixture, with_resolver, sockets);
+}
 static void progressTeardown(tcp_progress_fixture_t *fixture)
 {
     if (lineIsAlive(fixture->line))
@@ -669,6 +676,148 @@ static void unexpectedLingerPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     twfRequire(false, "detached adapter forwarded discarded input");
 }
 
+static void makeCloseLoopbackSockets(int sockets[2])
+{
+    int listening  = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int connecting = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    twfRequire(listening >= 0 && connecting >= 0, "failed to create IPv4 loopback sockets");
+    // Set the receiving peer's window before the handshake, including on the listening socket in connector tests.
+#ifdef TCP_PAUSE_TEST_LISTENER
+    const int receive_fd = connecting;
+#else
+    const int receive_fd = listening;
+#endif
+    const int receive_size = 4096;
+    twfRequire(setsockopt(receive_fd, SOL_SOCKET, SO_RCVBUF, &receive_size, sizeof(receive_size)) == 0,
+               "failed to bound peer TCP receive window");
+    struct sockaddr_in addr     = {.sin_family = AF_INET, .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    socklen_t          addr_len = sizeof(addr);
+    twfRequire(bind(listening, (struct sockaddr *) &addr, addr_len) == 0 && listen(listening, 1) == 0 &&
+                   getsockname(listening, (struct sockaddr *) &addr, &addr_len) == 0 &&
+                   connect(connecting, (struct sockaddr *) &addr, addr_len) == 0,
+               "failed to connect IPv4 loopback peer");
+    const int accepted = accept4(listening, NULL, NULL, SOCK_CLOEXEC);
+    twfRequire(accepted >= 0, "failed to accept IPv4 loopback peer");
+    close(listening);
+#ifdef TCP_PAUSE_TEST_LISTENER
+    sockets[0] = accepted;
+    sockets[1] = connecting;
+#else
+    sockets[0] = connecting;
+    sockets[1] = accepted;
+#endif
+    const int send_size = 256 * 1024;
+    twfRequire(setsockopt(sockets[0], SOL_SOCKET, SO_SNDBUF, &send_size, sizeof(send_size)) == 0,
+               "failed to provision kernel TCP send buffer");
+}
+
+static uint8_t closeLoopbackByte(size_t offset)
+{
+    return (uint8_t) (offset * 31 + offset / 251);
+}
+
+static void runPausedLoopbackClose(bool unread_input, bool peer_write_shutdown)
+{
+    twfSetCase(peer_write_shutdown ? "detected fallback shutdown preserves IPv4 TCP body and EOF"
+               : unread_input      ? "read Pause uses ordinary TCP close with unread peer input"
+                                   : "read Pause uses ordinary TCP close with no peer input");
+    int sockets[2];
+    makeCloseLoopbackSockets(sockets);
+    tcp_progress_fixture_t fixture;
+    progressSetupWithSockets(&fixture, false, sockets);
+#ifndef TCP_PAUSE_TEST_LISTENER
+    // The test supplies an already-connected descriptor in place of the production connect attempt.
+    wioConnectCallBack(fixture.io);
+    neighbor->fnPayloadD = unexpectedLingerPayload;
+#else
+    neighbor->fnPayloadU = unexpectedLingerPayload;
+#endif
+    if (peer_write_shutdown)
+        lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
+    twfRequire(wioRead(fixture.io) == 0, "failed to start fixture socket reads");
+#ifdef TCP_PAUSE_TEST_LISTENER
+    tcplistenerTunnelDownStreamPause(adapter, fixture.line);
+#else
+    tcpconnectorTunnelUpStreamPause(adapter, fixture.line);
+#endif
+    twfRequire(! (fixture.io->events & WW_READ), "adapter did not stop reads on Pause");
+
+    if (unread_input)
+    {
+        twfRequire(send(fixture.peer, "!", 1, 0) == 1, "failed to send the peer's unread byte");
+        int queued_input = 0;
+        twfRequire(ioctl(sockets[0], SIOCINQ, &queued_input) == 0 && queued_input == 1,
+                   "peer byte did not remain unread before Finish");
+    }
+    const size_t body_size = 131072;
+    sbuf_t      *body      = twfTrackAcquired(sbufCreate((uint32_t) body_size));
+    for (size_t i = 0; i < body_size; ++i)
+        sbufGetMutablePtr(body)[i] = closeLoopbackByte(i);
+    sbufSetLength(body, (uint32_t) body_size);
+    submit(fixture.line, body);
+    int queued_output = 0;
+    twfRequire(wioCheckWriteComplete(fixture.io) && ioctl(sockets[0], SIOCOUTQ, &queued_output) == 0 &&
+                   queued_output > 0,
+               "regression requires outstanding kernel bytes and an empty WIO write queue");
+    finishLine(fixture.line);
+    twfRequire(! lineIsAlive(fixture.line) && twfLineRefCount(fixture.line) == 1,
+               "TCP Finish did not retire the line independently of the socket");
+
+    if (! peer_write_shutdown)
+    {
+        twfRequire(wioIsClosed(fixture.io) && localidletableGetItemCount(fixture.tables[0]) == 0 &&
+                       fixture.finishes == 0 && fixture.resumes == 0,
+                   "ordinary TCP Finish retained a paused socket or notified its retired line");
+        if (unread_input)
+        {
+            // Linux may reset this connection during ordinary close.
+            progressTeardown(&fixture);
+            return;
+        }
+    }
+    else
+    {
+        twfRequire(! wioIsClosed(fixture.io) && localidletableGetItemCount(fixture.tables[0]) == 1,
+                   "detected fallback shutdown did not retain the socket for bounded cleanup");
+    }
+
+    size_t         received    = 0;
+    bool           eof         = false;
+    const uint64_t deadline_ms = wloopNowMonotonicMS(fixture.env.loop) + 10000;
+    while (! eof && wloopNowMonotonicMS(fixture.env.loop) < deadline_ms)
+    {
+        discard       wloopProcessEvents(fixture.env.loop, 0);
+        uint8_t       chunk[16384];
+        const ssize_t count = recv(fixture.peer, chunk, sizeof(chunk), MSG_DONTWAIT);
+        if (count < 0)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            {
+                wwSleepMS(1);
+                continue;
+            }
+            fprintf(stderr, "peer read failed at byte %zu with errno %d\n", received, errno);
+            twfRequire(false, "peer received a socket error before clean EOF");
+        }
+        for (ssize_t i = 0; i < count; ++i, ++received)
+            twfRequire(received < body_size && chunk[i] == closeLoopbackByte(received), "TCP body bytes changed");
+        eof = count == 0;
+    }
+    twfRequire(eof, "peer never received TCP EOF");
+    twfRequireEqualU32(received, body_size, "TCP Finish truncated accepted body bytes");
+
+    if (! wioIsClosed(fixture.io))
+    {
+        twfRequire(shutdown(fixture.peer, SHUT_WR) == 0, "failed to close peer write side after EOF");
+        for (unsigned attempt = 0; attempt < 64 && ! wioIsClosed(fixture.io); ++attempt)
+            discard wloopProcessEvents(fixture.env.loop, 0);
+    }
+    twfRequire(wioIsClosed(fixture.io) && localidletableGetItemCount(fixture.tables[0]) == 0 && fixture.finishes == 0 &&
+                   fixture.resumes == 0,
+               "TCP EOF drain retained socket state or called the retired line");
+    progressTeardown(&fixture);
+}
+
 static void runCloseLingerCase(bool queued_output, bool stopping)
 {
     twfSetCase(stopping        ? "detached socket drain is included in worker shutdown"
@@ -678,12 +827,10 @@ static void runCloseLingerCase(bool queued_output, bool stopping)
     progressSetup(&fixture, false);
 #ifdef TCP_PAUSE_TEST_LISTENER
     neighbor->fnPayloadU = unexpectedLingerPayload;
-    lineMarkFallback(fixture.line);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 #else
     neighbor->fnPayloadD = unexpectedLingerPayload;
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
 #endif
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 
     const size_t body_bytes = queued_output ? 256 * 1024 : 0;
     if (queued_output)
@@ -762,12 +909,10 @@ static void runCloseLingerDeadlineCase(void)
     progressSetup(&fixture, false);
 #ifdef TCP_PAUSE_TEST_LISTENER
     neighbor->fnPayloadU = unexpectedLingerPayload;
-    lineMarkFallback(fixture.line);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
 #else
     neighbor->fnPayloadD = unexpectedLingerPayload;
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
 #endif
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     const uint64_t start_ms      = UINT64_C(5000000000);
     fixture.env.loop->cur_hrtime = start_ms * 1000;
     finishLine(fixture.line);
@@ -804,7 +949,7 @@ static void runCloseLingerAdmissionCase(void)
     twfSetCase("quiescence refuses a new detached socket drain");
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, false);
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     wloopCloseNormalAdmission(fixture.env.loop);
 #ifdef TCP_PAUSE_TEST_LISTENER
     tcplistenerTunnelOnQuiesceRequest(adapter, wwLifecycleProcessShutdown());
@@ -821,25 +966,21 @@ static void runCloseLingerAdmissionCase(void)
     progressTeardown(&fixture);
 }
 
-static void runCloseLingerReasonsCase(void)
+static void runFallbackLingerRequestCase(void)
 {
-    twfSetCase("retiring linger reasons preserves independent requests and restores ordinary close");
+    twfSetCase("retiring a fallback peer shutdown restores ordinary close");
     tcp_progress_fixture_t fixture;
     progressSetup(&fixture, false);
-    twfRequire(! lineShouldLingerOnClose(fixture.line), "new line requested socket linger");
-    lineRequestCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
+    lineMarkFallback(fixture.line);
+    twfRequire(! lineShouldLingerOnClose(fixture.line), "entering fallback requested socket linger before detection");
     lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
     lineRequestCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
+    twfRequire(lineShouldLingerOnClose(fixture.line), "missing fallback peer shutdown request");
     lineClearCloseLinger(fixture.line, kLineCloseLingerPeerWriteShutdown);
-    twfRequire(lineShouldLingerOnClose(fixture.line) &&
-                   lineHasCloseLingerReason(fixture.line, kLineCloseLingerProtocolDrain) &&
-                   ! lineHasCloseLingerReason(fixture.line, kLineCloseLingerPeerWriteShutdown),
-               "retiring a peer shutdown reason lost independent protocol completion");
-    lineClearCloseLinger(fixture.line, kLineCloseLingerProtocolDrain);
     finishLine(fixture.line);
     twfRequire(! lineIsAlive(fixture.line) && wioIsClosed(fixture.io) &&
                    localidletableGetItemCount(fixture.tables[0]) == 0,
-               "cleared linger reasons retained a socket or idle entry");
+               "cleared fallback peer shutdown retained a socket or idle entry");
     progressTeardown(&fixture);
 }
 
@@ -1491,8 +1632,16 @@ static void runReadPreferenceCase(void)
 }
 #endif
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2 && stringCompare(argv[1], "--loopback") == 0)
+    {
+        runPausedLoopbackClose(true, false);
+        runPausedLoopbackClose(false, false);
+        runPausedLoopbackClose(true, true);
+        return 0;
+    }
+    twfRequire(argc == 1, "expected no arguments or --loopback in a private network namespace");
     runCapacityCase();
     runWriteCompletionCase(false);
     runWriteCompletionCase(true);
@@ -1520,7 +1669,7 @@ int main(void)
     runCloseLingerCase(true, true);
     runCloseLingerDeadlineCase();
     runCloseLingerAdmissionCase();
-    runCloseLingerReasonsCase();
+    runFallbackLingerRequestCase();
 #if WW_HAVE_SPLICE
     runReadPreferenceCase();
     runPauseCase(true, true);

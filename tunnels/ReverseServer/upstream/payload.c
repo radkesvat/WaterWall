@@ -25,7 +25,7 @@ static bool pipeToRemoteWorker(tunnel_t *t, line_t *d, reverseserver_lstate_t *d
         bufferpoolReuseBuffer(pool, body);
     }
     sbufSetLength(replay, length);
-    reverseserverRemoveConnectionD(box, dls);
+    reverseserverLeaveWaiting(&box->reverse_links, dls, kReverseHalfClosed);
     reverseserverLinestateDestroy(dls);
 
     /* Keep the physical source paused. The target's complete handshake repeats
@@ -45,7 +45,7 @@ static void tryPairWithRemoteUpstreamConnection(tunnel_t *t, line_t *d, reverses
 {
     for (wid_t wid = 0; wid < getWorkersCount(); ++wid)
     {
-        if (wid != lineGetWID(d) && atomicLoad(&ts->threadlocal_pool[wid].u_count) != 0 &&
+        if (wid != lineGetWID(d) && atomicLoad(&ts->threadlocal_pool[wid].users.count) != 0 &&
             pipeToRemoteWorker(t, d, dls, box, ts, wid))
             return;
     }
@@ -58,9 +58,9 @@ static void pairWaitingPeerOnWorker(worker_t *worker, void *arg1, void *arg2, vo
     const wid_t                 user_wid = (wid_t) (uintptr_t) arg2;
     reverseserver_tstate_t     *ts       = tunnelGetState(t);
     reverseserver_thread_box_t *box      = &ts->threadlocal_pool[worker->wid];
-    if (atomicLoad(&ts->threadlocal_pool[user_wid].u_count) == 0)
+    if (atomicLoad(&ts->threadlocal_pool[user_wid].users.count) == 0)
         return;
-    for (reverseserver_lstate_t *ls = box->d_root; ls != NULL; ls = ls->next)
+    for (reverseserver_lstate_t *ls = box->reverse_links.head; ls != NULL; ls = ls->next)
     {
         if (pipeToRemoteWorker(t, ls->d, ls, box, ts, user_wid))
             return;
@@ -84,7 +84,7 @@ void reverseserverNotifyWaitingPeers(tunnel_t *t, wid_t user_wid)
     reverseserver_tstate_t *ts = tunnelGetState(t);
     for (wid_t wi = 0; wi < getWorkersCount(); ++wi)
     {
-        if (wi != user_wid && atomicLoad(&ts->threadlocal_pool[wi].d_count) > 0)
+        if (wi != user_wid && atomicLoad(&ts->threadlocal_pool[wi].reverse_links.count) > 0)
         {
             /* No line pointer crosses this boundary. The peer worker resolves
              * its own live waiting list; quiescence simply cancels the hint. */
@@ -104,17 +104,21 @@ void reverseserverNotifyWaitingPeers(tunnel_t *t, wid_t user_wid)
 void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
 {
     reverseserver_lstate_t *dls = lineGetState(d, t);
-    if (dls->paired)
+    if (dls->phase == kReverseHalfDraining || dls->phase == kReverseHalfClosed)
     {
-        if (! reverseserverQueuePairedPayload(t, d, buf))
-            tunnelNextUpStreamPayload(t, dls->u, buf);
+        lineReuseBuffer(d, buf);
+        return;
+    }
+    if (dls->phase == kReverseHalfPaired)
+    {
+        reverseserverForwardPairedPayload(t, d, buf);
         return;
     }
 
     reverseserver_tstate_t     *ts  = tunnelGetState(t);
     reverseserver_thread_box_t *box = &ts->threadlocal_pool[lineGetWID(d)];
     buf                             = sbufEnsureOrdinary(lineGetBufferPool(d), buf);
-    if (! dls->handshaked)
+    if (dls->phase == kReverseHalfOpening)
     {
         const uint32_t count = min(sbufGetLength(buf), ts->handshake_length - dls->handshake_read);
         /* Compare every fragment, but reveal no match result before the complete handshake arrives. */
@@ -133,16 +137,15 @@ void reverseserverTunnelUpStreamPayload(tunnel_t *t, line_t *d, sbuf_t *buf)
             reverseserverCloseLine(t, d);
             return;
         }
-        dls->handshaked = true;
-        reverseserverAddConnectionD(box, dls);
+        reverseserverEnterWaiting(&box->reverse_links, dls);
     }
     /* Own the coalesced application tail before Pause can reenter. */
     if (! reverseserverRetainPayload(t, d, buf) || ! reverseserverReconcileSource(t, d))
         return;
-    if (dls->paired || dls->d != d)
+    if (dls->phase != kReverseHalfWaiting)
         return;
-    if (atomicLoad(&box->u_count) != 0)
-        reverseserverPair(t, box->u_root->u, d);
+    if (box->users.head != NULL)
+        reverseserverPair(t, box->users.head->u, d);
     else
         tryPairWithRemoteUpstreamConnection(t, d, dls, ts, box);
 }

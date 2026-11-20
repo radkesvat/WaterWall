@@ -11,6 +11,7 @@
  * or application-throughput behavior.
  * CTest: waterwall.windows_lifecycle_unit
  */
+#include "wevent.h"
 #include "wwapi.h"
 
 #include "test_assert.h"

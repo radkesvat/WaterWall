@@ -1,0 +1,44 @@
+{
+  "name": "http-proxy-connect-trojan",
+  "nodes": [
+    {
+      "name": "listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 29090,
+        "nodelay": true
+      },
+      "next": "http-proxy"
+    },
+    {
+      "name": "http-proxy",
+      "type": "HttpProxyServer",
+      "settings": {
+        "no-auth": true,
+        "connect-timeout-ms": 1000
+      },
+      "next": "trojan"
+    },
+    {
+      "name": "trojan",
+      "type": "TrojanServer",
+      "settings": {
+        "users": ["local-trojan-test-password"],
+        "connect": true,
+        "udp": false
+      },
+      "next": "target"
+    },
+    {
+      "name": "target",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "dest_context->address",
+        "port": "dest_context->port",
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}

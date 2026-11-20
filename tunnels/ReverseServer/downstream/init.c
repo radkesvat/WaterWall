@@ -8,20 +8,19 @@ void reverseserverTunnelDownStreamInit(tunnel_t *t, line_t *u)
     reverseserverLinestateInitialize(uls, u, NULL);
     reverseserver_tstate_t     *ts  = tunnelGetState(t);
     reverseserver_thread_box_t *box = &ts->threadlocal_pool[lineGetWID(u)];
-    uls->handshaked                 = true;
-    reverseserverAddConnectionU(box, uls);
+    reverseserverEnterWaiting(&box->users, uls);
     if (! lineCallWithRef(u, tunnelNextUpStreamEst, t))
         return;
     /* Est can admit payload and complete pairing reentrantly. */
-    if (uls->paired)
+    if (uls->phase != kReverseHalfWaiting)
         return;
     if (! reverseserverReconcileSource(t, u))
         return;
     /* The waiting Pause can itself admit a peer or close this line. */
-    if (uls->paired)
+    if (uls->phase != kReverseHalfWaiting)
         return;
-    if (atomicLoad(&box->d_count) != 0)
-        reverseserverPair(t, u, box->d_root->d);
+    if (box->reverse_links.head != NULL)
+        reverseserverPair(t, u, box->reverse_links.head->d);
     else
         reverseserverNotifyWaitingPeers(t, lineGetWID(u));
 }

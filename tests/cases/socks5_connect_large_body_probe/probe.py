@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Coalesced SOCKS CONNECT header plus a large application body, with auth/response and real echo
-peers. Exact negotiation/payload bytes and no lost tail; original unexpected-EOF policy. Runs inside
-the namespace harness. CTest: waterwall.socks5_connect_large_body_probe."""
+"""Check coalesced SOCKS CONNECT and large bodies with real echo peers, then verify that a
+refused outbound dial closes the stream after CONNECT success. Runs inside the namespace
+harness. CTest: waterwall.socks5_connect_large_body_probe."""
 import sys
 from pathlib import Path
 import os
@@ -18,6 +18,7 @@ from wwtest.sockets import exact as read_exact
 HOST = "127.0.0.1"
 TARGET = 24802
 BODY = bytes(range(256)) * 32
+CONNECT_SUCCESS = b"\x05\x00\x00\x01" + bytes(6)
 
 
 def exact(sock, count):
@@ -73,8 +74,19 @@ with socket.socket() as listener:
                 else:
                     client.sendall(request[:5])
                     client.sendall(request[5:] + BODY)
-                assert exact(client, 10) == b"\x05\x00\x00\x01" + bytes(6)
+                assert exact(client, 10) == CONNECT_SUCCESS
                 assert exact(client, len(BODY)) == BODY
     thread.join(5)
     assert not thread.is_alive()
-print("SOCKS CONNECT large-body probe passed in both auth modes")
+
+# Reserving a port without listening gives the proxy a deterministic refused dial.
+with socket.socket() as refused:
+    refused.bind((HOST, 0))
+    port = refused.getsockname()[1]
+    request = b"\x05\x01\x00\x01" + socket.inet_aton(HOST) + struct.pack("!H", port)
+    for auth in (False, True):
+        with negotiate(auth) as client:
+            client.sendall(request)
+            assert exact(client, 10) == CONNECT_SUCCESS
+            assert client.recv(1) == b"", "refused dial did not close the stream after success"
+print("SOCKS CONNECT large-body and refused-dial probe passed in both auth modes")

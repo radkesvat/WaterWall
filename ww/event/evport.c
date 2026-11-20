@@ -2,10 +2,12 @@
 
 #ifdef EVENT_PORT
 
+#include "ev_memory.h"
 #include "wdef.h"
 #include "wevent.h"
 #include "wplatform.h"
 
+#include <poll.h>
 #include <port.h>
 
 #define EVENTS_INIT_SIZE 64
@@ -30,9 +32,12 @@ int iowatcherInit(wloop_t *loop)
 {
     if (loop->iowatcher)
         return 0;
+    int fd = port_create();
+    if (fd < 0)
+        return -errno;
     evport_ctx_t *evport_ctx;
     EVENTLOOP_ALLOC_SIZEOF(evport_ctx);
-    evport_ctx->port     = port_create();
+    evport_ctx->port     = fd;
     evport_ctx->capacity = EVENTS_INIT_SIZE;
     evport_ctx->nevents  = 0;
     int bytes            = sizeof(port_event_t) * evport_ctx->capacity;
@@ -56,7 +61,9 @@ int iowatcherAddEvent(wloop_t *loop, int fd, int events)
 {
     if (loop->iowatcher == NULL)
     {
-        iowatcherInit(loop);
+        int error = iowatcherInit(loop);
+        if (error != 0)
+            return error;
     }
     evport_ctx_t *evport_ctx = (evport_ctx_t *) loop->iowatcher;
     wio_t        *io         = loop->ios.ptr[fd];
@@ -78,7 +85,8 @@ int iowatcherAddEvent(wloop_t *loop, int fd, int events)
     {
         evport_events |= POLLOUT;
     }
-    port_associate(evport_ctx->port, PORT_SOURCE_FD, fd, evport_events, NULL);
+    if (port_associate(evport_ctx->port, PORT_SOURCE_FD, (uintptr_t) fd, evport_events, NULL) != 0)
+        return -errno;
     if (io->events == 0)
     {
         if (evport_ctx->nevents == evport_ctx->capacity)
@@ -170,7 +178,9 @@ int iowatcherPollEvents(wloop_t *loop, int timeout)
             }
             EVENT_PENDING(io);
             // Upon retrieval, the event object is no longer associated with the port.
-            iowatcherAddEvent(loop, fd, io->events);
+            int error = iowatcherAddEvent(loop, fd, io->events);
+            if (error != 0)
+                return error;
         }
     }
     return (int) nevents;

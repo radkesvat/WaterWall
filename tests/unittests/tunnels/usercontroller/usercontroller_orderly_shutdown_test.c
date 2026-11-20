@@ -49,7 +49,7 @@ static void fixtureSetup(usercontroller_fixture_t *fixture)
     memoryZero(fixture, sizeof(*fixture));
     tosWorkerEnvSetup(&g_env, kTestWorkerCount, 8192, 1024);
 
-    fixture->tunnel = tunnelCreate(NULL, sizeof(usercontroller_tstate_t), sizeof(usercontroller_lstate_t));
+    fixture->tunnel = tunnelCreate(NULL, sizeof(usercontroller_tstate_t), kLineStateSize);
     twfRequire(fixture->tunnel != NULL, "failed to create the UserController tunnel");
 
     usercontroller_tstate_t *ts = tunnelGetState(fixture->tunnel);

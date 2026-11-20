@@ -1,15 +1,42 @@
 <!--
-Documentation version: 156
+Documentation version: 157
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/JunkDatagramSender.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/JunkDatagramSender.mdx, and all files must keep the same documentation version.
 -->
 
 # JunkDatagramSender Node
 
+## Overview
+
 `JunkDatagramSender` is a composable middle tunnel that injects generated junk datagram payloads before the first upstream payloads of a line. It is intended for camouflage and protocol-noise experiments around UDP-like paths, while still preserving Waterwall's normal line lifecycle and callback directions.
 
 The node forwards `Init` normally, then sends generated junk payloads when upstream payload callbacks arrive. The real upstream payload is forwarded after that junk batch has been sent. Regular payloads after the configured trigger count, downstream payloads, `Est`, pause/resume, and finish callbacks are otherwise pass-through.
 
-## Configuration Example
+## Typical placement
+
+### Observe generated datagrams in a controlled UDP test
+
+```text
+sender:   UdpListener -> JunkDatagramSender -> UdpConnector
+receiver: UdpListener -> LoggerTunnel -> BlackHole(passive)
+```
+Send a known UDP payload to the sender listener. Point its connector at the
+receiver listener, set LoggerTunnel to `mode: "log"`, and set BlackHole to
+`mode: "passive"`. The receiver logs the generated packets followed by the real
+payload; it consumes them without an application response. The node settings
+below choose the noise generators and trigger count.
+
+There is no matching junk-removal node. A normal remote application receives
+these extra datagrams too. Putting JunkDatagramSender before packet-mode
+encryption authenticates the junk as application data; encryption does not
+remove it. Use a production receiver only if it explicitly tolerates the chosen
+noise. Keep this node on datagram-preserving paths: in a byte stream, injected
+bytes become part of the application's stream.
+
+## Minimal practical example
+
+These are node fragments; define the referenced neighboring nodes in the surrounding configuration.
+
+### Configuration Example
 
 ```json
 {
@@ -26,7 +53,9 @@ The node forwards `Init` normally, then sends generated junk payloads when upstr
 }
 ```
 
-## Settings
+## Configuration
+
+### Settings
 
 - `packet-count-perline-min` `(integer, optional)`
   Minimum number of junk packets generated each time an upstream payload triggers junk sending.
@@ -45,7 +74,7 @@ The node forwards `Init` normally, then sends generated junk payloads when upstr
 - `keep-sending-max-ms` `(integer, optional)`
   Default `0` disables delayed copies. When greater than zero, each generated junk packet is duplicated and scheduled once at a random delay between `1` and this value.
 
-## Protocol Names
+### Protocol Names
 
 Accepted canonical names are:
 
@@ -63,7 +92,7 @@ Accepted canonical names are:
 
 Some shorter aliases are accepted, such as `quic`, `http3`, `rtp`, `stun`, and `ipsec-natt`.
 
-## Disabled Protocol Names
+### Disabled Protocol Names
 
 These protocol modules are intentionally disabled until their packet generators are implemented. If a user lists one in `selected-protocols`, configuration fails.
 
@@ -77,7 +106,9 @@ These protocol modules are intentionally disabled until their packet generators 
 - `game`
 - `coap`
 
-## Module Contract
+## Implementation details
+
+### Module Contract
 
 Each protocol module lives in `modules/` and exposes one generator:
 
@@ -89,7 +120,7 @@ The generator receives an already allocated `sbuf_t`, writes one datagram payloa
 
 The DNS module currently builds a real DNS query UDP payload with a question and optional EDNS(0) OPT record. DHCP builds valid-looking DHCPv4 client messages, NTP builds valid-looking NTP client requests, QUIC/HTTP3 builds QUIC Initial-like datagrams with HTTP/3 ALPN, RTP/RTCP/SRTP builds RTP media, RTCP control, and SRTP-shaped payloads, STUN/TURN/ICE builds connectivity-check and relay-control messages, mDNS builds multicast DNS query and announcement payloads, SNMP builds v1/v2c manager requests, Syslog builds RFC3164/RFC5424 messages, IPsec NAT-T builds keepalive, IKEv2, and ESP-in-UDP payloads, and SIP builds valid-looking SIP requests and responses. The disabled modules remain structural placeholders for future implementation and are not selectable by users.
 
-## Lifecycle Notes
+### Lifecycle Notes
 
 `JunkDatagramSender` stores a per-line remaining trigger count and directional publication permissions. Init opens both directions; zeroed state means publication is closed. For an immediate junk batch, it holds a temporary line reference with `lineRef()`, checks `lineIsAlive()` and then local publication permission after each re-entrant send, and releases that reference with `lineUnref()`. The reference preserves the allocation, not line contents or worker access. If a send handles Finish while the normal line remains alive, the batch stops and its still-owned application buffer is recycled.
 
@@ -97,7 +128,15 @@ Delayed payloads are best effort and transfer their duplicate buffer to Waterwal
 
 This tunnel never destroys borrowed normal lines or chain-owned packet lines. Init initializes state without generating junk payloads.
 
-## Node Metadata
+### Splice support
+
+Generated junk and its delayed duplicates remain ordinary buffers. Incoming application payloads pass through opaquely, preserving their private-pipe bodies and existing ordering relative to immediate junk. Closed publication discards input; if sending junk closes the line or retires this node's state, the still-owned application buffer is recycled.
+
+Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
+
+Packet configurations of this dual-layer node still do not enable splice.
+
+### Node Metadata
 
 Source-backed metadata:
 
@@ -110,11 +149,3 @@ Source-backed metadata:
 | `layer_group_prev_node` | `kNodeLayerSameAsNext` |
 | `layer_group_next_node` | `kNodeLayerSameAsPrev` |
 | `required_padding_left` | `0` bytes |
-
-## Splice support
-
-Generated junk and its delayed duplicates remain ordinary buffers. Incoming application payloads pass through opaquely, preserving their private-pipe bodies and existing ordering relative to immediate junk. Closed publication discards input; if sending junk closes the line or retires this node's state, the still-owned application buffer is recycled.
-
-Ordinary fallback buffers remain accepted. Splice requires a supported Linux build, `misc.splice` enabled, no packet nodes, and support from every node in the finalized expanded/merged chain. The capability flag does not bypass these checks. No performance improvement is promised without measurement.
-
-Packet configurations of this dual-layer node still do not enable splice.

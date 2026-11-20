@@ -7,9 +7,13 @@ both directions after a server-first greeting, exercise both EOF directions, and
 leave a final session alive during orderly runtime shutdown. The TCP relay counts
 lane identities and verifies every carrier transports application data in both
 directions. It forwards later DATA before held earlier DATA, forwards CLOSE
-before held DATA in both directions, drops a carrier from another session, and
-checks expiry of an incomplete introduction and an incomplete carrier group.
-Four workers and splice-enabled transport paths exercise actual worker handoff.
+before held DATA in both directions, and drops a carrier from another session.
+Valid sessions use the production setup deadline. A separate runtime with a
+short deadline checks expiry of an incomplete introduction and an incomplete
+carrier group, for both splice settings.
+Four workers exercise actual worker handoff. The TCP variants use strace to
+verify post-setup splice behavior at all four endpoints. The TLS and KCP cases
+exercise the blocked-chain topology with splice enabled globally.
 All sockets use the namespace harness's private loopback network. This verifies
 correctness; it makes no assertion about throughput improvement.
 CTest: waterwall.connection_stripe_{tcp,tls,kcp}.
@@ -19,7 +23,9 @@ Three client-first application streams exchange distinct full-duplex bodies;
 closing children in both directions leaves a sibling usable. A later child
 reuses the same group, verified by the relay's cumulative TCP accept count
 (TLS is forwarded opaquely). Each child opens its own service connection.
-CTest: waterwall.connection_stripe_mux_{tcp,tls}.
+CTest: waterwall.connection_stripe_mux_{tcp,tls} and
+waterwall.connection_stripe_{tcp,mux_tcp}_splice_false. The existing TCP cases
+exercise splice enabled; the explicit false variants exercise ordinary I/O.
 """
 
 import argparse
@@ -27,6 +33,7 @@ import concurrent.futures
 import contextlib
 import json
 import os
+import re
 from pathlib import Path
 import select
 import shutil
@@ -44,6 +51,7 @@ from wwtest.config import core_config
 from wwtest.process import Process, close_on_error, install_termination_handler
 from wwtest.run_directory import RunDirectory
 from wwtest.sockets import configure_listener, connect_when_ready, exact
+from wwtest.trace import successful_calls
 
 
 HOST = "127.0.0.1"
@@ -236,7 +244,7 @@ def topology(carrier, *, relay=False, mux=False):
         ]
     nodes += [
         {"name": "stripe-server", "type": "ConnectionStripeServer", "next": "mux-server" if mux else "backend",
-         "settings": {"max-connections": LANES, **({"setup-timeout-ms": 100} if relay and not mux else {})}},
+         "settings": {"max-connections": LANES}},
         {"name": "backend", "type": "TcpConnector",
          "settings": {"address": HOST, "port": BACKEND_PORT, "nodelay": True, "fastopen": False}},
     ]
@@ -364,7 +372,9 @@ def setup_expiry(process, backend):
     incomplete_group = (struct.pack("!B3sIQQ", 1, b"\0\0\0", 24, 0, 0) +
                         b"unpaired-session" + struct.pack("!HHI", 0, LANES, 1 << 20))
     for introduction in (b"\x01\x00", incomplete_group):
-        with socket.create_connection((HOST, WIRE_PORT), timeout=3) as connection:
+        with connect_when_ready(process, (HOST, WIRE_PORT), deadline=time.monotonic() + 10,
+                                failure=lambda: AssertionError("stripe runtime exited before expiry connection"),
+                                timeout=3) as connection:
             connection.settimeout(3)
             connection.sendall(introduction)
             assert connection.recv(1) == b"", "incomplete stripe setup did not expire"
@@ -372,19 +382,63 @@ def setup_expiry(process, backend):
         assert_no_extra_backend(backend)
 
 
-def write_configuration(root, carrier, *, relay=False, mux=False):
+def write_configuration(root, carrier, *, relay=False, mux=False, splice=True, setup_timeout_ms=None):
     for name in ("server.crt", "server.key"):
         shutil.copyfile(CERTIFICATES / name, root / name)
-    (root / "config.json").write_text(json.dumps({"name": "connection-stripe", "nodes": topology(carrier, relay=relay, mux=mux)}))
-    (root / "core.json").write_text(json.dumps(core_config(workers=1 if mux else 4, ram_profile="minimal", splice=True)))
+    nodes = topology(carrier, relay=relay, mux=mux)
+    if setup_timeout_ms is not None:
+        server_settings = next(node["settings"] for node in nodes if node["name"] == "stripe-server")
+        server_settings["setup-timeout-ms"] = setup_timeout_ms
+    (root / "config.json").write_text(json.dumps({"name": "connection-stripe", "nodes": nodes}))
+    (root / "core.json").write_text(json.dumps(core_config(workers=1 if mux else 4, ram_profile="minimal", splice=splice)))
 
 
-def run_mux(binary, carrier):
-    with RunDirectory(f"waterwall-connection-stripe-mux-{carrier}-") as root:
-        write_configuration(root, carrier, relay=True, mux=True)
+def runtime_command(binary, root, trace):
+    if not trace:
+        return [binary]
+    tracer = shutil.which("strace")
+    if tracer is None:
+        raise RuntimeError("inconclusive: strace is required for Stripe splice evidence")
+    return [tracer, "-D", "-f", "-yy", "-e", "trace=splice", "-o", str(root / "splice.log"), binary]
+
+
+def trace_boundary(root, trace):
+    return len((root / "splice.log").read_text()) if trace else 0
+
+
+def check_trace(root, boundary, *, enabled):
+    calls = list(successful_calls((root / "splice.log").read_text()[boundary:]))
+    if not enabled:
+        assert not calls, "splice I/O occurred with misc.splice disabled"
+        return
+    outputs = [call for call in calls if re.match(r"splice\(\d+<pipe:\[\d+\]>, NULL, \d+<TCP:", call)]
+    for label, endpoint in (("client upload", f"->{HOST}:{RELAY_PORT}"),
+                            ("server upload", f"->{HOST}:{BACKEND_PORT}"),
+                            ("server download", f"{HOST}:{WIRE_PORT}->"),
+                            ("client download", f"{HOST}:{APP_PORT}->")):
+        assert any(endpoint in call for call in outputs), \
+            f"{label}: no successful post-setup pipe-to-socket DATA output (pipe prerequisites may be unavailable)"
+
+
+def run_setup_expiry(binary, *, enabled, trace):
+    # Keep the short negative-case deadline out of valid, traced relay sessions.
+    with RunDirectory("waterwall-connection-stripe-setup-expiry-") as root:
+        write_configuration(root, "tcp", splice=enabled, setup_timeout_ms=100)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
-            with Process([binary], cwd=root, log_path=root / "stdout.log") as process, \
+            with Process(runtime_command(binary, root, trace), cwd=root, log_path=root / "stdout.log") as process:
+                setup_expiry(process, backend)
+                process.send_signal(signal.SIGTERM)
+                assert process.wait(timeout=10) == 128 + signal.SIGTERM, "stripe expiry runtime shutdown failed"
+    print("ConnectionStripe TCP: incomplete introduction and incomplete group expiry passed")
+
+
+def run_mux(binary, carrier, *, enabled=True, trace=False):
+    with RunDirectory(f"waterwall-connection-stripe-mux-{carrier}-") as root:
+        write_configuration(root, carrier, relay=True, mux=True, splice=enabled)
+        with socket.socket() as backend:
+            configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
+            with Process(runtime_command(binary, root, trace), cwd=root, log_path=root / "stdout.log") as process, \
                     CarrierRelay(framed=carrier == "tcp") as relay, \
                     contextlib.ExitStack() as sockets, \
                     concurrent.futures.ThreadPoolExecutor(max_workers=SESSIONS * 2) as executor:
@@ -392,6 +446,7 @@ def run_mux(binary, carrier):
                 assert len(relay.connections) == LANES, "MUX children did not share eight carriers"
                 session = relay.session(1) if carrier == "tcp" else None
                 assert_no_extra_backend(backend)
+                boundary = trace_boundary(root, trace)
                 jobs = []
                 for identifier, (client, peer) in enumerate(children):
                     jobs += [executor.submit(exchange, client, identifier, server=False, close=False),
@@ -427,15 +482,17 @@ def run_mux(binary, carrier):
                 assert_no_extra_backend(backend)
                 shutdown_active(process, survivor, service)
                 assert later[0].recv(1) == b"" and later[1].recv(1) == b"", "a Mux child survived shutdown"
+        if trace:
+            check_trace(root, boundary, enabled=enabled)
     print(f"ConnectionStripe Mux {carrier}: shared eight-carrier group, full-duplex children, independent close, reuse and shutdown passed")
 
 
-def run(binary, carrier):
+def run(binary, carrier, *, enabled=True, trace=False):
     with RunDirectory(f"waterwall-connection-stripe-{carrier}-") as root:
-        write_configuration(root, carrier, relay=carrier == "tcp")
+        write_configuration(root, carrier, relay=carrier == "tcp", splice=enabled)
         with socket.socket() as backend:
             configure_listener(backend, (HOST, BACKEND_PORT), timeout=15)
-            with Process([binary], cwd=root, log_path=root / "stdout.log") as process, \
+            with Process(runtime_command(binary, root, trace), cwd=root, log_path=root / "stdout.log") as process, \
                     (CarrierRelay() if carrier == "tcp" else contextlib.nullcontext()) as relay:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=SESSIONS * 2) as executor, \
                         contextlib.ExitStack() as sockets:
@@ -450,6 +507,7 @@ def run(binary, carrier):
                             relay.arm(session, 0, "reorder", 0)
                             relay.arm(session, 1, "reorder", len(GREETING) + 4)
                     assert_no_extra_backend(backend)
+                    boundary = trace_boundary(root, trace)
                     jobs = []
                     for identifier, (client, peer) in enumerate(sessions):
                         jobs += [executor.submit(exchange, client, identifier, server=False),
@@ -463,7 +521,6 @@ def run(binary, carrier):
                     relay.assert_exercised()
                     assert all(min(member["bytes"]) > 16384 for member in relay.connections), \
                         "a carrier did not carry application data in both directions"
-                    setup_expiry(process, backend)
                     relay_close(process, backend, relay, SESSIONS + 1, 0)
                     relay_close(process, backend, relay, SESSIONS + 2, 1)
                     relay_failure(process, backend, relay, SESSIONS + 3)
@@ -474,6 +531,10 @@ def run(binary, carrier):
                         relay.session(final_number)
                     assert_no_extra_backend(backend)
                     shutdown_active(process, client, peer)
+        if trace:
+            check_trace(root, boundary, enabled=enabled)
+    if carrier == "tcp":
+        run_setup_expiry(binary, enabled=enabled, trace=trace)
     detail = ", reordered DATA/CLOSE and member loss" if carrier == "tcp" else ""
     print(f"ConnectionStripe {carrier}: eight carriers, concurrent full-duplex streams, server-first, EOF{detail} and shutdown passed")
 
@@ -483,8 +544,13 @@ if __name__ == "__main__":
     parser.add_argument("binary")
     parser.add_argument("carrier", choices=("tcp", "tls", "kcp"))
     parser.add_argument("--mux", action="store_true", help="verify Mux children sharing one striped TCP/TLS group")
+    parser.add_argument("--splice", choices=("true", "false"), default="true")
+    parser.add_argument("--trace-splice", action="store_true", help="check TCP splice syscalls after setup")
     args = parser.parse_args()
     if args.mux and args.carrier == "kcp":
         parser.error("--mux covers TCP and TLS carriers")
+    if args.trace_splice and args.carrier != "tcp":
+        parser.error("--trace-splice requires the TCP carrier")
     install_termination_handler()
-    (run_mux if args.mux else run)(str(Path(args.binary).resolve()), args.carrier)
+    (run_mux if args.mux else run)(str(Path(args.binary).resolve()), args.carrier,
+                                 enabled=args.splice == "true", trace=args.trace_splice)

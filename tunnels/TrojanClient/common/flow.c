@@ -15,7 +15,7 @@ void trojanclientSendDueRequest(tunnel_t *t, line_t *l)
 {
     trojanclient_lstate_t *ls = lineGetState(l, t);
     if (ls->phase == kTrojanClientPhaseClosed || ls->request_sent || ! firstPayloadWindowIsDue(&ls->first_payload) ||
-        ls->carrier_paused || ls->est_notifying || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
+        ls->carrier_paused || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return;
     /* Encoding consumes no caller input and performs its sole callback last. */
     if (UNLIKELY(! trojanclientSendInitialRequest(t, l, ls, NULL)))
@@ -34,35 +34,21 @@ static void firstPayloadWindowNotified(void *owner, first_payload_window_event_t
     }
 }
 
-void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
+void trojanclientStartNext(tunnel_t *t, line_t *l, line_t *application)
 {
-    assert(ls->phase != kTrojanClientPhaseClosed);
-    assert(ls->kind != kTrojanClientLineKindUdpApplication);
-    if (ls->phase == kTrojanClientPhaseEstablished)
-    {
-        if (ls->kind == kTrojanClientLineKindDirect)
-            tunnelPrevDownStreamEst(t, l);
-        return;
-    }
-    line_t *application = ls->kind == kTrojanClientLineKindUdpCarrier ? ls->application_line : l;
     lineRef(l);
     if (application != l)
         lineRef(application);
-    ls->phase            = kTrojanClientPhaseEstablished;
-    ls->est_notifying    = true;
-    if (! ls->request_sent)
-    {
-        trojanclient_tstate_t *ts = tunnelGetState(t);
-        firstPayloadWindowStart(&ls->first_payload, getWorkerLoop(lineGetWID(l)), ts->first_payload_timeout_ms);
-    }
-    tunnelPrevDownStreamEst(t, application);
+    tunnelNextUpStreamInit(t, l);
     if (trojanclientAssociationAlive(t, l, application))
     {
-        ls->est_notifying = false;
-        if (! ls->request_sent)
+        trojanclient_lstate_t *ls   = lineGetState(l, t);
+        wloop_t               *loop = getWorkerLoop(lineGetWID(l));
+        if (! ls->request_sent && wloopNormalDispatchAllowed(loop))
         {
-            switch (
-                firstPayloadWindowArm(&ls->first_payload, getWorkerLoop(lineGetWID(l)), firstPayloadWindowNotified, ls))
+            trojanclient_tstate_t *ts = tunnelGetState(t);
+            firstPayloadWindowStart(&ls->first_payload, loop, ts->first_payload_timeout_ms);
+            switch (firstPayloadWindowArm(&ls->first_payload, loop, firstPayloadWindowNotified, ls))
             {
             case kFirstPayloadWindowArmDue:
                 trojanclientSendDueRequest(t, l);
@@ -78,6 +64,22 @@ void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t
     if (application != l)
         lineUnref(application);
     lineUnref(l);
+}
+
+void trojanclientOnNextEstablished(tunnel_t *t, line_t *l, trojanclient_lstate_t *ls)
+{
+    assert(ls->phase != kTrojanClientPhaseClosed);
+    assert(ls->kind != kTrojanClientLineKindUdpApplication);
+    if (ls->kind == kTrojanClientLineKindDirect)
+    {
+        ls->phase = kTrojanClientPhaseEstablished;
+        tunnelPrevDownStreamEst(t, l);
+    }
+    else if (ls->phase != kTrojanClientPhaseEstablished)
+    {
+        ls->phase = kTrojanClientPhaseEstablished;
+        tunnelPrevDownStreamEst(t, ls->application_line);
+    }
 }
 
 void trojanclientSetNextPaused(tunnel_t *t, line_t *l, bool paused)

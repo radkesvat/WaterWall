@@ -31,24 +31,4 @@ void speedtestclientTunnelDownStreamEst(tunnel_t *t, line_t *l)
          (state->upload && state->download) ? "+" : "",
          state->download ? "download" : "",
          target_buf);
-
-    /* A synchronous scheduling refusal closes this owned line. Keep the
-     * allocation present across the first admission and stop before the
-     * second scheduler reads destroyed lstate. */
-    lineRef(l);
-    if (state->upload)
-    {
-        speedtestclientScheduleSend(t, l, ls);
-    }
-    else if (! ls->hello_sent)
-    {
-        speedtestclientScheduleSend(t, l, ls);
-    }
-    if (! lineIsAlive(l))
-    {
-        lineUnref(l);
-        return;
-    }
-    speedtestclientScheduleReport(t, l, ls);
-    lineUnref(l);
 }

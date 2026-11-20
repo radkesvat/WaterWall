@@ -57,6 +57,7 @@ static void enetserverFinishCarrier(tunnel_t *t, line_t *line)
 
 /* The carrier is borrowed from the previous node; this node creates the service line toward the next one. */
 const enet_output_t enetserverOutput = {
+    .create_application  = enetserverCreateApplication,
     .init_owned          = enetserverInitService,
     .application_est     = enetserverEstablishApplication,
     .application_payload = enetserverSendApplication,

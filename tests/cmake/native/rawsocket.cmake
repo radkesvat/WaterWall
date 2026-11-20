@@ -145,7 +145,9 @@ if(TARGET HalfDuplexClient)
   waterwall_add_native_executable(halfduplexclient_reentrant_close_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/halfduplex/halfduplexclient_reentrant_close_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})
   waterwall_line_failure_test_use_tunnel(halfduplexclient_reentrant_close_test HalfDuplexClient)
-  target_link_options(halfduplexclient_reentrant_close_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  target_link_options(halfduplexclient_reentrant_close_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAddDeadline")
   target_link_libraries(halfduplexclient_reentrant_close_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexclient_reentrant_close_test)
 
@@ -172,12 +174,15 @@ if(TARGET HalfDuplexServer)
   target_compile_definitions(halfduplexserver_reentrant_init_test PRIVATE
     WW_HALFDUPLEXSERVER_RENDEZVOUS_TEST_SEAM=1
   )
-  target_link_options(halfduplexserver_reentrant_init_test PRIVATE
-    ${WATERWALL_LINE_FAILURE_WRAPS}
+  set(WATERWALL_HALFDUPLEXSERVER_REENTRANT_WRAPS
     "-Wl,--wrap=lineScheduleTask"
     "-Wl,--wrap=sbufAppendMerge"
     "-Wl,--wrap=bufferqueueTryPushBack"
+    "-Wl,--wrap=getHRTimeUs"
+    "-Wl,--wrap=wtimerAddDeadline"
   )
+  target_link_options(halfduplexserver_reentrant_init_test PRIVATE
+    ${WATERWALL_LINE_FAILURE_WRAPS} ${WATERWALL_HALFDUPLEXSERVER_REENTRANT_WRAPS})
   target_link_libraries(halfduplexserver_reentrant_init_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests halfduplexserver_reentrant_init_test)
 
@@ -266,6 +271,7 @@ if(TARGET ConnectionFisherClient)
   waterwall_line_failure_test_use_tunnel(connectionfisherclient_reentrant_selection_test ConnectionFisherClient)
   target_link_options(connectionfisherclient_reentrant_selection_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
+    "-Wl,--wrap=wtimerAddDeadline"
   )
   target_link_libraries(connectionfisherclient_reentrant_selection_test PRIVATE ww)
   add_dependencies(waterwall_unit_tests connectionfisherclient_reentrant_selection_test)
@@ -283,7 +289,7 @@ if(TARGET TlsServer)
   waterwall_line_failure_test_use_tunnel(tlsserver_line_failure_test TlsServer)
   target_link_options(tlsserver_line_failure_test PRIVATE
     ${WATERWALL_LINE_FAILURE_WRAPS}
-    "-Wl,--wrap=wtimerAdd"
+    "-Wl,--wrap=wtimerAddDeadline"
     "-Wl,--wrap=BIO_new"
     "-Wl,--wrap=BIO_free"
     "-Wl,--wrap=SSL_new"
@@ -463,6 +469,14 @@ if(LINUX)
         ${tcp_pause_target}
         "unit;tunnels;tcp;pause;splice;lifetime"
       )
+      if(WATERWALL_ENABLE_INTEGRATION_TEST_NETNS AND NOT CMAKE_CROSSCOMPILING)
+        set(tcp_close_case waterwall.tcp${tcp_side_lower}_paused_eof)
+        set(tcp_close_fixture tcp${tcp_side_lower}_close_executable)
+        add_waterwall_isolated_test(${tcp_close_case} "$<TARGET_FILE:${tcp_pause_target}>" --loopback)
+        set_tests_properties(${tcp_close_case} PROPERTIES TIMEOUT 45 FIXTURES_REQUIRED ${tcp_close_fixture})
+        set_tests_properties(waterwall.tcp${tcp_side_lower}_pause_close_unit PROPERTIES FIXTURES_SETUP ${tcp_close_fixture})
+        add_waterwall_test_labels(${tcp_close_case} "unit" "integration" "tunnels" "tcp" "pause")
+      endif()
     endif()
   endforeach()
 endif()
@@ -517,6 +531,10 @@ if(TARGET KcpClient AND TARGET KcpServer)
       "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_client.c"
       "${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/kcp/settings_geometry_server.c")
     target_link_libraries(${kcp_test} PRIVATE KcpClient KcpServer KcpCommon ww)
+    if(TARGET UdpConnector)
+      target_link_libraries(${kcp_test} PRIVATE UdpConnector)
+      target_compile_definitions(${kcp_test} PRIVATE WATERWALL_KCP_TEST_UDP_CONNECTOR)
+    endif()
     target_link_options(${kcp_test} PRIVATE
       "-Wl,--wrap=getHRTimeUs" "-Wl,--wrap=wtimerAdd"
       "-Wl,--wrap=touSessionCreate" "-Wl,--wrap=ikcp_create" "-Wl,--wrap=ikcp_release"

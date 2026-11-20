@@ -55,7 +55,7 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
         if (ls->next_finished)
         {
-            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            if (ls->h2_end_stream_emitted)
             {
                 httpserverTunnelDownStreamFinish(t, l);
             }
@@ -161,7 +161,7 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         if (ls->next_finished)
         {
-            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            if (ls->h2_end_stream_emitted)
             {
                 httpserverTunnelDownStreamFinish(t, l);
             }
@@ -224,7 +224,7 @@ static void processPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
         if (ls->next_finished)
         {
-            if (ls->session == NULL || ! nghttp2_session_want_write(ls->session))
+            if (ls->h2_end_stream_emitted)
             {
                 httpserverTunnelDownStreamFinish(t, l);
             }

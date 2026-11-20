@@ -16,14 +16,18 @@
  * CTest: waterwall.connectionstripe_session_unit
  */
 #include "ConnectionStripeClient/interface.h"
+#include "ConnectionStripeCommon/stripe.h"
 #include "ConnectionStripeServer/interface.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "fixtures/protocols/splice_source.h"
 
 enum
 {
-    kMaxLanes        = 32,
-    kCaptureCapacity = 4 * 1024 * 1024,
-    kTestWindow      = 1024 * 1024,
+    kMaxLanes          = 32,
+    kCaptureCapacity   = 4 * 1024 * 1024,
+    kTestWindow        = 1024 * 1024,
+    kTestListenerPort  = 8443,
+    kTestFirstPeerPort = 45000,
 };
 
 typedef struct wire_piece_s
@@ -65,15 +69,42 @@ typedef struct fixture_s
     bool             reject_application_payload, server_first, finish_server_first;
     bool             application_resume_payload, backend_resume_payload, finish_resume_payload;
     bool             retire_application_during_transport_finish, retire_backend_during_transport_finish;
+    bool             reject_upload_output, reject_download_output;
     bool             injected_finish;
+    unsigned         wire_splice[2], wire_ordinary[2], application_splice[2];
 } fixture_t;
 
 static fixture_t f;
+#if WW_HAVE_SPLICE
+static bool     splice_inputs;
+static unsigned input_serial;
+static bool     short_deadline;
+static bool     alternate_ordinary;
+#endif
 
 static void sendPattern(bool upload, size_t length, uint8_t seed);
 
 static sbuf_t *payload(const void *bytes, size_t length)
 {
+#if WW_HAVE_SPLICE
+    if (splice_inputs && (++input_serial % 3 != 0 || ! alternate_ordinary))
+    {
+        /* Alternate a resident prefix plus private body with an all-pipe source.
+         * These sources never borrow a destination inventory entry. */
+        const size_t prefix = input_serial % 2 ? min(length, (size_t) 13) : 0;
+        sbuf_t      *buf    = twfTrackAcquired(testSpliceSourceBuffer(64, (uint32_t) (length - prefix)));
+        if (length != prefix)
+            twfRequire(write(sbufSpliceMetadata(buf).pipefd[1], (const uint8_t *) bytes + prefix, length - prefix) ==
+                           (ssize_t) (length - prefix),
+                       "could not populate Stripe source pipe");
+        buf->capacity = buf->initial_headroom + length - prefix;
+        sbufSetLength(buf, length - prefix);
+        sbufShiftLeft(buf, prefix);
+        if (prefix)
+            memoryCopy(sbufGetMutablePtr(buf), bytes, prefix);
+        return buf;
+    }
+#endif
     sbuf_t *buf = bufferpoolGetBestFit(f.env.pool, length, 64);
     sbufSetLength(buf, length);
     if (length != 0)
@@ -90,7 +121,7 @@ static lane_t *findLane(line_t *line, bool client)
     return NULL;
 }
 
-static void enqueue(wire_queue_t *queue, sbuf_t *buf, bool finish)
+static void enqueue(wire_queue_t *queue, sbuf_t *buf, bool finish, bool upload)
 {
     const size_t  length = buf == NULL ? 0 : sbufGetLength(buf);
     wire_piece_t *piece  = memoryAllocateZero(sizeof(*piece) + length);
@@ -98,8 +129,19 @@ static void enqueue(wire_queue_t *queue, sbuf_t *buf, bool finish)
     piece->finish        = finish;
     if (length != 0)
     {
-        twfRequire(! sbufIsSplice(buf), "striping produced nonresident wire bytes");
-        memoryCopyLarge(piece->bytes, sbufGetRawPtr(buf), length);
+        const sbuf_read_view_t view = sbufGetResidentView(buf);
+        twfRequire(view.length >= 24, "Stripe did not dispatch a complete resident header with its body");
+        if (view.data[0] == 3)
+        {
+            twfRequire(length == 24 + GET_BE32(view.data + 4), "DATA header and body were dispatched separately");
+            if (sbufIsSplice(buf))
+                ++f.wire_splice[upload];
+            else
+                ++f.wire_ordinary[upload];
+        }
+        else
+            twfRequire(! sbufIsSplice(buf), "Stripe control unexpectedly leased a pipe");
+        sbufReadRangeToMemory(buf, piece->bytes, length);
     }
     if (queue->tail != NULL)
         queue->tail->next = piece;
@@ -115,7 +157,10 @@ static void clientTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     twfRequire(t == f.client_transport, "upload used the wrong transport target");
     lane_t *lane = findLane(line, true);
     lane->upload_bytes += sbufGetLength(buf);
-    enqueue(&lane->upload, buf, false);
+    const bool reject = f.reject_upload_output && sbufGetResidentView(buf).data[0] == 3;
+    enqueue(&lane->upload, buf, false, true);
+    if (reject)
+        tunnelPrevDownStreamFinish(t, line);
 }
 
 static void serverTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
@@ -123,7 +168,13 @@ static void serverTransportPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     twfRequire(t == f.server_transport, "download used the wrong transport target");
     lane_t *lane = findLane(line, false);
     lane->download_bytes += sbufGetLength(buf);
-    enqueue(&lane->download, buf, false);
+    const bool reject = f.reject_download_output && sbufGetResidentView(buf).data[0] == 3;
+    enqueue(&lane->download, buf, false, false);
+    if (reject)
+    {
+        tunnelNextUpStreamFinish(t, line);
+        lineDestroy(line);
+    }
 }
 
 static void clientTransportFinish(tunnel_t *t, line_t *line)
@@ -131,7 +182,7 @@ static void clientTransportFinish(tunnel_t *t, line_t *line)
     twfRequire(t == f.client_transport, "client transport Finish reached wrong target");
     lane_t *lane = findLane(line, true);
     twfRequire(++lane->client_finishes == 1, "client transport received duplicate Finish");
-    enqueue(&lane->upload, NULL, true);
+    enqueue(&lane->upload, NULL, true, true);
     if (f.retire_application_during_transport_finish && ! f.injected_finish && lineIsAlive(f.client_main))
     {
         f.injected_finish = true;
@@ -145,7 +196,7 @@ static void serverTransportFinish(tunnel_t *t, line_t *line)
     twfRequire(t == f.server_transport, "server transport Finish reached wrong owner");
     lane_t *lane = findLane(line, false);
     twfRequire(++lane->server_finishes == 1, "server transport received duplicate Finish");
-    enqueue(&lane->download, NULL, true);
+    enqueue(&lane->download, NULL, true, false);
     lineDestroy(line);
     if (f.retire_backend_during_transport_finish && ! f.injected_finish && f.server_main != NULL &&
         lineIsAlive(f.server_main))
@@ -189,6 +240,9 @@ static void applicationEst(tunnel_t *t, line_t *line)
 static void backendInit(tunnel_t *t, line_t *line)
 {
     twfRequire(t == f.backend && f.server_main == NULL, "session opened multiple backend connections");
+    const routing_context_t *route = lineGetRoutingContext(line);
+    twfRequire(route->local_listener_port == kTestListenerPort && route->peer_source_port == kTestFirstPeerPort,
+               "server application Init lost member zero's observed ports");
     f.server_main = line;
     lineRef(line);
     ++f.backend_inits;
@@ -213,12 +267,25 @@ static void backendInit(tunnel_t *t, line_t *line)
     }
 }
 
+static void checkApplicationStorage(sbuf_t *buf, bool upload)
+{
+    size_t capacity, charge;
+    twfRequire(sbufTryComputeCapacity(sbufGetLength(buf), 64, &capacity) &&
+                   sbufTryComputeQueueCharge(capacity, &charge),
+               "invalid canonical fixture geometry");
+    twfRequire(sbufGetHeadroom(buf) >= 64 && sbufGetQueueCharge(buf) <= charge,
+               "reorder storage exceeded the canonical allowance or lost onward padding");
+    if (sbufIsSplice(buf))
+        ++f.application_splice[upload];
+}
+
 static void backendPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
 {
     twfRequire(t == f.backend && line == f.server_main, "upload reached wrong application line");
     const size_t length = sbufGetLength(buf);
     twfRequire(f.upload_length + length <= sizeof(f.upload), "upload capture overflow");
-    memoryCopyLarge(f.upload + f.upload_length, sbufGetRawPtr(buf), length);
+    checkApplicationStorage(buf, true);
+    sbufReadRangeToMemory(buf, f.upload + f.upload_length, length);
     f.upload_length += length;
     lineReuseBuffer(line, buf);
     if (f.reject_backend_payload)
@@ -230,7 +297,8 @@ static void applicationPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
     twfRequire(t == f.application && line == f.client_main, "download reached wrong application line");
     const size_t length = sbufGetLength(buf);
     twfRequire(f.download_length + length <= sizeof(f.download), "download capture overflow");
-    memoryCopyLarge(f.download + f.download_length, sbufGetRawPtr(buf), length);
+    checkApplicationStorage(buf, false);
+    sbufReadRangeToMemory(buf, f.download + f.download_length, length);
     f.download_length += length;
     lineReuseBuffer(line, buf);
     if (f.reject_application_payload)
@@ -287,10 +355,17 @@ static void backendResume(tunnel_t *t, line_t *line)
 static void clientTransportInit(tunnel_t *t, line_t *line)
 {
     twfRequire(t == f.client_transport && f.lane_count < f.expected_lanes, "incorrect transport fanout");
+    twfRequire(addresscontextClassifyTransport(lineGetSourceAddressContext(line)) == kAddressContextTransportTcp &&
+                   addresscontextClassifyTransport(lineGetDestinationAddressContext(line)) ==
+                       kAddressContextTransportTcp,
+               "client transport Init needs an explicit stream protocol");
     lane_t *lane = &f.lanes[f.lane_count++];
     lane->client = line;
     lineRef(line);
-    lane->server = lineCreate(tunnelchainGetLinePools(f.server_chain), 0);
+    lane->server             = lineCreate(tunnelchainGetLinePools(f.server_chain), 0);
+    routing_context_t *route = lineGetRoutingContext(lane->server);
+    route->src_ctx.port = route->local_listener_port = kTestListenerPort;
+    route->peer_source_port                          = (uint16_t) (kTestFirstPeerPort + f.lane_count - 1);
     lineRef(lane->server);
     tunnelNextUpStreamInit(f.server_transport, lane->server);
     if (lineIsAlive(line))
@@ -309,24 +384,32 @@ static tunnel_chain_t *makeChain(tunnel_t *entry)
     return chain;
 }
 
-static void setup(unsigned count)
+static void setupWithSplicePolicy(unsigned count, bool disable_splice)
 {
     memoryZero(&f, sizeof(f));
     twfWorkerEnvSetup(&f.env, 64 * 1024, 64);
-    f.expected_lanes   = count;
-    f.client_node      = nodeConnectionStripeClientGet();
-    f.server_node      = nodeConnectionStripeServerGet();
-    f.client_node.name = (char *) "stripe-client";
-    f.server_node.name = (char *) "stripe-server";
+    GSTATE.splice_disabled = disable_splice;
+    f.expected_lanes       = count;
+    f.client_node          = nodeConnectionStripeClientGet();
+    f.server_node          = nodeConnectionStripeServerGet();
+    f.client_node.name     = (char *) "stripe-client";
+    f.server_node.name     = (char *) "stripe-server";
     f.client_node.next = f.server_node.next = (char *) "fixture-neighbor";
     f.client_node.node_settings_json        = cJSON_CreateObject();
     cJSON_AddNumberToObject(f.client_node.node_settings_json, "connections", count);
+#if WW_HAVE_SPLICE
+    if (short_deadline)
+        cJSON_AddNumberToObject(f.client_node.node_settings_json, "drain-timeout-ms", 1);
+#endif
     f.client         = connectionstripeclientTunnelCreate(&f.client_node);
     f.server_wrapper = connectionstripeserverTunnelCreate(&f.server_node);
     twfRequire(f.client != NULL && f.server_wrapper != NULL, "valid stripe constructor failed");
-    f.client_chain = makeChain(f.client);
-    f.server_chain = makeChain(f.server_wrapper);
-    f.server       = f.server_wrapper->next;
+    f.client_chain           = makeChain(f.client);
+    f.server_chain           = makeChain(f.server_wrapper);
+    f.server                 = f.server_wrapper->next;
+    const bool expect_splice = WW_HAVE_SPLICE && ! disable_splice;
+    twfRequire(f.client_chain->supports_splice == expect_splice && f.server_chain->supports_splice == expect_splice,
+               "Stripe or its PipeTunnel wrapper lost finalized splice capability");
     twfRequire(f.server != NULL, "server did not insert its PipeTunnel child");
 
     f.application      = tunnelCreate(NULL, 0, 0);
@@ -369,6 +452,11 @@ static void setup(unsigned count)
     }
     f.client_main = lineCreate(tunnelchainGetLinePools(f.client_chain), 0);
     lineRef(f.client_main);
+}
+
+static void setup(unsigned count)
+{
+    setupWithSplicePolicy(count, false);
 }
 
 static bool deliver(unsigned lane_index, bool upload, size_t fragment)
@@ -903,6 +991,29 @@ static void caseInvalidData(unsigned mode)
     teardown();
 }
 
+static void caseDuplicateOrOverlap(bool upload, bool duplicate)
+{
+    twfSetCase("Stripe recycles rejected duplicate and overlapping DATA before session abort");
+    setup(1);
+    start(SIZE_MAX);
+    if (upload)
+        tunnelPrevDownStreamPause(f.backend, f.server_main);
+    else
+        tunnelNextUpStreamPause(f.application, f.client_main);
+    sendPattern(upload, 32749, 23);
+    wire_queue_t *queue  = upload ? &f.lanes[0].upload : &f.lanes[0].download;
+    wire_piece_t *second = queue->head ? queue->head->next : NULL;
+    twfRequire(second != NULL && second->bytes[0] == 3, "fixture did not capture a second DATA record");
+    PUT_BE64(second->bytes + 8, duplicate ? 0 : 1);
+    if (duplicate)
+        PUT_BE64(second->bytes + 16, 0);
+    pump(SIZE_MAX);
+    twfRequire(f.upload_length == 0 && f.download_length == 0 && ! lineIsAlive(f.client_main) &&
+                   ! lineIsAlive(f.server_main),
+               "duplicate or overlapping DATA escaped rejection");
+    teardown();
+}
+
 static void caseInvalidWindow(unsigned mode)
 {
     twfSetCase("ConnectionStripe rejects WINDOW byte/frame boundaries which do not match sent records");
@@ -948,10 +1059,12 @@ static void caseReentrant(unsigned mode)
     f.reject_application_est     = mode == 1;
     f.reject_backend_payload     = mode == 2;
     f.reject_application_payload = mode == 3;
+    f.reject_upload_output       = mode == 4;
+    f.reject_download_output     = mode == 5;
     start(SIZE_MAX);
-    if (mode == 2)
+    if (mode == 2 || mode == 4)
         sendPattern(true, 32749, 71);
-    else if (mode == 3)
+    else if (mode == 3 || mode == 5)
         sendPattern(false, 32749, 71);
     pump(SIZE_MAX);
     twfRequire(! lineIsAlive(f.client_main), "synchronous rejection left the client application alive");
@@ -1008,6 +1121,8 @@ static void caseSettings(void)
         {"{\"max-pending-connections\":65536}", false, true, true},
         {"{\"max-pending-connections\":65537}", false, false, true},
         {"{\"connection\":8}", false, false, true},
+        {"{\"connections\\u0000suffix\":8}", false, false, false},
+        {"{\"max-sessions\\u0000suffix\":1}", false, false, true},
         {"[]", false, false, false},
         {"null", false, false, false},
     };
@@ -1033,15 +1148,141 @@ static void caseSettings(void)
     twfWorkerEnvTeardown(&env);
 }
 
-int main(void)
+static unsigned timers_until_quiesce;
+
+wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat)
 {
-    twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
-    twfRequire(frandGlobalInit(), "fast random global initialization failed");
-    frandInit();
-    caseSettings();
+    if (timers_until_quiesce != 0 && --timers_until_quiesce == 0)
+        discard wloopRequestQuiesce(loop);
+    return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
+}
+
+static void caseStripeTimerAdmission(bool client)
+{
+    twfSetCase(client ? "quiescence during the first Stripe client timer registration"
+                      : "quiescence during the first Stripe server timer registration");
+    setup(1);
+    /* Client Init registers its timer first, then initializes the server carrier. */
+    timers_until_quiesce = client ? 1 : 2;
+    tunnelNextUpStreamInit(f.application, f.client_main);
+    twfRequire(timers_until_quiesce == 0 && ! wloopNormalDispatchAllowed(f.env.loop),
+               "fixture did not close admission during the selected timer registration");
+    pump(SIZE_MAX);
+    twfRequire(f.lane_count == (client ? 0U : 1U) && f.backend_inits == 0 && f.app_finishes == 1 &&
+                   ! lineIsAlive(f.client_main),
+               "first timer admission refusal left a group alive or opened the backend");
+    teardown();
+}
+
+static void caseStripePreReadyFinish(void)
+{
+    twfSetCase("Stripe drains accepted bytes after the client application finishes before READY");
+    setup(2);
+    tunnelNextUpStreamInit(f.application, f.client_main);
+    twfRequire(f.app_established == 1 && f.backend_inits == 0, "fixture already completed group setup");
+    const size_t length = 32749;
+    sendPattern(true, length, 31);
+    tunnelNextUpStreamFinish(f.application, f.client_main);
+    lineDestroy(f.client_main);
+    pump(211);
+    requirePattern(true, length, 31);
+    twfRequire(f.app_finishes == 0 && f.app_resumes == 0 && f.backend_inits == 1 && f.backend_finishes == 1 &&
+                   ! lineIsAlive(f.server_main),
+               "pre-READY Finish failed to complete orderly closure on the attached backend");
+    teardown();
+}
+
+#if WW_HAVE_SPLICE
+static void caseStripePreReadyDeadline(void)
+{
+    twfSetCase("READY leaves the pre-existing client drain deadline armed");
+    short_deadline = true;
+    setup(1);
+    short_deadline = false;
+    tunnelNextUpStreamInit(f.application, f.client_main);
+    sendPattern(true, 17, 23);
+    tunnelNextUpStreamFinish(f.application, f.client_main);
+    lineDestroy(f.client_main);
+    /* Deliver JOIN and READY, then withhold the peer's close acknowledgment. */
+    twfRequire(deliver(0, true, SIZE_MAX) && deliver(0, false, SIZE_MAX) && lineIsAlive(f.lanes[0].client),
+               "client did not keep its detached group through READY");
+    wwSleepMS(1100);
+    discard wloopProcessEvents(f.env.loop, 0);
+    twfRequire(! lineIsAlive(f.lanes[0].client), "READY canceled the drain deadline");
+    teardown();
+}
+#endif
+
+static void continueJoinFrameDuringInit(tunnel_t *t, line_t *line)
+{
+    backendInit(t, line);
+    tunnelNextUpStreamPayload(f.server_transport, f.lanes[0].server, payload("llo", 3));
+}
+
+static void continueJoinFrameDuringReady(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    const bool ready = sbufGetResidentView(buf).data[0] == kStripeReady;
+    serverTransportPayload(t, line, buf);
+    if (ready)
+        tunnelNextUpStreamPayload(f.server_transport, line, payload("llo", 3));
+}
+
+static void caseCompletingJoinWithFramePrefix(bool during_init)
+{
+    twfSetCase(during_init ? "ConnectionStripe JOIN suffix precedes payload reentering backend Init"
+                           : "ConnectionStripe JOIN suffix precedes payload reentering READY");
+    setup(1);
+    if (during_init)
+        f.backend->fnInitU = continueJoinFrameDuringInit;
+    else
+        f.server_transport->fnPayloadD = continueJoinFrameDuringReady;
+    tunnelNextUpStreamInit(f.application, f.client_main);
+
+    wire_queue_t *wire = &f.lanes[0].upload;
+    twfRequire(wire->head != NULL && wire->head == wire->tail && wire->head->length == kStripeJoinSize,
+               "expected a single client JOIN");
+    uint8_t batch[kStripeJoinSize + kStripeHeaderSize + 2] = {0};
+    memoryCopy(batch, wire->head->bytes, kStripeJoinSize);
+    memoryFree(wire->head);
+    *wire         = (wire_queue_t) {0};
+    uint8_t *data = batch + kStripeJoinSize;
+    data[0]       = kStripeData;
+    PUT_BE32(data + 4, 5);
+    memoryCopy(data + kStripeHeaderSize, "he", 2);
+
+    tunnelNextUpStreamPayload(f.server_transport, f.lanes[0].server, payload(batch, sizeof(batch)));
+    twfRequire(f.backend_inits == 1 && f.server_main != NULL && lineIsAlive(f.server_main) && f.upload_length == 5 &&
+                   memoryEqual(f.upload, "hello", 5),
+               "final JOIN and reentrant continuation failed to deliver one ordered frame");
+    teardown();
+}
+
+static void caseRecordGapBoundaries(void)
+{
+    twfSetCase("ConnectionStripe missing DATA counts cover exactly the possible byte gaps");
+    twfRequire(connectionstripeRecordGapFits(4, 100, 4, 100) && ! connectionstripeRecordGapFits(4, 100, 4, 101),
+               "adjacent record boundaries must have equal byte offsets");
+    twfRequire(connectionstripeRecordGapFits(4, 100, 6, 102) &&
+                   connectionstripeRecordGapFits(4, 100, 6, 100 + 2 * kStripeMaxFrame) &&
+                   ! connectionstripeRecordGapFits(4, 100, 6, 101) &&
+                   ! connectionstripeRecordGapFits(4, 100, 6, 101 + 2 * kStripeMaxFrame),
+               "missing record sizes must include both exact boundaries");
+    twfRequire(connectionstripeRecordGapFits(UINT64_MAX - 1, UINT64_MAX - 1, UINT64_MAX, UINT64_MAX) &&
+                   ! connectionstripeRecordGapFits(UINT64_MAX, UINT64_MAX, 0, 0) &&
+                   ! connectionstripeRecordGapFits(0, 0, UINT64_MAX, UINT64_MAX),
+               "record or byte counts wrapped while computing a gap");
+}
+
+static void runCases(void)
+{
     caseDuplex(1, SIZE_MAX);
     caseDuplex(8, 317);
     caseDuplex(32, SIZE_MAX);
+    caseStripePreReadyFinish();
+    caseCompletingJoinWithFramePrefix(true);
+    caseCompletingJoinWithFramePrefix(false);
     caseServerFirst();
     caseServerFirstFinishDuringInit();
     caseServerFirstDataBeforeReady();
@@ -1052,6 +1293,10 @@ int main(void)
     caseReceiveWindow(true);
     caseReceiveWindow(false);
     caseDuplexReceiveWindow();
+    caseDuplicateOrOverlap(true, true);
+    caseDuplicateOrOverlap(false, true);
+    caseDuplicateOrOverlap(true, false);
+    caseDuplicateOrOverlap(false, false);
     caseFrameWindow(true);
     caseFrameWindow(false);
     caseCloseOvertakesData(true);
@@ -1069,8 +1314,174 @@ int main(void)
         caseInvalidData(mode);
     for (unsigned mode = 0; mode < 4; ++mode)
         caseInvalidWindow(mode);
-    for (unsigned mode = 0; mode < 4; ++mode)
+    for (unsigned mode = 0; mode < 6; ++mode)
         caseReentrant(mode);
+}
+
+#if WW_HAVE_SPLICE
+static void caseSpliceDisabled(void)
+{
+    twfSetCase("Stripe emits ordinary DATA on splice-disabled chains with pipe-backed input");
+    setupWithSplicePolicy(2, true);
+    start(SIZE_MAX);
+    const size_t length = 2 * 16384 + 179;
+    sendPattern(true, length, 19);
+    sendPattern(false, length, 27);
+    pump(SIZE_MAX);
+    requirePattern(true, length, 19);
+    requirePattern(false, length, 27);
+    for (unsigned dir = 0; dir < 2; ++dir)
+        twfRequire(f.wire_ordinary[dir] != 0 && f.wire_splice[dir] == 0 && f.application_splice[dir] == 0,
+                   "a splice-disabled chain forwarded pipe-backed DATA");
+    teardown();
+}
+
+static void caseSplicePreservation(bool exhausted)
+{
+    twfSetCase(exhausted ? "Stripe immediate ordinary fallback on pipe refusal" : "Stripe preserves actual DATA pipes");
+    setup(2);
+    start(SIZE_MAX);
+    test_splice_inventory_hold_t held = {0};
+    if (exhausted)
+        held = testSpliceInventoryHoldAvailable(f.env.pool);
+    /* Empty, 1-byte, resident-only, full frame, multi-frame and short tail. */
+    sendPattern(true, 0, 19);
+    tunnelNextUpStreamPayload(f.application, f.client_main, payload(NULL, 0));
+    const size_t length = 2 * 16384 + 179;
+    sendPattern(true, length, 19);
+    sendPattern(false, length, 27);
+    pump(SIZE_MAX);
+    requirePattern(true, length, 19);
+    requirePattern(false, length, 27);
+    for (unsigned dir = 0; dir < 2; ++dir)
+        twfRequire(exhausted ? (f.wire_splice[dir] == 0 && f.application_splice[dir] == 0 && f.wire_ordinary[dir] != 0)
+                             : (f.wire_splice[dir] != 0 && f.application_splice[dir] != 0),
+                   "DATA representation disagrees with available pipes before capture consumption");
+    testSpliceInventoryReleaseHeld(&held);
+    if (exhausted)
+    {
+        sendPattern(true, 16384, 31);
+        sendPattern(false, 16384, 33);
+        pump(SIZE_MAX);
+        twfRequire(f.wire_splice[0] && f.wire_splice[1] && f.application_splice[0] && f.application_splice[1],
+                   "Stripe did not reuse destination pipes after fallback");
+    }
+    teardown();
+}
+
+static void caseSpliceBatch(bool upload)
+{
+    twfSetCase("Stripe drains several complete frames from one mixed input");
+    setup(1);
+    start(SIZE_MAX);
+    sendPattern(upload, 32749, 61);
+    wire_queue_t *queue = upload ? &f.lanes[0].upload : &f.lanes[0].download;
+    wire_piece_t *first = queue->head, *second = first ? first->next : NULL;
+    twfRequire(second && ! second->next && first->bytes[0] == 3 && second->bytes[0] == 3,
+               "batch fixture did not capture two complete DATA frames");
+    uint8_t bytes[32749 + 48];
+    memoryCopy(bytes, first->bytes, first->length);
+    memoryCopy(bytes + first->length, second->bytes, second->length);
+    queue->head = queue->tail = NULL;
+    memoryFree(first);
+    memoryFree(second);
+    if (upload)
+        tunnelNextUpStreamPayload(f.server_transport, f.lanes[0].server, payload(bytes, sizeof(bytes)));
+    else
+        tunnelPrevDownStreamPayload(f.client_transport, f.lanes[0].client, payload(bytes, sizeof(bytes)));
+    pump(SIZE_MAX);
+    requirePattern(upload, 32749, 61);
+    teardown();
+}
+
+static void caseSpliceCanonicalInput(void)
+{
+    twfSetCase("Stripe canonicalizes oversized source charge and preserves resident-only input");
+    setup(1);
+    start(SIZE_MAX);
+    /* A tiny logical payload cannot retain arbitrary logical pipe capacity. */
+    input_serial = 1;
+    sbuf_t *buf  = payload("tiny", 4);
+    buf->capacity += 1024 * 1024;
+    tunnelNextUpStreamPayload(f.application, f.client_main, buf);
+    twfRequire(f.wire_ordinary[1] == 1 && f.wire_splice[1] == 0,
+               "oversized splice input bypassed canonical transmit storage");
+    /* All bytes are resident padding, even though the wrapper has a pipe flag. */
+    input_serial = 0;
+    tunnelPrevDownStreamPayload(f.backend, f.server_main, payload("prefix", 6));
+    twfRequire(f.wire_ordinary[0] == 1 && f.wire_splice[0] == 0,
+               "resident-only input unnecessarily became a pipe body");
+    pump(SIZE_MAX);
+    twfRequire(f.upload_length == 4 && memoryEqual(f.upload, "tiny", 4) && f.download_length == 6 &&
+                   memoryEqual(f.download, "prefix", 6),
+               "canonical or resident-only fallback changed bytes");
+    teardown();
+}
+
+static void caseSpliceRetentionCleanup(unsigned mode)
+{
+    twfSetCase("Stripe settles retained private pipes on session failure and shutdown");
+    short_deadline = mode == 1;
+    setup(2);
+    short_deadline = false;
+    start(SIZE_MAX);
+    /* Leave queued transmit source, an incomplete parser body and
+     * an out-of-order receive record alive together on both endpoints. */
+    tunnelPrevDownStreamPause(f.backend, f.server_main);
+    tunnelNextUpStreamPause(f.application, f.client_main);
+    sendPattern(true, 32749, 7);
+    sendPattern(false, 32749, 9);
+    deliver(1, true, SIZE_MAX);
+    deliver(1, false, SIZE_MAX);
+    deliver(0, true, 25);
+    deliver(0, false, 25);
+    for (unsigned i = 0; i < f.lane_count; ++i)
+    {
+        tunnelPrevDownStreamPause(f.client_transport, f.lanes[i].client);
+        tunnelNextUpStreamPause(f.server_transport, f.lanes[i].server);
+    }
+    sendPattern(true, 32749, 13);
+    sendPattern(false, 32749, 15);
+    if (mode == 0)
+        tunnelPrevDownStreamFinish(f.client_transport, f.lanes[1].client);
+    else if (mode == 1)
+    {
+        tunnelNextUpStreamFinish(f.application, f.client_main);
+        lineDestroy(f.client_main);
+        wwSleepMS(1100);
+        discard wloopProcessEvents(f.env.loop, 0);
+        for (unsigned i = 0; i < f.lane_count; ++i)
+            twfRequire(! lineIsAlive(f.lanes[i].client), "drain timeout did not settle retained pipe input");
+    }
+    teardown();
+}
+#endif
+
+int main(void)
+{
+    twfRequire(globalstateInitializeSecureRandom(), "secure random initialization failed");
+    twfRequire(frandGlobalInit(), "fast random global initialization failed");
+    frandInit();
+    caseSettings();
+    caseRecordGapBoundaries();
+    caseStripeTimerAdmission(true);
+    caseStripeTimerAdmission(false);
+    runCases();
+#if WW_HAVE_SPLICE
+    splice_inputs = true;
+    caseSpliceDisabled();
+    caseStripePreReadyDeadline();
+    caseSplicePreservation(false);
+    caseSplicePreservation(true);
+    caseSpliceBatch(true);
+    caseSpliceBatch(false);
+    caseSpliceCanonicalInput();
+    alternate_ordinary = true;
+    runCases();
+    caseSpliceRetentionCleanup(0);
+    caseSpliceRetentionCleanup(1);
+    caseSpliceRetentionCleanup(2);
+#endif
     frandThreadCleanup();
     frandGlobalCleanup();
     globalstateDestroySecureRandom();

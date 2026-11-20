@@ -1,16 +1,24 @@
 # QuicServer
 
+## Overview
+
 `QuicServer` decrypts upstream carrier datagrams into a raw application byte
 stream and encrypts downstream application bytes into QUIC datagrams. Google
 QUICHE performs QUIC v1/TLS 1.3. Existing adapters accept peers and own their
 normal WaterWall lines; this node creates no listener or socket.
+
+## Typical placement
 
 ```text
 UdpListener -> QuicServer -> TcpConnector
 UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
 ```
 
-## Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+Feed this node from a datagram carrier, replace the certificate/key paths, and define `application-out` for the decoded application stream. The client must trust this certificate and use its name. Both peers must agree on ALPN; `h3` does not make this an HTTP/3 server.
 
 ```json
 {
@@ -20,18 +28,16 @@ UdpListener -> QuicServer -> VlessServer -> SpeedTestServer
   "settings": {
     "cert-file": "server.crt",
     "key-file": "server.key",
-    "protocol": "h3",
-    "carrier-mode": "datagram"
+    "protocol": "h3"
   }
 }
 ```
 
-`name`, `type`, `next` and an object `settings` are required. `type` must be
-exactly `QuicServer`. Full UDP and framed TCP client/server configurations and
-local certificate instructions are in
-[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-## Server settings
+## Configuration
+
+### Server settings
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
@@ -45,16 +51,15 @@ outside this node's interface. QUICHE parses the first valid Initial and
 preserves QUIC anti-amplification before peer address validation; an existing
 WaterWall line does not by itself validate that address.
 
-## Shared settings
+### Shared settings
 
 | Setting | Default | Accepted values and behavior |
 | --- | --- | --- |
 | `protocol` | `"h3"` | One exact, printable ASCII ALPN identifier, 1–255 bytes. Both peers must agree. |
-| `carrier-mode` | `"datagram"` | Exactly `datagram` or `stream`. Select explicitly for a stream carrier. |
 | `handshake-timeout-ms` | `10000` | Integer 1–86,400,000. Total deadline through authenticated handshake and application-stream opening; partial input does not restart it. |
 | `idle-timeout-ms` | `60000` | Integer 1–86,400,000. QUIC idle lifetime, subject to peer negotiation and the carrier's own lifetime. |
 | `close-drain-timeout-ms` | `30000` | Integer 1–86,400,000. Local delivery deadline from the first local application Finish or peer FIN, including before handshake readiness; it is not extended by progress or retries. |
-| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram, excluding the stream envelope; input independently accepts up to 1,472 bytes. |
+| `max-packet-size` | `1350` | Integer 1200–1452. Maximum emitted QUIC datagram. Input independently accepts up to 1,472 bytes. |
 | `max-buffered-bytes` | `2097152` | Integer 65,536–67,108,864. Per-line bound for each independent retained application/output backlog, including accepted unacknowledged plaintext. |
 | `max-buffered-buffers` | `1024` | Integer 1–65,536. Per-backlog entry bound, including active retention. |
 | `receive-window-bytes` | `1048576` | Integer 16,384–16,777,216 and no greater than `max-buffered-bytes`; initial stream receive credit. |
@@ -73,7 +78,34 @@ Each configured entry reserves descriptor storage: require
 READY/PEER_FIN/CLOSED controls. These backing charges count toward allocation
 budgets even while the rings are empty; closing releases them.
 
-## Carrier and application semantics
+## Usage and troubleshooting
+
+### Example
+
+```json
+{
+  "name": "quic-server",
+  "type": "QuicServer",
+  "next": "application-out",
+  "settings": {
+    "cert-file": "server.crt",
+    "key-file": "server.key",
+    "protocol": "h3"
+  }
+}
+```
+
+`name`, `type`, `next` and an object `settings` are required. `type` must be
+exactly `QuicServer`. Full UDP and TCP client/server configurations and
+local certificate instructions are in
+[`tunnels/QuicClient/examples`](https://github.com/radkesvat/WaterWall/tree/main/tunnels/QuicClient/examples).
+
+For a TCP carrier, use `TcpListener -> UdpOverTcpServer -> QuicServer` and
+place `UdpOverTcpClient` between the peer's `QuicClient` and `TcpConnector`.
+
+## Advanced behavior
+
+### Carrier and application semantics
 
 The application interface is a reliable byte stream. Application Payload buffer
 boundaries are not preserved. Each association has one QUIC connection and one
@@ -83,13 +115,8 @@ normal line and owns a separate service line. This separates application closure
 from the lifetime needed for delivery and acknowledgements. Adapters own their
 sockets; each normal line is destroyed only by its creator.
 
-In `datagram` mode, one carrier Payload is exactly one complete QUIC datagram,
-with no private outer prefix. In `stream` mode every datagram has a four-byte
-unsigned big-endian length followed by that many bytes. Both peers must select
-`stream` over a byte-stream carrier. Its incremental parser accepts fragmented
-prefixes/bodies and coalesced frames; zero lengths or lengths above 1,472 close
-the association. There is no automatic carrier detection, fallback or adapter
-insertion.
+Each carrier Payload is exactly one complete QUIC datagram. The QUIC nodes drop
+empty carrier datagrams and those larger than 1,472 bytes.
 
 The client sends one encrypted opening byte `0x00` before application data. The
 server consumes it internally, allowing a server-first application to send even
@@ -102,7 +129,9 @@ with no HTTP/3 requests, responses, QPACK or HTTP control streams. Ordinary
 HTTP/3 peers cannot use it. This setting makes no Chrome/Cloudflare
 impersonation or classifier claim and does not change `HttpClient`/`HttpServer`.
 
-## Flow, storage and close
+## Implementation details
+
+### Flow, storage and close
 
 Every supported transport `Est` is relayed promptly, including repeats;
 authenticated handshake and stream readiness are independent internal barriers.
@@ -135,7 +164,9 @@ The first local application Finish or peer FIN starts the fixed local
 shutdown can end the association sooner; retries and ACKs never restart it.
 
 Receiving peer FIN delivers preceding decoded bytes, then finishes and detaches
-the application. Already accepted output still drains before CONNECTION_CLOSE.
+the application. If the application had paused carrier reads, local Finish or
+peer FIN releases that hold after detachment so the live carrier can receive
+ACKs and FIN. Already accepted output still drains before CONNECTION_CLOSE.
 After the local FIN is acknowledged and peer FIN is received, the engine enters
 QUIC closing/draining. Its separate fixed retention interval is at most three
 probe timeouts (PTO), capped by `close-drain-timeout-ms`; it handles late close
@@ -148,7 +179,7 @@ Carrier-side Finish and process shutdown abort outstanding delivery and settle
 owned lines immediately. FIN closes the application association rather than
 providing application half-close; a reset or other protocol failure also closes it.
 
-## Node Metadata
+### Node Metadata
 
 Both nodes are Layer 4 transforms with separate application and carrier lines: they allow previous and next
 nodes, advertise `kNodeFlagBlocksSplice`, and require zero additional left

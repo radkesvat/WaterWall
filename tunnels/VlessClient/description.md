@@ -1,9 +1,11 @@
 <!--
-Documentation version: 164
+Documentation version: 165
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/VlessClient.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/VlessClient.mdx, and all files must keep the same documentation version.
 -->
 
 # VlessClient Node
+
+## Overview
 
 `VlessClient` is a client-side plain VLESS v0 middle tunnel for Waterwall.
 
@@ -14,7 +16,7 @@ It supports TCP command `0x01` and UDP command `0x02` with the base VLESS UDP le
 This node implements plain VLESS only. It does not create TLS, REALITY, XTLS Vision, flow addons, mux, XUDP, WebSocket,
 gRPC, or other transport wrappers.
 
-## Typical Placement
+## Typical placement
 
 TCP VLESS client chain:
 
@@ -32,7 +34,17 @@ Important:
 - The final target destination is encoded inside the VLESS request header.
 - `VlessClient` can use fixed JSON target values or the incoming `line->dest_ctx`.
 
-## TCP Example
+
+The protocol node supplies no transport encryption. Configure the TLS nodes
+shown above and the matching peer credentials before exposing the service.
+
+## Minimal practical example
+
+This is a **node fragment**, not a complete config file. Add the entry listener
+and the neighboring nodes shown above, and replace the sample credentials and
+server addresses.
+
+### TCP Example
 
 ```json
 {
@@ -56,70 +68,10 @@ The next nodes should carry the byte stream to the VLESS server, for example:
 VlessClient -> TlsClient -> TcpConnector
 ```
 
-## Destination-Context Example
 
-```json
-{
-  "name": "vless-client",
-  "type": "VlessClient",
-  "next": "tls-client",
-  "settings": {
-    "id": "5783a3e7-e373-51cd-8642-c83782b807c5",
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "dest_context->protocol"
-  }
-}
-```
+## Configuration
 
-`id` and `user-id` are accepted aliases for `uuid`.
-
-## UDP Example
-
-```json
-{
-  "name": "vless-client-udp",
-  "type": "VlessClient",
-  "next": "tls-client",
-  "settings": {
-    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
-    "address": "dest_context->address",
-    "port": "dest_context->port",
-    "protocol": "udp"
-  }
-}
-```
-
-In UDP mode:
-
-- the application line remains UDP-facing toward the previous node
-- `VlessClient` creates one internal TCP carrier line for that UDP application line
-- the carrier sends a VLESS UDP request header containing the fixed final target
-- each upstream UDP payload is wrapped as `uint16_be length + payload`
-- each downstream VLESS UDP frame is length-decoded and forwarded back as raw UDP payload
-
-## Domain Resolution Example
-
-```json
-{
-  "name": "vless-client",
-  "type": "VlessClient",
-  "next": "tls-client",
-  "settings": {
-    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
-    "address": "example.com",
-    "port": 443,
-    "protocol": "tcp",
-    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
-  }
-}
-```
-
-With this setting, `VlessClient` resolves `example.com` before sending the VLESS request. If an IPv4 answer is
-available, the request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it falls
-back to IPv6.
-
-## Required JSON Fields
+### Required JSON Fields
 
 - `settings.uuid`
   Authentication UUID for the VLESS request.
@@ -136,7 +88,7 @@ back to IPv6.
 - `settings.port`
   The final target port to encode in the VLESS request. It may be a number or `"dest_context->port"`.
 
-## Optional JSON Fields
+### Optional JSON Fields
 
 - `settings.first-payload-timeout-ms`
   Integer milliseconds from 0 through 4,294,967,295; default 400. Zero disables deliberate waiting.
@@ -164,7 +116,7 @@ back to IPv6.
 - `settings.dns-behaviour`
   Controls local target lookup, address selection and DNS transport. See DNS behaviour below.
 
-## DNS behaviour
+### DNS behaviour
 
 Resolving a hostname means looking up its IP address. `VlessClient` can send
 the final target's hostname in the VLESS request, or resolve it locally and
@@ -220,7 +172,83 @@ The disabled form is exactly `"dns-behaviour": {"resolve": false}`. It rejects `
 
 See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) for native, direct and protected-chain configuration examples and core option limits. This policy controls lookups owned by this node; it does not configure PTC fake DNS, TunDevice system DNS or every DNS source in the program.
 
-## Protocol Behavior
+## Usage and troubleshooting
+
+### Destination-Context Example
+
+```json
+{
+  "name": "vless-client",
+  "type": "VlessClient",
+  "next": "tls-client",
+  "settings": {
+    "id": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "dest_context->protocol"
+  }
+}
+```
+
+`id` and `user-id` are accepted aliases for `uuid`.
+
+### UDP Example
+
+```json
+{
+  "name": "vless-client-udp",
+  "type": "VlessClient",
+  "next": "tls-client",
+  "settings": {
+    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "address": "dest_context->address",
+    "port": "dest_context->port",
+    "protocol": "udp"
+  }
+}
+```
+
+In UDP mode:
+
+- the application line remains UDP-facing toward the previous node
+- `VlessClient` creates one internal TCP carrier line for that UDP application line
+- the carrier sends a VLESS UDP request header containing the fixed final target
+- each upstream UDP payload is wrapped as `uint16_be length + payload`
+- each downstream VLESS UDP frame is length-decoded and forwarded back as raw UDP payload
+
+### Domain Resolution Example
+
+```json
+{
+  "name": "vless-client",
+  "type": "VlessClient",
+  "next": "tls-client",
+  "settings": {
+    "uuid": "5783a3e7-e373-51cd-8642-c83782b807c5",
+    "address": "example.com",
+    "port": 443,
+    "protocol": "tcp",
+    "dns-behaviour": {"resolve": true, "strategy": "prefer-ipv4"}
+  }
+}
+```
+
+With this setting, `VlessClient` resolves `example.com` before sending the VLESS request. If an IPv4 answer is
+available, the request encodes that IPv4 address instead of the domain name. If no IPv4 answer is available, it falls
+back to IPv6.
+
+### Notes And Caveats
+
+- `TlsClient` is required for ordinary VLESS deployments, but it is not inserted automatically.
+- This implementation sends empty request addons. It accepts a non-empty response addons section (logging a warning and skipping the addons bytes) for interoperability, but it does not act on any addon.
+- Unsupported VLESS features include flow, XTLS Vision, mux, reverse, XUDP, and transport-specific wrappers.
+- UDP payloads greater than `65535` bytes are dropped locally; empty datagrams are preserved.
+- Malformed downstream response headers or UDP frames close the affected line safely.
+- `required_padding_left` is `280`, covering the largest initial request plus a UDP length prefix.
+
+## Advanced behavior
+
+### Protocol Behavior
 
 Request format:
 
@@ -246,9 +274,11 @@ Response format:
 00 00
 ```
 
-## First payload and transport establishment
+## Implementation details
 
-`Init` prepares the destination and starts the next node without emitting a request.
+### First payload and transport establishment
+
+`Init` prepares the destination and initializes the next node.
 The first eligible application payload may arrive before transport `Est`, during its
 callback, or after Pause. It is sent immediately with the complete request
 in one ordinary buffer, including one UDP frame header when applicable. Ordinary input
@@ -259,7 +289,9 @@ initial request when it is the first application payload.
 
 Every direct TCP transport `Est` reaches the live application, including repeats,
 independently of protocol data and Pause. UDP carrier Est maps to its application
-once. If the request remains unsent, its first-payload deadline starts at the first Est.
+once. If the request remains unsent after the next node's `Init` returns and the line is
+still alive, the client starts its first-payload deadline. In UDP mode this is the
+TCP carrier's `Init`.
 `settings.first-payload-timeout-ms` defaults to **400**, accepts integers from **0** to
 **4,294,967,295**, and rejects other types and ranges. Zero disables deliberate waiting.
 Paused time counts. On direct TCP, expiry sends one header-only request even after
@@ -288,16 +320,7 @@ only incomplete framing/order state remains. Finish, malformed input or receiver
 stops delivery and closes the affected association. Only this node's owned carrier is
 destroyed here; the application owner drains it during shutdown.
 
-## Notes And Caveats
-
-- `TlsClient` is required for ordinary VLESS deployments, but it is not inserted automatically.
-- This implementation sends empty request addons. It accepts a non-empty response addons section (logging a warning and skipping the addons bytes) for interoperability, but it does not act on any addon.
-- Unsupported VLESS features include flow, XTLS Vision, mux, reverse, XUDP, and transport-specific wrappers.
-- UDP payloads greater than `65535` bytes are dropped locally; empty datagrams are preserved.
-- Malformed downstream response headers or UDP frames close the affected line safely.
-- `required_padding_left` is `280`, covering the largest initial request plus a UDP length prefix.
-
-## Splice and retention
+### Splice and retention
 
 The first request plus payload is ordinary; the request itself is at most 278 bytes.
 Later opaque TCP preserves its original ordinary or splice representation. UDP sends
@@ -334,7 +357,7 @@ final chain, including internal helpers. `DomainResolver` supports splice. `TlsC
 still blocks splice for its entire chain. Keep TLS in ordinary deployment configurations;
 splice capability does not guarantee zero-copy or a measured speed increase.
 
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

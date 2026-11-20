@@ -403,6 +403,13 @@ bool workerTryCreateCorePools(worker_t *worker)
 
 bool workerTryCreateBufferPool(worker_t *worker)
 {
+    static_assert(SMALL_BUFFER_SIZE > 0, "Worker small buffers need writable payload space");
+    static_assert(SMALL_BUFFER_SIZE <= MEDIUM_BUFFER_SIZE_RAM_LOW &&
+                      MEDIUM_BUFFER_SIZE_RAM_LOW <= LARGE_BUFFER_SIZE_RAM_LOW,
+                  "Low-memory worker buffers must satisfy small <= medium <= large");
+    static_assert(SMALL_BUFFER_SIZE <= MEDIUM_BUFFER_SIZE_RAM_HIGH &&
+                      MEDIUM_BUFFER_SIZE_RAM_HIGH <= LARGE_BUFFER_SIZE_RAM_HIGH,
+                  "High-memory worker buffers must satisfy small <= medium <= large");
     assert(worker != NULL);
     assert(worker->buffer_pool == NULL);
 

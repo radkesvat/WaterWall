@@ -21,4 +21,4 @@ context.set_alpn_protocols(["h2"])
 with socket.socket() as listener:
     probe.configure_listener(listener, (probe.HOST, probe.PEER_PORT), timeout=10)
     probe.run_complete_upload(listener, tls_context=context)
-print("HttpClient upload drain over TlsClient: exact body, END_STREAM, and EOF", flush=True)
+    probe.run_stay_alive(listener, tls_context=context)

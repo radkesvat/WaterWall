@@ -357,8 +357,8 @@ static void testIdlePingKeepsSessionAndSilenceEndsIt(void)
 
     world.cut             = true;
     const uint64_t cut_at = world.now;
-    require(simAdvanceUntil(&world, 200 + 2 * 1000 + 500, bothClosed),
-            "a silent link did not end the session within ping interval + 2T");
+    require(simAdvanceUntil(&world, 200 + 1000 + 500, bothClosed),
+            "a silent link did not end the session within ping interval + T + service allowance");
     require(world.now - cut_at >= 900, "the session ended before the configured timeout");
     require(world.end[0].close_reason == kEnetDriverCloseRemote, "client must report a remote close");
     require(world.end[1].close_reason == kEnetDriverCloseRemote, "server must report a remote close");
@@ -382,6 +382,39 @@ static void testIdleDriverSleepsUntilThePingDeadline(void)
     require(simWrite(&world, 0, &byte, 1), "write refused");
     require(enetDriverNextServiceDelayMs(world.end[0].driver, world.now) == kEnetDriverActiveTickMs,
             "unacknowledged bytes need the active tick");
+    simDestroy(&world);
+}
+
+static void testUnrelatedAckAfterRetryKeepsFirstSendDeadline(void)
+{
+    sim_world_t                world;
+    enet_driver_config_t       client = simConfig(kEnetDriverRoleClient);
+    const enet_driver_config_t server = simConfig(kEnetDriverRoleServer);
+    client.ping_interval_ms           = 3000;
+    client.no_recv_timeout_ms         = 4000;
+    openConnected(&world, &client, &server, 10);
+    simAdvance(&world, 100);
+
+    /* Keep losing one small command and its retries. A larger command sent later gets through. */
+    static const uint8_t bytes[512] = {0};
+    world.end[0].lose_small         = 100;
+    const uint64_t deadline         = world.now + client.no_recv_timeout_ms;
+    require(simWrite(&world, 0, bytes, 1), "first write refused");
+    /* Send immediately after the retry so the larger command travels in a separate datagram. */
+    while (world.end[0].lose_small == 99 && world.now < deadline)
+    {
+        simStep(&world);
+    }
+    require(world.end[0].lose_small < 99, "the first command was not retransmitted");
+    require(simWrite(&world, 0, bytes, sizeof(bytes)), "second write refused");
+    simAdvance(&world, 25);
+    TEST_EQUAL_SIZE(
+        TEST_FAILURE_EXIT, enetDriverQueuedBytes(world.end[0].driver), 1, "the later command was not acknowledged");
+    require(world.now < deadline, "the fixture did not deliver the later acknowledgement before the deadline");
+    simAdvance(&world, deadline - world.now);
+    require(world.end[0].closed_calls == 0, "the peer closed before the first command's deadline");
+    enetDriverService(world.end[0].driver, deadline);
+    require(world.end[0].closed_calls == 1, "the later acknowledgement postponed the first command's deadline");
     simDestroy(&world);
 }
 
@@ -501,6 +534,7 @@ int main(void)
     TEST_RUN_CASE(testPeerCloseDeliversPrecedingBytes);
     TEST_RUN_CASE(testIdlePingKeepsSessionAndSilenceEndsIt);
     TEST_RUN_CASE(testIdleDriverSleepsUntilThePingDeadline);
+    TEST_RUN_CASE(testUnrelatedAckAfterRetryKeepsFirstSendDeadline);
     TEST_RUN_CASE(testRefusedDatagramsAreRecoveredAsLoss);
     TEST_RUN_CASE(testTransferSurvivesLossDuplicationAndReordering);
     TEST_RUN_CASE(testLostCommandPassesTheReceiveLimit);

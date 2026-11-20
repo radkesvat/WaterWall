@@ -15,6 +15,19 @@
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "loggers/dns_logger.h"
 
+/* The prepare hook selects framing on this side. The next Init can repurpose
+ * the same line's destination for its own carrier. */
+typedef struct resolver_framing_case_s
+{
+    const char *name;
+    uint8_t     source_protocol;
+    uint8_t     prepared_protocol;
+    uint8_t     carrier_protocol;
+    bool        packet_line;
+    unsigned    expected_bytes;
+} resolver_framing_case_t;
+
+static const resolver_framing_case_t *finish_framing;
 static tunnel_t        *resolver;
 static LineDnsResolveFn dns_callback;
 static line_t          *dns_line;
@@ -28,6 +41,8 @@ static unsigned         held_pause_count, held_resume_count, pressure_action;
 static bool             pressure_only, initiating_source_paused;
 static bool             use_prepare_state;
 static unsigned         prepare_destroy_count;
+static unsigned                       next_finish_count;
+static bool                           close_during_final_handoff;
 static char             limit_log[1024];
 static unsigned         limit_log_count;
 static int              limit_log_level;
@@ -49,6 +64,8 @@ static bool prepareLine(tunnel_t *t, tunnel_t *owner, line_t *l, void *state)
                "prepare hook received the wrong line or owner");
     domainresolver_tstate_t *ts = tunnelGetState(t);
     memorySet(state, 0x5A, ts->user_lstate_size);
+    if (finish_framing != NULL)
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), finish_framing->prepared_protocol);
     return true;
 }
 
@@ -199,6 +216,20 @@ static void ownerFinish(tunnel_t *t, line_t *l)
     discard t;
     lineDestroy(l);
 }
+
+static void sourceAlreadyFinished(tunnel_t *t, line_t *l)
+{
+    discard t;
+    discard l;
+    twfRequire(false, "final DNS handoff reflected Finish to the retired source");
+}
+
+static void finishConsumer(tunnel_t *t, line_t *l)
+{
+    discard t;
+    twfRequireLineStateZeroed(l, resolver, "resolver sent Finish before clearing its state");
+    ++next_finish_count;
+}
 static void onEst(tunnel_t *t, line_t *l)
 {
     discard t;
@@ -222,6 +253,8 @@ static void onInit(tunnel_t *t, line_t *l)
         tunnelDownStreamFin(resolver, l);
         return;
     }
+    if (finish_framing != NULL && finish_framing->carrier_protocol != 0)
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), finish_framing->carrier_protocol);
     tunnelDownStreamEst(resolver, l);
     if (use_prepare_state && lineIsAlive(l))
         twfRequire(prepare_destroy_count == 0, "resolver retired prepare state during next Init reentry");
@@ -232,6 +265,12 @@ static void onPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     twfRequire(sbufGetLength(buf) == 1 && wire_length < sizeof(wire), "resolver changed payload boundary");
     wire[wire_length++] = *(const char *) sbufGetRawPtr(buf);
     lineReuseBuffer(l, buf);
+    if (close_during_final_handoff)
+    {
+        close_during_final_handoff = false;
+        tunnelDownStreamFin(resolver, l);
+        return;
+    }
     if (pressure_only && pressure_action == 7)
     {
         pressure_action = 0;
@@ -246,9 +285,18 @@ static void onPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     }
 }
 
-static void run(bool close_now, bool literal)
+enum resolver_finish_case
 {
-    twfSetCase("DomainResolver preserves DNS FIFO across Init/Est/Pause reentry");
+    kResolverKeepOpen,
+    kResolverFinalDelivery,
+    kResolverDestinationCloses,
+};
+
+static void run(bool close_now, bool literal, enum resolver_finish_case mode, const resolver_framing_case_t *framing)
+{
+    finish_framing = framing;
+    twfSetCase(framing == NULL ? "DomainResolver preserves DNS FIFO across Init/Est/Pause reentry" : framing->name);
+    const bool       packet_line = framing != NULL && framing->packet_line;
     twf_worker_env_t env;
     twfWorkerEnvSetup(&env, 4096, 32);
     node_t node = {.type = (char *) "DomainResolver"};
@@ -266,7 +314,7 @@ static void run(bool close_now, bool literal)
     prev->fnPauseD = next->fnPauseU = onPause;
     prev->fnResumeD = next->fnResumeU = onResume;
     prev->fnFinD                      = ownerFinish;
-    next->fnFinU                      = noop;
+    next->fnFinU                      = mode == kResolverKeepOpen ? noop : finishConsumer;
     domainresolver_tstate_t *ts       = tunnelGetState(resolver);
     ts->strategy                      = kDsOnlyIpV4;
     use_prepare_state                 = true;
@@ -280,7 +328,7 @@ static void run(bool close_now, bool literal)
     chain->packet_lines         = memoryAllocate(sizeof(line_t *));
     chain->packet_lines[0]      = twfLinePoolCreateLine(&lines);
     resolver->chain             = chain;
-    line_t *line                = twfLinePoolCreateLine(&lines);
+    line_t *line                = packet_line ? chain->packet_lines[0] : twfLinePoolCreateLine(&lines);
     lineRef(line);
     address_context_t *dest = lineGetDestinationAddressContext(line);
     if (literal)
@@ -288,7 +336,10 @@ static void run(bool close_now, bool literal)
     else
         addresscontextDomainSet(dest, "resolver.invalid", 16);
     addresscontextSetPort(dest, 80);
-    addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+    if (framing == NULL)
+        addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+    else
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), framing->source_protocol);
     pressure_only    = false;
     held_pause_count = held_resume_count = pressure_action = 0;
     initiating_source_paused                               = false;
@@ -319,6 +370,23 @@ static void run(bool close_now, bool literal)
         twfRequire(source_pause_count == 1, "DNS Init replay duplicated an already forwarded source Pause");
         twfRequire(tunnelIsActiveForLine(resolver, line) && prepare_destroy_count == 0,
                    "resolver retired its paused startup backlog");
+        if (mode != kResolverKeepOpen)
+        {
+            const bool     next_closes    = mode == kResolverDestinationCloses;
+            const unsigned expected_bytes = framing != NULL ? framing->expected_bytes : next_closes ? 1U : 2U;
+            next_finish_count             = 0;
+            close_during_final_handoff    = next_closes;
+            prev->fnFinD                  = sourceAlreadyFinished;
+            tunnelUpStreamFin(resolver, line);
+            if (! packet_line)
+                lineDestroy(line);
+            twfRequireEqualU32((uint32_t) wire_length, expected_bytes, "source Finish lost accepted DNS FIFO bytes");
+            twfRequire(memoryEqual(wire, "AB", wire_length) && next_finish_count == (next_closes ? 0U : 1U),
+                       "source Finish changed final DNS callback order");
+            twfRequire(held_pause_count == 1 && held_resume_count == 0,
+                       "final DNS handoff reflected pressure to the retired source");
+            goto teardown;
+        }
         inject_after_first = ! literal;
         resumeConsumer(line);
         if (! literal)
@@ -353,7 +421,9 @@ static void run(bool close_now, bool literal)
         tunnelUpStreamFin(resolver, line);
         lineDestroy(line);
     }
-    twfRequire(! lineIsAlive(line), "DNS close did not settle owner");
+teardown:
+    twfRequire(lineIsAlive(line) == packet_line, "DNS close did not preserve exact line ownership");
+    finish_framing = NULL;
     twfRequire(prepare_destroy_count == 1, "Finish repeated or skipped prepare-state destruction");
     use_prepare_state = false;
     lineUnref(line);
@@ -677,7 +747,21 @@ int main(void)
         runPressure(action);
     for (unsigned close_now = 0; close_now < 2; ++close_now)
         for (unsigned literal = 0; literal < 2; ++literal)
-            run(close_now, literal);
+            run(close_now, literal, kResolverKeepOpen, NULL);
+    run(false, false, kResolverDestinationCloses, NULL);
+    const resolver_framing_case_t framing[] = {
+        /* Source, prepared destination, later carrier tag, packet-line identity, delivered bytes. */
+        {"untagged normal stream", 0, 0, 0, false, 2},
+        {"prepared TCP stream", 0, IP_PROTO_TCP, 0, false, 2},
+        {"prepared UDP datagrams", 0, IP_PROTO_UDP, 0, false, 0},
+        {"UDP input framed as a stream before resolver", IP_PROTO_UDP, IP_PROTO_TCP, IP_PROTO_UDP, false, 2},
+        {"TCP input decoded into datagrams before resolver", IP_PROTO_TCP, IP_PROTO_UDP, IP_PROTO_TCP, false, 0},
+        {"source-only UDP", IP_PROTO_UDP, 0, 0, false, 0},
+        {"unsupported destination with TCP source", IP_PROTO_TCP, IP_PROTO_ICMP, 0, false, 0},
+        {"worker packet line with TCP metadata", 0, IP_PROTO_TCP, 0, true, 0},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(framing); ++i)
+        run(false, false, kResolverFinalDelivery, &framing[i]);
     runLimitLogging();
     return 0;
 }

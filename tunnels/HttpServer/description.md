@@ -1,9 +1,11 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/HttpServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/HttpServer.mdx, and all files must keep the same documentation version.
 -->
 
 # HttpServer Node
+
+## Overview
 
 `HttpServer` is the inverse of `HttpClient`.
 
@@ -13,7 +15,7 @@ When `websocket` mode is enabled, it validates a WebSocket opening handshake fir
 
 This tunnel does not terminate TLS by itself. If your wire protocol is HTTPS, you need another tunnel before it that already turned TLS records back into plain HTTP bytes.
 
-## What It Does
+### What It Does
 
 - Detects or enforces HTTP/1.1 versus HTTP/2.
 - Parses HTTP/1.1 request headers.
@@ -25,7 +27,7 @@ This tunnel does not terminate TLS by itself. If your wire protocol is HTTPS, yo
 
 This node consumes HTTP request headers and generates HTTP response headers internally.
 
-## Typical Placement
+## Typical placement
 
 A common layout is:
 
@@ -42,33 +44,33 @@ or, for decrypted HTTPS traffic:
 
 - `TcpListener -> SomeTlsDecodeTunnel -> HttpServer -> SomeServiceTunnel`
 
-## Configuration Example
+## Minimal practical example
+
+Node fragment; define the referenced neighbors and peers in the same deployment.
+
+This HTTP/1.1 node fragment pairs with HttpClient using the same host, path and method. Define `service-node` for the decoded payload. HTTPS requires TLS termination before this node; HttpServer itself handles only the HTTP framing.
 
 ```json
 {
   "name": "http-server",
   "type": "HttpServer",
   "settings": {
-    "http-version": "both",
-    "upgrade": true,
-    "websocket": false,
+    "http-version": 1,
     "host": "example.com",
     "path": "/api/upload",
-    "method": "POST",
-    "status": 200,
-    "content-type": "application/json",
-    "headers": {
-      "cache-control": "no-store",
-      "x-powered-by": "waterwall"
-    }
+    "method": "POST"
   },
   "next": "service-node"
 }
 ```
 
-## Required JSON Fields
+See [Configuration](#configuration) for defaults and conditional requirements and [Usage and troubleshooting](#usage-and-troubleshooting) for complete examples and operational limits.
 
-### Top-level fields
+## Configuration
+
+### Required JSON Fields
+
+#### Top-level fields
 
 - `name` `(string)`
   A user-chosen name for this node.
@@ -76,7 +78,7 @@ or, for decrypted HTTPS traffic:
 - `type` `(string)`
   Must be exactly `"HttpServer"`.
 
-### `settings`
+#### `settings`
 
 There are no tunnel-specific mandatory settings.
 
@@ -87,7 +89,9 @@ If omitted, the current implementation defaults to:
 - expected path: `/`
 - response status: `200`
 
-## Optional `settings` Fields
+### Optional `settings` Fields
+
+#### Protocol choice
 
 - `http-version` `(number or string)`
   Selects protocol mode.
@@ -107,43 +111,7 @@ If omitted, the current implementation defaults to:
 
   Current default: `both`
 
-- `close-drain-timeout-ms` `(integer)`
-  Maximum time to finish an HTTP/2 response after the backend sends `Finish`.
-  Default: `30000` milliseconds. Allowed range: `1` to `86400000` inclusive.
-
-  The fixed deadline starts at the first backend `Finish`. Incoming traffic, additional
-  flow-control credit and partial response progress do not restart it. At expiry, any
-  remaining response is discarded and the carrier direction is finished. This applies
-  to direct and upgraded HTTP/2, including WebSocket over HTTP/2; it does not change
-  HTTP/1.1, split HTTP/1.1 or custom raw-upgrade closing behavior.
-
-- `upgrade` `(boolean)`
-  Only meaningful when `http-version` is `both`.
-
-  If enabled, the server can accept HTTP/1.1 upgrade requests.
-
-  Default upgrade protocol:
-  - `Connection: Upgrade, HTTP2-Settings`
-  - `Upgrade: h2c`
-  - `HTTP2-Settings: ...`
-
-  Default:
-  - `true` when `http-version` is `both`
-  - `false` otherwise
-
-- `upgrade-protocol` `(string)`
-  Optional HTTP/1.1 upgrade protocol token to accept instead of the default `h2c`.
-
-  When this is set to a value other than `h2c`:
-  - the server expects `Connection: Upgrade`
-  - the server expects `Upgrade: <your-token>`
-  - after a successful `101`, the tunnel switches to raw bidirectional byte forwarding
-
-- `upgrade-request-headers` `(object)`
-  Optional required headers that must appear on the HTTP/1.1 upgrade request before the upgrade is accepted.
-
-- `upgrade-response-headers` `(object)`
-  Optional extra headers to include only on the HTTP/1.1 `101 Switching Protocols` response.
+#### HTTP metadata
 
 - `host` `(string)`
   Optional expected HTTP `Host`.
@@ -179,6 +147,42 @@ If omitted, the current implementation defaults to:
 
   Each key is the header name and each value must be a string.
 
+- `no-split-upload-buffering-limit` `(boolean)`
+  When enabled, SplitHttp will not close connections if the upload side sends too much data before the corresponding download connection has joined.
+
+  This option is currently considered mainly useful for multi-worker test scenarios, such as http1_bidirectional_tcp_loopback, where the TestClient sends all chunks immediately after the connection is established.
+  Default: `false`
+
+#### Upgrade and WebSocket
+
+- `upgrade` `(boolean)`
+  Only meaningful when `http-version` is `both`.
+
+  If enabled, the server can accept HTTP/1.1 upgrade requests.
+
+  Default upgrade protocol:
+  - `Connection: Upgrade, HTTP2-Settings`
+  - `Upgrade: h2c`
+  - `HTTP2-Settings: ...`
+
+  Default:
+  - `true` when `http-version` is `both`
+  - `false` otherwise
+
+- `upgrade-protocol` `(string)`
+  Optional HTTP/1.1 upgrade protocol token to accept instead of the default `h2c`.
+
+  When this is set to a value other than `h2c`:
+  - the server expects `Connection: Upgrade`
+  - the server expects `Upgrade: <your-token>`
+  - after a successful `101`, the tunnel switches to raw bidirectional byte forwarding
+
+- `upgrade-request-headers` `(object)`
+  Optional required headers that must appear on the HTTP/1.1 upgrade request before the upgrade is accepted.
+
+- `upgrade-response-headers` `(object)`
+  Optional extra headers to include only on the HTTP/1.1 `101 Switching Protocols` response.
+
 - `websocket` `(boolean)`
   Enables WebSocket mode.
   Default: `false`
@@ -193,6 +197,8 @@ If omitted, the current implementation defaults to:
 
 - `websocket-subprotocol` `(string)`
   Optional subprotocol to require and echo back in the handshake response.
+
+#### Split requests
 
 - `http1-mode` `(string)`
   Selects the HTTP/1.1 transport shape.
@@ -224,42 +230,62 @@ If omitted, the current implementation defaults to:
 
   Path templates may contain `{id}`, `{direction}`, `{cache}`, and `{token}`.
 
+#### Closing and diagnostics
+
+- `close-drain-timeout-ms` `(integer)`
+  Maximum time to finish an HTTP/2 response after the backend sends `Finish`.
+  Default: `30000` milliseconds. Allowed range: `1` to `86400000` inclusive.
+
+  The fixed deadline starts at the first backend `Finish`. Incoming traffic, additional
+  flow-control credit and partial response progress do not restart it. At expiry, any
+  remaining response is discarded and the carrier direction is finished. This applies
+  to direct and upgraded HTTP/2, including WebSocket over HTTP/2; it does not change
+  HTTP/1.1, split HTTP/1.1 or custom raw-upgrade closing behavior.
+
 - `verbose` `(boolean)`
   Enables extra debug logging for protocol detection, handshakes, and framing flow.
   Default: `false`
 
   Rejections and protocol errors are still logged even when this is `false`.
 
-- `no-split-upload-buffering-limit` `(boolean)`
-  When enabled, SplitHttp will not close connections if the upload side sends too much data before the corresponding download connection has joined.
+## Usage and troubleshooting
 
-  This option is currently considered mainly useful for multi-worker test scenarios, such as http1_bidirectional_tcp_loopback, where the TestClient sends all chunks immediately after the connection is established.
-  Default: `false`
+### Configuration Example
 
-## Detailed Behavior
+```json
+{
+  "name": "http-server",
+  "type": "HttpServer",
+  "settings": {
+    "http-version": "both",
+    "upgrade": true,
+    "websocket": false,
+    "host": "example.com",
+    "path": "/api/upload",
+    "method": "POST",
+    "status": 200,
+    "content-type": "application/json",
+    "headers": {
+      "cache-control": "no-store",
+      "x-powered-by": "waterwall"
+    }
+  },
+  "next": "service-node"
+}
+```
 
-### Lifecycle behavior
+### Notes And Caveats
 
-On upstream `Init`, `HttpServer`:
+- `HttpServer` is an HTTP framing tunnel, not a TLS tunnel.
+- HTTP/1.1 request validation checks method, path, and optional host.
+- Current HTTP/2 code is single-stream oriented and does not expose request metadata to the next tunnel.
+- HTTP/2 request validation checks method, path, and optional authority/host before forwarding body bytes.
+- In WebSocket mode, handshake-critical headers are generated by the tunnel and conflicting duplicates from `headers` are ignored.
+- Response headers are always generated by this tunnel; the next tunnel supplies only response body payload and finish events.
+- Automatic `Content-Type` emission only works for content types recognized by Waterwall's internal table. For custom values, add the header manually in `headers`.
+- This tunnel reserves `required_padding_left = 16` so HTTP/1.1 chunks and small tunnel frames can prepend protocol bytes efficiently. HTTP/2 DATA is emitted through nghttp2, not hand-packed into caller buffers.
 
-- allocates per-line HTTP state
-- forwards upstream `Init` to the next tunnel
-- chooses its runtime mode according to `http-version`
-
-The runtime protocol rules are:
-
-- HTTP/1.1 mode:
-  treat all traffic as HTTP/1.1
-- HTTP/2 mode:
-  initialize nghttp2 server state immediately
-- both mode:
-  wait for input and detect whether the stream begins with the HTTP/2 client preface or with an HTTP/1.1 request line
-
-In `websocket` mode:
-
-- HTTP/1.1 expects the normal WebSocket upgrade request
-- direct HTTP/2 expects extended `CONNECT` with `:protocol = websocket`
-- the HTTP/1.1 `Upgrade: h2c` path is not used as the WebSocket handshake
+## Advanced behavior
 
 ### HTTP/1.1 request handling
 
@@ -399,7 +425,9 @@ closes the connection. Its `large-send-buffer` / `large-recv-buffer` settings af
 After `Finish` from the next tunnel, `HttpServer` keeps its HTTP/2 state and borrowed carrier line available while
 accepted response bytes wait for flow-control credit. It still processes HTTP/2 control frames such as
 WINDOW_UPDATE, but discards later request-body data, including body events already decoded into its local queue.
-It sends no more callbacks toward the finished next tunnel. Once response DATA and `END_STREAM` have been handed
+If the service paused carrier reads, including before an h2c upgrade, HttpServer arms the close deadline and
+resumes the carrier so it can read WINDOW_UPDATE. It sends no more callbacks toward the finished next tunnel.
+Once response DATA and `END_STREAM` have been handed
 to the previous tunnel, it releases HTTP state and finishes that direction. Handing bytes to the transport is not
 confirmation that the client received them.
 
@@ -416,16 +444,9 @@ direction. It never sends another callback toward the finished backend. Completi
 cancellation cancel the timer; process shutdown also aborts the wait instead of waiting for the deadline.
 The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
 response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
-This deadline bounds retained HTTP response work, not the lifetime of the physical TCP socket: bytes already handed
-to the transport follow that adapter's close/write-flush policy. Expiry does not request successful-response linger.
+The deadline covers HTTP response work up to handoff or expiry. In either case HttpServer sends Finish
+to the live carrier. A TCP adapter normally flushes accepted writes and closes the socket fully.
 
-On Linux, successful response completion requests `TcpListener`'s socket-only linger. The Waterwall line is destroyed immediately;
-the detached socket may spend up to 60 seconds flushing its accepted writes, then shuts down its write direction
-and reads/discards remaining peer input for at most 5 seconds of inactivity or 30 seconds total. These limits are
-hardcoded and the latter phase starts after write completion. Reading remaining input avoids a TCP reset caused by
-closing with unread input. Transport errors, peer closure or process shutdown can end this earlier. Other platforms
-use the ordinary adapter close path. The normal `TcpListener` settings `initial-idle-timeout-ms` (60000 by default)
-and `active-idle-timeout-ms` (600000 by default) are separate from these linger limits.
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 
 Extra streams can be rejected with `RST_STREAM REFUSED_STREAM`.
@@ -466,7 +487,34 @@ the line. HTTP body, HTTP/2, WebSocket and split modes remain active for framing
 or line mapping. Same-line Pause/Resume notifications are transparent and
 repeatable, including during upgrade; they do not postpone ready output.
 
-### Data ownership at tunnel boundaries
+## Implementation details
+
+### Detailed Behavior
+
+#### Lifecycle behavior
+
+On upstream `Init`, `HttpServer`:
+
+- allocates per-line HTTP state
+- forwards upstream `Init` to the next tunnel
+- chooses its runtime mode according to `http-version`
+
+The runtime protocol rules are:
+
+- HTTP/1.1 mode:
+  treat all traffic as HTTP/1.1
+- HTTP/2 mode:
+  initialize nghttp2 server state immediately
+- both mode:
+  wait for input and detect whether the stream begins with the HTTP/2 client preface or with an HTTP/1.1 request line
+
+In `websocket` mode:
+
+- HTTP/1.1 expects the normal WebSocket upgrade request
+- direct HTTP/2 expects extended `CONNECT` with `:protocol = websocket`
+- the HTTP/1.1 `Upgrade: h2c` path is not used as the WebSocket handshake
+
+#### Data ownership at tunnel boundaries
 
 `HttpServer` forwards only request and response bodies across tunnel boundaries.
 
@@ -476,18 +524,7 @@ That means:
 - response headers are not expected from the next tunnel
 - lifecycle events are used to mark end-of-request and end-of-response
 
-## Notes And Caveats
-
-- `HttpServer` is an HTTP framing tunnel, not a TLS tunnel.
-- HTTP/1.1 request validation checks method, path, and optional host.
-- Current HTTP/2 code is single-stream oriented and does not expose request metadata to the next tunnel.
-- HTTP/2 request validation checks method, path, and optional authority/host before forwarding body bytes.
-- In WebSocket mode, handshake-critical headers are generated by the tunnel and conflicting duplicates from `headers` are ignored.
-- Response headers are always generated by this tunnel; the next tunnel supplies only response body payload and finish events.
-- Automatic `Content-Type` emission only works for content types recognized by Waterwall's internal table. For custom values, add the header manually in `headers`.
-- This tunnel reserves `required_padding_left = 16` so HTTP/1.1 chunks and small tunnel frames can prepend protocol bytes efficiently. HTTP/2 DATA is emitted through nghttp2, not hand-packed into caller buffers.
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

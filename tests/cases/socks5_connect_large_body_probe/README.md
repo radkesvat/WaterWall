@@ -2,7 +2,7 @@
 
 ## Execution and checks
 
-Coalesced SOCKS CONNECT header plus a large application body, with auth/response and real echo peers. Exact negotiation/payload bytes and no lost tail; original unexpected-EOF policy. Runs inside the namespace harness.
+This namespace probe checks coalesced SOCKS CONNECT and large application bodies with real echo peers. It also checks that a refused outbound dial closes the stream after CONNECT success in both authentication modes.
 
 Topology: auth-client: AuthenticationClient → auth-db; auth-db: AuthenticationServer; listener-noauth: TcpListener → socks-noauth; socks-noauth: Socks5Server → target-noauth; target-noauth: TcpConnector; listener-auth: TcpListener → socks-auth; socks-auth: Socks5Server → target-auth; target-auth: TcpConnector.
 

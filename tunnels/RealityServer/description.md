@@ -1,18 +1,55 @@
 <!--
-Documentation version: 154
+Documentation version: 155
 Sync note: Any change to this file must also be applied to WaterWall/WaterWall-Docs/docs/02-noderefs/RealityServer.mdx and WaterWall/WaterWall-Docs/i18n/fa/docusaurus-plugin-content-docs/current/02-noderefs/RealityServer.mdx, and all files must keep the same documentation version.
 -->
 
 # RealityServer
 
+## Overview
+
 `RealityServer` implements Reality v2. It starts each connection as a visitor TCP bridge, passively extracts the real ClientHello and final ServerHello binding, and only then tests client-to-server records with fresh per-connection session keys. TLS 1.3 requires an authenticated request/ack/confirm handoff before the visitor branch is closed and the same Waterwall line switches to the normal `next` chain. TLS 1.2 retains its immediate profile-aware authorization path.
 
-Typical placement:
+## Typical placement
 
 - `TcpListener -> RealityServer -> protected-chain`
 - `RealityServer.settings.destination` points to the visitor target, usually a `TcpConnector` for the real domain.
 
-## Settings
+
+Both peers must share `password`, `algorithm`, `salt`, and `kdf-iterations`,
+including their defaults, and use compatible handoff behavior. The visitor site
+must match the client SNI and certificate verification. Camouflage assumes a
+non-terminating on-path observer without the password or TLS traffic secrets
+and without control of the cover destination. It does not survive TLS termination
+or promise every browser timing or application behavior; read the
+[full security limits](#security-model-and-limitations) before deployment.
+
+## Minimal practical example
+
+The JSON below is a **node fragment**, not a complete config file.
+Replace the sample secret and transport/visitor node names, then complete
+the surrounding listener, peer, and application branches described above.
+
+### Example
+
+```json
+{
+  "name": "reality-server",
+  "type": "RealityServer",
+  "settings": {
+    "destination": "visitor-site",
+    "password": "replace-with-a-strong-secret",
+    "algorithm": "chacha20-poly1305",
+    "tls12-gcm-server-nonce-policy": "auto",
+    "sniffing-attempts": 8
+  },
+  "next": "protected-chain"
+}
+```
+
+
+## Configuration
+
+### Settings
 
 - `destination` (string, required): node name for normal visitor traffic
 - `password` (string, required): shared Reality secret, `1..32` UTF-8 bytes
@@ -26,12 +63,31 @@ Typical placement:
 
 Defaults apply only when an optional key is absent. A present optional key with the wrong JSON type is a startup error. Primary fields win over aliases even when malformed; an invalid `algorithm` is not rescued by `method`, and an invalid `sniffing-attempts` is not rescued by `sniffing-counter`.
 
-## Behavior
+## Advanced behavior
+
+### Security Model And Limitations
+
+The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
+
+Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
+
+Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
+
+### Compatibility
+
+The authenticated TLS 1.3 handoff requires a coordinated client/server upgrade from earlier unpublished v2 builds, including builds that switched immediately after the main TLS handshake. It remains wire-incompatible with v1. TLS 1.2 layouts and counters are unchanged. The password-derived value is only a root key for per-TLS-session derivation. No persistent replay database is needed.
+
+## Implementation details
+
+### Behavior
 
 Pause and Resume are advisory and repeatable. RealityServer forwards them to the selected live branch:
 `destination` before authorization and protected `next` afterward. The handoff cutoff and Finish guards
-suppress callbacks toward a retired branch. Ready records do not wait for Resume. The node stays active:
-authorized traffic needs record cryptography and sequencing, while visitor traffic needs destination routing
+suppress callbacks toward a retired branch. Ready records do not wait for Resume. After sending the TLS 1.3
+handoff ACK, RealityServer releases any frontend read Pause left by the cover branch so the frontend can
+deliver CONFIRM. A Pause from protected `next` during reentrant initialization continues to hold frontend
+reads. The node stays active in both modes.
+Authorized traffic needs record cryptography and sequencing, while visitor traffic needs destination routing
 and branch cleanup, so neither mode can use permanent bypass.
 
 Destination handshake envelopes are tracked incrementally in bounded parser/tracker state; the complete pre-key destination flight is never retained or replayed. Unprotected TLS 1.2 records can be tracked before the cipher profile is known. The selected profile is installed when both hellos are ready, including when ClientHello arrives after an already captured ServerHello. Invalid pre-profile TLS 1.2 tracking falls back to Visitor if TLS 1.2 is selected; it does not reject a TLS 1.3 negotiation.
@@ -54,36 +110,7 @@ For downstream TLS 1.2 GCM, `auto` freezes `sequence` when observed cover nonces
 
 The visible TLS facade counter is separate from the secret Reality replay counter and is never used as the Reality AEAD nonce. Both nodes advertise `21` bytes of left padding for the largest CBC prefix. There is no fallback to the earlier unpublished 12-byte-prefix application layout or the legacy static-key format, and the obsolete `max-frame-size` setting is rejected at startup.
 
-## Security Model And Limitations
-
-The reviewed camouflage threat model is a non-terminating on-path observer. It may capture and reassemble the full bidirectional stream; inspect TLS record types, versions, lengths, directions, ordering, timing, visible nonces/IVs, and close behavior; manipulate bytes; and initiate probes while knowing the implementation. It is assumed not to know the Reality password or genuine TLS traffic secrets, not to terminate TLS, and not to control or collude with the configured cover destination. It also cannot alter a completed TLS handshake without failing TLS Finished verification.
-
-Per-session Reality material depends on the fresh client and server randoms from the genuine TLS handshake. There is no independent Reality server challenge dedicated to session freshness. Cross-connection replay protection therefore assumes that the observer cannot predict or control both handshake randoms. A malicious or colluding cover destination that deliberately helps reproduce a previously observed handshake binding is outside this model; defending that stronger model would require an independently authenticated server challenge.
-
-Reality camouflage reproduces selected public TLS record properties, including suite-specific record shapes, lengths, explicit nonces/IVs, controls, alerts, and close behavior. After takeover, however, the records contain Reality-AEAD ciphertext rather than genuine ciphertext under the cover connection's TLS traffic keys. Reality does not claim to survive TLS termination or to reproduce every Chrome timing distribution, write size, burst pattern, or higher-level application semantic. A TLS-terminating observer can test the real traffic keys against later records and is outside the reviewed camouflage boundary.
-
-## Compatibility
-
-The authenticated TLS 1.3 handoff requires a coordinated client/server upgrade from earlier unpublished v2 builds, including builds that switched immediately after the main TLS handshake. It remains wire-incompatible with v1. TLS 1.2 layouts and counters are unchanged. The password-derived value is only a root key for per-TLS-session derivation. No persistent replay database is needed.
-
-## Example
-
-```json
-{
-  "name": "reality-server",
-  "type": "RealityServer",
-  "settings": {
-    "destination": "visitor-site",
-    "password": "replace-with-a-strong-secret",
-    "algorithm": "chacha20-poly1305",
-    "tls12-gcm-server-nonce-policy": "auto",
-    "sniffing-attempts": 8
-  },
-  "next": "protected-chain"
-}
-```
-
-## Node Metadata
+### Node Metadata
 
 Source-backed metadata:
 

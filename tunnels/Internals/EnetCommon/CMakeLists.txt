@@ -1,6 +1,6 @@
 set(ENET_VENDOR_DIR ${CMAKE_SOURCE_DIR}/ww/vendor/enet)
 
-# Vendored ENet protocol core, byte-identical to the pinned upstream commit (see
+# Vendored ENet protocol core, pinned upstream base plus documented local patches (see
 # ww/vendor/enet/README.waterwall.md). Upstream's socket layer is never compiled
 # here: src/platform.c supplies ENet's platform functions, so ENet cannot
 # create, poll or close an OS socket. Like kcp_protocol, the core links only the
@@ -34,7 +34,8 @@ if(WIN32 AND CMAKE_C_COMPILER_ID STREQUAL "Clang")
 endif()
 
 # WaterWall half shared by EnetClient and EnetServer: the node settings, the worker session around the driver and
-# the tunnel logic of both roles. It uses the WaterWall API, so it is a separate archive from the checked EnetCommon.
+# shared association lifetime and flow handling. It uses the WaterWall API, so it is a separate archive from the
+# checked EnetCommon.
 add_library(EnetTunnelCommon STATIC src/settings.c src/session.c src/endpoint.c)
 target_link_libraries(EnetTunnelCommon PUBLIC EnetCommon PRIVATE ww)
 if(NOT APPLE)
