@@ -296,6 +296,7 @@ option(INCLUDE_MUX_CLIENT               "link MuxClient staticly to the core"   
 option(INCLUDE_TUN_DEVICE               "link TunDevice staticly to the core"                                       ${TUNDEVICE_SUPPORTED})
 option(INCLUDE_PACKET_GENERATOR         "link PacketGenerator staticly to the core"                                 TRUE)
 option(INCLUDE_PACKET_COUNTER           "link PacketCounter staticly to the core"                                   TRUE)
+option(INCLUDE_SYN_REPLY                "link SynReply statically to the core"                                      TRUE)
 option(INCLUDE_RAWSOCKET                "link RawSocket staticly to the core"                                       ${RAWSOCKET_SUPPORTED})
 option(INCLUDE_DISTURBER                "link Disturber staticly to the core"                                       TRUE)
 option(INCLUDE_JUNK_DATAGRAM_SENDER     "link JunkDatagramSender staticly to the core"                              TRUE)
@@ -712,6 +713,13 @@ if(INCLUDE_PACKET_COUNTER)
   add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketCounter)
   target_link_directories(${WATERWALL_APPLICATION_TARGET} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/tunnels/PacketCounter)
   target_link_libraries(${WATERWALL_APPLICATION_TARGET} PacketCounter)
+endif()
+
+#syn reply
+if(INCLUDE_SYN_REPLY)
+  target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PUBLIC INCLUDE_SYN_REPLY=1)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/tunnels/Internals/SynReply)
+  target_link_libraries(${WATERWALL_APPLICATION_TARGET} SynReply)
 endif()
 
 #packet to connection

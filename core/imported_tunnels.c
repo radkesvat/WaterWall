@@ -65,6 +65,10 @@ static IMPORTED_TUNNEL_REGISTRATION_BOUNDARY void registerImportedTunnel(node_t 
 #include "PacketCounter/interface.h"
 #endif
 
+#ifdef INCLUDE_SYN_REPLY
+#include "SynReply/interface.h"
+#endif
+
 #ifdef INCLUDE_PACKET_TO_CONNECTION
 #include "PacketsToConnection/interface.h"
 #endif
@@ -490,6 +494,10 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 
 #ifdef INCLUDE_PACKET_COUNTER
     USING(PacketCounter);
+#endif
+
+#ifdef INCLUDE_SYN_REPLY
+    USING(SynReply);
 #endif
 
 #ifdef INCLUDE_PACKET_TO_CONNECTION

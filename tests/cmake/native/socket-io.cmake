@@ -125,6 +125,16 @@ if(TARGET PacketCounter)
   )
 endif()
 
+if(TARGET SynReply)
+  waterwall_add_native_executable(synreply_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/packet_io/synreply_test.c)
+  target_link_libraries(synreply_test PRIVATE SynReply ww)
+  add_waterwall_unit_test(
+    waterwall.synreply_unit
+    synreply_test
+    "unit;tunnels;synreply;packet;checksum;lifecycle"
+  )
+endif()
+
 waterwall_add_native_executable(local_idle_table_indexed_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/net/local_idle_table_indexed_test.c)
   target_link_libraries(local_idle_table_indexed_test PRIVATE ww_test_support)
 target_link_libraries(local_idle_table_indexed_test PRIVATE ww)
