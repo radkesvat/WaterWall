@@ -465,18 +465,22 @@ static void inputAccumulatorCases(tunnel_chain_t *chain)
                         source_data[i] == (uint8_t) (0x20U + i),
                     "replacement append changed preserved/new byte order or deferred source contents");
 
-        const sbuf_t before         = *replacement;
-        const size_t refused_length = settings->max_pending - hpsPendingBytes(session) + 1;
-        dir->incoming               = bufferpoolGetBestFit(pool, refused_length, bufferpoolGetLargeBufferPadding(pool));
-        incoming                    = dir->incoming;
+        const sbuf_read_view_t before          = sbufGetResidentView(replacement);
+        const size_t           before_capacity = sbufGetTotalCapacity(replacement);
+        const uint16_t         before_headroom = sbufGetInitialHeadroom(replacement);
+        const uint16_t         before_flags    = replacement->flags;
+        const size_t           refused_length  = settings->max_pending - hpsPendingBytes(session) + 1;
+        dir->incoming = bufferpoolGetBestFit(pool, refused_length, bufferpoolGetLargeBufferPadding(pool));
+        incoming      = dir->incoming;
         sbufSetLength(incoming, refused_length);
         memorySet(sbufGetMutablePtr(incoming), 0x6e, refused_length);
         require(! hpsAppendInput(session, direction, sbufGetRawPtr(incoming), refused_length),
                 "accumulator accepted input beyond its logical pending budget");
-        require(dir->input == replacement && replacement->data == before.data && replacement->len == before.len &&
-                    replacement->capacity == before.capacity &&
-                    replacement->initial_headroom == before.initial_headroom && replacement->flags == before.flags &&
-                    memoryEqual(replacement->data, "fix!tail", 8) && dir->incoming == incoming &&
+        require(dir->input == replacement && sbufGetRawPtr(replacement) == before.data &&
+                    sbufGetLength(replacement) == before.length &&
+                    sbufGetTotalCapacity(replacement) == before_capacity &&
+                    sbufGetInitialHeadroom(replacement) == before_headroom && replacement->flags == before_flags &&
+                    memoryEqual(sbufGetRawPtr(replacement), "fix!tail", 8) && dir->incoming == incoming &&
                     sbufGetLength(incoming) == refused_length,
                 "pending-budget refusal replaced or consumed existing input/source storage");
         for (size_t i = 0; i < append_length; ++i)
@@ -516,16 +520,20 @@ static void inputAccumulatorCases(tunnel_chain_t *chain)
     sbuf_t *source             = up->deferred;
     sbufSetLength(source, append_length);
     memorySet(sbufGetMutablePtr(source), 0x3c, append_length);
-    sbuf_t      *original = up->input;
-    const sbuf_t before   = *original;
+    sbuf_t                *original        = up->input;
+    const sbuf_read_view_t before          = sbufGetResidentView(original);
+    const size_t           before_capacity = sbufGetTotalCapacity(original);
+    const uint16_t         before_headroom = sbufGetInitialHeadroom(original);
+    const uint16_t         before_flags    = original->flags;
     require(append_length <= settings->max_pending - hpsPendingBytes(session) &&
                 append_length > sbufGetTailroom(original),
             "allocation-refusal setup did not require replacement within its logical budget");
     require(! hpsAppendInput(session, kHpsUpstream, sbufGetRawPtr(source), append_length),
             "accumulator accepted replacement beyond the allocation-charge budget");
-    require(up->input == original && original->data == before.data && original->len == before.len &&
-                original->capacity == before.capacity && original->initial_headroom == before.initial_headroom &&
-                original->flags == before.flags && memoryEqual(original->data, "old", 3) && up->deferred == source &&
+    require(up->input == original && sbufGetRawPtr(original) == before.data &&
+                sbufGetLength(original) == before.length && sbufGetTotalCapacity(original) == before_capacity &&
+                sbufGetInitialHeadroom(original) == before_headroom && original->flags == before_flags &&
+                memoryEqual(sbufGetRawPtr(original), "old", 3) && up->deferred == source &&
                 sbufGetLength(source) == append_length && hpsPendingBytes(session) == 6,
             "allocation-charge refusal changed accumulated input or distinct source ownership");
     for (size_t i = 0; i < append_length; ++i)
