@@ -22,8 +22,8 @@ static void settle(wireguard_job_t *job)
 {
     if (job->release != NULL)
         job->release(job->argument);
-    atomic_fetch_sub(&job->dispatch->bytes, job->charge);
-    atomic_fetch_sub(&job->dispatch->count, 1);
+    atomicSub(&job->dispatch->bytes, job->charge);
+    atomicSub(&job->dispatch->count, 1);
     memoryFree(job);
 }
 
@@ -43,7 +43,7 @@ static void execute(void *worker, void *arg1, void *arg2, void *arg3)
     discard          arg2;
     discard          arg3;
     wireguard_job_t *job = arg1;
-    if (LIKELY(atomic_load(&job->dispatch->open)))
+    if (LIKELY(atomicLoad(&job->dispatch->open)))
         job->run(job->t, job->packet, job->argument);
     else
         reuseBuffer(job->packet);
@@ -54,18 +54,20 @@ void wireguardDispatch(wireguard_dispatch_t *dispatch, wid_t worker, tunnel_t *t
                        wireguard_dispatch_fn run, void (*release)(void *))
 {
     const size_t charge = sbufGetAllocationCharge(packet) + sizeof(wireguard_job_t);
-    if (UNLIKELY(! atomic_load(&dispatch->open)))
+    if (UNLIKELY(! atomicLoad(&dispatch->open)))
         goto refuse;
-    if (UNLIKELY(atomic_fetch_add(&dispatch->count, 1) >= 512))
+    if (UNLIKELY(atomicAdd(&dispatch->count, 1) >= 512))
     {
-        atomic_fetch_sub(&dispatch->count, 1);
+        atomicSub(&dispatch->count, 1);
         goto refuse;
     }
-    if (UNLIKELY(atomic_fetch_add(&dispatch->bytes, charge) > 8U * 1024U * 1024U || charge > 8U * 1024U * 1024U ||
-                 atomic_load(&dispatch->bytes) > 8U * 1024U * 1024U))
+    const size_t previous_bytes = atomicAdd(&dispatch->bytes, charge);
+    const size_t byte_limit     = 8U * 1024U * 1024U;
+    if (UNLIKELY(previous_bytes > byte_limit || charge > byte_limit ||
+                 (size_t) atomicLoad(&dispatch->bytes) > byte_limit))
     {
-        atomic_fetch_sub(&dispatch->bytes, charge);
-        atomic_fetch_sub(&dispatch->count, 1);
+        atomicSub(&dispatch->bytes, charge);
+        atomicSub(&dispatch->count, 1);
         goto refuse;
     }
     wireguard_job_t *job = memoryAllocate(sizeof(*job));

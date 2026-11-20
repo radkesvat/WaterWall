@@ -92,7 +92,7 @@ void apiserverLinestateDestroy(apiserver_lstate_t *ls)
     *ls->previous = ls->next;
     if (ls->next)
         ls->next->previous = ls->previous;
-    atomic_fetch_sub(&ts->session_count, 1);
+    atomicSub(&ts->session_count, 1);
     apiserverRelease(ls, sizeof(*ls));
     bufferbudgetAssertEmpty(&ls->budget);
     memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
@@ -122,10 +122,11 @@ bool apiserverLinestateInitialize(tunnel_t *t, line_t *line)
     apiserver_lstate_t *ls = lineGetState(line, t);
     *ls                    = (apiserver_lstate_t) {.tunnel = t, .line = line};
     bufferbudgetInit(&ls->budget, (buffer_budget_cost_t) {.charge = ts->limits.max_line_memory});
-    w_atomic_uint_value_t count    = atomic_load(&ts->session_count);
+    size_t                count    = atomicLoad(&ts->session_count);
     bool                  admitted = false;
-    while (count < ts->limits.max_sessions && ! atomic_load(&ts->stopping) && nodeApiAdmissionIsOpen())
-        if (atomic_compare_exchange_weak(&ts->session_count, &count, count + 1))
+    while (count < ts->limits.max_sessions && ! atomicLoad(&ts->stopping) && nodeApiAdmissionIsOpen())
+        if (atomicCompareExchangeWeakSizeExplicit(
+                &ts->session_count, &count, count + 1, memory_order_seq_cst, memory_order_seq_cst))
         {
             admitted = true;
             break;
@@ -135,10 +136,10 @@ bool apiserverLinestateInitialize(tunnel_t *t, line_t *line)
         if (! admitted && count >= ts->limits.max_sessions)
             LOGW("APIServer: rejecting session: session limit reached "
                  "(observed_sessions=%zu, max_sessions=%zu)",
-                 (size_t) count,
+                 count,
                  ts->limits.max_sessions);
         if (admitted)
-            atomic_fetch_sub(&ts->session_count, 1);
+            atomicSub(&ts->session_count, 1);
         memoryZeroAligned32(ls, tunnelGetCorrectAlignedLineStateSize(sizeof(*ls)));
         return false;
     }

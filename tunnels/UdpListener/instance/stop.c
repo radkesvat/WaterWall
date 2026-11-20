@@ -6,7 +6,7 @@ void udplistenerTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t
 {
     discard               context;
     udplistener_tstate_t *ts = tunnelGetState(t);
-    atomic_store_explicit(&ts->dynamic_admission_open, false, memory_order_release);
+    atomicStoreExplicit(&ts->dynamic_admission_open, false, memory_order_release);
 }
 
 void udplistenerTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)

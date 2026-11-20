@@ -700,9 +700,9 @@ static inline void hybridmutexLock(whybrid_mutex_t *m)
                     // Pair registration and the flag check with hybridmutexUnlock so either the unlocker sees this
                     // waiter or we see its release. The SC fence also excludes older non-SC flag/count values permitted
                     // by C's mixed-order rules (acquire exchanges and relaxed waiter decrements).
-                    atomic_fetch_add(&m->nwait, 1);
-                    atomic_thread_fence(memory_order_seq_cst);
-                    while (atomic_load(&m->flag))
+                    atomicAdd(&m->nwait, 1);
+                    atomicThreadFence(memory_order_seq_cst);
+                    while (atomicLoad(&m->flag))
                     {
                         semaphoreWait(&m->sema);
                     }
@@ -737,8 +737,8 @@ static inline bool hybridmutexTryLock(whybrid_mutex_t *m)
  */
 static inline void hybridmutexUnlock(whybrid_mutex_t *m)
 {
-    (void) atomic_exchange(&m->flag, false);
-    if (atomic_load(&m->nwait) != 0)
+    (void) atomicExchange(&m->flag, false);
+    if (atomicLoad(&m->nwait) != 0)
     {
         // at least one thread waiting on a semaphore signal -- wake one thread
         semaphorePost(&m->sema); // TODO: should we check the return value?

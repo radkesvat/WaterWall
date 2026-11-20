@@ -54,7 +54,7 @@ local_idle_table_t *udpsockGetWorkerIdleTable(udpsock_t *socket);
 void               udpsockRetire(udpsock_t *socket);
 static inline bool udpsockIsRetired(const udpsock_t *socket)
 {
-    return atomic_load_explicit(&socket->retired, memory_order_acquire);
+    return atomicLoadExplicit(&socket->retired, memory_order_acquire);
 }
 
 /**

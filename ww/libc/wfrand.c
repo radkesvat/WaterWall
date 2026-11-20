@@ -200,7 +200,7 @@ static int            g_frand_atfork_result;
 
 static void frandAtForkChild(void)
 {
-    atomic_store_explicit(&g_frand_state.fork_reseed_state, kFrandForkReseedRequired, memory_order_relaxed);
+    atomicStoreExplicit(&g_frand_state.fork_reseed_state, kFrandForkReseedRequired, memory_order_relaxed);
     tls_frand_state.cursor      = CHACHA20_BLOCK_SIZE;
     tls_frand_state.initialized = false;
 }
@@ -219,7 +219,7 @@ static void frandHandleForkReseed(void)
 {
     for (;;)
     {
-        const int state = atomic_load_explicit(&g_frand_state.fork_reseed_state, memory_order_acquire);
+        const int state = atomicLoadExplicit(&g_frand_state.fork_reseed_state, memory_order_acquire);
         if (state == kFrandForkKeyCurrent)
         {
             return;
@@ -228,11 +228,11 @@ static void frandHandleForkReseed(void)
         if (state == kFrandForkReseedRequired)
         {
             int expected = kFrandForkReseedRequired;
-            if (atomic_compare_exchange_weak_explicit(&g_frand_state.fork_reseed_state,
-                                                      &expected,
-                                                      kFrandForkReseedInProgress,
-                                                      memory_order_acq_rel,
-                                                      memory_order_acquire))
+            if (atomicCompareExchangeWeakExplicit(&g_frand_state.fork_reseed_state,
+                                                  &expected,
+                                                  kFrandForkReseedInProgress,
+                                                  memory_order_acq_rel,
+                                                  memory_order_acquire))
             {
                 uint8_t new_master_key[CHACHA20_KEY_SIZE];
                 if (UNLIKELY(! secureRandomBytes(new_master_key, sizeof(new_master_key))))
@@ -244,7 +244,7 @@ static void frandHandleForkReseed(void)
                 memoryCopy(g_frand_state.master_key, new_master_key, sizeof(new_master_key));
                 memorySecureZero(new_master_key, sizeof(new_master_key));
                 atomicStoreU64Relaxed(&g_frand_state.next_stream_id, 0);
-                atomic_store_explicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_release);
+                atomicStoreExplicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_release);
                 return;
             }
             continue;
@@ -299,7 +299,7 @@ static void frandInitializeTls(frand_tls_state_t *tls)
     memorySecureZero(tls, sizeof(*tls));
     tls->cursor = CHACHA20_BLOCK_SIZE;
 
-    const bool global_initialized = atomic_load_explicit(&g_frand_state.initialized, memory_order_acquire);
+    const bool global_initialized = atomicLoadExplicit(&g_frand_state.initialized, memory_order_acquire);
     assert(global_initialized);
     if (UNLIKELY(! global_initialized))
     {
@@ -413,7 +413,7 @@ void getRandomBytes(void *bytes, size_t size)
 
 bool frandGlobalInit(void)
 {
-    const bool already_initialized = atomic_load_explicit(&g_frand_state.initialized, memory_order_acquire);
+    const bool already_initialized = atomicLoadExplicit(&g_frand_state.initialized, memory_order_acquire);
     assert(! already_initialized);
     if (UNLIKELY(already_initialized))
     {
@@ -438,19 +438,19 @@ bool frandGlobalInit(void)
     memorySecureZero(master_key, sizeof(master_key));
     atomicStoreU64Relaxed(&g_frand_state.next_stream_id, 0);
 #if defined(OS_UNIX)
-    atomic_store_explicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
+    atomicStoreExplicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
 #endif
 #if defined(WFRAND_TEST_SEAM)
     g_frand_state.test_max_blocks_per_stream = 0;
 #endif
-    atomic_store_explicit(&g_frand_state.initialized, true, memory_order_release);
+    atomicStoreExplicit(&g_frand_state.initialized, true, memory_order_release);
 
     return true;
 }
 
 void frandGlobalCleanup(void)
 {
-    const bool initialized = atomic_load_explicit(&g_frand_state.initialized, memory_order_acquire);
+    const bool initialized = atomicLoadExplicit(&g_frand_state.initialized, memory_order_acquire);
     assert(initialized);
     discard initialized;
     assert(! tls_frand_state.initialized);
@@ -459,11 +459,11 @@ void frandGlobalCleanup(void)
         frandInvariantFailure("process cleanup began before current-thread cleanup");
     }
 
-    atomic_store_explicit(&g_frand_state.initialized, false, memory_order_release);
+    atomicStoreExplicit(&g_frand_state.initialized, false, memory_order_release);
     memorySecureZero(g_frand_state.master_key, sizeof(g_frand_state.master_key));
     atomicStoreU64Relaxed(&g_frand_state.next_stream_id, 0);
 #if defined(OS_UNIX)
-    atomic_store_explicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
+    atomicStoreExplicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
 #endif
 #if defined(WFRAND_TEST_SEAM)
     g_frand_state.test_max_blocks_per_stream = 0;
@@ -486,14 +486,14 @@ void frandThreadCleanup(void)
 void wfrandTestReset(const uint8_t key[CHACHA20_KEY_SIZE], uint64_t next_stream_id)
 {
     assert(key != NULL);
-    assert(atomic_load_explicit(&g_frand_state.initialized, memory_order_acquire));
+    assert(atomicLoadExplicit(&g_frand_state.initialized, memory_order_acquire));
 
     frandThreadCleanup();
     memoryCopy(g_frand_state.master_key, key, CHACHA20_KEY_SIZE);
     atomicStoreU64Relaxed(&g_frand_state.next_stream_id, next_stream_id);
     g_frand_state.test_max_blocks_per_stream = 0;
 #if defined(OS_UNIX)
-    atomic_store_explicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
+    atomicStoreExplicit(&g_frand_state.fork_reseed_state, kFrandForkKeyCurrent, memory_order_relaxed);
 #endif
     frandInit();
 }
@@ -512,6 +512,6 @@ void wfrandTestSetMaxBlocksPerStream(uint64_t max_blocks)
 
 bool wfrandTestIsThreadInitialized(void)
 {
-    return tls_frand_state.initialized && atomic_load_explicit(&g_frand_state.initialized, memory_order_relaxed);
+    return tls_frand_state.initialized && atomicLoadExplicit(&g_frand_state.initialized, memory_order_relaxed);
 }
 #endif

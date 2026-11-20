@@ -172,7 +172,7 @@ static void drainRetiredUdpSocket(void *worker_ptr, void *arg1, void *arg2, void
 
 void udpsockRetire(udpsock_t *socket)
 {
-    if (atomic_exchange_explicit(&socket->retired, true, memory_order_acq_rel))
+    if (atomicExchangeExplicit(&socket->retired, true, memory_order_acq_rel))
         return;
     socket->io = NULL;
     if (socket->owner_slot != NULL)

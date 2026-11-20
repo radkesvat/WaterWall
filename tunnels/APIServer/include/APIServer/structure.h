@@ -102,7 +102,7 @@ typedef struct apiserver_tstate_s
     node_api_domain_t   *domain;
     node_api_domain_t   *unauthenticated_domain;
     apiserver_lstate_t **sessions;
-    atomic_uint          session_count;
+    atomic_size_t        session_count;
     atomic_ullong        serial;
     atomic_bool          stopping;
 } apiserver_tstate_t;

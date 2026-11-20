@@ -76,7 +76,7 @@ void nodeApiDomainClose(node_api_domain_t *domain)
 
 static void domainReleaseReference(node_api_domain_t *domain)
 {
-    if (atomic_fetch_sub_explicit(&domain->references, 1, memory_order_acq_rel) == 1)
+    if (atomicSubExplicit(&domain->references, 1, memory_order_acq_rel) == 1)
     {
         mutexDestroy(&domain->mutex);
         memoryFree(domain);
@@ -178,7 +178,7 @@ node_api_job_t *nodeApiJobCreate(node_api_domain_t *domain, tunnel_t *target, co
     {
         ++domain->jobs;
         domain->bytes += charge;
-        atomic_fetch_add_explicit(&domain->references, 1, memory_order_relaxed);
+        atomicAddExplicit(&domain->references, 1, memory_order_relaxed);
     }
     mutexUnlock(&domain->mutex);
     if (! accepted)

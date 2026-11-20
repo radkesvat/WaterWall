@@ -43,7 +43,7 @@ static line_t *ensureCarrier(client_t *state)
         return *phase == kCarrierOpen ? line : NULL;
     }
     const uint32_t now = getTickMS();
-    if (! atomic_load(&state->dispatch.open) || (state->attempted && now - state->last_attempt < 400))
+    if (! atomicLoad(&state->dispatch.open) || (state->attempted && now - state->last_attempt < 400))
         return NULL;
     state->attempted    = true;
     state->last_attempt = now;
@@ -73,7 +73,7 @@ static bool output(void *context, sbuf_t *packet, wireguard_peer_t *selected_pee
     discard   port;
     client_t *state = context;
     line_t   *line  = ensureCarrier(state);
-    if (line == NULL || state->paused || ! atomic_load(&state->dispatch.open))
+    if (line == NULL || state->paused || ! atomicLoad(&state->dispatch.open))
     {
         reuseBuffer(packet);
         return false;
@@ -142,7 +142,7 @@ static void payloadDown(tunnel_t *t, line_t *l, sbuf_t *packet)
 {
     client_t *state = tunnelGetState(t);
     assert(currentThreadOwnsWorker(0));
-    if (UNLIKELY(state->carrier != l || ! atomic_load(&state->dispatch.open)))
+    if (UNLIKELY(state->carrier != l || ! atomicLoad(&state->dispatch.open)))
     {
         lineReuseBuffer(l, packet);
         return;
@@ -194,7 +194,7 @@ static void resumeDown(tunnel_t *t, line_t *l)
 static void tick(wtimer_t *timer)
 {
     client_t *state = weventGetUserdata(timer);
-    if (atomic_load(&state->dispatch.open))
+    if (atomicLoad(&state->dispatch.open))
     {
         discard ensureCarrier(state);
         wireguardCommonLoop(&state->engine);
@@ -217,7 +217,7 @@ static void quiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard   context;
     client_t *state = tunnelGetState(t);
-    atomic_store(&state->dispatch.open, false);
+    atomicStore(&state->dispatch.open, false);
 }
 static void quiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
@@ -259,7 +259,7 @@ static void destroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard   context;
     client_t *state = tunnelGetState(t);
-    assert(state->pending_count == 0 && state->carrier == NULL && atomic_load(&state->dispatch.count) == 0);
+    assert(state->pending_count == 0 && state->carrier == NULL && atomicLoad(&state->dispatch.count) == 0);
     addresscontextReset(&state->endpoint);
     wireguardDeviceDestroy(&state->engine);
     tunnelDestroy(t);

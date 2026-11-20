@@ -115,7 +115,7 @@ static void trafficshaperNotify(traffic_shaper_t *shaper)
 
 static void trafficshaperContinuationUnref(traffic_shaper_continuation_t *continuation)
 {
-    if (atomic_fetch_sub_explicit(&continuation->references, 1, memory_order_acq_rel) == 1)
+    if (atomicSubExplicit(&continuation->references, 1, memory_order_acq_rel) == 1)
         memoryFree(continuation);
 }
 

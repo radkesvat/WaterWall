@@ -1703,7 +1703,7 @@ static cJSON *userBuildJsonLocked(User *user, const user_stat_t *stats, bool pla
 size_t userExportFixedOverhead(void)
 {
     static atomic_size_t cached   = 0;
-    size_t               overhead = atomic_load(&cached);
+    size_t               overhead = atomicLoad(&cached);
     if (overhead != 0)
         return overhead;
     /* Nonempty sentinels select every optional string, but placeholders avoid
@@ -1731,7 +1731,7 @@ size_t userExportFixedOverhead(void)
     overhead          = stringLength(text);
     cJSON_free(text);
     cJSON_Delete(json);
-    atomic_store(&cached, overhead);
+    atomicStore(&cached, overhead);
     return overhead;
 }
 

@@ -178,7 +178,7 @@ static void windowsHandlerGateLeave(void)
 
 static void windowsHandlerGateCloseAndWait(void)
 {
-    discard atomic_fetch_or_explicit(&windows_ctrl_handler_gate, WINDOWS_HANDLER_GATE_CLOSED, memory_order_acq_rel);
+    discard atomicOrExplicit(&windows_ctrl_handler_gate, WINDOWS_HANDLER_GATE_CLOSED, memory_order_acq_rel);
     while ((atomicLoadExplicit(&windows_ctrl_handler_gate, memory_order_acquire) & WINDOWS_HANDLER_GATE_COUNT_MASK) !=
            0)
     {
@@ -1043,7 +1043,7 @@ void signalmanagerDestroy(void)
     }
 
 #if defined(OS_WIN)
-    discard atomic_fetch_or_explicit(&windows_ctrl_handler_gate, WINDOWS_HANDLER_GATE_CLOSED, memory_order_acq_rel);
+    discard atomicOrExplicit(&windows_ctrl_handler_gate, WINDOWS_HANDLER_GATE_CLOSED, memory_order_acq_rel);
 
     if (signalmanager_gstate->console_handler_registered && ! SetConsoleCtrlHandler(CtrlHandler, FALSE))
     {

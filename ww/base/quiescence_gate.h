@@ -176,7 +176,7 @@ static inline bool quiescenceGateEnter(quiescence_gate_t *gate)
 #endif
 
         // Observes fields published before the successful Open release CAS.
-        if (atomic_compare_exchange_weak_explicit(
+        if (atomicCompareExchangeWeakExplicit(
                 &gate->state, &state, state + 1, memory_order_acquire, memory_order_relaxed))
         {
 #ifndef NDEBUG
@@ -239,7 +239,7 @@ static inline void quiescenceGateClose(quiescence_gate_t *gate)
 #ifndef NDEBUG
     assert(! quiescenceGateThreadIsInsideGate(gate));
 #endif
-    discard atomic_fetch_or_explicit(&gate->state, QUIESCENCE_GATE_CLOSED, memory_order_acq_rel);
+    discard atomicOrExplicit(&gate->state, QUIESCENCE_GATE_CLOSED, memory_order_acq_rel);
 }
 
 WW_EXPORT void quiescenceGateWaitQuiesced(quiescence_gate_t *gate, QuiescenceGateYieldFn yield_fn, void *yield_context);

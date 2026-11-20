@@ -4,7 +4,7 @@ void apiserverOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *contex
 {
     discard             context;
     apiserver_tstate_t *ts = tunnelGetState(t);
-    atomic_store(&ts->stopping, true);
+    atomicStore(&ts->stopping, true);
     nodeApiDomainClose(ts->domain);
     nodeApiDomainClose(ts->unauthenticated_domain);
 }

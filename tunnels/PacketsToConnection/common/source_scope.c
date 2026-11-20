@@ -76,7 +76,7 @@ static void complete(void *worker, void *arg1, void *arg2, void *arg3)
     discard   arg2;
     discard   arg3;
     retire_t *retire = arg1;
-    retire->callback(retire->context, ! atomic_load(&retire->failed));
+    retire->callback(retire->context, ! atomicLoad(&retire->failed));
     memoryFree(retire);
 }
 static void completeCanceled(void *arg1, void *arg2, void *arg3, worker_message_cancel_reason_e reason)
@@ -91,10 +91,10 @@ static void completeCanceled(void *arg1, void *arg2, void *arg3, worker_message_
 static void acknowledge(retire_t *retire, bool success)
 {
     if (! success)
-        atomic_store(&retire->failed, true);
-    if (atomic_fetch_sub(&retire->remaining, 1) != 1)
+        atomicStore(&retire->failed, true);
+    if (atomicSub(&retire->remaining, 1) != 1)
         return;
-    if (atomic_load(&retire->failed))
+    if (atomicLoad(&retire->failed))
     {
         /* Cancellation only settles ownership and notifies; it never posts work. */
         retire->callback(retire->context, false);

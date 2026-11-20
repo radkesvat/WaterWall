@@ -70,7 +70,7 @@ bool udplistenerDynamicEndpointOpen(tunnel_t *t, wid_t wid, const udplistener_dy
     }
 
     udplistener_tstate_t *ts = tunnelGetState(t);
-    if (! atomic_load_explicit(&ts->dynamic_admission_open, memory_order_acquire) || ts->worker_registries == NULL ||
+    if (! atomicLoadExplicit(&ts->dynamic_admission_open, memory_order_acquire) || ts->worker_registries == NULL ||
         wid >= ts->workers_count)
     {
         return false;
@@ -181,7 +181,7 @@ bool udplistenerDynamicEndpointActivate(tunnel_t *t, udplistener_dynamic_endpoin
     }
 
     udplistener_tstate_t *ts = tunnelGetState(t);
-    if (! atomic_load_explicit(&ts->dynamic_admission_open, memory_order_acquire))
+    if (! atomicLoadExplicit(&ts->dynamic_admission_open, memory_order_acquire))
     {
         return false;
     }

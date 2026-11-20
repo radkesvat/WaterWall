@@ -106,7 +106,7 @@ void deviceReaderSessionRef(device_reader_session_t *session)
             abortProgramNow(1);
         }
 
-        if (atomic_compare_exchange_weak_explicit(
+        if (atomicCompareExchangeWeakExplicit(
                 &session->refcount, &previous, previous + 1, memory_order_relaxed, memory_order_relaxed))
         {
             return;

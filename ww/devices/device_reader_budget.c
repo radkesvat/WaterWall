@@ -17,7 +17,7 @@ enum
 
 void deviceReaderSessionSignalOutputCapacity(device_reader_session_t *session)
 {
-    if (! atomic_exchange_explicit(&session->output_waiting, false, memory_order_acq_rel))
+    if (! atomicExchangeExplicit(&session->output_waiting, false, memory_order_acq_rel))
     {
         return;
     }
@@ -69,10 +69,8 @@ void deviceReaderSessionReleaseWork(device_reader_session_t *session, size_t exa
     assert(exact_charge > 0);
     assert(packets > 0);
     mutexLock(&session->output_budget_lock);
-    const size_t previous_charge =
-        atomic_fetch_sub_explicit(&session->output_charge, exact_charge, memory_order_acq_rel);
-    const unsigned int previous_count =
-        atomic_fetch_sub_explicit(&session->output_packets, packets, memory_order_acq_rel);
+    const size_t       previous_charge = atomicSubExplicit(&session->output_charge, exact_charge, memory_order_acq_rel);
+    const unsigned int previous_count  = atomicSubExplicit(&session->output_packets, packets, memory_order_acq_rel);
     if (UNLIKELY(previous_charge < exact_charge || previous_count < packets))
     {
         LOGF("DeviceReaderSession: output-budget reservation underflow "
@@ -97,7 +95,7 @@ bool deviceReaderSessionConfigureOutputBudget(device_reader_session_t *session, 
     assert(session != NULL);
     assert(max_charge > 0 && max_packets > 0);
     assert(session->output_charge_limit == 0);
-    assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
+    assert(atomicLoadExplicit(&session->generation, memory_order_relaxed) == 0);
     if (! mutexTryInit(&session->output_budget_lock))
     {
         LOGE("DeviceReaderSession: cannot configure device dispatch budget: mutex initialization failed "
@@ -132,7 +130,7 @@ void deviceReaderSessionConfigureCapacityNotify(device_reader_session_t *session
 {
     assert(session != NULL && notify != NULL);
     assert(session->output_charge_limit != 0);
-    assert(atomic_load_explicit(&session->generation, memory_order_relaxed) == 0);
+    assert(atomicLoadExplicit(&session->generation, memory_order_relaxed) == 0);
     assert(session->capacity_notify == NULL);
     session->capacity_notify         = notify;
     session->capacity_notify_context = context;
@@ -144,7 +142,7 @@ bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t 
     assert(session->output_charge_limit != 0);
     assert(exact_charge > 0 && exact_charge <= session->output_charge_limit);
     assert(packets > 0 && packets <= session->output_packet_limit);
-    if (UNLIKELY(! atomic_load_explicit(&session->producer_admission, memory_order_acquire)))
+    if (UNLIKELY(! atomicLoadExplicit(&session->producer_admission, memory_order_acquire)))
     {
         return false;
     }
@@ -153,16 +151,16 @@ bool deviceReaderSessionTryReserveWork(device_reader_session_t *session, size_t 
      * otherwise make a peer sleep even though no accepted work can wake it.
      * Publish refusal while holding the same short lock used by settlement. */
     mutexLock(&session->output_budget_lock);
-    const size_t       charge = atomic_load_explicit(&session->output_charge, memory_order_relaxed);
-    const unsigned int count  = atomic_load_explicit(&session->output_packets, memory_order_relaxed);
+    const size_t       charge = atomicLoadExplicit(&session->output_charge, memory_order_relaxed);
+    const unsigned int count  = atomicLoadExplicit(&session->output_packets, memory_order_relaxed);
     if (packets > session->output_packet_limit - count || exact_charge > session->output_charge_limit - charge)
     {
-        atomic_store_explicit(&session->output_waiting, true, memory_order_release);
+        atomicStoreExplicit(&session->output_waiting, true, memory_order_release);
         mutexUnlock(&session->output_budget_lock);
         return false;
     }
-    atomic_store_explicit(&session->output_charge, charge + exact_charge, memory_order_relaxed);
-    atomic_store_explicit(&session->output_packets, count + packets, memory_order_relaxed);
+    atomicStoreExplicit(&session->output_charge, charge + exact_charge, memory_order_relaxed);
+    atomicStoreExplicit(&session->output_packets, count + packets, memory_order_relaxed);
     /* A successful producer must not clear another producer's waiter. */
     mutexUnlock(&session->output_budget_lock);
     return true;

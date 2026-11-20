@@ -63,12 +63,12 @@ typedef struct send_s
 
 static void ingressRetain(ingress_t *ingress)
 {
-    atomic_fetch_add(&ingress->references, 1);
+    atomicAdd(&ingress->references, 1);
 }
 static void ingressRelease(void *argument)
 {
     ingress_t *ingress = argument;
-    if (ingress != NULL && atomic_fetch_sub(&ingress->references, 1) == 1)
+    if (ingress != NULL && atomicSub(&ingress->references, 1) == 1)
     {
         assert(ingress->line == NULL);
         mutexDestroy(&ingress->lock);
@@ -100,7 +100,7 @@ static uint64_t sourceEpoch(void *context, const ip_addr_t *source)
     unsigned                                       index          = 0;
     uint8_t                                        public_key[32] = {0};
     authenticationclient_wireguard_authorization_t expected       = {0};
-    if (UNLIKELY(! atomic_load(&state->dispatch.open)))
+    if (UNLIKELY(! atomicLoad(&state->dispatch.open)))
         return 0;
     mutexLock(&state->bindings_lock);
     for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
@@ -138,8 +138,8 @@ static void retired(void *context, bool success)
 {
     /* Cancellation can arrive on a foreign teardown thread. Notification only. */
     binding_t *binding = context;
-    atomic_store(&binding->retirement_ok, success);
-    atomic_store(&binding->retirement_done, true);
+    atomicStore(&binding->retirement_ok, success);
+    atomicStore(&binding->retirement_done, true);
 }
 static void clearBinding(server_t *state, unsigned index)
 {
@@ -172,8 +172,8 @@ static void retireBinding(server_t *state, unsigned index)
     discard wireguardifRemovePeer(&state->engine, (uint8_t) index);
     if (state->connection && had_flows)
     {
-        atomic_store(&binding->retirement_done, false);
-        atomic_store(&binding->retirement_ok, false);
+        atomicStore(&binding->retirement_done, false);
+        atomicStore(&binding->retirement_ok, false);
         ptcRetireSourceRange(
             state->ptc, &binding->authorization.network, &binding->authorization.mask, 0, retired, binding);
     }
@@ -190,7 +190,7 @@ static void reconcile(server_t *state)
         binding_t *binding = &state->bindings[i];
         if (binding->retiring)
         {
-            if (atomic_load(&binding->retirement_done) && atomic_load(&binding->retirement_ok))
+            if (atomicLoad(&binding->retirement_done) && atomicLoad(&binding->retirement_ok))
                 clearBinding(state, i);
             continue;
         }
@@ -535,7 +535,7 @@ static void detachIngress(tunnel_t *t, line_t *line)
         ingress->next->previous = ingress->previous;
     mutexLock(&ingress->lock);
     ingress->line = NULL;
-    atomic_fetch_sub(&state->ingress_count, 1);
+    atomicSub(&state->ingress_count, 1);
     mutexUnlock(&ingress->lock);
     lineUnref(line);
     ingressRelease(ingress);
@@ -549,14 +549,14 @@ static void initUp(tunnel_t *t, line_t *line)
     const address_context_t *source = lineGetSourceAddressContext(line);
     /* UDP ingress keeps the remote port separately from its local listener port. */
     const uint16_t peer_port = lineGetRoutingContext(line)->peer_source_port;
-    if (UNLIKELY(! atomic_load(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0))
+    if (UNLIKELY(! atomicLoad(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0))
     {
         tunnelPrevDownStreamFinish(t, line);
         return;
     }
-    if (atomic_fetch_add(&state->ingress_count, 1) >= 1024)
+    if (atomicAdd(&state->ingress_count, 1) >= 1024)
     {
-        atomic_fetch_sub(&state->ingress_count, 1);
+        atomicSub(&state->ingress_count, 1);
         tunnelPrevDownStreamFinish(t, line);
         return;
     }
@@ -564,7 +564,7 @@ static void initUp(tunnel_t *t, line_t *line)
     if (UNLIKELY(! mutexTryInit(&ingress->lock)))
     {
         memoryFree(ingress);
-        atomic_fetch_sub(&state->ingress_count, 1);
+        atomicSub(&state->ingress_count, 1);
         tunnelPrevDownStreamFinish(t, line);
         return;
     }
@@ -694,7 +694,7 @@ static void prepare(tunnel_t *t)
 static void tick(wtimer_t *timer)
 {
     server_t *state = weventGetUserdata(timer);
-    if (! atomic_load(&state->dispatch.open))
+    if (! atomicLoad(&state->dispatch.open))
         return;
     reconcile(state);
     wireguardCommonLoop(&state->engine);
@@ -705,7 +705,7 @@ static void packetInit(void *worker, void *arg1, void *arg2, void *arg3)
     discard   arg3;
     tunnel_t *t     = arg1;
     server_t *state = tunnelGetState(t);
-    if (! atomic_load(&state->dispatch.open))
+    if (! atomicLoad(&state->dispatch.open))
         return;
     line_t *line = tunnelchainGetWorkerPacketLine(t->chain, ((worker_t *) worker)->wid);
     tunnelNextUpStreamInit(t, line);
@@ -739,7 +739,7 @@ static void quiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard   context;
     server_t *state = tunnelGetState(t);
-    atomic_store(&state->dispatch.open, false);
+    atomicStore(&state->dispatch.open, false);
 }
 static void quiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
@@ -776,7 +776,7 @@ static void destroy(tunnel_t *t, const ww_lifecycle_context_t *context)
 {
     discard   context;
     server_t *state = tunnelGetState(t);
-    assert(atomic_load(&state->dispatch.count) == 0 && atomic_load(&state->ingress_count) == 0);
+    assert(atomicLoad(&state->dispatch.count) == 0 && atomicLoad(&state->ingress_count) == 0);
     destroyChild(&state->ptc_node, state->ptc);
     destroyChild(&state->binding_node, state->binder);
     destroyChild(&state->controller_node, state->controller);

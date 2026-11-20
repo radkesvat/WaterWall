@@ -16,7 +16,7 @@ const char *apiserverAuthorize(apiserver_tstate_t *ts, api_request_t *r, tunnel_
         r->close = true;
         return "unauthorized";
     }
-    if (! nodeApiAdmissionIsOpen() || atomic_load(&ts->stopping))
+    if (! nodeApiAdmissionIsOpen() || atomicLoad(&ts->stopping))
         return "shutting_down";
     const char              *config = NULL;
     node_api_target_status_t found =

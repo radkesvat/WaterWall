@@ -9,7 +9,7 @@ void apiserverUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
     assert(! sbufIsSplice(payload)); /* APIServer blocks splice for the entire chain. */
     size_t bytes = sbufGetLength(payload);
     /* Admitted callbacks and synchronous shutdown flushes can still deliver bytes. */
-    if (ls->quiesced || atomic_load(&ts->stopping))
+    if (ls->quiesced || atomicLoad(&ts->stopping))
     {
         memorySecureZero(sbufGetMutablePtr(payload), bytes);
         lineReuseBuffer(line, payload);
