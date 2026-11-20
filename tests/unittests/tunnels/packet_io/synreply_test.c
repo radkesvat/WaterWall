@@ -435,20 +435,20 @@ static void checkInvalidSettings(void)
     static const char *const invalid[] = {
         "null",
         "[]",
-        "{\"reply_source_ip\":null}",
-        "{\"reply_source_ip\":42}",
-        "{\"reply_source_ip\":\"\"}",
-        "{\"reply_source_ip\":\"localhost\"}",
-        "{\"reply_source_ip\":\"2001:db8::1\"}",
-        "{\"reply_source_ip\":\"192.0.2.20/32\"}",
-        "{\"reply_source_ip\":\"192.0.2.256\"}",
-        "{\"reply_source_ip\":\"224.0.0.1\"}",
-        "{\"reply_source_ip\":\"255.255.255.255\"}",
-        "{\"reply_source_ip\":\"0.0.0.0\"}",
-        "{\"reply_src_ip\":\"192.0.2.20\"}",
-        "{\"reply_source_ip\":\"192.0.2.20\",\"reply_source_ip\":\"192.0.2.21\"}",
-        "{\"reply_source_ip\":\"192.0.2.20\\u0000suffix\"}",
-        "{\"reply_source_ip\\u0000suffix\":\"192.0.2.20\"}",
+        "{\"reply-source-ip\":null}",
+        "{\"reply-source-ip\":42}",
+        "{\"reply-source-ip\":\"\"}",
+        "{\"reply-source-ip\":\"localhost\"}",
+        "{\"reply-source-ip\":\"2001:db8::1\"}",
+        "{\"reply-source-ip\":\"192.0.2.20/32\"}",
+        "{\"reply-source-ip\":\"192.0.2.256\"}",
+        "{\"reply-source-ip\":\"224.0.0.1\"}",
+        "{\"reply-source-ip\":\"255.255.255.255\"}",
+        "{\"reply-source-ip\":\"0.0.0.0\"}",
+        "{\"reply_source_ip\":\"192.0.2.20\"}",
+        "{\"reply-source-ip\":\"192.0.2.20\",\"reply-source-ip\":\"192.0.2.21\"}",
+        "{\"reply-source-ip\":\"192.0.2.20\\u0000suffix\"}",
+        "{\"reply-source-ip\\u0000suffix\":\"192.0.2.20\"}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
     {
@@ -668,7 +668,7 @@ int main(void)
     checkInvalidSettings();
     checkSourceSetting(NULL, false);
     checkSourceSetting("{}", false);
-    checkSourceSetting("{\"reply_source_ip\":\"192.0.2.20\"}", true);
+    checkSourceSetting("{\"reply-source-ip\":\"192.0.2.20\"}", true);
 
     setupChain(NULL);
     line_t *line = tunnelchainGetWorkerPacketLine(fixture.chain, 0);

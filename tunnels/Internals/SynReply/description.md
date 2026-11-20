@@ -12,8 +12,8 @@ broadcast address (`255.255.255.255`), or multicast (`224.0.0.0/4`), the
 packet passes through without a reply.
 
 Omit `settings` or use an empty object to source each reply from the original
-SYN's destination address. Set `settings.reply_source_ip` to a single IPv4
-literal to use that address for every reply. A configured `reply_source_ip`
+SYN's destination address. Set `settings.reply-source-ip` to a single IPv4
+literal to use that address for every reply. A configured `reply-source-ip`
 must belong to the server running SynReply. The node rejects unspecified,
 limited broadcast and multicast addresses for this setting at startup. In
 both modes, the reply goes to the observed sender.

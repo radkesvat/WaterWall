@@ -12,20 +12,20 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
         return NULL;
     }
 
-    const char    *key     = "reply_source_ip";
+    const char    *key     = "reply-source-ip";
     const cJSON   *source  = settings != NULL ? settings->child : NULL;
     struct in_addr address = {0};
     if (source != NULL)
     {
         if (source->string == NULL || strcmp(source->string, key) != 0 || source->next != NULL)
         {
-            LOGE("SynReply: settings may contain only one reply_source_ip field");
+            LOGE("SynReply: settings may contain only one reply-source-ip field");
             return NULL;
         }
         if (! cJSON_IsString(source) || ! jsonObjectFieldStringsAreExact(settings, key) ||
             inet_pton(AF_INET, source->valuestring, &address) != 1 || ! synreplyAddressAllowsReply(address.s_addr))
         {
-            LOGE("SynReply: reply_source_ip must be a unicast IPv4 literal");
+            LOGE("SynReply: reply-source-ip must be a unicast IPv4 literal");
             return NULL;
         }
     }
