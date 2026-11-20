@@ -320,11 +320,23 @@ int main(void)
 {
     testCaseSet("legacy_node_compatibility_test");
     char directory[MAX_PATH];
+#ifdef OS_WIN
+    char  executable[MAX_PATH];
+    DWORD length = GetModuleFileNameA(NULL, executable, sizeof(executable));
+    require(length > 0 && length < sizeof(executable), "fixture executable path is unavailable");
+    libraryDirectory(executable, directory, sizeof(directory));
+    require(SetCurrentDirectoryA(directory) != FALSE, "cannot access fixture DLL directory");
+    require(WW_EXTERNAL_NODE_ABI_VERSION != 10u, "older hosts would accept a layout-tagged DLL");
+#else
     libraryDirectory(EXTERNAL_NODE_ABI_V3_LIBRARY_PATH, directory, sizeof(directory));
+#endif
     nodelibrarySetSearchPath(directory);
 
     verifyRejectedLibrary(MISSING_NODE_LIBRARY_PATH, directory, "MissingAbiFixture");
     verifyRejectedLibrary(MISMATCHED_NODE_LIBRARY_PATH, directory, "MismatchedAbiFixture");
+#ifdef OS_WIN
+    verifyRejectedLibrary(OTHER_ATOMIC_NODE_LIBRARY_PATH, directory, "OtherAtomicAbiFixture");
+#endif
     verifyExternalNodeAbiV3(EXTERNAL_NODE_ABI_V3_LIBRARY_PATH, directory);
 
     puts("current external-node ABI tests passed");

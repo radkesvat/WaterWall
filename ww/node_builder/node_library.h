@@ -10,7 +10,15 @@
 
 /* The historical descriptor symbol name is retained, but the version gates the
  * complete external-node ABI, including buffer and device APIs. */
-#define WW_EXTERNAL_NODE_ABI_VERSION           10u
+#define WW_EXTERNAL_NODE_ABI_REVISION 10u
+#ifdef OS_WIN
+/* The high bits identify the layout of atomics embedded in public structures.
+ * Both tagged values must differ from descriptors built before this check. */
+#define WW_EXTERNAL_NODE_ABI_FOR_ATOMICS(c11) (WW_EXTERNAL_NODE_ABI_REVISION | ((c11) ? 0x10000u : 0x20000u))
+#define WW_EXTERNAL_NODE_ABI_VERSION          WW_EXTERNAL_NODE_ABI_FOR_ATOMICS(WW_HAVE_C11_ATOMICS)
+#else
+#define WW_EXTERNAL_NODE_ABI_VERSION WW_EXTERNAL_NODE_ABI_REVISION
+#endif
 #define WW_EXTERNAL_NODE_LIFECYCLE_ABI_VERSION WW_EXTERNAL_NODE_ABI_VERSION
 #define WW_EXTERNAL_NODE_LIFECYCLE_ABI_SYMBOL  "waterwallNodeLifecycleAbiVersion"
 

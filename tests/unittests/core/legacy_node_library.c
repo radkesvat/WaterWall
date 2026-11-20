@@ -9,7 +9,7 @@
  * CTest: owning suite registration in tests/cmake/native/; this is a helper/conditional source, not a
  * separate selectable test
  */
-#include "objects/node.h"
+#include "node_builder/node_library.h"
 
 #ifdef OS_WIN
 #define FIXTURE_EXPORT __declspec(dllexport)
@@ -22,10 +22,15 @@
 #endif
 
 static unsigned int getter_calls;
+static char         fixture_node_name[] = FIXTURE_NODE_TYPE;
 
 FIXTURE_EXPORT node_t       nodeGet(void);
 FIXTURE_EXPORT void         rejectedNodeResetCounters(void);
 FIXTURE_EXPORT unsigned int rejectedNodeGetGetterCalls(void);
+
+#ifdef FIXTURE_C11_DESCRIPTOR_ONLY
+#define FIXTURE_ABI_VERSION WW_EXTERNAL_NODE_ABI_FOR_ATOMICS(1)
+#endif
 
 #ifdef FIXTURE_ABI_VERSION
 FIXTURE_EXPORT uint32_t waterwallNodeLifecycleAbiVersion(void);
@@ -39,7 +44,7 @@ FIXTURE_EXPORT uint32_t waterwallNodeLifecycleAbiVersion(void)
 FIXTURE_EXPORT node_t nodeGet(void)
 {
     ++getter_calls;
-    return (node_t) {.type = FIXTURE_NODE_TYPE};
+    return (node_t) {.type = fixture_node_name};
 }
 
 FIXTURE_EXPORT void rejectedNodeResetCounters(void)

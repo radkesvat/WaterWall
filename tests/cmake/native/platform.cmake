@@ -50,6 +50,7 @@ endif()
 # test here as well. The test remains build-on-demand through its CTest runner.
 if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
   set(WATERWALL_SOURCE_DIR "${PROJECT_SOURCE_DIR}")
+  include("${PROJECT_SOURCE_DIR}/tests/unittests/external_node_abi.cmake")
   include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_packed_startup.cmake")
   include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_driver_artifacts.cmake")
   include("${PROJECT_SOURCE_DIR}/tests/unittests/tundevice_policy_cleanup.cmake")
