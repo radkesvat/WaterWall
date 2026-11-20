@@ -1,0 +1,60 @@
+{
+  "name": "gns-service-close-probe",
+  "nodes": [
+    {
+      "name": "udp-path-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26680, "nodelay": true },
+      "next": "udp-path-client"
+    },
+    {
+      "name": "udp-path-client",
+      "type": "GnsClient",
+      "next": "udp-out"
+    },
+    {
+      "name": "udp-out",
+      "type": "UdpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26681 }
+    },
+    {
+      "name": "udp-in",
+      "type": "UdpListener",
+      "settings": { "address": "127.0.0.1", "port": 26681 },
+      "next": "udp-path-server"
+    },
+    {
+      "name": "udp-path-server",
+      "type": "GnsServer",
+      "settings": { "send-rate": 8388608 },
+      "next": "udp-path-service"
+    },
+    {
+      "name": "udp-path-service",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26683, "fastopen": false }
+    },
+    {
+      "name": "direct-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26682, "nodelay": true },
+      "next": "direct-client"
+    },
+    {
+      "name": "direct-client",
+      "type": "GnsClient",
+      "next": "direct-server"
+    },
+    {
+      "name": "direct-server",
+      "type": "GnsServer",
+      "settings": { "send-rate": 8388608 },
+      "next": "direct-service"
+    },
+    {
+      "name": "direct-service",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26683, "fastopen": false }
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "name": "gns-stripe-client",
+  "nodes": [
+    {
+      "name": "application",
+      "type": "TcpListener",
+      "next": "stripe-client",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 1080,
+        "nodelay": true
+      }
+    },
+    {
+      "name": "stripe-client",
+      "type": "ConnectionStripeClient",
+      "next": "gns-client",
+      "settings": {
+        "connections": 8
+      }
+    },
+    {
+      "name": "gns-client",
+      "type": "GnsClient",
+      "next": "transport",
+      "settings": {
+        "send-mtu": 1400,
+        "send-rate": 2097152
+      }
+    },
+    {
+      "name": "transport",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    }
+  ]
+}

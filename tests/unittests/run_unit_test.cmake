@@ -26,7 +26,11 @@ if(NOT EXISTS "${UNIT_TEST_EXECUTABLE}")
   ww_native_run_finish("missing executable")
   message(FATAL_ERROR "Unit-test executable is missing after build: ${UNIT_TEST_EXECUTABLE}")
 endif()
-ww_native_run_execute(child "${UNIT_TEST_TIMEOUT}" "${UNIT_TEST_EXECUTABLE}" ${UNIT_TEST_ARGUMENTS})
+set(unit_test_command "${UNIT_TEST_EXECUTABLE}")
+if(DEFINED UNIT_TEST_NETWORK_NAMESPACE_WRAPPER)
+  list(PREPEND unit_test_command "${UNIT_TEST_BASH}" "${UNIT_TEST_NETWORK_NAMESPACE_WRAPPER}")
+endif()
+ww_native_run_execute(child "${UNIT_TEST_TIMEOUT}" ${unit_test_command} ${UNIT_TEST_ARGUMENTS})
 if(DEFINED UNIT_TEST_RESULT_FILE)
   # Auxiliary Python callers use this receipt without buffering the artifact
   # announcement. Their CTest process can still return the original skip code.

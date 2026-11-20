@@ -17,8 +17,10 @@ foreach(test_name IN ITEMS fixture_pass fixture_build_failure)
   if(test_name STREQUAL fixture_build_failure)
     set(target build_failure)
   endif()
+  # Match the self-building native test registration, including cold CTest runs.
   add_test(NAME ${test_name} COMMAND "${CMAKE_COMMAND}"
-    "-DUNIT_TEST_TARGET=${target}" "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:runner_fixture>"
+    "-DUNIT_TEST_TARGET=${target}"
+    "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE_DIR:runner_fixture>/$<TARGET_FILE_NAME:runner_fixture>"
     "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}" "-DUNIT_TEST_CONFIG=$<CONFIG>"
     "-DUNIT_TEST_NAME=waterwall.runner_fixture"
     "-DUNIT_TEST_SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"

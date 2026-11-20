@@ -1,0 +1,11 @@
+# ThreadSanitizer suppressions for the tests that run GameNetworkingSockets.
+#
+# The library guards itself with std::recursive_timed_mutex and takes it with
+# try_lock_for, which reaches pthread_mutex_clocklock. GCC's ThreadSanitizer
+# runtime does not intercept that call, so it never sees those acquisitions. It
+# then reports the unlock that follows, and reads the library's try-lock
+# ordering as a possible deadlock. The library is not instrumented, so both
+# reports show only libstdc++'s mutex wrappers. WaterWall's own locks do not go
+# through these wrappers and stay checked.
+mutex:__gthread_mutex_unlock
+deadlock:__gthread_mutex_lock

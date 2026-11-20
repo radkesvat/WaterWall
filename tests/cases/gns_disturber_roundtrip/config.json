@@ -1,0 +1,51 @@
+{
+  "name": "gns-disturber-roundtrip",
+  "nodes": [
+    {
+      "name": "tester-client",
+      "type": "TesterClient",
+      "settings": {
+        "chunk-count": 9
+      },
+      "next": "gns-client"
+    },
+    {
+      "name": "gns-client",
+      "type": "GnsClient",
+      "settings": {
+        "send-rate": 10485760
+      },
+      "next": "disturber"
+    },
+    {
+      "name": "disturber",
+      "type": "Disturber",
+      "settings": {
+        "disturb-upstream": true,
+        "disturb-downstream": true,
+        "chance_payload_loss": 15,
+        "chance_payload_duplication": 100,
+        "chance_payload_out_of_order": 20,
+        "chance_payload_delay": 20,
+        "delay_min_ms": 1,
+        "delay_max_ms": 8
+      },
+      "next": "gns-server"
+    },
+    {
+      "name": "gns-server",
+      "type": "GnsServer",
+      "settings": {
+        "send-rate": 10485760
+      },
+      "next": "tester-server"
+    },
+    {
+      "name": "tester-server",
+      "type": "TesterServer",
+      "settings": {
+        "chunk-count": 9
+      }
+    }
+  ]
+}

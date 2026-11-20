@@ -1,0 +1,44 @@
+{
+  "name": "gns-obfuscated-server",
+  "nodes": [
+    {
+      "name": "transport",
+      "type": "UdpListener",
+      "next": "obfuscator-server",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 8443
+      }
+    },
+    {
+      "name": "obfuscator-server",
+      "type": "ObfuscatorServer",
+      "next": "gns-server",
+      "settings": {
+        "method": "xor",
+        "xor_key": 90,
+        "skip": "none",
+        "tls_record_header": false
+      }
+    },
+    {
+      "name": "gns-server",
+      "type": "GnsServer",
+      "next": "destination",
+      "settings": {
+        "send-mtu": 1400,
+        "send-rate": 4194304
+      }
+    },
+    {
+      "name": "destination",
+      "type": "TcpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 9000,
+        "nodelay": true,
+        "fastopen": false
+      }
+    }
+  ]
+}
