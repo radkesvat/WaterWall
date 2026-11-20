@@ -94,6 +94,12 @@ static sbuf_t *synreplyBuildReply(line_t *line, const ipv4_packet_view_t *syn, c
         LOGF("SynReply: generated an invalid IPv4 SYN-ACK");
         abortProgramNow(1);
     }
+    if (state->fake_checksum)
+    {
+        /* Skip zero on wrap since 0xffff and 0 are equivalent in one's-complement arithmetic. */
+        const uint16_t valid_checksum = lwip_ntohs(tcp->chksum);
+        tcp->chksum                   = lwip_htons(valid_checksum == UINT16_MAX ? 1 : (uint16_t) (valid_checksum + 1));
+    }
     sbufSetRecalculateChecksum(reply, false);
     return reply;
 }

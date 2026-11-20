@@ -17,13 +17,15 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
         return NULL;
     }
 
-    const cJSON *source      = cJSON_GetObjectItemCaseSensitive(settings, "reply-source-ip");
-    const cJSON *ttl_setting = cJSON_GetObjectItemCaseSensitive(settings, "ttl");
+    const cJSON *source        = cJSON_GetObjectItemCaseSensitive(settings, "reply-source-ip");
+    const cJSON *ttl_setting   = cJSON_GetObjectItemCaseSensitive(settings, "ttl");
+    const cJSON *fake_checksum = cJSON_GetObjectItemCaseSensitive(settings, "fake-checksum");
     const cJSON *field;
     cJSON_ArrayForEach(field, settings)
     {
         /* Each lookup above selects only the first occurrence of its key. */
-        if ((field != source && field != ttl_setting) || ! jsonObjectFieldStringsAreExact(settings, field->string))
+        if ((field != source && field != ttl_setting && field != fake_checksum) ||
+            ! jsonObjectFieldStringsAreExact(settings, field->string))
         {
             LOGE("SynReply: unknown, duplicate or malformed setting");
             return NULL;
@@ -45,6 +47,12 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (fake_checksum != NULL && ! cJSON_IsBool(fake_checksum))
+    {
+        LOGE("SynReply: fake-checksum must be a boolean");
+        return NULL;
+    }
+
     tunnel_t *t = packettunnelCreate(node, sizeof(synreply_tstate_t), 0);
     if (t == NULL)
     {
@@ -55,6 +63,7 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
     state->reply_source_ip     = address.s_addr;
     state->has_reply_source_ip = source != NULL;
     state->ttl                 = (uint8_t) ttl;
+    state->fake_checksum       = cJSON_IsTrue(fake_checksum);
 
     t->fnPayloadU = synreplyTunnelUpStreamPayload;
     t->fnPayloadD = tunnelDefaultDownStreamPayload;

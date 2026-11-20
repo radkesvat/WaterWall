@@ -353,7 +353,7 @@ static uint16_t checksumResidual(const uint8_t *bytes, size_t length)
     return (uint16_t) ~sum;
 }
 
-static void requireReply(uint32_t source, uint32_t sequence)
+static void requireReply(uint32_t source, uint32_t sequence, bool fake_checksum)
 {
     const uint8_t *ip  = fixture.reply.bytes;
     const uint8_t *tcp = ip + IP_HLEN;
@@ -372,17 +372,20 @@ static void requireReply(uint32_t source, uint32_t sequence)
     tcp_checksum_input[9] = IPPROTO_TCP;
     PUT_BE16(tcp_checksum_input + 10, TCP_HLEN);
     memoryCopy(tcp_checksum_input + 12, tcp, TCP_HLEN);
-    require(checksumResidual(tcp_checksum_input, sizeof(tcp_checksum_input)) == 0,
-            "TCP reply checksum residual is nonzero");
+    const uint16_t residual = checksumResidual(tcp_checksum_input, sizeof(tcp_checksum_input));
+    if (fake_checksum)
+        require(GET_BE16(tcp + 16) != 0 && residual != 0, "expected a nonzero, invalid TCP checksum");
+    else
+        require(residual == 0, "TCP reply checksum residual is nonzero");
 }
 
-static void checkOpeningSyn(line_t *line, const packet_t *syn, uint32_t source, uint32_t sequence)
+static void checkOpeningSyn(line_t *line, const packet_t *syn, uint32_t source, uint32_t sequence, bool fake_checksum)
 {
     const event_t expected[] = {{kOriginal, true}, {kReply, false}};
     fixture.trace_length     = 0;
     sendPacket(line, syn, true);
     requireTrace(expected, ARRAY_SIZE(expected));
-    requireReply(source, sequence);
+    requireReply(source, sequence, fake_checksum);
 }
 
 static void checkPassThrough(const char *name, line_t *line, const packet_t *packet, bool upstream)
@@ -417,17 +420,24 @@ static void checkNonUnicastEndpoints(line_t *line)
     }
 }
 
-static void checkReplySettings(const char *settings, bool overridden, uint8_t expected_ttl)
+static void checkReplySettings(const char *settings, bool overridden, uint8_t expected_ttl, bool fake_checksum)
 {
     testCaseSet(settings ? settings : "settings omitted");
     setupChain(settings);
     line_t        *line   = tunnelchainGetWorkerPacketLine(fixture.chain, 0);
     const packet_t first  = makeTcpPacket(kFirstTarget, 150, TCP_SYN, false, 0);
-    const packet_t second = makeTcpPacket(kSecondTarget, 151, TCP_SYN, false, 0);
-    checkOpeningSyn(line, &first, overridden ? kOverride : kFirstTarget, 150);
+    packet_t       second = makeTcpPacket(kSecondTarget, 151, TCP_SYN, false, 0);
+    second.repair         = true;
+    checkOpeningSyn(line, &first, overridden ? kOverride : kFirstTarget, 150, fake_checksum);
     require(fixture.reply.bytes[8] == expected_ttl, "reply TTL differs from the expected wire value");
-    checkOpeningSyn(line, &second, overridden ? kOverride : kSecondTarget, 151);
+    checkOpeningSyn(line, &second, overridden ? kOverride : kSecondTarget, 151, fake_checksum);
     require(fixture.reply.bytes[8] == expected_ttl, "second reply did not retain the configured TTL");
+    if (fake_checksum)
+    {
+        checkPassThrough("checksum setting leaves downstream SYN unchanged", line, &second, false);
+        second.bytes[IP_HLEN + 16] ^= 1;
+        checkPassThrough("checksum setting still rejects invalid upstream TCP checksum", line, &second, true);
+    }
     checkNonUnicastEndpoints(line);
     teardownChain();
 }
@@ -462,6 +472,14 @@ static void checkInvalidSettings(void)
         "{\"ttl\":{}}",
         "{\"ttl\":1,\"ttl\":2}",
         "{\"ttl\\u0000suffix\":64}",
+        "{\"fake-checksum\":null}",
+        "{\"fake-checksum\":0}",
+        "{\"fake-checksum\":1}",
+        "{\"fake-checksum\":\"true\"}",
+        "{\"fake-checksum\":[]}",
+        "{\"fake-checksum\":{}}",
+        "{\"fake-checksum\":false,\"fake-checksum\":true}",
+        "{\"fake-checksum\\u0000suffix\":true}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
     {
@@ -477,15 +495,15 @@ static void checkOpeningPackets(line_t *line)
 {
     testCaseSet("retransmissions");
     const packet_t syn = makeTcpPacket(kFirstTarget, 7493, TCP_SYN, false, 0);
-    checkOpeningSyn(line, &syn, kFirstTarget, 7493);
-    checkOpeningSyn(line, &syn, kFirstTarget, 7493);
+    checkOpeningSyn(line, &syn, kFirstTarget, 7493, false);
+    checkOpeningSyn(line, &syn, kFirstTarget, 7493, false);
 
     testCaseSet("IPv4 and TCP options, ECN, and acknowledgment wraparound");
     packet_t ecn = makeTcpPacket(kSecondTarget, UINT32_MAX, TCP_SYN | TCP_ECE | TCP_CWR, true, 0);
-    checkOpeningSyn(line, &ecn, kSecondTarget, UINT32_MAX);
+    checkOpeningSyn(line, &ecn, kSecondTarget, UINT32_MAX, false);
     testCaseSet("valid bytes with pending checksum repair");
     ecn.repair = true;
-    checkOpeningSyn(line, &ecn, kSecondTarget, UINT32_MAX);
+    checkOpeningSyn(line, &ecn, kSecondTarget, UINT32_MAX, false);
 }
 
 static void checkPassThroughPackets(line_t *line)
@@ -606,7 +624,7 @@ static void checkOptionFormats(line_t *line)
                    sizeof(cases[i].tcp_options));
         require(calcFullPacketChecksum(packet.bytes, packet.length), "option fixture checksum failed");
         if (cases[i].valid)
-            checkOpeningSyn(line, &packet, kFirstTarget, 7493);
+            checkOpeningSyn(line, &packet, kFirstTarget, 7493, false);
         else
             checkPassThrough(cases[i].name, line, &packet, true);
     }
@@ -660,7 +678,7 @@ static void checkLifecycle(void)
     testCaseSet("Finish leaves the other worker's reply path open");
     testWorkerBindWID(1);
     line_t *other = tunnelchainGetWorkerPacketLine(fixture.chain, 1);
-    checkOpeningSyn(other, &second, kSecondTarget, 7494);
+    checkOpeningSyn(other, &second, kSecondTarget, 7494, false);
     testCaseSet("upstream Finish relays to next on the packet line");
     fixture.trace_length = 0;
     tunnelNextUpStreamFinish(fixture.prev, other);
@@ -679,12 +697,15 @@ int main(void)
     setupWorkers();
 
     checkInvalidSettings();
-    checkReplySettings(NULL, false, 64);
-    checkReplySettings("{}", false, 64);
-    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\"}", true, 64);
-    checkReplySettings("{\"ttl\":1}", false, 1);
-    checkReplySettings("{\"ttl\":128,\"reply-source-ip\":\"192.0.2.20\"}", true, 128);
-    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\",\"ttl\":255}", true, 255);
+    checkReplySettings(NULL, false, 64, false);
+    checkReplySettings("{}", false, 64, false);
+    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\"}", true, 64, false);
+    checkReplySettings("{\"ttl\":1}", false, 1, false);
+    checkReplySettings("{\"ttl\":128,\"reply-source-ip\":\"192.0.2.20\"}", true, 128, false);
+    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\",\"ttl\":255}", true, 255, false);
+    checkReplySettings("{\"fake-checksum\":false}", false, 64, false);
+    checkReplySettings("{\"fake-checksum\":true}", false, 64, true);
+    checkReplySettings("{\"ttl\":128,\"fake-checksum\":true,\"reply-source-ip\":\"192.0.2.20\"}", true, 128, true);
 
     setupChain(NULL);
     line_t *line = tunnelchainGetWorkerPacketLine(fixture.chain, 0);

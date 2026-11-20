@@ -21,6 +21,11 @@ both modes, the reply goes to the observed sender.
 `settings.ttl` sets the IPv4 TTL of generated SYN-ACKs only. It accepts a
 JSON integer from 1 to 255 and defaults to 64.
 
+`settings.fake-checksum` accepts only the JSON booleans `true` and `false`.
+The default, `false`, gives generated SYN-ACKs a valid TCP checksum. With
+`true`, the generated TCP checksum is nonzero and incorrect. In both modes
+the reply's IPv4 header checksum is valid and original packets pass unchanged.
+
 Handing off the SYN-ACK completes the response. TCP connection state and later
 handshake steps belong to the TCP endpoints.
 
