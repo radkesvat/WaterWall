@@ -7,7 +7,6 @@
 enum
 {
     kSynReplyPacketLength = IP_HLEN + TCP_HLEN,
-    kSynReplyTtl          = 64,
     kSynReplyWindow       = UINT16_MAX,
     kSynReplyTcpOptionMss = 2,
     kSynReplyTcpMssLength = 4,
@@ -66,7 +65,7 @@ static bool synreplyReadSyn(const sbuf_t *payload, ipv4_packet_view_t *syn)
     return checksums.ipv4 && checksums.tcp;
 }
 
-static sbuf_t *synreplyBuildReply(line_t *line, const ipv4_packet_view_t *syn, uint32_t reply_source_ip)
+static sbuf_t *synreplyBuildReply(line_t *line, const ipv4_packet_view_t *syn, const synreply_tstate_t *state)
 {
     sbuf_t  *reply  = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
     uint8_t *packet = sbufGetMutablePtr(reply);
@@ -77,9 +76,9 @@ static sbuf_t *synreplyBuildReply(line_t *line, const ipv4_packet_view_t *syn, u
     IPH_VHL_SET(ip, 4, IP_HLEN / 4U);
     IPH_LEN_SET(ip, lwip_htons(kSynReplyPacketLength));
     IPH_OFFSET_SET(ip, lwip_htons(IP_DF));
-    IPH_TTL_SET(ip, kSynReplyTtl);
+    IPH_TTL_SET(ip, state->ttl);
     IPH_PROTO_SET(ip, IP_PROTO_TCP);
-    ip->src.addr  = reply_source_ip;
+    ip->src.addr  = state->has_reply_source_ip ? state->reply_source_ip : syn->destination_address;
     ip->dest.addr = syn->source_address;
 
     struct tcp_hdr *tcp = (struct tcp_hdr *) (packet + IP_HLEN);
@@ -111,15 +110,12 @@ void synreplyTunnelUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *payload)
         return;
     }
 
-    /* The view contains only scalars. The next node may consume the buffer immediately. */
-    const synreply_tstate_t *state = tunnelGetState(t);
-    const uint32_t reply_source_ip = state->has_reply_source_ip ? state->reply_source_ip : syn.destination_address;
-    /* A reentrant Finish bypasses SynReply while the worker packet line stays alive. */
+    /* The scalar view survives the handoff. A reentrant Finish bypasses SynReply on the live packet line. */
     if (! lineCallWithRefWithBuf(line, tunnelNextUpStreamPayload, t, payload) || ! tunnelIsActiveForLine(t, line))
     {
         return;
     }
 
-    sbuf_t *reply = synreplyBuildReply(line, &syn, reply_source_ip);
+    sbuf_t *reply = synreplyBuildReply(line, &syn, tunnelGetState(t));
     tunnelPrevDownStreamPayload(t, line, reply);
 }

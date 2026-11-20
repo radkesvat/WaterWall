@@ -3,6 +3,11 @@
 
 #include "loggers/network_logger.h"
 
+enum
+{
+    kSynReplyDefaultTtl = 64
+};
+
 tunnel_t *synreplyTunnelCreate(node_t *node)
 {
     const cJSON *settings = node->node_settings_json;
@@ -12,22 +17,32 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
         return NULL;
     }
 
-    const char    *key     = "reply-source-ip";
-    const cJSON   *source  = settings != NULL ? settings->child : NULL;
-    struct in_addr address = {0};
-    if (source != NULL)
+    const cJSON *source      = cJSON_GetObjectItemCaseSensitive(settings, "reply-source-ip");
+    const cJSON *ttl_setting = cJSON_GetObjectItemCaseSensitive(settings, "ttl");
+    const cJSON *field;
+    cJSON_ArrayForEach(field, settings)
     {
-        if (source->string == NULL || strcmp(source->string, key) != 0 || source->next != NULL)
+        /* Each lookup above selects only the first occurrence of its key. */
+        if ((field != source && field != ttl_setting) || ! jsonObjectFieldStringsAreExact(settings, field->string))
         {
-            LOGE("SynReply: settings may contain only one reply-source-ip field");
+            LOGE("SynReply: unknown, duplicate or malformed setting");
             return NULL;
         }
-        if (! cJSON_IsString(source) || ! jsonObjectFieldStringsAreExact(settings, key) ||
-            inet_pton(AF_INET, source->valuestring, &address) != 1 || ! synreplyAddressAllowsReply(address.s_addr))
-        {
-            LOGE("SynReply: reply-source-ip must be a unicast IPv4 literal");
-            return NULL;
-        }
+    }
+
+    struct in_addr address = {0};
+    if (source != NULL && (! cJSON_IsString(source) || inet_pton(AF_INET, source->valuestring, &address) != 1 ||
+                           ! synreplyAddressAllowsReply(address.s_addr)))
+    {
+        LOGE("SynReply: reply-source-ip must be a unicast IPv4 literal");
+        return NULL;
+    }
+
+    int64_t ttl = kSynReplyDefaultTtl;
+    if (ttl_setting != NULL && ! jsonGetIntegerInRange(ttl_setting, 1, UINT8_MAX, &ttl))
+    {
+        LOGE("SynReply: ttl must be an integer from 1 to 255");
+        return NULL;
     }
 
     tunnel_t *t = packettunnelCreate(node, sizeof(synreply_tstate_t), 0);
@@ -39,6 +54,7 @@ tunnel_t *synreplyTunnelCreate(node_t *node)
     synreply_tstate_t *state   = tunnelGetState(t);
     state->reply_source_ip     = address.s_addr;
     state->has_reply_source_ip = source != NULL;
+    state->ttl                 = (uint8_t) ttl;
 
     t->fnPayloadU = synreplyTunnelUpStreamPayload;
     t->fnPayloadD = tunnelDefaultDownStreamPayload;

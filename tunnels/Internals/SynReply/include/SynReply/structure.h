@@ -5,6 +5,7 @@
 typedef struct synreply_tstate_s
 {
     uint32_t reply_source_ip;
+    uint8_t  ttl;
     bool     has_reply_source_ip;
 } synreply_tstate_t;
 

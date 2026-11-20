@@ -320,7 +320,7 @@ static packet_t makeTcpPacket(uint32_t destination, uint32_t sequence, uint8_t f
     uint8_t *tcp = ip + ip_length;
     ip[0]        = (uint8_t) (0x40 | (ip_length / 4));
     PUT_BE16(ip + 2, (uint16_t) packet.length);
-    ip[8] = 64;
+    ip[8] = 37;
     ip[9] = IPPROTO_TCP;
     PUT_BE32(ip + 12, kSender);
     PUT_BE32(ip + 16, destination);
@@ -417,7 +417,7 @@ static void checkNonUnicastEndpoints(line_t *line)
     }
 }
 
-static void checkSourceSetting(const char *settings, bool overridden)
+static void checkReplySettings(const char *settings, bool overridden, uint8_t expected_ttl)
 {
     testCaseSet(settings ? settings : "settings omitted");
     setupChain(settings);
@@ -425,7 +425,9 @@ static void checkSourceSetting(const char *settings, bool overridden)
     const packet_t first  = makeTcpPacket(kFirstTarget, 150, TCP_SYN, false, 0);
     const packet_t second = makeTcpPacket(kSecondTarget, 151, TCP_SYN, false, 0);
     checkOpeningSyn(line, &first, overridden ? kOverride : kFirstTarget, 150);
+    require(fixture.reply.bytes[8] == expected_ttl, "reply TTL differs from the expected wire value");
     checkOpeningSyn(line, &second, overridden ? kOverride : kSecondTarget, 151);
+    require(fixture.reply.bytes[8] == expected_ttl, "second reply did not retain the configured TTL");
     checkNonUnicastEndpoints(line);
     teardownChain();
 }
@@ -449,6 +451,17 @@ static void checkInvalidSettings(void)
         "{\"reply-source-ip\":\"192.0.2.20\",\"reply-source-ip\":\"192.0.2.21\"}",
         "{\"reply-source-ip\":\"192.0.2.20\\u0000suffix\"}",
         "{\"reply-source-ip\\u0000suffix\":\"192.0.2.20\"}",
+        "{\"ttl\":0}",
+        "{\"ttl\":-1}",
+        "{\"ttl\":256}",
+        "{\"ttl\":1.5}",
+        "{\"ttl\":\"64\"}",
+        "{\"ttl\":null}",
+        "{\"ttl\":true}",
+        "{\"ttl\":[]}",
+        "{\"ttl\":{}}",
+        "{\"ttl\":1,\"ttl\":2}",
+        "{\"ttl\\u0000suffix\":64}",
     };
     for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
     {
@@ -666,9 +679,12 @@ int main(void)
     setupWorkers();
 
     checkInvalidSettings();
-    checkSourceSetting(NULL, false);
-    checkSourceSetting("{}", false);
-    checkSourceSetting("{\"reply-source-ip\":\"192.0.2.20\"}", true);
+    checkReplySettings(NULL, false, 64);
+    checkReplySettings("{}", false, 64);
+    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\"}", true, 64);
+    checkReplySettings("{\"ttl\":1}", false, 1);
+    checkReplySettings("{\"ttl\":128,\"reply-source-ip\":\"192.0.2.20\"}", true, 128);
+    checkReplySettings("{\"reply-source-ip\":\"192.0.2.20\",\"ttl\":255}", true, 255);
 
     setupChain(NULL);
     line_t *line = tunnelchainGetWorkerPacketLine(fixture.chain, 0);
