@@ -295,7 +295,7 @@ int main(void)
     line_t *other = openFixtureLine(state, &pool, 1, "10.60.0.2", true);
     twfRequire(opened_count == 3 && lineGetCurrentUser(a)->user_id == 42 && lineGetCurrentUser(other)->user_id == 43,
                "two accounts lost their independent inner-flow identities");
-    atomic_fetch_add(&as->users_generation, 1);
+    atomicIncU64(&as->users_generation);
     twfRequire(candidate(state, keys[0]) == &state->engine.peers[0],
                "queued handshake lost continuous authorization across a full refresh");
     ip_addr_t continuous_source;
@@ -337,7 +337,7 @@ int main(void)
     twfRequire(state->bindings[0].usable && state->bindings[0].epoch == saved_epoch &&
                    state->engine.peers[0].curr_keypair.valid,
                "cached live binding could not rekey during control rejection");
-    atomic_fetch_add(&as->users_generation, 1);
+    atomicIncU64(&as->users_generation);
     reconcile(state);
     twfRequire(state->bindings[0].usable && sourceEpoch(state, &continuous_source) == saved_epoch,
                "unchanged refresh during rejection retired existing flows");

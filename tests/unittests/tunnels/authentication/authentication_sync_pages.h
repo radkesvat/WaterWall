@@ -114,37 +114,37 @@ static void testMalformedPagesAndBackoff(void)
                                         kAuthPageFaultDuplicateCredential};
     for (size_t i = 0; i < sizeof(faults) / sizeof(faults[0]); ++i)
     {
-        const uint64_t generation = state(0)->users_generation;
+        const uint64_t generation = atomicLoadU64(&state(0)->users_generation);
         auth_page_fault           = faults[i];
         auth_page_fault_position  = 128;
         requestPull(clients[0]);
-        require(auth_page_fault == kAuthPageFaultNone && state(0)->users_generation == generation &&
+        require(auth_page_fault == kAuthPageFaultNone && atomicLoadU64(&state(0)->users_generation) == generation &&
                     ! state(0)->staging.active && ! state(0)->continuity_error &&
                     state(0)->last_failure == kAuthenticationClientFailureInvalidResponse &&
                     authenticationclientCanAuthenticate(clients[0]),
                 "malformed page replaced cache, escaped validation or lost cached admission");
         pump(1000);
-        require(state(0)->users_generation == generation + 1 && state(0)->sync_retry_streak == 0 &&
+        require(atomicLoadU64(&state(0)->users_generation) == generation + 1 && state(0)->sync_retry_streak == 0 &&
                     ! state(0)->staging.active,
                 "valid retry did not recover a discarded private traversal");
     }
 
     /* A valid page carrying an unknown correlation cannot advance staging or
      * settle the real pending page. Deliver its untouched original afterward. */
-    const uint64_t generation = state(0)->users_generation;
+    const uint64_t generation = atomicLoadU64(&state(0)->users_generation);
     auth_page_fault           = kAuthPageFaultCorrelation;
     auth_page_fault_position  = 128;
     requestPull(clients[0]);
     require(auth_page_original != NULL && state(0)->staging.active && state(0)->staging.position == 128 &&
-                state(0)->pull_in_flight && state(0)->pending_count == 1 && state(0)->users_generation == generation &&
-                state(0)->sync_retry_streak == 0,
+                state(0)->pull_in_flight && state(0)->pending_count == 1 &&
+                atomicLoadU64(&state(0)->users_generation) == generation && state(0)->sync_retry_streak == 0,
             "stale page correlation advanced staging or settled a current request");
     sbuf_t *valid_page = auth_page_original;
     sbuf_t *late_page  = sbufDuplicate(valid_page);
     auth_page_original = NULL;
     tunnelDownStreamPayload(clients[0], state(0)->control_line, valid_page);
     drainPageProgress();
-    require(state(0)->users_generation == generation + 1 && ! state(0)->staging.active,
+    require(atomicLoadU64(&state(0)->users_generation) == generation + 1 && ! state(0)->staging.active,
             "ignored stale correlation prevented the current page from completing");
     disconnect(0);
     hold_page_position = 128;
@@ -155,11 +155,11 @@ static void testMalformedPagesAndBackoff(void)
     const uint32_t                       previous_streak  = state(0)->sync_retry_streak;
     tunnelDownStreamPayload(clients[0], state(0)->control_line, late_page);
     require(state(0)->staging.position == 128 && state(0)->pull_in_flight && state(0)->pending_count == 1 &&
-                state(0)->users_generation == generation + 1 && state(0)->last_failure == previous_failure &&
-                state(0)->sync_retry_streak == previous_streak,
+                atomicLoadU64(&state(0)->users_generation) == generation + 1 &&
+                state(0)->last_failure == previous_failure && state(0)->sync_retry_streak == previous_streak,
             "late page from an old line advanced a new traversal or rewrote failure history");
     deliverHeldRequest();
-    require(state(0)->users_generation == generation + 2 && ! state(0)->staging.active,
+    require(atomicLoadU64(&state(0)->users_generation) == generation + 2 && ! state(0)->staging.active,
             "late old-line page prevented current traversal completion");
     teardown();
 
@@ -167,14 +167,14 @@ static void testMalformedPagesAndBackoff(void)
      * a reason to discard debt, re-enroll and accept arbitrary page metadata. */
     setup(129);
     start(0);
-    const uint64_t checkpoint_generation = state(0)->users_generation;
+    const uint64_t checkpoint_generation = atomicLoadU64(&state(0)->users_generation);
     traffic(0, 9);
     auth_page_fault          = kAuthPageFaultCheckpoint;
     auth_page_fault_position = 128;
     requestPull(clients[0]);
     require(auth_page_fault == kAuthPageFaultNone && state(0)->continuity_error &&
                 state(0)->last_failure == kAuthenticationClientFailureContinuity &&
-                state(0)->users_generation == checkpoint_generation && local(0, false) == 9 &&
+                atomicLoadU64(&state(0)->users_generation) == checkpoint_generation && local(0, false) == 9 &&
                 ! state(0)->staging.active && state(0)->control_line == NULL && state(0)->last_ack_sequence == 0 &&
                 ! authenticationclientCanAuthenticate(clients[0]),
             "wrong page checkpoint cleared debt, installed a table or bypassed continuity handling");
@@ -184,7 +184,7 @@ static void testMalformedPagesAndBackoff(void)
      * Session, Pong and intermediate progress must preserve the failure streak. */
     setup(129);
     start(0);
-    const uint64_t stable_generation = state(0)->users_generation;
+    const uint64_t stable_generation = atomicLoadU64(&state(0)->users_generation);
     auth_page_fault                  = kAuthPageFaultMissingCount;
     auth_page_fault_position         = 128;
     requestPull(clients[0]);
@@ -195,7 +195,8 @@ static void testMalformedPagesAndBackoff(void)
         const uint64_t                 delay = streak <= 2 ? 1000 : 2000;
         require(ts->sync_retry_streak == streak && ts->pull_retry_not_before_ms == now + delay &&
                     ts->control_line != NULL && ! ts->staging.active && ts->progress_timer != NULL &&
-                    ts->users_generation == stable_generation && authenticationclientCanAuthenticate(clients[0]),
+                    atomicLoadU64(&ts->users_generation) == stable_generation &&
+                    authenticationclientCanAuthenticate(clients[0]),
                 "repeated bad pages lost their fixed exponential retry deadline or old cache");
         const unsigned requests = page_requests;
         requestPull(clients[0]);
@@ -219,7 +220,7 @@ static void testMalformedPagesAndBackoff(void)
         }
         deliverHeldRequest();
     }
-    require(state(0)->users_generation == stable_generation + 1 && ! state(0)->staging.active &&
+    require(atomicLoadU64(&state(0)->users_generation) == stable_generation + 1 && ! state(0)->staging.active &&
                 state(0)->sync_retry_streak == 0 && state(0)->sync_retry_not_before_ms == 0 &&
                 state(0)->sync_retry_failure == kAuthenticationClientFailureNone,
             "successful final validation did not reset the failed-refresh streak");

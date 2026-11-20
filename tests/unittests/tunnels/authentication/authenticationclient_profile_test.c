@@ -316,14 +316,15 @@ static void replaceCredentialTable(profile_fixture_t *fixture, uint64_t id, cons
     authenticationclient_tstate_t *ts = tunnelGetState(fixture->tunnel);
     mutexLock(&ts->control_mutex);
     rwlockWriteLock(&ts->users_lock);
+    const uint64_t next_generation = atomicLoadU64(&ts->users_generation) + 1;
     if (fresh != NULL)
     {
-        fresh->runtime.identity_generation_floor = ts->users_generation + 1;
-        fresh->runtime.wireguard_generation_floor = ts->users_generation + 1;
+        fresh->runtime.identity_generation_floor  = next_generation;
+        fresh->runtime.wireguard_generation_floor = next_generation;
     }
     require(usersMigrateRuntimeStateByIdentifier(&replacement, &fixture->users), "replacement migration failed");
     usersPublishCandidate(&fixture->users, &replacement);
-    ++ts->users_generation;
+    atomicStoreU64(&ts->users_generation, next_generation);
     rwlockWriteUnlock(&ts->users_lock);
     mutexUnlock(&ts->control_mutex);
     usersDestroy(&replacement);

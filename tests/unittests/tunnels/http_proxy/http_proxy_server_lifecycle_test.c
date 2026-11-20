@@ -2064,7 +2064,7 @@ static void runSuite(uint32_t large_size, uint32_t splice_limit)
     sendBytes(client, false, authenticated_get);
     require(lineIsAlive(client) && opens == 1, "loaded offline authentication rejected a new HTTP request");
     ats->authenticated = true;
-    ++ats->users_generation;
+    atomicIncU64(&ats->users_generation);
     sendBytes(client, false, authenticated_get);
     require(opens == 2 && closes == 1, "generation change reused old child");
     userSetEnabled(usersLookupByIdentifier(&users, 1001), false);

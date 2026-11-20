@@ -588,7 +588,7 @@ static void teardown(void)
 static void traffic(unsigned i, uint64_t bytes)
 {
     user_handle_t handle;
-    userHandleSet(&handle, state(i)->users_generation, 42);
+    userHandleSet(&handle, atomicLoadU64(&state(i)->users_generation), 42);
     require(authenticationclientUserAddTraffic(clients[i], &handle, bytes, 0), "local traffic failed");
 }
 static uint64_t local(unsigned i, bool baseline)
@@ -759,7 +759,7 @@ static void testPeriodicAndExplicitPullCoalescing(void)
             authenticationclient_tstate_t *ts = state(0);
             ts->pull_interval_ms              = 1000;
             require(authenticationclientStartSyncTimer(clients[0]), "periodic pull timer creation failed");
-            const uint64_t generation = ts->users_generation;
+            const uint64_t generation = atomicLoadU64(&ts->users_generation);
             const unsigned traversals = pulls;
             /* First response advertises a revision newer than the active cache.
              * Timer ticks must still join this unpublished traversal. */
@@ -770,7 +770,7 @@ static void testPeriodicAndExplicitPullCoalescing(void)
                 hold_final_page = true;
             requestPull(clients[0]);
             require(held_request != NULL && ts->staging.active && ts->pull_in_flight && ! ts->pull_requested &&
-                        ts->users_generation == generation,
+                        atomicLoadU64(&ts->users_generation) == generation,
                     "periodic coalescing traversal did not hold its publication barrier");
             for (unsigned tick = 0; tick < 5; ++tick)
             {
@@ -789,9 +789,9 @@ static void testPeriodicAndExplicitPullCoalescing(void)
             }
             deliverHeldRequest();
             pump(1);
-            require(ts->users_generation == generation + 1 + explicit_pull && pulls == traversals + 1 + explicit_pull &&
-                        ! ts->staging.active && ! ts->pull_requested && ! ts->pull_in_flight &&
-                        ts->progress_timer == NULL,
+            require(atomicLoadU64(&ts->users_generation) == generation + 1 + explicit_pull &&
+                        pulls == traversals + 1 + explicit_pull && ! ts->staging.active && ! ts->pull_requested &&
+                        ! ts->pull_in_flight && ts->progress_timer == NULL,
                     "periodic/explicit demand installed an incorrect number of traversals");
             teardown();
         }
@@ -2050,7 +2050,7 @@ static void testCachedAdmissionAndRejection(void)
             "status lost rejection history or conflated it with cache presence");
     require(! authenticationclientGetUserByPassword(clients[0], "account-0", &handle) && ! userHandleIsValid(&handle),
             "lookup bypassed sticky rejection");
-    userHandleSet(&handle, state(0)->users_generation, 42);
+    userHandleSet(&handle, atomicLoadU64(&state(0)->users_generation), 42);
     require(authenticationclientUserTryAdmitConnection(clients[0], &handle, &ip, 100010) == kUserAdmissionInvalid,
             "admission bypassed sticky rejection");
     require(! authenticationclientUserAccountTraffic(clients[0], &handle, 3, 0, 100010) && local(0, false) == 3,
@@ -2108,11 +2108,11 @@ static void testInvalidClockRefresh(void)
     discard userAccountTraffic(user, 4, 0, 0, NULL);
     for (unsigned fault = 1; fault <= 6; ++fault)
     {
-        const uint64_t generation  = state(0)->users_generation;
+        const uint64_t generation  = atomicLoadU64(&state(0)->users_generation);
         const uint64_t observation = user->client_time.first_report_ms;
         clock_fault                = fault;
         authenticationclientRequestPull(clients[0]);
-        require(state(0)->users_generation == generation && local(0, false) == 4 &&
+        require(atomicLoadU64(&state(0)->users_generation) == generation && local(0, false) == 4 &&
                     user->client_time.first_report_ms == observation && authenticationclientCanAuthenticate(clients[0]),
                 "invalid clock replaced old cache/evidence");
         pump(1000);
@@ -2182,7 +2182,7 @@ static void testObservationMergeAndMetadataOnly(void)
     authenticationclientRequestPush(clients[0]);
     pump(10);
     require(pushes == sent, "acknowledged metadata caused empty resend loop");
-    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     require(authenticationclientUserAddTraffic(clients[0], &handle, 0, 1), "later download");
     authenticationclientRequestPush(clients[0]);
     batch = cJSON_Parse(captured_batch);
@@ -2634,7 +2634,7 @@ static void testTrafficDuringRefresh(void)
     authenticationclientRequestPush(clients[0]);
     user_t        *user   = usersLookupByIdentifier(state(0)->users, 42);
     const uint64_t origin = user->client_time.first_report_ms;
-    user_handle_t  handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t  handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     require(authenticationclientUserTryAdmitConnection(clients[0], &handle, NULL, 100000) == kUserAdmissionOk,
             "concurrent reservation");
     refresh_traffic_context_t context = {.handle = handle};
@@ -2675,7 +2675,7 @@ static void testSharedBandwidthReservations(void)
     start(0);
     disconnect(0);
     user_handle_t handle;
-    userHandleSet(&handle, state(0)->users_generation, 42);
+    userHandleSet(&handle, atomicLoadU64(&state(0)->users_generation), 42);
     uint64_t first  = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthUpload);
     uint64_t second = authenticationclientUserBandwidthRegister(clients[0], &handle, kUserBandwidthDownload);
     require(first != 0 && second > first, "client tickets not unique");
@@ -2700,7 +2700,7 @@ static void testSharedBandwidthReservations(void)
     rwlockWriteLock(&state(0)->users_lock);
     users_t *old    = state(0)->users;
     state(0)->users = replacement;
-    ++state(0)->users_generation;
+    atomicIncU64(&state(0)->users_generation);
     rwlockWriteUnlock(&state(0)->users_lock);
     usersDestroy(old);
     memoryFreeAligned(old);
@@ -2800,7 +2800,7 @@ static void testOfflineFirstUseDeadline(void)
     authTestPeerSetUser(server, 42, &update);
     start(0);
     user_handle_t handle;
-    userHandleSet(&handle, state(0)->users_generation, 42);
+    userHandleSet(&handle, atomicLoadU64(&state(0)->users_generation), 42);
     disconnect(0);
     require(! authenticationclientUserAccountTraffic(clients[0], &handle, 1, 0, 100000), "first traffic closed early");
     atomicStoreU64(&now_us, 100101000);
@@ -2992,8 +2992,8 @@ static void testMultiplierFragmentAccounting(void)
         setup(2);
         startWithMultiplier(0, multipliers[i]);
         disconnect(0);
-        user_handle_t first  = {.generation = state(0)->users_generation, .user_id = 42};
-        user_handle_t second = {.generation = state(0)->users_generation, .user_id = 43};
+        user_handle_t first  = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
+        user_handle_t second = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 43};
         require(authenticationclientUserAddTraffic(clients[0], &second, 1, 1), "second account fractional traffic");
         for (unsigned fragment = 0; fragment < 9; ++fragment)
         {
@@ -3051,7 +3051,7 @@ static void testDiscountFirstUse(void)
         authTestPeerSetUser(server, 42, &update);
         startWithMultiplier(0, 500);
         disconnect(0);
-        user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+        user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
         require(authenticationclientUserAddTraffic(clients[0], &handle, 0, 0) &&
                     ! usersLookupByIdentifier(state(0)->users, 42)->client_time.observed,
                 "empty traffic started first-use expiry");
@@ -3089,7 +3089,7 @@ static void testMultiplierRefreshAndReplay(void)
     user_update_t initial = {.mask = kUserUpdateStats, .stats.traffic.u = 20};
     authTestPeerSetUser(server, 42, &initial);
     startWithMultiplier(0, 500);
-    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     require(authenticationclientUserAddTraffic(clients[0], &handle, 3, 1), "discounted initial traffic");
     require(localStats(0, 42).traffic.u == 21 && localStats(0, 42).traffic.d == 0,
             "initial fractional charge was wrong");
@@ -3125,7 +3125,7 @@ static void testMultiplierSharedServerTotals(void)
     startWithMultiplier(1, 2000);
     for (unsigned i = 0; i < 2; ++i)
     {
-        user_handle_t handle = {.generation = state(i)->users_generation, .user_id = 42};
+        user_handle_t handle = {.generation = atomicLoadU64(&state(i)->users_generation), .user_id = 42};
         require(authenticationclientUserAddTraffic(clients[i], &handle, 3, 5), "different-rate producer traffic");
         authenticationclientRequestPush(clients[i]);
     }
@@ -3139,7 +3139,7 @@ static void testMultiplierSharedServerTotals(void)
     }
     require(authTestPeerStats(server, 42).traffic.u == 107 && authTestPeerStats(server, 42).traffic.d == 12,
             "different producer multipliers did not aggregate exact charges");
-    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     require(authenticationclientUserAddTraffic(clients[0], &handle, 1, 1), "discounted remainder after remote update");
     require(localStats(0, 42).traffic.u == 108 && localStats(0, 42).traffic.d == 13,
             "other producer's traffic erased local fractional remainder");
@@ -3156,7 +3156,7 @@ static void testDiscountConcurrentRefresh(void)
     traffic(0, 1);
     authenticationclientRequestPush(clients[0]);
     require(local(0, false) == 0 && authTestPeerFirstUse(server) != 0, "concurrent discount metadata-only setup");
-    user_handle_t             handle      = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t             handle      = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     refresh_traffic_context_t contexts[2] = {{.handle = handle}, {.handle = handle}};
     pthread_t                 threads[2];
     for (unsigned i = 0; i < 2; ++i)
@@ -3219,7 +3219,7 @@ static void testStatusSnapshot(void)
             "pull success timestamp did not track commit");
     disconnect(0);
     user_handle_t handle;
-    userHandleSet(&handle, state(0)->users_generation, 42);
+    userHandleSet(&handle, atomicLoadU64(&state(0)->users_generation), 42);
     require(! authenticationclientUserAccountTraffic(clients[0], &handle, 20, 30, 100000), "offline status traffic");
     authenticationclient_tstate_t *ts = state(0);
     ts->pending_entries               = memoryAllocate(sizeof(*ts->pending_entries));
@@ -3470,7 +3470,7 @@ static void testFirstUseDeferredByPull(void)
     for (unsigned pass = 0; pass < 5; ++pass)
         for (uint64_t id = 42; id < 42 + 128; ++id)
         {
-            user_handle_t handle = {.generation = state(0)->users_generation, .user_id = id};
+            user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = id};
             require(authenticationclientUserAddTraffic(clients[0], &handle, 1, 0), "first-use traffic failed");
         }
     testWorkerBindWID(0);
@@ -3593,15 +3593,18 @@ static void testPagedTablesAndAggregateLimits(void)
     start(0);
     require(usersCount(state(0)->users) == 129 && page_requests == 3,
             "128-row page boundary did not make positional progress");
-    const uint64_t generation = state(0)->users_generation;
-    state(0)->sync_max_users  = 128;
+    const uint64_t generation = UINT32_MAX;
+    atomicStoreU64(&state(0)->users_generation, generation);
+    state(0)->sync_max_users = 128;
     requestPull(clients[0]);
-    require(state(0)->users_generation == generation && authenticationclientCanAuthenticate(clients[0]) &&
+    require(atomicLoadU64(&state(0)->users_generation) == generation &&
+                authenticationclientCanAuthenticate(clients[0]) &&
                 state(0)->last_failure == kAuthenticationClientFailureSyncLimit && ! state(0)->staging.active,
             "declared count limit replaced cache or retained staging");
     state(0)->sync_max_users = 129;
     pump(1000);
-    require(state(0)->users_generation == generation + 1, "count equality did not recover");
+    require(authenticationclientUsersGeneration(clients[0]) == generation + 1,
+            "count-equality retry did not publish the full 64-bit generation");
     hold_final_page = true;
     requestPull(clients[0]);
     require(held_request != NULL && state(0)->staging.complete, "byte-equality traversal not held at validation");
@@ -3611,10 +3614,10 @@ static void testPagedTablesAndAggregateLimits(void)
     requestPull(clients[0]);
     require(! state(0)->staging.active && state(0)->last_pull_success_valid,
             "exact aggregate-byte boundary was refused");
-    const uint64_t installed = state(0)->users_generation;
+    const uint64_t installed = atomicLoadU64(&state(0)->users_generation);
     state(0)->sync_max_bytes = exact_bytes - 1;
     requestPull(clients[0]);
-    require(state(0)->users_generation == installed &&
+    require(atomicLoadU64(&state(0)->users_generation) == installed &&
                 state(0)->last_failure == kAuthenticationClientFailureSyncLimit &&
                 authenticationclientCanAuthenticate(clients[0]) && ! state(0)->staging.active,
             "one-over aggregate bytes changed active cache");
@@ -3625,11 +3628,12 @@ static void testPagedConfigurationAndLiveDeltas(void)
 {
     setup(257);
     start(0);
-    const uint64_t generation = state(0)->users_generation;
+    const uint64_t generation = atomicLoadU64(&state(0)->users_generation);
     hold_page_position        = 128;
     requestPull(clients[0]);
     require(held_request != NULL && state(0)->staging.position == 128 && state(0)->staging.active &&
-                state(0)->users_generation == generation && authenticationclientCanAuthenticate(clients[0]),
+                atomicLoadU64(&state(0)->users_generation) == generation &&
+                authenticationclientCanAuthenticate(clients[0]),
             "intermediate page exposed a partial table");
     const unsigned before_pushes = pushes;
     for (uint64_t id = 42; id <= 42 + 256; id += 256)
@@ -3651,27 +3655,27 @@ static void testPagedConfigurationAndLiveDeltas(void)
     require(! state(0)->staging.active && ! state(0)->pull_required && state(0)->pending_batch == NULL,
             "post-paging ACK refresh did not settle");
 
-    const uint64_t stable = state(0)->users_generation;
+    const uint64_t stable = atomicLoadU64(&state(0)->users_generation);
     hold_page_position    = 128;
     requestPull(clients[0]);
     authTestPeerPassword(server);
     deliverHeldRequest();
-    require(state(0)->users_generation == stable + 1 && ! state(0)->staging.active &&
+    require(atomicLoadU64(&state(0)->users_generation) == stable + 1 && ! state(0)->staging.active &&
                 authenticationclientCanAuthenticate(clients[0]),
             "config edit invalidated the retained traversal snapshot");
     requestPull(clients[0]);
-    require(state(0)->users_generation == stable + 2 && state(0)->sync_retry_streak == 0,
+    require(atomicLoadU64(&state(0)->users_generation) == stable + 2 && state(0)->sync_retry_streak == 0,
             "later traversal did not install the edited snapshot");
     user_handle_t handle;
     require(authenticationclientGetUserByPassword(clients[0], "changed", &handle), "coherent edited credential absent");
 
-    const uint64_t validated = state(0)->users_generation;
+    const uint64_t validated = atomicLoadU64(&state(0)->users_generation);
     hold_final_page          = true;
     requestPull(clients[0]);
     require(held_request != NULL && state(0)->staging.complete, "final validation was not independently pending");
     authTestPeerSetConfigRevision(server, state(0)->staging.config_revision + 1);
     deliverHeldRequest();
-    require(state(0)->users_generation == validated + 1 && ! state(0)->staging.active &&
+    require(atomicLoadU64(&state(0)->users_generation) == validated + 1 && ! state(0)->staging.active &&
                 authenticationclientCanAuthenticate(clients[0]),
             "edit before validation invalidated an immutable snapshot");
     teardown();
@@ -3683,7 +3687,7 @@ static void testPagingDisconnectAndAbsoluteDeadlines(void)
     start(0);
     for (unsigned boundary = 0; boundary < 4; ++boundary)
     {
-        const uint64_t generation = state(0)->users_generation;
+        const uint64_t generation = atomicLoadU64(&state(0)->users_generation);
         if (boundary == 3)
             hold_final_page = true;
         else
@@ -3693,13 +3697,14 @@ static void testPagingDisconnectAndAbsoluteDeadlines(void)
         sbufDestroy(held_request);
         held_request = NULL;
         disconnect(0);
-        require(! state(0)->staging.active && state(0)->users_generation == generation &&
+        require(! state(0)->staging.active && atomicLoadU64(&state(0)->users_generation) == generation &&
                     authenticationclientCanAuthenticate(clients[0]),
                 "disconnect discarded active cache");
         pump(10);
-        require(state(0)->users_generation == generation + 1, "boundary disconnect failed to restart traversal");
+        require(atomicLoadU64(&state(0)->users_generation) == generation + 1,
+                "boundary disconnect failed to restart traversal");
     }
-    const uint64_t generation = state(0)->users_generation;
+    const uint64_t generation = atomicLoadU64(&state(0)->users_generation);
     hold_page_position        = 128;
     requestPull(clients[0]);
     pump(700);
@@ -3712,7 +3717,7 @@ static void testPagingDisconnectAndAbsoluteDeadlines(void)
     require(held_request != NULL && state(0)->staging.complete, "delayed final validation not held");
     pump(700);
     deliverHeldRequest();
-    require(state(0)->users_generation == generation + 1 && ! state(0)->staging.active,
+    require(atomicLoadU64(&state(0)->users_generation) == generation + 1 && ! state(0)->staging.active,
             "progressing traversal inherited a whole-table absolute timeout");
     hold_page_position = 128;
     requestPull(clients[0]);
@@ -3758,7 +3763,7 @@ static void testPagingPreservesRuntimeAndFractionalCarry(void)
 {
     setup(257);
     startWithMultiplier(0, 500);
-    user_handle_t handle = {.generation = state(0)->users_generation, .user_id = 42};
+    user_handle_t handle = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
     user_ip_key_t ip     = {.type = 4, .bytes = {192, 0, 2, 9}};
     require(authenticationclientUserTryAdmitConnection(clients[0], &handle, &ip, 100000) == kUserAdmissionOk,
             "page runtime admission fixture");
@@ -3815,7 +3820,7 @@ static void testStatisticsMayChangeBetweenPages(void)
     require(held_request != NULL, "statistics traversal boundary not held");
     const uint64_t first_stats = state(0)->staging.stats_revision;
     const unsigned traversals  = pulls;
-    user_handle_t  remote      = {.generation = state(1)->users_generation, .user_id = 42 + 256};
+    user_handle_t  remote      = {.generation = atomicLoadU64(&state(1)->users_generation), .user_id = 42 + 256};
     require(authenticationclientUserAddTraffic(clients[1], &remote, 15, 0), "foreign stats fixture");
     requestPush(clients[1]);
     require(authTestPeerStats(server, 42 + 256).traffic.u == 15, "foreign stats not accepted");
@@ -3843,8 +3848,8 @@ static void testOrphanDebtAndProvedBatchRejection(void)
     {
         setup(2);
         start(0);
-        user_handle_t removed   = {.generation = state(0)->users_generation, .user_id = 42};
-        user_handle_t surviving = {.generation = state(0)->users_generation, .user_id = 43};
+        user_handle_t removed   = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 42};
+        user_handle_t surviving = {.generation = atomicLoadU64(&state(0)->users_generation), .user_id = 43};
         user_ip_key_t ip        = {.type = 4, .bytes = {192, 0, 2, 44}};
         require(authenticationclientUserTryAdmitConnection(clients[0], &removed, &ip, 100000) == kUserAdmissionOk,
                 "removed-account reservation fixture");
@@ -3978,13 +3983,14 @@ static void testOrphanLedgerBudget(void)
     for (size_t i = 0; i < 64; ++i)
         ts->catchup_entries[i] = (authenticationclient_accounting_entry_t) {
             .id = 1000 + i, .delta = {.u = 1}, .first_usage_at_ms = 1, .detached = true};
-    const uint64_t                           generation = ts->users_generation;
+    const uint64_t                           generation = atomicLoadU64(&ts->users_generation);
     authenticationclient_accounting_entry_t *retained   = ts->catchup_entries;
     ts->sync_max_bytes                                  = 4096;
     authTestPeerRemoveUser(server);
     authenticationclientRequestPull(clients[0]);
-    require(ts->last_failure == kAuthenticationClientFailureSyncLimit && ts->users_generation == generation &&
-                ts->catchup_entries == retained && ts->catchup_entries_count == 64 && ts->orphan_debt_count == 64 &&
+    require(ts->last_failure == kAuthenticationClientFailureSyncLimit &&
+                atomicLoadU64(&ts->users_generation) == generation && ts->catchup_entries == retained &&
+                ts->catchup_entries_count == 64 && ts->orphan_debt_count == 64 &&
                 usersLookupByIdentifier(ts->users, 42) != NULL && retained[63].delta.u == 1,
             "ledger capacity refusal changed active config or erased retained obligations");
     ts->catchup_capture_needed = true;
@@ -4002,7 +4008,7 @@ static void testOrphanLedgerBudget(void)
     }
     ts->sync_max_bytes = 1024 * 1024;
     pump(1000);
-    require(ts->users_generation == generation + 1 && ts->orphan_debt_count == 64 &&
+    require(atomicLoadU64(&ts->users_generation) == generation + 1 && ts->orphan_debt_count == 64 &&
                 usersLookupByIdentifier(ts->users, 42) == NULL && ts->progress_timer == NULL,
             "bounded ledger retry did not preserve orphan debt while publishing config");
     teardown();

@@ -43,8 +43,9 @@ wcrypto_status_t __wrap_vmessAuthIdCheck(vmess_auth_id_ctx_t *ctx, const vmess_p
         userSetId(&user, 42);
         twfRequire(usersAddUser(state->users, &user), "refresh UUID insertion failed");
         userDestroy(&user);
-        ++state->users_generation;
-        usersLookupByIdentifier(state->users, 42)->runtime.identity_generation_floor = state->users_generation;
+        const uint64_t next_generation = atomicLoadU64(&state->users_generation) + 1;
+        usersLookupByIdentifier(state->users, 42)->runtime.identity_generation_floor = next_generation;
+        atomicStoreU64(&state->users_generation, next_generation);
         rwlockWriteUnlock(&state->users_lock);
         mutexUnlock(&state->control_mutex);
         memorySecureZero(uuid, sizeof(uuid));

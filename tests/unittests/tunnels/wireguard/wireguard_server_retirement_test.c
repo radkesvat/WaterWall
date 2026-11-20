@@ -80,7 +80,7 @@ static void refresh(wg_server_fixture_t *f, unsigned change)
     rwlockWriteLock(&f->as->users_lock);
     twfRequire(usersMigrateRuntimeStateByIdentifier(&next, &f->users), "refresh migration failed");
     usersPublishCandidate(&f->users, &next);
-    atomic_store(&f->as->users_generation, generation);
+    atomicStoreU64(&f->as->users_generation, generation);
     rwlockWriteUnlock(&f->as->users_lock);
     mutexUnlock(&f->as->control_mutex);
     usersDestroy(&next);

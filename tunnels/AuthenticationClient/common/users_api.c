@@ -56,7 +56,7 @@ uint64_t authenticationclientUsersGeneration(tunnel_t *t)
     }
 
     authenticationclient_tstate_t *ts = tunnelGetState(t);
-    return atomic_load(&ts->users_generation);
+    return atomicLoadU64(&ts->users_generation);
 }
 
 authenticationclient_uuid_snapshot_result_t authenticationclientGetUUIDSource(
@@ -77,10 +77,11 @@ authenticationclient_uuid_snapshot_result_t authenticationclientGetUUIDSource(
             result = kAuthenticationClientUuidSnapshotLimit;
         else
         {
-            *source_out = (authenticationclient_uuid_source_t) {.users_generation = ts->users_generation,
-                                                                .total_users      = count,
-                                                                .max_users        = (size_t) ts->sync_max_users,
-                                                                .max_bytes        = (size_t) ts->sync_max_bytes};
+            *source_out =
+                (authenticationclient_uuid_source_t) {.users_generation = atomicLoadU64(&ts->users_generation),
+                                                      .total_users      = count,
+                                                      .max_users        = (size_t) ts->sync_max_users,
+                                                      .max_bytes        = (size_t) ts->sync_max_bytes};
             result      = kAuthenticationClientUuidSnapshotOk;
         }
     }
@@ -104,7 +105,7 @@ authenticationclient_uuid_snapshot_result_t authenticationclientCopyUUIDCandidat
     rwlockReadLock(&ts->users_lock);
     if (authenticationclientCanAuthenticateLocked(ts))
     {
-        if (expected_generation != ts->users_generation)
+        if (expected_generation != atomicLoadU64(&ts->users_generation))
             result = kAuthenticationClientUuidSnapshotChanged;
         else if (usersCount(ts->users) > ts->sync_max_users ||
                  ! usersCopyUUIDCandidatePage(ts->users, position, max_rows, entries_out, count_out, next_position_out))
@@ -218,7 +219,7 @@ static authenticationclient_user_lookup_result_t authenticationclientResolveCred
     if (user != NULL && authenticationclientIdDetachedLocked(ts, userGetId(user)))
         user = NULL;
     if (user != NULL && expected_identity != NULL &&
-        (expected_identity->generation > ts->users_generation ||
+        (expected_identity->generation > atomicLoadU64(&ts->users_generation) ||
          expected_identity->generation < user->runtime.identity_generation_floor ||
          expected_identity->user_id != userGetId(user)))
         user = NULL;
@@ -247,7 +248,7 @@ static authenticationclient_user_lookup_result_t authenticationclientResolveCred
                     result = kAuthenticationClientUserLookupUserIdRequired;
                 else
                 {
-                    userHandleSet(handle_out, ts->users_generation, user_id);
+                    userHandleSet(handle_out, atomicLoadU64(&ts->users_generation), user_id);
                     result = kAuthenticationClientUserLookupOk;
                 }
             }
@@ -415,7 +416,7 @@ bool authenticationclientUserHandleIsLive(tunnel_t *t, const user_handle_t *hand
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = NULL;
-    if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
+    if (LIKELY(ts->users != NULL) && handle->generation == atomicLoadU64(&ts->users_generation))
     {
         user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
@@ -437,7 +438,7 @@ cJSON *authenticationclientUserToJson(tunnel_t *t, const user_handle_t *handle)
     cJSON                         *json = NULL;
 
     rwlockReadLock(&ts->users_lock);
-    if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
+    if (LIKELY(ts->users != NULL) && handle->generation == atomicLoadU64(&ts->users_generation))
     {
         json = usersUserToJsonByIdentifier(ts->users, handle->user_id);
     }
@@ -478,7 +479,7 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
 
     rwlockReadLock(&ts->users_lock);
     user_t *user = NULL;
-    if (LIKELY(ts->users != NULL) && handle->generation == ts->users_generation)
+    if (LIKELY(ts->users != NULL) && handle->generation == atomicLoadU64(&ts->users_generation))
     {
         user = usersLookupByIdentifier(ts->users, handle->user_id);
     }
@@ -651,7 +652,7 @@ static bool authenticationclientAccountTraffic(tunnel_t *t, const user_handle_t 
 
     rwlockReadLock(&ts->users_lock);
     if (authenticationclientHandleCurrentLocked(ts, handle) &&
-        (! check_generation || handle->generation == ts->users_generation))
+        (! check_generation || handle->generation == atomicLoadU64(&ts->users_generation)))
     {
         // AccountTraffic returns close=true when the user is gone (revoked), so a removed user's
         // traffic is rejected and the connection is torn down.
@@ -1035,9 +1036,9 @@ authenticationclient_user_lookup_result_t authenticationclientCopyWireGuardAutho
                 {
                     authorization->network    = user->wireguard_allowed_ip;
                     authorization->mask       = user->wireguard_allowed_mask;
-                    authorization->generation = ts->users_generation;
+                    authorization->generation = atomicLoadU64(&ts->users_generation);
                     authorization->continuity = user->runtime.wireguard_generation_floor;
-                    userHandleSet(&authorization->handle, ts->users_generation, id);
+                    userHandleSet(&authorization->handle, authorization->generation, id);
                     result = kAuthenticationClientUserLookupOk;
                 }
                 rwlockReadUnlock(&user->lock);
@@ -1074,7 +1075,8 @@ bool authenticationclientWireGuardAuthorizationMatches(tunnel_t            *t,
             ! userRuntimeShouldClose(user, authenticationclientLocalTimeMS()))
         {
             rwlockReadLock(&user->lock);
-            matches = user->enabled && user->id == handle->user_id && handle->generation <= ts->users_generation &&
+            matches = user->enabled && user->id == handle->user_id &&
+                      handle->generation <= atomicLoadU64(&ts->users_generation) &&
                       handle->generation >= user->runtime.identity_generation_floor &&
                       continuity == user->runtime.wireguard_generation_floor && user->wireguard_allowed_ips_valid &&
                       ipAddrCmp(network, &user->wireguard_allowed_ip) && ipAddrCmp(mask, &user->wireguard_allowed_mask);

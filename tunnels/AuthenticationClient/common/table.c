@@ -200,16 +200,18 @@ static authenticationclient_failure_t installStaging(tunnel_t *t, uint64_t gener
         authenticationclientDestroyUsers(baseline);
         return kAuthenticationClientFailureSyncLimit;
     }
-    if (ts->users_generation == UINT64_MAX)
+    const uint64_t current_generation = atomicLoadU64(&ts->users_generation);
+    if (current_generation == UINT64_MAX)
     {
         LOGF("AuthenticationClient: installed account generation exhausted");
         abortProgramNow(1);
     }
+    const uint64_t next_generation = current_generation + 1;
     users_t *old = ts->users, *old_baseline = ts->sync_baseline_users;
     for (size_t i = 0; i < usersCount(stage->users); ++i)
     {
-        usersGetAt(stage->users, i)->runtime.identity_generation_floor = ts->users_generation + 1;
-        usersGetAt(stage->users, i)->runtime.wireguard_generation_floor = ts->users_generation + 1;
+        usersGetAt(stage->users, i)->runtime.identity_generation_floor  = next_generation;
+        usersGetAt(stage->users, i)->runtime.wireguard_generation_floor = next_generation;
     }
     /* All fallible work is complete. Migration cannot refuse initialized tables. */
     if (! usersMigrateRuntimeStateByIdentifier(stage->users, old))
@@ -244,7 +246,7 @@ static authenticationclient_failure_t installStaging(tunnel_t *t, uint64_t gener
     ts->users               = stage->users;
     stage->users            = NULL;
     ts->sync_baseline_users = baseline;
-    ++ts->users_generation;
+    atomicStoreU64(&ts->users_generation, next_generation);
     ts->local_config_revision     = stage->config_revision;
     ts->local_stats_revision      = stage->stats_revision; /* Immutable snapshot revision. */
     ts->local_revision_generation = generation;
