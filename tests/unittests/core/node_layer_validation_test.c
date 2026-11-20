@@ -22,6 +22,7 @@
 
 #include "wwapi.h"
 
+#include "node_builder/input_hints.h"
 #include "test_assert.h"
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
@@ -144,6 +145,51 @@ static void testValidL4Chain(void)
     require(chain.resolved_prev_layer[1] == kLayerDomainL4, "mid prev layer not L4");
     require(chain.resolved_next_layer[1] == kLayerDomainL4, "mid next layer not L4");
     require(chain.resolved_prev_layer[2] == kLayerDomainL4, "tail prev layer not L4");
+}
+
+static void testInputHintMetadata(void)
+{
+    node_t                             hints[]   = {nodeHintConnectionINGet(), nodeHintPacketINGet()};
+    static const enum node_layer_group layers[]  = {kNodeLayer4, kNodeLayer3};
+    static const node_layer_domain_t   domains[] = {kLayerDomainL4, kLayerDomainL3};
+
+    node_t sink_node = {
+        .name                  = (char *) "sink",
+        .type                  = (char *) "TestDualLayerSink",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayerAnything,
+        .layer_group_prev_node = kNodeLayerAnything,
+        .layer_group_next_node = kNodeLayerNone,
+        .can_have_prev         = true,
+    };
+
+    for (unsigned i = 0; i < ARRAY_SIZE(hints); ++i)
+    {
+        node_t *hint = &hints[i];
+        require(hint->flags == kNodeFlagChainHead && ! hint->can_have_prev && hint->can_have_next,
+                "input hint does not describe a chain head");
+        require(hint->layer_group_prev_node == kNodeLayerNone && hint->layer_group == layers[i] &&
+                    hint->layer_group_next_node == layers[i],
+                "input hint does not declare its input layer");
+        require(hint->required_padding_left == 0, "input hint requires buffer padding");
+
+        hint->name = (char *) "entry";
+
+        tunnel_t       head  = {.node = hint};
+        tunnel_t       sink  = {.node = &sink_node};
+        tunnel_chain_t chain = {0};
+        bindTunnels(&head, &sink);
+        tunnelarrayInsert(&chain.tunnels, &head);
+        tunnelarrayInsert(&chain.tunnels, &sink);
+        head.chain = &chain;
+        sink.chain = &chain;
+
+        node_layer_solver_status_t status = {0};
+        require(nodeLayerSolveChain(&chain, &status), "input hint metadata cannot connect to a dual-layer sink");
+        require(chain.resolved_next_layer[0] == domains[i] && chain.resolved_prev_layer[1] == domains[i],
+                "input hint solved to the wrong layer");
+        memoryFree(hint->type);
+    }
 }
 
 static void testValidTransparentMiddleChainL4(void)
@@ -2132,6 +2178,7 @@ int main(void)
 {
     testCaseSet("node_layer_validation_test");
     testValidL4Chain();
+    testInputHintMetadata();
     testValidTransparentMiddleChainL4();
     testValidTransparentMiddleChainL3();
     testValidMultiHopTransparent();

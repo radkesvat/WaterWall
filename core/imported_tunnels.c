@@ -1,5 +1,6 @@
 #include "imported_tunnels.h"
 #include "loggers/core_logger.h"
+#include "node_builder/input_hints.h"
 #include "wwapi.h"
 
 #if defined(__MINGW32__) && defined(__GNUC__) && ! defined(__clang__)
@@ -443,6 +444,9 @@ ww_startup_result_t loadImportedTunnelsIntoCore(void)
 {
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
+
+    USING(HintConnectionIN);
+    USING(HintPacketIN);
 
 #if INCLUDE_TEMPLATE
     USING(Template);

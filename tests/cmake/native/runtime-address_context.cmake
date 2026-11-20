@@ -671,8 +671,15 @@
         "unit;signal-manager;shutdown;signals"
       )
 
-      waterwall_add_native_executable(node_manager_startup_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/node_manager_startup_test.c)
+      waterwall_add_native_executable(node_manager_startup_test SUPPORT SOURCES
+        ${WATERWALL_UNIT_SOURCE_ROOT}/core/node_manager_startup_test.c
+        ${CMAKE_SOURCE_DIR}/core/imported_tunnels.c)
+      target_include_directories(node_manager_startup_test PRIVATE ${CMAKE_SOURCE_DIR}/core)
       target_link_libraries(node_manager_startup_test PRIVATE ww_test_support ww)
+      if(TARGET BlackHole)
+        target_link_libraries(node_manager_startup_test PRIVATE BlackHole)
+        target_compile_definitions(node_manager_startup_test PRIVATE WW_TEST_BLACKHOLE_SINK=1)
+      endif()
       target_link_options(node_manager_startup_test PRIVATE "-Wl,--wrap=applicationShutdownWasRequested")
       add_dependencies(waterwall_unit_tests node_manager_startup_test)
       add_waterwall_unit_test(waterwall.node_manager_startup_unit node_manager_startup_test "unit;node-manager;startup;bufio")

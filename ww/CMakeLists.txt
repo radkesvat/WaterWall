@@ -184,6 +184,7 @@ add_library(ww STATIC
     node_builder/config_file.c
     node_builder/config_policy.c
     node_builder/config_lexical.c
+    node_builder/input_hints.c
     node_builder/node_library.c
     
     # Managers

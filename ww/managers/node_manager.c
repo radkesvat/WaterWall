@@ -11,6 +11,7 @@
 #include "net/node_layer_solver.h"
 #include "node_builder/config_lexical.h"
 #include "node_builder/config_policy.h"
+#include "node_builder/input_hints.h"
 #include "signal_manager.h"
 #include "utils/json_helpers.h"
 
@@ -626,6 +627,55 @@ static void pathWalk(node_manager_config_t *cfg)
     }
 }
 
+static void validateInputHints(node_manager_config_t *cfg)
+{
+    const char *unresolved = NULL;
+    c_foreach(entry, map_node_t, cfg->node_map)
+    {
+        const node_t *hint       = entry.ref->second;
+        const char   *diagnostic = nodeInputHintUnresolvedDiagnostic(hint);
+        if (diagnostic == NULL)
+        {
+            continue;
+        }
+
+        const cJSON *settings = hint->node_settings_json;
+        if (settings != NULL && (! cJSON_IsObject(settings) || settings->child != NULL))
+        {
+            LOGF("NodeManager: input hint node \"%s\" settings must be omitted or an empty object",
+                 configPolicyDiagnostic(hint->name));
+            startupFailureRecord(1);
+            return;
+        }
+        if (hint->hash_next == 0 || hint->next[0] == '\0')
+        {
+            LOGF("NodeManager: input hint node \"%s\" requires a next node", configPolicyDiagnostic(hint->name));
+            startupFailureRecord(1);
+            return;
+        }
+        c_foreach(other, map_node_t, cfg->node_map)
+        {
+            const node_t *predecessor = other.ref->second;
+            if (predecessor->hash_next != 0 && predecessor->hash_next == hint->hash_name)
+            {
+                LOGF("NodeManager: input hint node \"%s\" must be a chain head", configPolicyDiagnostic(hint->name));
+                startupFailureRecord(1);
+                return;
+            }
+        }
+        if (unresolved == NULL)
+        {
+            unresolved = diagnostic;
+        }
+    }
+
+    if (unresolved != NULL)
+    {
+        LOGF("%s", unresolved);
+        startupFailureRecord(1);
+    }
+}
+
 /**
  * @brief Ensure at least one chain-head node exists in config.
  *
@@ -1044,6 +1094,11 @@ static void startInstallingConfigFile(node_manager_config_t *cfg)
         return;
     }
     pathWalk(cfg);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
+    validateInputHints(cfg);
     if (UNLIKELY(startupFailurePending()))
     {
         return;
