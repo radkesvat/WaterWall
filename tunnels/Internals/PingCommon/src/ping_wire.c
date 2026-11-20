@@ -614,15 +614,12 @@ static uint32_t pingwireXorShift32(uint32_t value)
 
 static uint32_t pingwireReplyIdRandom(ping_wire_reply_id_generator_t *generator)
 {
-    w_atomic_uint_value_t observed = atomicLoadRelaxed(&generator->random_state);
+    uint32_t observed = atomicLoadU32Relaxed(&generator->random_state);
     for (;;)
     {
-        const uint32_t next = pingwireXorShift32((uint32_t) observed);
-        if (atomicCompareExchangeExplicit(&generator->random_state,
-                                          &observed,
-                                          (w_atomic_uint_value_t) next,
-                                          memory_order_relaxed,
-                                          memory_order_relaxed))
+        const uint32_t next = pingwireXorShift32(observed);
+        if (atomicCompareExchangeU32Explicit(
+                &generator->random_state, &observed, next, memory_order_relaxed, memory_order_relaxed))
         {
             return next;
         }
@@ -633,8 +630,8 @@ void pingwireReplyIdGeneratorInitialize(ping_wire_reply_id_generator_t *generato
 {
     assert(generator != NULL);
 
-    atomicStoreRelaxed(&generator->visible_counter, seed);
-    atomicStoreRelaxed(&generator->random_state, pingwireXorShift32(seed ^ UINT32_C(0xa5c39e71)));
+    atomicStoreU32Relaxed(&generator->visible_counter, seed);
+    atomicStoreU32Relaxed(&generator->random_state, pingwireXorShift32(seed ^ UINT32_C(0xa5c39e71)));
     atomicStoreU64Relaxed(&generator->last_reply_ms, now_ms);
 }
 
@@ -656,7 +653,7 @@ uint16_t pingwireReplyIdGeneratorNextAt(ping_wire_reply_id_generator_t *generato
                 if (idle)
                 {
                     const uint32_t perturbation = 1U + (idle_perturbation % (kPingWireReplyPerturbationMaximum + 1U));
-                    discard        atomicAdd(&generator->visible_counter, perturbation);
+                    discard        atomicAddU32(&generator->visible_counter, perturbation);
                 }
                 break;
             }
@@ -665,7 +662,7 @@ uint16_t pingwireReplyIdGeneratorNextAt(ping_wire_reply_id_generator_t *generato
         break;
     }
 
-    return (uint16_t) (atomicAdd(&generator->visible_counter, 1U) + 1U);
+    return (uint16_t) (atomicAddU32(&generator->visible_counter, 1U) + 1U);
 }
 
 uint16_t pingwireReplyIdGeneratorNext(ping_wire_reply_id_generator_t *generator, uint64_t now_ms)

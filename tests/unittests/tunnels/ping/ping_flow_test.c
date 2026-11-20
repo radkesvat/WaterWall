@@ -701,13 +701,13 @@ static void caseForeignWorkerAdmissionIrrelevant(flow_fixture_t *fixture)
     resetSinks(fixture);
     sbuf_t *request = makeTransportPacket(fixture->packet_lines[0], IP_PROTO_TCP, 2);
     wrapPeerRequest(fixture, request, 3000);
-    const unsigned references = atomicLoadRelaxed(&fixture->packet_lines[2]->refc);
+    const unsigned references = atomicLoadU32Relaxed(&fixture->packet_lines[2]->refc);
     workerMessagesCloseAdmission(&fixture->env.workers[2]);
     sendInbound(fixture, 0, request);
     tosPumpWorker(&fixture->env, 2);
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "unrelated worker admission blocked decoded delivery");
     twfRequire(decodedInnerSink(fixture)->packets[0].wid == 0, "decoder used the unrelated flow-hash worker");
-    twfRequireEqualU32(atomicLoadRelaxed(&fixture->packet_lines[2]->refc),
+    twfRequireEqualU32(atomicLoadU32Relaxed(&fixture->packet_lines[2]->refc),
                        references,
                        "decoded delivery borrowed an unrelated worker packet-line reference");
     twfRequire(workerMessagesOpenAdmission(&fixture->env.workers[2]), "could not reopen test worker admission");
@@ -924,7 +924,7 @@ static void caseGeneratedReplySuccessfulReentry(flow_fixture_t *fixture)
 
     sbuf_t           *request    = peerRequest(fixture, fixture->packet_lines[0], 91);
     captured_packet_t captured   = captureBuffer(request);
-    const unsigned    references = atomicLoadRelaxed(&fixture->packet_lines[0]->refc);
+    const unsigned    references = atomicLoadU32Relaxed(&fixture->packet_lines[0]->refc);
     flow_sink_t      *reply_sink = generatedReplySink(fixture);
     reply_sink->reenter_packet   = &captured;
     reply_sink->reenter_wid      = 0;
@@ -935,7 +935,7 @@ static void caseGeneratedReplySuccessfulReentry(flow_fixture_t *fixture)
     twfRequireEqualU32(reply_sink->count, 2, "nested duplicate request did not produce the second optional reply");
     twfRequireEqualU32(decodedInnerSink(fixture)->count, 1, "reentry changed one-time inner delivery");
     twfRequire(lineIsAlive(fixture->packet_lines[0]), "successful reentry killed the worker packet line");
-    twfRequireEqualU32(atomicLoadRelaxed(&fixture->packet_lines[0]->refc),
+    twfRequireEqualU32(atomicLoadU32Relaxed(&fixture->packet_lines[0]->refc),
                        references,
                        "successful reentry leaked a packet-line reference");
 

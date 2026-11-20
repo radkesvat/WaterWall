@@ -121,8 +121,8 @@ typedef enum ping_wire_replay_result_e
  */
 typedef struct ping_wire_reply_id_generator_s
 {
-    atomic_uint   visible_counter;
-    atomic_uint   random_state;
+    atomic_u32_t  visible_counter;
+    atomic_u32_t  random_state;
     atomic_ullong last_reply_ms;
 } ping_wire_reply_id_generator_t;
 
