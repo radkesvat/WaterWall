@@ -279,8 +279,8 @@ bool tundeviceBringUp(tun_device_t *tdev)
 
 #ifdef OS_LINUX
     atomicStoreRelaxed(&tdev->gso_write_disabled, false);
-    atomicStoreRelaxed(&tdev->gso_generated_segments, 0);
-    atomicStoreRelaxed(&tdev->gso_intact_aggregates, 0);
+    atomicStoreU64Relaxed(&tdev->gso_generated_segments, 0);
+    atomicStoreU64Relaxed(&tdev->gso_intact_aggregates, 0);
 #endif
     if (! tunWriterOpen(&tdev->writer, kTunWriterQueueMax, SIZE_MAX, tdev, tunWriteBatch))
     {

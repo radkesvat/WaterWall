@@ -36,7 +36,7 @@ struct capture_device_s
     /* The lifecycle coordinator owns native queues until worker activation and
      * after owner quiescence. No external Linux reader thread exists. */
     struct capture_reader_generation_s *reader;
-    atomic_uintptr_t                    reader_notify;
+    atomic_ptr_t                        reader_notify;
     uint16_t                            queue_count;
     struct capture_linux_queue_s       *queues;
     char                              **capture_cidrs;

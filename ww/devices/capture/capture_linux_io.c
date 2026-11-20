@@ -113,8 +113,7 @@ static bool captureReaderSchedule(capture_worker_reader_t *lane, bool required)
 void captureReaderCapacityReady(void *context)
 {
     capture_device_t            *device = context;
-    capture_reader_generation_t *generation =
-        (capture_reader_generation_t *) atomicLoadExplicit(&device->reader_notify, memory_order_acquire);
+    capture_reader_generation_t *generation = atomicLoadPtrExplicit(&device->reader_notify, memory_order_acquire);
     if (generation == NULL)
         return;
     /* Session notification admission pins the device and reader generation. */
@@ -521,7 +520,7 @@ void captureReaderOpen(capture_device_t *device)
         generation->lanes[i].records    = memoryAllocateZero((size_t) capacity * sizeof(netfilter_packet_record_t));
         generation->lanes[i].workspace  = netfilterBatchWorkspaceCreate(capacity);
     }
-    atomicStoreExplicit(&device->reader_notify, (uintptr_t) generation, memory_order_release);
+    atomicStorePtrExplicit(&device->reader_notify, generation, memory_order_release);
     generation->command_progress = (proc_command_progress_t) {.callback = captureReaderService, .context = device};
     procCommandProgressRegister(&generation->command_progress);
 }
@@ -738,7 +737,7 @@ void captureReaderDestroy(capture_device_t *device)
             sbufDestroy(lane->pending_bufs[j]);
     }
     procCommandProgressUnregister(&generation->command_progress);
-    atomicStoreExplicit(&device->reader_notify, (uintptr_t) NULL, memory_order_release);
+    atomicStorePtrExplicit(&device->reader_notify, NULL, memory_order_release);
     device->reader = NULL;
     captureReaderUnref(generation);
 }

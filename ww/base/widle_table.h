@@ -69,7 +69,7 @@ typedef void (*ExpireCallBack)(idle_item_t *);
 struct idle_item_s
 {
     void            *userdata;               ///< User data associated with the item.
-    atomic_uintptr_t table;                  ///< Parent idle table pointer, or 0 when detached.
+    atomic_ptr_t     table;                  ///< Parent idle table pointer, or 0 when detached.
     atomic_ullong    expire_at_ms;           ///< Expiration in cached event-loop monotonic milliseconds.
     ExpireCallBack   cb;                     ///< Expiration callback.
     hash_t           hash;                   ///< Hash used for item lookup.

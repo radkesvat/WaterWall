@@ -58,7 +58,7 @@ struct tun_device_s
     bool         gso_enabled;
 #ifdef OS_LINUX
     struct tun_reader_generation_s *reader;
-    atomic_uintptr_t                reader_notify;
+    atomic_ptr_t                    reader_notify;
     uint16_t                        queue_count;
     int                             queue_fds[UINT8_MAX + 1U];
     bool                            trusted_checksums;
@@ -70,8 +70,8 @@ struct tun_device_s
     /* Output allowance and this chain's padding, captured before publication. */
     size_t               gso_output_charge[UINT8_MAX + 1U];
     uint16_t             offload_output_padding[UINT8_MAX + 1U];
-    atomic_uint_fast64_t gso_generated_segments;
-    atomic_uint_fast64_t gso_intact_aggregates;
+    atomic_ullong        gso_generated_segments;
+    atomic_ullong        gso_intact_aggregates;
 #endif
 
     atomic_int lifecycle;

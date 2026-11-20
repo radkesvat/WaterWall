@@ -18,7 +18,7 @@ typedef struct tun_writer_generation_s tun_writer_generation_t;
  * producer contexts to be quiesced; accepted drain tokens may outlive Destroy. */
 typedef struct tun_writer_s
 {
-    atomic_uintptr_t         published_generation;
+    atomic_ptr_t             published_generation;
     tun_writer_generation_t *current;
     tun_writer_generation_t *retired;
 } tun_writer_t;

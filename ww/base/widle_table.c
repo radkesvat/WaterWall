@@ -143,12 +143,12 @@ static void idletableAssertItemOwner(wid_t wid)
 // must not be weakened to relaxed.
 static idle_table_t *idleItemGetTable(const idle_item_t *item)
 {
-    return (idle_table_t *) (uintptr_t) atomicLoadExplicit(&(item->table), memory_order_acquire);
+    return atomicLoadPtrExplicit(&item->table, memory_order_acquire);
 }
 
 static void idleItemSetTable(idle_item_t *item, idle_table_t *table)
 {
-    atomicStoreExplicit(&(item->table), (uintptr_t) table, memory_order_release);
+    atomicStorePtrExplicit(&item->table, table, memory_order_release);
 }
 
 static bool idleItemIsRemoved(const idle_item_t *item)
@@ -279,7 +279,7 @@ idle_item_t *idletableCreateItem(idle_table_t *self, hash_t key, void *userdata,
                            .wid                    = wid,
                            .userdata               = userdata,
                            .cb                     = cb,
-                           .table                  = (uintptr_t) self,
+                           .table                  = self,
                            .removed                = false,
                            .worker_message_pending = false};
 

@@ -21,7 +21,7 @@ typedef struct cached_item_s
 } cached_item_t;
 
 static ww_lwip_pool_cache_t *caches;
-static atomic_uintptr_t      rx_pool;
+static atomic_ptr_t          rx_pool;
 
 static int cacheIndex(const struct memp_desc *pool)
 {
@@ -30,7 +30,7 @@ static int cacheIndex(const struct memp_desc *pool)
     for (unsigned i = MEMP_POOL_FIRST; i <= MEMP_POOL_LAST; ++i)
         if (pool == memp_pools[i])
             return (int) (i - MEMP_POOL_FIRST + 1);
-    if (pool == (const struct memp_desc *) atomicLoadExplicit(&rx_pool, memory_order_acquire))
+    if (pool == atomicLoadPtrExplicit(&rx_pool, memory_order_acquire))
         return kWwLwipPoolCacheRx;
     return -1;
 }
@@ -40,18 +40,18 @@ static const struct memp_desc *cachePool(unsigned index)
     if (index == 0)
         return memp_pools[MEMP_TCP_SEG];
     if (index == kWwLwipPoolCacheRx)
-        return (const struct memp_desc *) atomicLoadExplicit(&rx_pool, memory_order_acquire);
+        return atomicLoadPtrExplicit(&rx_pool, memory_order_acquire);
     return memp_pools[MEMP_POOL_FIRST + index - 1];
 }
 
 static cached_item_t *take(ww_lwip_pool_cache_t *cache, unsigned index)
 {
-    return (cached_item_t *) atomicExchangeExplicit(&cache->heads[index], 0, memory_order_acq_rel);
+    return atomicExchangePtrExplicit(&cache->heads[index], NULL, memory_order_acq_rel);
 }
 
 static void publish(ww_lwip_pool_cache_t *cache, unsigned index, cached_item_t *head)
 {
-    atomicStoreExplicit(&cache->heads[index], (uintptr_t) head, memory_order_release);
+    atomicStorePtrExplicit(&cache->heads[index], head, memory_order_release);
 }
 
 static cached_item_t *prepend(void *item, cached_item_t *head)
@@ -148,8 +148,9 @@ void wwLwipPoolCacheRegisterRxPool(const struct memp_desc *pool)
     wwLwipCapacityRegisterRxPool(pool);
 #if WW_LWIP_POOL_CACHE_ENABLED
     assert(pool->size >= sizeof(cached_item_t));
-    const uintptr_t previous = atomicExchangeExplicit(&rx_pool, (uintptr_t) pool, memory_order_acq_rel);
-    assert(previous == 0 || previous == (uintptr_t) pool);
+    /* The registry only exposes const descriptors. */
+    const struct memp_desc *previous = atomicExchangePtrExplicit(&rx_pool, (void *) pool, memory_order_acq_rel);
+    assert(previous == NULL || previous == pool);
     (void) previous;
 #endif
 }
@@ -166,7 +167,7 @@ void wwLwipPoolCacheReclaimAll(void)
 void wwLwipPoolCacheInitialize(ww_lwip_pool_cache_t *cache)
 {
     for (unsigned i = 0; i < kWwLwipPoolCacheCount; ++i)
-        atomic_init(&cache->heads[i], 0);
+        atomic_init(&cache->heads[i], NULL);
 #if WW_LWIP_POOL_CACHE_ENABLED
     SYS_ARCH_DECL_PROTECT(protection);
     SYS_ARCH_PROTECT(protection);

@@ -68,22 +68,18 @@ static void rawWriterReportRefusals(raw_writer_lane_t *lane, log_rate_limiter_re
 
 static bool rawWriterReservePacket(raw_writer_generation_t *generation, raw_writer_lane_t *lane, size_t packet_bytes)
 {
-#if WW_HAVE_C11_ATOMICS
     size_t current = atomicLoadRelaxed(&generation->packets);
-#else
-    w_atomic_uint_value_t current = atomicLoadRelaxed(&generation->packets);
-#endif
     for (;;)
     {
-        if ((size_t) current >= generation->packet_limit)
+        if (current >= generation->packet_limit)
         {
-            lane->last_refused_packets      = (size_t) current;
+            lane->last_refused_packets      = current;
             lane->last_refused_packet_bytes = packet_bytes;
             /* A full output queue can reject every packet in a receive burst. */
             rawWriterReportRefusals(lane, logRateLimiterRecordImmediate(&lane->refusal_limiter, 1000));
             return false;
         }
-        if (atomic_compare_exchange_weak_explicit(
+        if (atomicCompareExchangeWeakSizeExplicit(
                 &generation->packets, &current, current + 1, memory_order_relaxed, memory_order_relaxed))
             return true;
     }
@@ -223,7 +219,7 @@ static void rawWriterDrain(worker_t *worker, void *arg1, void *arg2, void *arg3)
 void rawWriterInit(raw_writer_t *writer)
 {
     *writer = (raw_writer_t) {0};
-    atomicStoreRelaxed(&writer->published_generation, (uintptr_t) NULL);
+    atomicStorePtrExplicit(&writer->published_generation, NULL, memory_order_relaxed);
 }
 
 bool rawWriterOpen(raw_writer_t *writer, size_t packet_limit, uint32_t retry_delay_ms, void *context,
@@ -256,14 +252,14 @@ bool rawWriterOpen(raw_writer_t *writer, size_t packet_limit, uint32_t retry_del
         return false;
     }
     writer->current = generation;
-    atomicStoreExplicit(&writer->published_generation, (uintptr_t) generation, memory_order_release);
+    atomicStorePtrExplicit(&writer->published_generation, generation, memory_order_release);
     return true;
 }
 
 void rawWriterCloseRequest(raw_writer_t *writer)
 {
-    raw_writer_generation_t *generation = (raw_writer_generation_t *) atomicExchangeExplicit(
-        &writer->published_generation, (uintptr_t) NULL, memory_order_acq_rel);
+    raw_writer_generation_t *generation =
+        atomicExchangePtrExplicit(&writer->published_generation, NULL, memory_order_acq_rel);
     if (generation != NULL)
     {
         assert(generation == writer->current);
@@ -309,8 +305,7 @@ void rawWriterDestroy(raw_writer_t *writer)
 raw_writer_send_result_t rawWriterTrySend(raw_writer_t *writer, sbuf_t *buffer)
 {
     worker_t                *worker = getCurrentWorker();
-    raw_writer_generation_t *generation =
-        (raw_writer_generation_t *) atomicLoadExplicit(&writer->published_generation, memory_order_acquire);
+    raw_writer_generation_t *generation = atomicLoadPtrExplicit(&writer->published_generation, memory_order_acquire);
     if (generation == NULL)
         return kRawWriterSendDown;
     if (! quiescenceGateEnter(&generation->gate))

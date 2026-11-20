@@ -18,7 +18,7 @@ typedef struct raw_writer_lane_s       raw_writer_lane_t;
  * already accepted worker tokens retain their generation independently. */
 typedef struct raw_writer_s
 {
-    atomic_uintptr_t         published_generation;
+    atomic_ptr_t             published_generation;
     raw_writer_generation_t *current;
     raw_writer_generation_t *retired;
 } raw_writer_t;

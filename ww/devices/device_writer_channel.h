@@ -34,7 +34,7 @@ typedef struct device_writer_generation_s
 
 typedef struct device_writer_channel_s
 {
-    atomic_uintptr_t            published_generation;
+    atomic_ptr_t                published_generation;
     device_writer_generation_t *current;
     device_writer_generation_t *retired;
     size_t                      retired_generation_count;

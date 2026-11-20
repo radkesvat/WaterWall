@@ -70,20 +70,16 @@ static void tunWriterReportRefusals(tun_writer_queue_t *queue, size_t wid, log_r
 
 static bool tunWriterReserve(atomic_size_t *used, size_t limit, size_t amount, size_t *refused_usage)
 {
-#if WW_HAVE_C11_ATOMICS
     size_t current = atomicLoadRelaxed(used);
-#else
-    w_atomic_uint_value_t current = atomicLoadRelaxed(used);
-#endif
     for (;;)
     {
-        if (amount > limit - (size_t) current)
+        if (amount > limit - current)
         {
-            *refused_usage = (size_t) current;
+            *refused_usage = current;
             return false;
         }
-        if (atomic_compare_exchange_weak_explicit(
-                used, &current, (size_t) current + amount, memory_order_relaxed, memory_order_relaxed))
+        if (atomicCompareExchangeWeakSizeExplicit(
+                used, &current, current + amount, memory_order_relaxed, memory_order_relaxed))
             return true;
     }
 }
@@ -195,7 +191,7 @@ static void tunWriterDrain(worker_t *worker, void *arg1, void *arg2, void *arg3)
 void tunWriterInit(tun_writer_t *writer)
 {
     *writer = (tun_writer_t) {0};
-    atomicStoreRelaxed(&writer->published_generation, (uintptr_t) NULL);
+    atomicStorePtrExplicit(&writer->published_generation, NULL, memory_order_relaxed);
 }
 
 bool tunWriterOpen(tun_writer_t *writer, size_t packet_limit, size_t charge_limit, void *context,
@@ -224,14 +220,14 @@ bool tunWriterOpen(tun_writer_t *writer, size_t packet_limit, size_t charge_limi
         return false;
     }
     writer->current = generation;
-    atomicStoreExplicit(&writer->published_generation, (uintptr_t) generation, memory_order_release);
+    atomicStorePtrExplicit(&writer->published_generation, generation, memory_order_release);
     return true;
 }
 
 void tunWriterCloseRequest(tun_writer_t *writer)
 {
-    tun_writer_generation_t *generation = (tun_writer_generation_t *) atomicExchangeExplicit(
-        &writer->published_generation, (uintptr_t) NULL, memory_order_acq_rel);
+    tun_writer_generation_t *generation =
+        atomicExchangePtrExplicit(&writer->published_generation, NULL, memory_order_acq_rel);
     if (generation != NULL)
     {
         assert(generation == writer->current);
@@ -275,8 +271,7 @@ void tunWriterDestroy(tun_writer_t *writer)
 tun_writer_send_result_t tunWriterTrySend(tun_writer_t *writer, sbuf_t *buffer)
 {
     worker_t                *worker = getCurrentWorker();
-    tun_writer_generation_t *generation =
-        (tun_writer_generation_t *) atomicLoadExplicit(&writer->published_generation, memory_order_acquire);
+    tun_writer_generation_t *generation = atomicLoadPtrExplicit(&writer->published_generation, memory_order_acquire);
     if (generation == NULL)
         return kTunWriterSendDown;
     if (! quiescenceGateEnter(&generation->gate))

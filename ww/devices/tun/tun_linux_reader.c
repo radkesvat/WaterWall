@@ -127,7 +127,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
         budget->bytes -= length;
         if (intact_tcp_gso)
         {
-            atomic_fetch_add_explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
+            atomicAddU64Explicit(&device->gso_intact_aggregates, 1, memory_order_relaxed);
         }
         tunDeliverPacket(session->device, output, wid);
         return true;
@@ -183,7 +183,7 @@ static bool tunOffloadWorkStep(device_reader_session_t *session, void *context, 
         emitted++;
     }
     tun_device_t *tdev = session->device;
-    atomic_fetch_add_explicit(&tdev->gso_generated_segments, emitted, memory_order_relaxed);
+    atomicAddU64Explicit(&tdev->gso_generated_segments, emitted, memory_order_relaxed);
     if (work->next_payload_offset != work->plan.payload_length)
     {
         return false;
@@ -311,8 +311,7 @@ static bool tunReaderSchedule(tun_worker_reader_t *lane, bool required)
 void tunReaderCapacityReady(void *context)
 {
     tun_device_t            *device = context;
-    tun_reader_generation_t *generation =
-        (tun_reader_generation_t *) atomicLoadExplicit(&device->reader_notify, memory_order_acquire);
+    tun_reader_generation_t *generation = atomicLoadPtrExplicit(&device->reader_notify, memory_order_acquire);
     if (generation == NULL)
         return;
     /* Session notification admission keeps the device and generation alive. */
@@ -627,7 +626,7 @@ bool tunReaderOpen(tun_device_t *tdev)
         lane->wid                 = (wid_t) i;
         lane->fd                  = tdev->queue_fds[i];
     }
-    atomicStoreExplicit(&tdev->reader_notify, (uintptr_t) generation, memory_order_release);
+    atomicStorePtrExplicit(&tdev->reader_notify, generation, memory_order_release);
     if (tdev->read_event_callback == NULL)
         return true;
     /* Init is already in each worker FIFO; readiness is installed after it. */
@@ -687,13 +686,13 @@ void tunReaderCloseWait(tun_device_t *tdev)
              tdev->name,
              (unsigned long long) totals.ordinary_records,
              (unsigned long long) totals.gso_aggregates,
-             (unsigned long long) atomicLoadRelaxed(&tdev->gso_generated_segments),
+             (unsigned long long) atomicLoadU64Relaxed(&tdev->gso_generated_segments),
              (unsigned long long) totals.checksum_completions,
              (unsigned long long) totals.malformed_records,
              (unsigned long long) totals.unsupported_records,
              (unsigned long long) totals.oversized_records,
-             (unsigned long long) atomicLoadRelaxed(&tdev->gso_intact_aggregates));
-    atomicStoreExplicit(&tdev->reader_notify, (uintptr_t) NULL, memory_order_release);
+             (unsigned long long) atomicLoadU64Relaxed(&tdev->gso_intact_aggregates));
+    atomicStorePtrExplicit(&tdev->reader_notify, NULL, memory_order_release);
     tdev->reader = NULL;
     tunReaderUnref(generation);
 }

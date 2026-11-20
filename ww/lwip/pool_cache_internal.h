@@ -17,7 +17,7 @@ enum
 typedef struct ww_lwip_pool_cache_s
 {
     struct ww_lwip_pool_cache_s *next; /* protected by SYS_ARCH_PROTECT */
-    atomic_uintptr_t             heads[kWwLwipPoolCacheCount];
+    atomic_ptr_t                 heads[kWwLwipPoolCacheCount];
 } ww_lwip_pool_cache_t;
 
 void wwLwipPoolCacheInitialize(ww_lwip_pool_cache_t *cache);

@@ -38,7 +38,7 @@ void deviceWriterChannelInit(device_writer_channel_t *writer_channel)
         .retired_generation_count = 0,
         .current_closed           = false,
     };
-    atomicStoreRelaxed(&writer_channel->published_generation, (uintptr_t) NULL);
+    atomicStorePtrExplicit(&writer_channel->published_generation, NULL, memory_order_relaxed);
 }
 
 bool deviceWriterChannelOpen(device_writer_channel_t *writer_channel, size_t queue_capacity)
@@ -64,20 +64,20 @@ bool deviceWriterChannelOpen(device_writer_channel_t *writer_channel, size_t que
     writer_channel->current_closed = false;
 
     // Publishes the immutable generation and channel fields to producers.
-    atomicStoreExplicit(&writer_channel->published_generation, (uintptr_t) generation, memory_order_release);
+    atomicStorePtrExplicit(&writer_channel->published_generation, generation, memory_order_release);
     return true;
 }
 
 device_writer_send_result_t deviceWriterChannelTrySend(device_writer_channel_t *writer_channel, sbuf_t *buf)
 {
     // Selects one fully initialized immutable generation for this send attempt.
-    const uintptr_t published = atomicLoadExplicit(&writer_channel->published_generation, memory_order_acquire);
-    if (UNLIKELY(published == (uintptr_t) NULL))
+    device_writer_generation_t *generation =
+        atomicLoadPtrExplicit(&writer_channel->published_generation, memory_order_acquire);
+    if (UNLIKELY(generation == NULL))
     {
         return kDeviceWriterSendDown;
     }
 
-    device_writer_generation_t *generation = (device_writer_generation_t *) published;
 #ifdef DEVICE_WRITER_CHANNEL_TEST_HOOKS
     if (device_writer_channel_after_select_hook != NULL)
     {
@@ -96,14 +96,13 @@ device_writer_send_result_t deviceWriterChannelTrySend(device_writer_channel_t *
 
 void deviceWriterChannelClose(device_writer_channel_t *writer_channel)
 {
-    const uintptr_t published = (uintptr_t) atomicExchangeExplicit(
-        &writer_channel->published_generation, (uintptr_t) NULL, memory_order_relaxed);
-    if (published == (uintptr_t) NULL)
+    device_writer_generation_t *generation =
+        atomicExchangePtrExplicit(&writer_channel->published_generation, NULL, memory_order_relaxed);
+    if (generation == NULL)
     {
         return;
     }
 
-    device_writer_generation_t *generation = (device_writer_generation_t *) published;
     assert(generation == writer_channel->current);
     assert(! writer_channel->current_closed);
     if (UNLIKELY(generation != writer_channel->current || writer_channel->current_closed))
@@ -165,7 +164,7 @@ bool deviceWriterChannelRetireCurrent(device_writer_channel_t *writer_channel)
 
 bool deviceWriterChannelDestroy(device_writer_channel_t *writer_channel)
 {
-    if (UNLIKELY(atomicLoadRelaxed(&writer_channel->published_generation) != (uintptr_t) NULL))
+    if (UNLIKELY(atomicLoadPtrExplicit(&writer_channel->published_generation, memory_order_relaxed) != NULL))
     {
         LOGE("DeviceWriterChannel: refusing to destroy a published generation");
         return false;

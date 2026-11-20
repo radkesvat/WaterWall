@@ -28,7 +28,7 @@ typedef struct windivert_api_s
 
 static windivert_api_t windivert_api;
 static HMODULE         pending_module;
-static volatile LONG   active_handles;
+static atomic_u32_t    active_handles;
 
 static bool windivertCleanupPending(void)
 {
@@ -117,7 +117,7 @@ void windivertManagerShutdown(void)
 {
     /* Node destruction has already stopped producers and closed their handles.
      * Retain the module/artifacts if a user could not release its native handle. */
-    if (InterlockedCompareExchange(&active_handles, 0, 0) != 0)
+    if (atomicLoadU32(&active_handles) != 0)
     {
         LOGE("WinDivertManager: retained module and artifacts while device handles remain open");
         return;
@@ -137,7 +137,7 @@ HANDLE windivertOpen(const char *filter, WINDIVERT_LAYER layer, INT16 priority, 
 {
     HANDLE handle = windivert_api.open(filter, layer, priority, flags);
     if (handle != INVALID_HANDLE_VALUE)
-        InterlockedIncrement(&active_handles);
+        atomicIncU32(&active_handles);
     return handle;
 }
 
@@ -166,9 +166,9 @@ bool windivertClose(HANDLE handle)
 {
     if (! windivert_api.close(handle))
         return false;
-    LONG remaining = InterlockedDecrement(&active_handles);
-    assert(remaining >= 0);
-    discard remaining;
+    const uint32_t previous = atomicDecU32(&active_handles);
+    assert(previous > 0);
+    discard previous;
     return true;
 }
 
