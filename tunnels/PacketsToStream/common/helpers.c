@@ -43,14 +43,12 @@ static bool packetstostreamArmTimeoutTimer(tunnel_t *t, wid_t wid)
 
     if (*timer_slot != NULL)
     {
-        wtimerReset(*timer_slot, ts->tolerance_ms);
-        return true;
+        return wtimerReset(*timer_slot, ts->tolerance_ms);
     }
 
-    *timer_slot = wtimerAdd(getWorkerLoop(wid), packetstostreamTimeoutTimerCallback, ts->tolerance_ms, 1);
+    *timer_slot = wtimerAddDeadline(getWorkerLoop(wid), packetstostreamTimeoutTimerCallback, ts->tolerance_ms);
     if (*timer_slot == NULL)
     {
-        LOGF("PacketsToStream: failed to create sensitive-mode timeout timer on worker %u", (unsigned int) wid);
         return false;
     }
 
@@ -83,7 +81,6 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
                                              line_t *stream_line)
 {
     packetstostream_tstate_t *ts  = tunnelGetState(t);
-    const uint64_t            now = wloopNowMS(getWorkerLoop(lineGetWID(packet_line)));
     sbuf_t                   *buf = packetstostreamCreateHeartbeatPacket(packet_line, kSensitivePingByte);
 
     if (! packetstostreamArmTimeoutTimer(t, lineGetWID(packet_line)))
@@ -94,6 +91,9 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
          * still owns it: recycle it, leave the timer slot NULL and the pong
          * state untouched, then request an orderly shutdown and return.
          */
+        const wid_t wid = lineGetWID(packet_line);
+        LOGF("PacketsToStream: failed to arm sensitive-mode timeout timer on worker %u", (unsigned int) wid);
+        packetstostreamDisarmTimeoutTimer(t, wid);
         lineReuseBuffer(packet_line, buf);
         if (! requestProgramShutdown(1))
         {
@@ -102,9 +102,11 @@ static bool packetstostreamSendSensitivePing(tunnel_t *t, line_t *packet_line, p
         return false;
     }
 
-    ls->awaiting_pong    = true;
-    ls->ping_sent_at_ms  = now;
-    ls->pong_deadline_ms = now + ts->tolerance_ms;
+    // Publish before handoff because Payload can synchronously return a PONG or Finish.
+    const uint64_t now_us = getHRTimeUs();
+    ls->ping_sent_at_us   = now_us;
+    ls->pong_deadline_us  = now_us + (uint64_t) ts->tolerance_ms * 1000U;
+    ls->awaiting_pong     = true;
 
     if (lineCallWithRefWithBuf(stream_line, tunnelNextUpStreamPayload, t, buf))
     {
@@ -217,8 +219,8 @@ void packetstostreamResetOutputLineState(tunnel_t *t, line_t *packet_line, packe
     ls->line             = NULL;
     ls->paused           = false;
     ls->awaiting_pong    = false;
-    ls->ping_sent_at_ms  = 0;
-    ls->pong_deadline_ms = 0;
+    ls->ping_sent_at_us  = 0;
+    ls->pong_deadline_us = 0;
 
     packetstostreamDisarmTimeoutTimer(t, lineGetWID(packet_line));
 
@@ -385,30 +387,27 @@ void packetstostreamTimeoutTimerCallback(wtimer_t *timer)
     }
 
     assert(lineGetWID(packet_line) == wid);
-    const uint64_t now = wloopNowMS(weventGetLoop(timer));
-    if (now < ls->pong_deadline_ms)
+    const uint64_t now_us = getHRTimeUs();
+    if (now_us < ls->pong_deadline_us)
     {
-        const uint64_t remaining_ms_u64 = ls->pong_deadline_ms - now;
-        const uint32_t remaining_ms     = (remaining_ms_u64 > UINT32_MAX) ? UINT32_MAX : (uint32_t) remaining_ms_u64;
-
-        /*
-         * The event loop can schedule timeout callbacks slightly before the
-         * exact millisecond deadline because timer deadlines are tracked in
-         * microseconds but some timeout values are rounded to coarser buckets.
-         * Re-arm the same one-shot timer instead of clearing the slot, otherwise
-         * awaiting_pong could remain stuck forever after a lost ping.
-         */
-        if (! wtimerReset(timer, remaining_ms))
+        // The timer was armed before handoff. Round the remaining delay up to milliseconds.
+        const uint32_t remaining_ms = (uint32_t) ((ls->pong_deadline_us - now_us + 999U) / 1000U);
+        if (wtimerReset(timer, remaining_ms))
         {
-            ts->worker_timeout_timers[wid] = NULL;
-            weventSetUserData(timer, NULL);
+            return;
         }
+
+        // The dispatcher reclaims the detached one-shot after this callback.
+        ts->worker_timeout_timers[wid] = NULL;
+        weventSetUserData(timer, NULL);
+        ls->awaiting_pong    = false;
+        ls->ping_sent_at_us  = 0;
+        ls->pong_deadline_us = 0;
         return;
     }
 
     ts->worker_timeout_timers[wid] = NULL;
-    const uint64_t elapsed_ms =
-        (ls->ping_sent_at_ms > 0 && now >= ls->ping_sent_at_ms) ? (now - ls->ping_sent_at_ms) : ts->tolerance_ms;
+    const uint64_t elapsed_ms      = (now_us - ls->ping_sent_at_us) / 1000U;
 
     LOGW("PacketsToStream: sensitive-mode ping timed out after %llums (limit=%u ms), resetting connection",
          (unsigned long long) elapsed_ms,

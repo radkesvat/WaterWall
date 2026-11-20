@@ -1,18 +1,10 @@
 /*
- * Covers: packetstostream orderly shutdown; the explicit inputs, callbacks and expected results below
- * define this suite.
- * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
- * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
- * Cases: packet-source recovery after stream replacement, reentrant Resume and packet ordering,
- * caseHealthyPingArmsTheTimer, caseTimeoutTimerFailure,
- * caseDueTimeoutTimerRearmRefusalClearsSlot, caseRecreateRefusalRemainsRetryableUntilWorkerStop,
- * caseWorkerStopClosesOwnedOutputLine, casePacketWorkerStopSettlesOwnerState,
- * caseDestroyRejectsUndrainedFinalizedPacketState, caseDestroyRejectsFinalizedChainWithoutPacketLines;
- * the driver lists the remaining cases
- * Checks: Assertion labels include: a healthy ping must be forwarded once; a healthy ping must arm the
- * timeout timer; a healthy ping must publish awaiting_pong; the heartbeat must be recycled exactly once
- * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
- * or application-throughput behavior.
+ * Covers: packetstostream heartbeat deadlines, stream replacement, and orderly shutdown.
+ *
+ * Setup: Real worker, line, timer, and neighbour code with a controlled monotonic clock in deadline cases.
+ *
+ * Cases: Timely, missing, and late PONGs, pending timer reuse, callback reentry, timer refusal, and worker stop.
+ *
  * CTest: waterwall.packetstostream_orderly_shutdown_test_unit
  */
 /*
@@ -30,18 +22,25 @@
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 
 // ---------------------------------------------------------------------------
-// wtimerAdd injection
+// Timer and clock injection
 // ---------------------------------------------------------------------------
 
 static bool         g_timer_fails                  = false;
 static bool         g_timer_reset_closes_admission = false;
+static bool         g_timer_reset_was_pending;
 static unsigned int g_recreate_refusals;
 static unsigned int g_recreate_submissions;
+static uint64_t     g_now_us;
+static uint64_t     g_deadline_arm_delay_us;
 
 wtimer_t                 *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t                 *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
+wtimer_t                 *__real_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms);
+wtimer_t                 *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms);
 bool                      __real_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
 bool                      __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms);
+unsigned long long        __real_getHRTimeUs(void);
+unsigned long long        __wrap_getHRTimeUs(void);
 line_task_submit_result_e __real_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
                                                   LineTaskCancelFn on_cancel);
 line_task_submit_result_e __wrap_lineScheduleTask(line_t *const line, LineTaskFnNoBuf task, tunnel_t *t,
@@ -56,8 +55,25 @@ wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uin
     return __real_wtimerAdd(loop, cb, timeout_ms, repeat);
 }
 
+wtimer_t *__wrap_wtimerAddDeadline(wloop_t *loop, wtimer_cb cb, uint32_t delay_ms)
+{
+    if (g_timer_fails)
+    {
+        return NULL;
+    }
+    wtimer_t *timer = __real_wtimerAddDeadline(loop, cb, delay_ms);
+    g_now_us += g_deadline_arm_delay_us;
+    return timer;
+}
+
+unsigned long long __wrap_getHRTimeUs(void)
+{
+    return g_now_us == 0 ? __real_getHRTimeUs() : g_now_us;
+}
+
 bool __wrap_wtimerReset(wtimer_t *timer, uint32_t timeout_ms)
 {
+    g_timer_reset_was_pending = timer->pending;
     if (g_timer_reset_closes_admission)
     {
         g_timer_reset_closes_admission = false;
@@ -99,7 +115,7 @@ enum
 
 typedef struct packetstostream_fixture_s
 {
-    twf_worker_env_t env;
+    tos_worker_env_t env;
     twf_trace_t      trace;
     tunnel_t        *p2s;
     tunnel_t        *prev;
@@ -117,7 +133,7 @@ typedef struct packetstostream_fixture_s
 static void fixtureSetup(packetstostream_fixture_t *fixture)
 {
     memoryZero(fixture, sizeof(*fixture));
-    twfWorkerEnvSetupWithSmallBuffers(&fixture->env, kTestLargeBufferSize, kTestSmallBufferSize, 0);
+    tosWorkerEnvSetup(&fixture->env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
 
     fixture->p2s = tunnelCreate(NULL, sizeof(packetstostream_tstate_t), sizeof(packetstostream_lstate_t));
     twfRequire(fixture->p2s != NULL, "failed to create the PacketsToStream tunnel");
@@ -149,7 +165,7 @@ static void fixtureSetup(packetstostream_fixture_t *fixture)
     // the production owner-close path exercise lineDestroy() faithfully.
     twfLinePoolSetup(&fixture->stream_line_pool, fixture->p2s->lstate_size, 4);
     fixture->chain->line_pools[0] = fixture->stream_line_pool.pools[0];
-    fixture->stream_line = twfLinePoolCreateLine(&fixture->stream_line_pool);
+    fixture->stream_line          = twfLinePoolCreateLine(&fixture->stream_line_pool);
 
     packetstostream_lstate_t *ls = lineGetState(fixture->packet_line, fixture->p2s);
     packetstostreamLinestateInitialize(ls, lineGetBufferPool(fixture->packet_line));
@@ -184,9 +200,38 @@ static void fixtureTeardown(packetstostream_fixture_t *fixture)
     {
         lineDestroy(fixture->stream_line);
     }
+    twfRequireNoLeakedBuffers();
+    tosWorkerEnvTeardown(&fixture->env);
     twfLinePoolTeardown(&fixture->stream_line_pool);
     twfLineDestroy(fixture->packet_line);
     memoryFree(fixture->chain);
+    tunnelDestroy(fixture->prev);
+    tunnelDestroy(fixture->p2s);
+    tunnelDestroy(fixture->next);
+    g_now_us = 0;
+}
+
+static void heartbeatFixtureSetup(packetstostream_fixture_t *fixture)
+{
+    g_now_us = 1000000;
+    fixtureSetup(fixture);
+    // The test decides when to send PINGs while the reply timer runs on the real loop.
+    twfRequire(__real_wtimerReset(fixture->heartbeat_timer, 10 * kTestToleranceMs), "failed to defer heartbeat tick");
+}
+
+static void deliverPong(packetstostream_fixture_t *fixture, line_t *stream_line)
+{
+    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(stream_line));
+    sbufSetLength(buf, kHeartbeatPacketSize);
+    uint8_t *raw = sbufGetMutablePtr(buf);
+    memoryZero(raw, IP_HLEN);
+    raw[0] = 0x45;
+    PUT_BE16(raw + 2, kHeartbeatPacketSize);
+    raw[8] = 64;
+    raw[9] = kHeartbeatProtocol;
+    IPH_CHKSUM_SET((struct ip_hdr *) raw, inet_chksum(raw, IP_HLEN));
+    memorySet(raw + IP_HLEN, kSensitivePongByte, kSensitivePayloadSize);
+    packetstostreamTunnelDownStreamPayload(fixture->p2s, stream_line, buf);
 }
 
 static packetstostream_fixture_t *g_flow_fixture;
@@ -347,7 +392,6 @@ static void caseDroppedPacketConsumesChecksumRequest(void)
                    "a dropped packet's checksum request modified the next unflagged packet");
 
         fixtureTeardown(&fixture);
-        twfRequireNoLeakedBuffers();
         tosRequireNoProcessApiCall();
     }
 }
@@ -375,7 +419,6 @@ static void caseInitReentryKeepsChecksumRequestOnItsPacket(void)
                "the original flagged packet was forwarded without checksum repair");
 
     fixtureTeardown(&fixture);
-    twfRequireNoLeakedBuffers();
     tosRequireNoProcessApiCall();
 }
 
@@ -411,7 +454,6 @@ static void caseReplacementReleasesPacketSource(void)
                    "repeated endpoint signals must be idempotent and preserve mapped Est");
 
         fixtureTeardown(&fixture);
-        twfRequireNoLeakedBuffers();
         tosRequireNoProcessApiCall();
     }
 }
@@ -451,7 +493,6 @@ static void caseLazyReplacementPreservesOutputOrder(void)
         twfRequire(! g_packet_source_paused, "lazy replacement must release the old stream's Pause");
 
         fixtureTeardown(&fixture);
-        twfRequireNoLeakedBuffers();
         tosRequireNoProcessApiCall();
     }
 }
@@ -480,12 +521,11 @@ static void caseReplacementCallbacksMayClose(void)
     twfRequire(lineIsAlive(fixture.packet_line), "replacement closure must preserve the persistent packet line");
 
     fixtureTeardown(&fixture);
-    twfRequireNoLeakedBuffers();
     tosRequireNoProcessApiCall();
 }
 
 // ---------------------------------------------------------------------------
-// The healthy path must stay untouched
+// Sensitive-mode heartbeat behavior
 // ---------------------------------------------------------------------------
 
 static void caseHealthyPingArmsTheTimer(void)
@@ -512,6 +552,170 @@ static void caseHealthyPingArmsTheTimer(void)
     wtimerDelete(fixture.timeout_timer_slot[0]);
     fixture.timeout_timer_slot[0] = NULL;
 
+    fixtureTeardown(&fixture);
+}
+
+static void caseTimelyPongAfterStaleCache(void)
+{
+    twfSetCase("packetstostream prompt PONG after pre-send worker delay");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    heartbeatFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+
+    // Simulate earlier work in the same loop turn, leaving its cached clock behind.
+    g_now_us += (kTestToleranceMs + 50) * 1000ULL;
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "the delayed worker must still send a PING");
+    twfRequire(ls->awaiting_pong, "the first PING must start a wait");
+
+    g_now_us += 20 * 1000ULL;
+    discard wloopProcessEvents(fixture.env.loops[0], 0);
+    deliverPong(&fixture, fixture.stream_line);
+    twfRequire(! ls->awaiting_pong, "the timely PONG must clear the wait");
+    twfRequire(ls->line == fixture.stream_line && lineIsAlive(fixture.stream_line),
+               "pre-send worker time must not shorten the PONG tolerance");
+
+    twfRequire(fixture.timeout_timer_slot[0] != NULL, "a timely PONG must allow its timer to wake harmlessly");
+    g_now_us = fixture.timeout_timer_slot[0]->next_timeout;
+    discard wloopProcessEvents(fixture.env.loops[0], 0);
+    twfRequire(fixture.timeout_timer_slot[0] == NULL, "the obsolete wake must release its timer slot");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "a timely PONG must preserve the same stream");
+
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseDeadlineRetiresStream(bool deliver_at_deadline)
+{
+    twfSetCase(deliver_at_deadline ? "packetstostream PONG at the deadline" : "packetstostream missing PONG");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    heartbeatFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls              = lineGetState(fixture.packet_line, fixture.p2s);
+    line_t                   *original_stream = fixture.stream_line;
+    lineRef(original_stream);
+
+    // In the missing-PONG case the timer arms half a millisecond before handoff.
+    g_deadline_arm_delay_us = deliver_at_deadline ? 0 : 500;
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    g_deadline_arm_delay_us    = 0;
+    const uint64_t deadline_us = g_now_us + kTestToleranceMs * 1000ULL;
+    twfRequire(ls->awaiting_pong && ls->pong_deadline_us == deadline_us,
+               "PING handoff must start a full reply interval");
+    packetstostreamTunnelDownStreamPause(fixture.p2s, original_stream);
+
+    wtimer_t *timer = fixture.timeout_timer_slot[0];
+    twfRequire(timer != NULL, "the PING must have a timeout timer");
+    if (deliver_at_deadline)
+    {
+        // No loop step here. The parser must observe the boundary even with a stale cache.
+        g_now_us = deadline_us;
+        deliverPong(&fixture, original_stream);
+    }
+    else
+    {
+        g_now_us = timer->next_timeout;
+        twfRequire(g_now_us < deadline_us, "the fixture must make the timer wake before the reply deadline");
+        discard wloopProcessEvents(fixture.env.loops[0], 0);
+        twfRequire(ls->awaiting_pong && lineIsAlive(original_stream), "an early wake must preserve the wait");
+        twfRequire(fixture.timeout_timer_slot[0] == timer && timer->next_timeout == g_now_us + 1000,
+                   "an early wake must rearm for the remaining partial millisecond");
+        g_now_us = timer->next_timeout;
+        discard wloopProcessEvents(fixture.env.loops[0], 0);
+    }
+
+    twfRequire(! lineIsAlive(original_stream) && ! ls->awaiting_pong, "expiry must retire the original stream");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "expiry must finish the original stream exactly once");
+    twfRequire(lineIsAlive(fixture.packet_line), "expiry must preserve the chain-owned packet line");
+
+    tosPumpWorker(&fixture.env, 0);
+    fixture.stream_line = ls->line;
+    twfRequire(fixture.stream_line != NULL && fixture.stream_line != original_stream &&
+                   lineIsAlive(fixture.stream_line),
+               "expiry must produce a live replacement stream");
+    lineUnref(original_stream);
+    twfRequireEqualU32(fixture.trace.next_init, 1, "expiry must initialize one replacement stream");
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    twfRequire(ls->awaiting_pong, "the replacement must be able to start a new wait");
+    twfRequireEqualU32(fixture.trace.next_payload, 2, "the replacement must send a new PING");
+    twfRequireEqualU32(fixture.trace.next_finish, 1, "the old wait must not finish the replacement");
+
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void caseSecondPingSupersedesPendingWake(void)
+{
+    twfSetCase("packetstostream second PING supersedes a pending wake");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    heartbeatFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    wtimer_t *timer = fixture.timeout_timer_slot[0];
+    twfRequire(timer != NULL, "the first PING must have a timeout timer");
+
+    g_now_us += 20 * 1000ULL;
+    deliverPong(&fixture, fixture.stream_line);
+    twfRequire(! ls->awaiting_pong, "the first PONG must clear its wait");
+
+    // Both timers become pending in the same turn. The later heartbeat is dispatched first.
+    wloopUpdateTime(fixture.env.loops[0]);
+    const uint32_t next_tick_ms = (uint32_t) ((timer->next_timeout - g_now_us) / 1000) + 1;
+    twfRequire(__real_wtimerReset(fixture.heartbeat_timer, next_tick_ms), "failed to position the next heartbeat tick");
+    g_now_us                  = fixture.heartbeat_timer->next_timeout;
+    g_timer_reset_was_pending = false;
+    discard wloopProcessEvents(fixture.env.loops[0], 0);
+
+    twfRequire(g_timer_reset_was_pending, "the second PING must reuse the already pending reply timer");
+    twfRequireEqualU32(fixture.trace.next_payload, 2, "the second PING must be forwarded once");
+    twfRequire(ls->awaiting_pong && fixture.timeout_timer_slot[0] == timer,
+               "the earlier wake must preserve the second wait and timer");
+
+    g_now_us += (kTestToleranceMs - 1) * 1000ULL;
+    deliverPong(&fixture, fixture.stream_line);
+    twfRequire(! ls->awaiting_pong, "the second PONG must clear its wait");
+    twfRequireEqualU32(fixture.trace.next_finish, 0, "both timely PONGs must preserve the stream");
+
+    tosRequireNoProcessApiCall();
+    fixtureTeardown(&fixture);
+}
+
+static void replyDuringPing(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    twfRequire(packetstostreamFrameMatchesFillByte(buf, kSensitivePingByte), "expected a PING before the inline reply");
+    twfNextPayload(t, l, buf);
+    packetstostream_lstate_t *ls = lineGetState(g_flow_fixture->packet_line, g_flow_fixture->p2s);
+    twfRequire(ls->awaiting_pong, "the wait must be published before the PING handoff");
+    deliverPong(g_flow_fixture, l);
+}
+
+static void caseHeartbeatHandoffMayReenter(void)
+{
+    twfSetCase("packetstostream PING handoff permits synchronous PONG and Finish");
+    tosResetProcessApi(true);
+
+    g_now_us = 1000000;
+    packetstostream_fixture_t fixture;
+    flowFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    fixture.next->fnPayloadU     = replyDuringPing;
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    twfRequire(! ls->awaiting_pong && ls->line == fixture.stream_line,
+               "an inline PONG must complete the wait without closing the stream");
+
+    fixture.next->fnPayloadU = flowNextPayload;
+    g_finish_during_payload  = true;
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    twfRequire(ls->line == NULL && ! ls->awaiting_pong && fixture.timeout_timer_slot[0] == NULL,
+               "an inline Finish must close the stream and clear its wait and timer");
+    twfRequire(lineIsAlive(fixture.packet_line), "an inline Finish must preserve the packet line");
+
+    tosRequireNoProcessApiCall();
     fixtureTeardown(&fixture);
 }
 
@@ -546,11 +750,39 @@ static void caseTimeoutTimerFailure(void)
     // no longer time out, and the slot stays empty for worker-stop cleanup.
     packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
     twfRequire(! ls->awaiting_pong, "a failed arm must not publish awaiting_pong");
-    twfRequireEqualU32((uint32_t) ls->ping_sent_at_ms, 0, "a failed arm must not publish ping_sent_at_ms");
-    twfRequireEqualU32((uint32_t) ls->pong_deadline_ms, 0, "a failed arm must not publish pong_deadline_ms");
+    twfRequire(ls->ping_sent_at_us == 0 && ls->pong_deadline_us == 0, "a failed arm must not publish timestamps");
     twfRequire(! ls->recreate_scheduled, "a timer failure must not schedule an output-line recreation");
     twfRequire(fixture.timeout_timer_slot[0] == NULL, "the timeout timer slot must stay NULL");
     twfRequire(ls->line == fixture.stream_line, "a timer failure must not drop the output line");
+
+    fixtureTeardown(&fixture);
+}
+
+static void caseTimeoutTimerReuseFailure(void)
+{
+    twfSetCase("packetstostream sensitive timeout timer reuse failure");
+    tosResetProcessApi(true);
+
+    packetstostream_fixture_t fixture;
+    heartbeatFixtureSetup(&fixture);
+    packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+    deliverPong(&fixture, fixture.stream_line);
+    twfRequire(fixture.timeout_timer_slot[0] != NULL && ! ls->awaiting_pong,
+               "a completed heartbeat must leave a timer to reuse");
+
+    const uint32_t recycles_before = twfRecycleCount();
+    g_timer_reset_closes_admission = true;
+    packetstostreamHeartbeatTimerCallback(fixture.heartbeat_timer);
+
+    tosRequireAcceptedRequest(1);
+    twfRequireEqualU32(twfRecycleCount() - recycles_before, 1, "a refused reset must recycle the unsent PING");
+    twfRequireEqualU32(fixture.trace.next_payload, 1, "a refused reset must not forward the second PING");
+    twfRequire(! ls->awaiting_pong && ls->ping_sent_at_us == 0 && ls->pong_deadline_us == 0,
+               "a refused reset must leave no published wait");
+    twfRequire(fixture.timeout_timer_slot[0] == NULL, "a refused reset must clear the unused timer slot");
+    twfRequire(ls->line == fixture.stream_line && lineIsAlive(fixture.stream_line),
+               "a refused reset must leave the stream for worker shutdown");
 
     fixtureTeardown(&fixture);
 }
@@ -561,28 +793,32 @@ static void caseDueTimeoutTimerRearmRefusalClearsSlot(void)
     tosResetProcessApi(true);
 
     packetstostream_fixture_t fixture;
-    fixtureSetup(&fixture);
+    heartbeatFixtureSetup(&fixture);
 
     packetstostream_lstate_t *ls = lineGetState(fixture.packet_line, fixture.p2s);
     ls->awaiting_pong            = true;
-    ls->pong_deadline_ms         = wloopNowMS(fixture.env.loop) + 1000U;
+    ls->ping_sent_at_us          = g_now_us;
+    ls->pong_deadline_us         = g_now_us + kTestToleranceMs * 1000ULL;
 
-    wtimer_t *timer = __real_wtimerAdd(fixture.env.loop, packetstostreamTimeoutTimerCallback, 1U, 1);
+    wloop_t  *loop  = fixture.env.loops[0];
+    wtimer_t *timer = __real_wtimerAddDeadline(loop, packetstostreamTimeoutTimerCallback, 1);
     twfRequire(timer != NULL, "failed to create the timeout timer fixture");
     fixture.timeout_timer_slot[0] = timer;
     weventSetUserData(timer, fixture.p2s);
 
-    const uint32_t timers_before = fixture.env.loop->ntimers;
-    wwSleepMS(2);
+    const uint32_t timers_before   = wloopNTimers(loop);
+    g_now_us                       = timer->next_timeout;
     g_timer_reset_closes_admission = true;
-    discard wloopProcessEvents(fixture.env.loop, 0);
+    discard wloopProcessEvents(loop, 0);
 
     tosRequireNoProcessApiCall();
     twfRequire(fixture.timeout_timer_slot[0] == NULL, "reset refusal retained the timeout timer slot");
-    twfRequire(ls->awaiting_pong, "reset refusal must leave line settlement to shutdown");
-    twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers,
-                       timers_before - 1U,
-                       "the event loop did not reclaim the due one-shot timer exactly once");
+    twfRequire(! ls->awaiting_pong && ls->ping_sent_at_us == 0 && ls->pong_deadline_us == 0,
+               "reset refusal must settle the wait before the timer is reclaimed");
+    twfRequire(ls->line == fixture.stream_line && lineIsAlive(fixture.stream_line),
+               "reset refusal must leave the stream for worker shutdown");
+    twfRequireEqualU32(
+        wloopNTimers(loop), timers_before - 1U, "the event loop did not reclaim the due one-shot timer exactly once");
 
     fixtureTeardown(&fixture);
 }
@@ -949,7 +1185,13 @@ int main(void)
     caseLazyReplacementPreservesOutputOrder();
     caseReplacementCallbacksMayClose();
     caseHealthyPingArmsTheTimer();
+    caseTimelyPongAfterStaleCache();
+    caseDeadlineRetiresStream(false);
+    caseDeadlineRetiresStream(true);
+    caseSecondPingSupersedesPendingWake();
+    caseHeartbeatHandoffMayReenter();
     caseTimeoutTimerFailure();
+    caseTimeoutTimerReuseFailure();
     caseDueTimeoutTimerRearmRefusalClearsSlot();
     caseRecreateRefusalRemainsRetryableUntilWorkerStop();
     caseWorkerStopClosesOwnedOutputLine();

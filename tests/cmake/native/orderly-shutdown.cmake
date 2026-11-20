@@ -28,7 +28,11 @@ foreach(orderly_case IN ITEMS
       target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=wtimerReset")
     endif()
     if(orderly_tunnel STREQUAL "PacketsToStream")
-      target_link_options(${orderly_test} PRIVATE "-Wl,--wrap=lineScheduleTask")
+      target_link_options(${orderly_test} PRIVATE
+        "-Wl,--wrap=getHRTimeUs"
+        "-Wl,--wrap=lineScheduleTask"
+        "-Wl,--wrap=wtimerAddDeadline"
+      )
     endif()
     if(orderly_tunnel STREQUAL "SpeedTestClient")
       target_link_options(${orderly_test} PRIVATE

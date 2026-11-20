@@ -77,7 +77,8 @@ There are no required tunnel-specific settings in the current implementation.
   Client-side only. Heartbeat send interval in milliseconds when `sensitive-mode` is enabled.
 
 - `tolerance-ms` `(integer, default: 150)`
-  Client-side only. Maximum time to wait for a heartbeat reply before the current stream line is closed and recreated.
+  Client-side only. Reply timeout in milliseconds, measured from PING handoff to the next node until `PacketsToStream`
+  processes the matching PONG.
 
 - `packet-validation-level` `(string, default: "none")`
   Optional packet validation mode. See the Packet Validation section for usage and caveats.
@@ -259,8 +260,12 @@ When `sensitive-mode` is enabled:
   wire format is a raw concatenation of IPv4 packets, the heartbeat is itself a small, fully valid IPv4 packet
   tagged with a reserved experimentation protocol number and a `0xFF` payload
 - it does not send another heartbeat while the previous one is still waiting for a reply
-- if the matching `0xDD`-payload heartbeat reply comes back on that same active line, the heartbeat is considered successful and is not emitted to the packet side
-- if no reply arrives within `tolerance-ms`, the current stream-facing line is finished locally, discarded, and recreated using the same worker-local bridge state
+- a matching `0xDD`-payload PONG processed on the same active line before the deadline completes the heartbeat.
+  The node consumes the PONG on the stream side
+- if the matching PONG is missing or processed at or after the deadline, the current stream-facing line is finished
+  locally, discarded, and recreated using the same worker-local bridge state
+
+A busy worker can process a PONG late even if it arrived before the deadline.
 
 This heartbeat lives entirely on the stream side and does not close the shared worker packet line.
 
