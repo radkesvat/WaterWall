@@ -51,6 +51,7 @@ struct gns_association_s
     bool               carrier_established;
     bool               application_established;
     bool               carrier_paused;
+    bool               carrier_pause_pending; /* pre-service hold awaiting delivery during promotion */
     bool               application_paused;
 };
 
@@ -157,8 +158,9 @@ static void serverPromote(gns_association_t *a)
     *service_ls                       = (gns_endpoint_lstate_t) {.association = a, .role = kGnsApplicationLine};
     /* Take the earlier carrier Est before publishing the service. Any first Est during Init or Pause is
      * forwarded by its handler, without becoming pending here. */
-    const bool pending_est = a->carrier_established;
-    a->application         = service;
+    const bool pending_est   = a->carrier_established;
+    a->carrier_pause_pending = a->carrier_paused;
+    a->application           = service;
 
     /* Init can finish the service, the carrier or both. Each step checks the association again. */
     gns_session_t *session = a->session;
@@ -166,10 +168,12 @@ static void serverPromote(gns_association_t *a)
     lineRef(service);
     a->owned_init_entered = true;
     ts->output->init_owned(t, service);
-    bool attached = lineIsAlive(service) && a->application == service;
-    if (attached && a->carrier_paused)
+    const bool pending_pause = a->carrier_pause_pending;
+    a->carrier_pause_pending = false;
+    bool attached            = lineIsAlive(service) && a->application == service;
+    if (attached && pending_pause)
     {
-        /* The carrier paused before the service existed. Deliver that hold now. */
+        /* No carrier pressure update superseded this Pause during Init. */
         ts->output->application_pause(t, service);
         attached = lineIsAlive(service) && a->application == service;
     }
@@ -471,9 +475,10 @@ void gnsEndpointSetCarrierPaused(tunnel_t *t, line_t *line, bool paused)
     assert(ls->role == kGnsCarrierLine && ls->association != NULL);
     gns_association_t           *a  = ls->association;
     const gns_endpoint_tstate_t *ts = tunnelGetState(t);
-    /* Publish the reason first. The producer hears it only while the session's own hold is clear; neither reason
-     * releases the other. */
-    a->carrier_paused = paused;
+    /* Publish the reason and supersede any pending replay before calling out. The producer hears this signal
+     * only while the session's own hold is clear. */
+    a->carrier_paused        = paused;
+    a->carrier_pause_pending = false;
     if (a->session != NULL && a->application != NULL && ! gnsSessionIsPressured(a->session))
     {
         endpointSignal(t, a->application, paused ? ts->output->application_pause : ts->output->application_resume);

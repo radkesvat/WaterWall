@@ -32,6 +32,13 @@ typedef enum carrier_est_stage_e
     kEstDuringServicePause,
 } carrier_est_stage_t;
 
+typedef enum carrier_flow_on_service_init_e
+{
+    kNoCarrierFlowOnServiceInit,
+    kCarrierPauseOnServiceInit,
+    kCarrierResumeOnServiceInit,
+} carrier_flow_on_service_init_t;
+
 typedef struct packet_s
 {
     sbuf_t  *buffer;
@@ -57,12 +64,14 @@ typedef struct fixture_s
     bool            hold_wire;                       /* datagrams wait in the queue */
     bool            drop_wire;                       /* datagrams are lost */
 
-    carrier_est_stage_t carrier_est_stage;
-    bool                wire_read_paused[2];
-    bool                application_finished[2];
-    bool                finish_carrier_on_resume;
-    bool                finish_service_in_init;
-    bool                defer_client_est;
+    carrier_est_stage_t            carrier_est_stage;
+    carrier_flow_on_service_init_t carrier_flow_on_service_init;
+    bool                           pause_carrier_before_service;
+    bool                           wire_read_paused[2];
+    bool                           application_finished[2];
+    bool                           finish_carrier_on_resume;
+    bool                           finish_service_in_init;
+    bool                           defer_client_est;
 } fixture_t;
 
 static fixture_t *active;
@@ -224,16 +233,13 @@ static void wireInit(tunnel_t *t, line_t *line)
                        kAddressContextTransportNone &&
                    isIcmpOnly(lineGetDestinationAddressContext(active->carrier)),
                "the server changed the borrowed carrier's transport metadata");
-    if (lineIsAlive(active->carrier))
+    if (lineIsAlive(active->carrier) && active->carrier_est_stage == kEstBeforeService)
     {
-        if (active->carrier_est_stage == kEstBeforeService)
-        {
-            tunnelNextUpStreamEst(t, active->carrier);
-        }
-        else if (active->carrier_est_stage == kEstDuringServicePause)
-        {
-            tunnelNextUpStreamPause(t, active->carrier);
-        }
+        tunnelNextUpStreamEst(t, active->carrier);
+    }
+    if (lineIsAlive(active->carrier) && active->pause_carrier_before_service)
+    {
+        tunnelNextUpStreamPause(t, active->carrier);
     }
     if (lineIsAlive(line) && ! active->defer_client_est)
     {
@@ -334,6 +340,20 @@ static void serviceInit(tunnel_t *t, line_t *line)
     {
         tunnelNextUpStreamEst(active->wire, active->carrier);
     }
+    if (! lineIsAlive(line))
+    {
+        return;
+    }
+    if (active->carrier_flow_on_service_init == kCarrierPauseOnServiceInit)
+    {
+        tunnelNextUpStreamPause(active->wire, active->carrier);
+        gnsRequire(active->service_pauses == 1, "carrier Pause did not reach service during Init");
+    }
+    else if (active->carrier_flow_on_service_init == kCarrierResumeOnServiceInit)
+    {
+        tunnelNextUpStreamResume(active->wire, active->carrier);
+        gnsRequire(active->service_resumes == 1, "carrier Resume did not reach service during Init");
+    }
 }
 
 static void serviceEst(tunnel_t *t, line_t *line)
@@ -361,8 +381,7 @@ static void serviceFinish(tunnel_t *t, line_t *line)
 static void servicePause(tunnel_t *t, line_t *line)
 {
     requireApplicationOpen(1);
-    discard t;
-    discard line;
+    gnsRequire(t == active->service && line == active->service_line, "Pause reached a foreign service line");
     active->service_pauses += 1;
     if (active->carrier_est_stage == kEstDuringServicePause && active->service_ests == 0)
     {
@@ -373,8 +392,7 @@ static void servicePause(tunnel_t *t, line_t *line)
 static void serviceResume(tunnel_t *t, line_t *line)
 {
     requireApplicationOpen(1);
-    discard t;
-    discard line;
+    gnsRequire(t == active->service && line == active->service_line, "Resume reached a foreign service line");
     active->service_resumes += 1;
 }
 
@@ -721,8 +739,9 @@ static void caseServiceEstDuringPromotion(void)
     for (size_t i = 0; i < ARRAY_SIZE(stages); ++i)
     {
         setup(&fixture, kDefaultSettings);
-        fixture.carrier_est_stage = stages[i];
-        fixture.defer_client_est  = true;
+        fixture.carrier_est_stage            = stages[i];
+        fixture.pause_carrier_before_service = stages[i] == kEstDuringServicePause;
+        fixture.defer_client_est             = true;
         openApp();
         /* The application's Init returned alive. A first write does not need the carrier's Est. */
         sendBytes(0, kChunk);
@@ -736,15 +755,52 @@ static void caseServiceEstDuringPromotion(void)
     }
 }
 
+static void caseServicePauseDuringPromotion(void)
+{
+    static fixture_t fixture;
+    const struct
+    {
+        bool                           pause_before_service;
+        carrier_flow_on_service_init_t flow_on_init;
+        unsigned                       pauses;
+        unsigned                       resumes;
+    } cases[] = {
+        {false, kCarrierPauseOnServiceInit, 1, 0},
+        {true, kNoCarrierFlowOnServiceInit, 1, 0},
+        {true, kCarrierResumeOnServiceInit, 0, 1},
+        {true, kCarrierPauseOnServiceInit, 1, 0},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        setup(&fixture, kDefaultSettings);
+        fixture.pause_carrier_before_service = cases[i].pause_before_service;
+        fixture.carrier_flow_on_service_init = cases[i].flow_on_init;
+        openApp();
+        gnsRequire(pumpUntil(serviceOpened), "the service did not open");
+        TEST_EQUAL_UINT(TEST_FAILURE_EXIT,
+                        fixture.service_pauses,
+                        cases[i].pauses,
+                        "promotion delivered the wrong number of carrier Pauses");
+        TEST_EQUAL_UINT(TEST_FAILURE_EXIT,
+                        fixture.service_resumes,
+                        cases[i].resumes,
+                        "promotion delivered the wrong number of carrier Resumes");
+        teardown();
+    }
+}
+
 static void caseServiceFinishDuringPromotion(void)
 {
     static fixture_t fixture;
     setup(&fixture, kDefaultSettings);
-    fixture.finish_service_in_init = true;
+    fixture.pause_carrier_before_service = true;
+    fixture.finish_service_in_init       = true;
     openApp();
     gnsRequire(pumpUntil(serviceOpened), "the service did not open");
     gnsRequire(fixture.service_ests == 0 && ! lineIsAlive(fixture.service_line),
                "promotion delivered pending Est after reentrant service Finish");
+    gnsRequire(fixture.service_pauses == 0 && fixture.service_resumes == 0,
+               "promotion delivered pending pressure after reentrant service Finish");
     gnsRequire(pumpUntilWithin(allFinished, kCloseWaitMs), "reentrant service Finish did not close the carriers");
     teardown();
 }
@@ -999,6 +1055,7 @@ int main(void)
         timers_at_start = wloopNTimers(getWorkerLoop(0));
         TEST_RUN_CASE(caseTransferAndOwnership);
         TEST_RUN_CASE(caseServiceEstDuringPromotion);
+        TEST_RUN_CASE(caseServicePauseDuringPromotion);
         TEST_RUN_CASE(caseServiceFinishDuringPromotion);
         TEST_RUN_CASE(caseApplicationFinish);
         TEST_RUN_CASE(caseServiceFinish);

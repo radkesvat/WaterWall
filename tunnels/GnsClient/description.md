@@ -202,8 +202,9 @@ removed without giving up native compatibility.
 - On a full Finish from the previous node, `GnsClient` immediately detaches
   the application line and releases that line's hold on carrier reads. The
   separate carrier can then receive acknowledgements for bytes already
-  accepted by GNS. The carrier stays open for delivery and for one second
-  after native close so the notice and answers to late packets can pass.
+  accepted by GNS. The carrier stays open for delivery and can stay open up
+  to one second after native close, within the original close-drain deadline.
+  This gives the close notice and answers to late packets time to pass.
   Incoming application bytes are discarded after Finish.
 - `close-drain-timeout-ms` after that Finish the node stops waiting, sends the
   close notice and closes. It logs a warning with the number of unacknowledged

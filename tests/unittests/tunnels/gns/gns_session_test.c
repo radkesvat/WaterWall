@@ -269,13 +269,6 @@ static void pairTransfer(pair_t *pair, end_t *from, size_t size)
     }
 }
 
-/* The worker loop's clock, which is the one the sessions read. */
-static uint64_t loopNowMs(void)
-{
-    wloopUpdateTime(getWorkerLoop(0));
-    return wloopNowMonotonicMS(getWorkerLoop(0));
-}
-
 static const char kFast[]            = "{\"send-rate\":20000000}";
 static const char kShortAckTimeout[] = "{\"send-rate\":20000000,\"no-recv-timeout-ms\":600}";
 /* A liveness timeout that never comes. For the cases that keep one direction of the wire closed for as long as a
@@ -592,11 +585,13 @@ static void caseFirstWriteAfterIdle(void)
     pair_t pair;
     pairStart(&pair, kShortAckTimeout, kPatient);
     pairConnect(&pair);
-    /* The idle interval outlasts the ACK deadline but finishes before the next idle maintenance poll. */
+    /* Simulate a worker callback that spends longer than the ACK interval before its first write. */
     wwSleepMS(650);
-    discard loopNowMs();
     endSendOne(&pair.client, 1);
-    gnsRequire(! pair.client.terminal, "a first write after idle expired before there was time to acknowledge it");
+    /* Run any due timer before the wire can deliver the byte or its ACK. */
+    gnsTestStep();
+    gnsRequire(gnsSessionIsConnected(pair.client.session),
+               "a first write against the stale loop clock expired before the peer could acknowledge it");
     pairUntil(&pair, pair.server.received == 1, "the first write after idle did not arrive");
     pairUntil(&pair, gnsSessionOutstandingBytes(pair.client.session) == 0, "the first write was not acknowledged");
     gnsRequire(gnsSessionIsConnected(pair.client.session), "the healthy session closed after the first write");
@@ -674,12 +669,14 @@ static void caseDrainTimeout(void)
     pairConnect(&pair);
     pair.client.lose = true;
     endSend(&pair.client, kChunk);
-    const uint64_t begin = loopNowMs();
+    const uint64_t before_finish = gnsTestNowMs();
     gnsSessionAppFinish(pair.client.session);
-    gnsRequire(gnsSessionCloseDeadline(pair.client.session) == begin + 400, "the drain deadline is not the setting's");
+    const uint64_t close_deadline = gnsSessionCloseDeadline(pair.client.session);
+    gnsRequire(close_deadline >= before_finish + 400 && close_deadline <= gnsTestNowMs() + 400,
+               "the drain deadline is not the setting's");
     pairUntil(&pair, pair.client.terminal, "a close that nobody acknowledges never ended");
     gnsRequire(pair.client.result == kGnsSessionDrainTimeout, "an unconfirmed close was reported as finished");
-    gnsRequire(loopNowMs() >= begin + 400, "the drain ended before its deadline");
+    gnsRequire(gnsTestNowMs() >= close_deadline, "the drain ended before its deadline");
     pairStop(&pair);
 }
 

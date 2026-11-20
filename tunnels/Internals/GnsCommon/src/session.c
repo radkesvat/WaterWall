@@ -60,11 +60,11 @@ struct gns_session_s
     buffer_budget_t          budget;      /* bounds what work may retain */
     uint64_t                 outstanding; /* queued plus unacknowledged bytes: last reading plus later writes */
     size_t                   outstanding_messages; /* native queued and retained messages, plus later writes */
-    uint64_t                 connect_deadline;
-    uint64_t                 close_deadline;
-    uint64_t                 linger_deadline;
-    uint64_t                 progress_deadline; /* zero when no ACK wait is active */
-    bool                     opened : 1;        /* the listen socket or the connection was asked for */
+    uint64_t                 connect_deadline_us;
+    uint64_t                 close_deadline_us;
+    uint64_t                 linger_deadline_us;
+    uint64_t                 progress_deadline_us; /* zero when no ACK wait is active */
+    bool                     opened : 1;           /* the listen socket or the connection was asked for */
     bool                     started : 1;
     bool                     driving : 1;
     bool                     dead : 1;
@@ -75,14 +75,10 @@ struct gns_session_s
     bool                     pressure : 1;
 };
 
-static uint64_t sessionNow(gns_session_t *s)
+static uint64_t sessionDeadline(uint64_t start_us, uint32_t interval_ms)
 {
-    return wloopNowMonotonicMS(s->config.loop);
-}
-
-static uint64_t sessionDeadline(uint64_t start, uint32_t interval)
-{
-    return start > UINT64_MAX - interval ? UINT64_MAX : start + interval;
+    const uint64_t interval_us = (uint64_t) interval_ms * 1000U;
+    return start_us > UINT64_MAX - interval_us ? UINT64_MAX : start_us + interval_us;
 }
 
 static const char *sessionRole(const gns_session_t *s)
@@ -220,18 +216,18 @@ static void sessionFail(gns_session_t *s, gns_session_result_t result)
     }
 }
 
-static bool sessionExpire(gns_session_t *s, uint64_t now)
+static bool sessionExpire(gns_session_t *s, uint64_t now_us)
 {
     if (s->close_sent)
     {
-        if (now >= s->linger_deadline)
+        if (now_us >= s->linger_deadline_us)
         {
             gnsSessionAbort(s, kGnsSessionClosed);
             return true;
         }
         return false;
     }
-    if (s->closing && now >= s->close_deadline)
+    if (s->closing && now_us >= s->close_deadline_us)
     {
         LOGW("Gns%s: close delivery unconfirmed at the fixed deadline "
              "(close-drain-timeout-ms=%u, unacknowledged_bytes=%llu)",
@@ -241,7 +237,7 @@ static bool sessionExpire(gns_session_t *s, uint64_t now)
         sessionFail(s, kGnsSessionDrainTimeout);
         return true;
     }
-    if (! s->config.client && ! s->connected && now >= s->connect_deadline)
+    if (! s->config.client && ! s->connected && now_us >= s->connect_deadline_us)
     {
         LOGD("GnsServer: closing carrier: no native connection (timeout-initial-ms=%u)",
              s->config.settings.timeout_initial_ms);
@@ -327,7 +323,7 @@ static bool sessionWrite(gns_session_t *s, const sbuf_t *payload)
         }
         if (s->connected && s->outstanding == 0)
         {
-            s->progress_deadline = sessionDeadline(sessionNow(s), s->config.settings.no_recv_timeout_ms);
+            s->progress_deadline_us = sessionDeadline(getHRTimeUs(), s->config.settings.no_recv_timeout_ms);
         }
         offset += chunk;
         s->outstanding += chunk + sessionFramingSize(chunk);
@@ -425,19 +421,19 @@ static void sessionPoll(gns_session_t *s)
 
     /* Retries move bytes between the native counters. Only acknowledgement reduces their sum. */
     const uint64_t reading  = (uint64_t) status.queued_bytes + status.unacked_bytes;
-    const uint64_t now      = sessionNow(s);
+    const uint64_t now_us   = getHRTimeUs();
     const bool     progress = reading < s->outstanding;
     s->outstanding          = reading;
     s->outstanding_messages = status.outstanding_messages;
     if (! s->connected || reading == 0)
     {
-        s->progress_deadline = 0;
+        s->progress_deadline_us = 0;
     }
-    else if (s->progress_deadline == 0 || progress)
+    else if (s->progress_deadline_us == 0 || progress)
     {
-        s->progress_deadline = sessionDeadline(now, s->config.settings.no_recv_timeout_ms);
+        s->progress_deadline_us = sessionDeadline(now_us, s->config.settings.no_recv_timeout_ms);
     }
-    else if (now >= s->progress_deadline)
+    else if (now_us >= s->progress_deadline_us)
     {
         LOGD("Gns%s: closing session: the peer acknowledged nothing for no-recv-timeout-ms "
              "(%u, unacknowledged_bytes=%llu)",
@@ -485,30 +481,33 @@ static void sessionPoll(gns_session_t *s)
     }
 }
 
-static void sessionArmTimer(gns_session_t *s, uint64_t now)
+static bool sessionArmTimer(const gns_session_t *s, wtimer_t *timer)
 {
-    if (s->timer == NULL)
-    {
-        return;
-    }
-    uint64_t delay = s->connected ? kGnsSessionPollConnectedMs : kGnsSessionPollConnectingMs;
+    const uint64_t now_us = getHRTimeUs();
+    uint64_t       deadline_us =
+        sessionDeadline(now_us, s->connected ? kGnsSessionPollConnectedMs : kGnsSessionPollConnectingMs);
     if (s->close_sent)
     {
-        delay = min(delay, s->linger_deadline > now ? s->linger_deadline - now : 1U);
+        deadline_us = min(deadline_us, s->linger_deadline_us);
     }
-    else if (s->closing)
+    else
     {
-        delay = min(delay, s->close_deadline > now ? s->close_deadline - now : 1U);
+        if (s->closing)
+        {
+            deadline_us = min(deadline_us, s->close_deadline_us);
+        }
+        if (! s->config.client && ! s->connected)
+        {
+            deadline_us = min(deadline_us, s->connect_deadline_us);
+        }
+        if (s->progress_deadline_us != 0)
+        {
+            deadline_us = min(deadline_us, s->progress_deadline_us);
+        }
     }
-    else if (! s->config.client && ! s->connected)
-    {
-        delay = min(delay, s->connect_deadline > now ? s->connect_deadline - now : 1U);
-    }
-    if (! s->close_sent && s->progress_deadline != 0)
-    {
-        delay = min(delay, s->progress_deadline > now ? s->progress_deadline - now : 1U);
-    }
-    wtimerReset(s->timer, max((uint32_t) delay, 1U));
+    /* Round the remaining time upward. The periodic status poll bounds the delay. */
+    const uint32_t delay_ms = deadline_us <= now_us ? 1U : (uint32_t) ((deadline_us - now_us + 999U) / 1000U);
+    return wtimerReset(timer, delay_ms);
 }
 
 /* The serialized driver. One call at a time gives one piece of work to GNS, then takes what GNS has for the
@@ -525,7 +524,6 @@ static void sessionDrive(gns_session_t *s)
     gnsPortEnter(s->port);
     for (uint32_t round = 0; ! s->dead && ! s->quiesced;)
     {
-        const uint64_t now = sessionNow(s);
         if (! s->opened)
         {
             s->opened = true;
@@ -538,7 +536,7 @@ static void sessionDrive(gns_session_t *s)
                 break;
             }
         }
-        if (sessionExpire(s, now))
+        if (sessionExpire(s, getHRTimeUs()))
         {
             break;
         }
@@ -592,12 +590,12 @@ static void sessionDrive(gns_session_t *s)
         if (s->closing && ! s->close_sent && s->outstanding == 0)
         {
             /* Every accepted payload has reached GNS and is acknowledged, so the close follows them. */
-            s->close_sent      = true;
-            s->linger_deadline = min(sessionDeadline(now, kGnsSessionCloseLingerMs), s->close_deadline);
+            s->close_sent = true;
             if (s->connection != 0)
             {
                 gnsEngineClose(s->connection);
             }
+            s->linger_deadline_us = min(sessionDeadline(getHRTimeUs(), kGnsSessionCloseLingerMs), s->close_deadline_us);
             continue;
         }
         if (gnsPortLeave(s->port))
@@ -611,9 +609,9 @@ static void sessionDrive(gns_session_t *s)
         }
     }
     s->driving = false;
-    if (! s->dead && ! s->quiesced)
+    if (s->timer != NULL && ! sessionArmTimer(s, s->timer))
     {
-        sessionArmTimer(s, sessionNow(s));
+        gnsSessionAbort(s, kGnsSessionAborted);
     }
     gnsSessionRelease(s);
 }
@@ -673,8 +671,8 @@ void gnsSessionAppFinish(gns_session_t *s)
     else if (! s->dead && ! s->closing)
     {
         /* The first closing event fixes the deadline; later progress never moves it. */
-        s->closing        = true;
-        s->close_deadline = sessionDeadline(sessionNow(s), s->config.settings.close_drain_timeout_ms);
+        s->closing           = true;
+        s->close_deadline_us = sessionDeadline(getHRTimeUs(), s->config.settings.close_drain_timeout_ms);
         sessionDrive(s);
     }
     gnsSessionRelease(s);
@@ -702,7 +700,24 @@ static void sessionTimerCallback(wtimer_t *timer)
 {
     gns_session_t *s = weventGetUserdata(timer);
     assert(s != NULL && s->timer == timer);
+    gnsSessionRetain(s);
+    /* Dispatch owns this due one-shot until it is successfully reset. */
+    s->timer = NULL;
+    weventSetUserData(timer, NULL);
     sessionDrive(s);
+    if (! s->dead && ! s->quiesced)
+    {
+        if (sessionArmTimer(s, timer))
+        {
+            s->timer = timer;
+            weventSetUserData(timer, s);
+        }
+        else
+        {
+            gnsSessionAbort(s, kGnsSessionAborted);
+        }
+    }
+    gnsSessionRelease(s);
 }
 
 /* The port's wake: GNS's own thread left something for the session while no call of the session was running. */
@@ -721,7 +736,7 @@ gns_session_t *gnsSessionCreate(const gns_session_config_t *config, const gns_se
     *s               = (gns_session_t) {.config = *config, .callbacks = *callbacks, .user = user, .references = 1};
     bufferbudgetInit(&s->budget,
                      (buffer_budget_cost_t) {.bytes = kGnsSessionNestedBytes, .charge = kGnsSessionNestedCharge});
-    s->connect_deadline = sessionDeadline(sessionNow(s), config->settings.timeout_initial_ms);
+    s->connect_deadline_us = sessionDeadline(getHRTimeUs(), config->settings.timeout_initial_ms);
     s->port = gnsPortCreate(config->wid, config->settings.carrier_queue_limit, config->port_admission, sessionWake, s);
 
     /* Synthetic addresses are only registration keys. The port's token is unique among the ports that exist. */
@@ -735,7 +750,7 @@ gns_session_t *gnsSessionCreate(const gns_session_config_t *config, const gns_se
     s->peer.ip[3] = 0x02;
     s->endpoint   = config->client ? gns_external_endpoint_create_connect(&s->address, gnsPortSend, s->port)
                                    : gns_external_endpoint_create_listen(&s->address, gnsPortSend, s->port);
-    s->timer      = wtimerAdd(config->loop, sessionTimerCallback, kGnsSessionPollConnectingMs, INFINITE);
+    s->timer      = wtimerAddDeadline(config->loop, sessionTimerCallback, kGnsSessionPollConnectingMs);
     if (s->endpoint == NULL || s->timer == NULL)
     {
         s->callbacks.destroy_user = NULL;
@@ -780,5 +795,5 @@ uint64_t gnsSessionRefusedDatagrams(const gns_session_t *s)
 
 uint64_t gnsSessionCloseDeadline(const gns_session_t *s)
 {
-    return s->close_deadline;
+    return s->close_deadline_us / 1000U;
 }

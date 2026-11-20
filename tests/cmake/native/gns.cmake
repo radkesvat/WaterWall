@@ -20,13 +20,32 @@ if(TARGET WaterWall::Gns)
   # The archive check needs plain object code; the unit tree builds without IPO.
   if(CMAKE_NM AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_dependencies(waterwall_unit_tests waterwall_gns)
+    # A fresh tree builds the GNS dependencies and may have to bootstrap host protoc.
+    set(gns_symbol_build_timeout 900)
+    set(gns_symbol_scan_timeout 30)
+    math(EXPR gns_symbol_outer_timeout "${gns_symbol_build_timeout} + ${gns_symbol_scan_timeout} + 35")
+    # Resolve the archive path without making it a CTest prerequisite. The runner
+    # builds it under the same lock as the other native tests.
+    set(gns_symbol_scan_args
+      "-DNM=${CMAKE_NM}"
+      "-DGNS_ARCHIVE=$<TARGET_FILE_DIR:waterwall_gns>/$<TARGET_FILE_NAME:waterwall_gns>"
+      -P "${WATERWALL_TEST_SOURCE_ROOT}/gns_no_os_socket_symbols.cmake")
     add_test(NAME waterwall.gns_no_os_socket_symbols
       COMMAND "${CMAKE_COMMAND}"
-        "-DNM=${CMAKE_NM}"
-        "-DGNS_ARCHIVE=$<TARGET_FILE:waterwall_gns>"
-        -P "${CMAKE_SOURCE_DIR}/tests/gns_no_os_socket_symbols.cmake")
+        "-DUNIT_TEST_TARGET=waterwall_gns"
+        "-DUNIT_TEST_CONFIG=$<CONFIG>"
+        "-DUNIT_TEST_EXECUTABLE=${CMAKE_COMMAND}"
+        "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        "-DUNIT_TEST_NAME=waterwall.gns_no_os_socket_symbols"
+        "-DUNIT_TEST_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DUNIT_TEST_FIXTURE_DIR=${WATERWALL_UNIT_SOURCE_ROOT}/fixtures"
+        "-DUNIT_TEST_BUILD_TIMEOUT=${gns_symbol_build_timeout}"
+        "-DUNIT_TEST_TIMEOUT=${gns_symbol_scan_timeout}"
+        "-DUNIT_TEST_ARGUMENTS=${gns_symbol_scan_args}"
+        -P "${WATERWALL_UNIT_TEST_RUNNER}")
     set_tests_properties(waterwall.gns_no_os_socket_symbols PROPERTIES
-      TIMEOUT 30 LABELS "unit;policy;build;linking;gns")
+      TIMEOUT "${gns_symbol_outer_timeout}" RESOURCE_LOCK waterwall_unit_test_build
+      LABELS "unit;policy;build;linking;gns")
   endif()
 endif()
 
