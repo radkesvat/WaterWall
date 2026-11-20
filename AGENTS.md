@@ -52,30 +52,26 @@ callers, guide text, and tests.
 
 ## 2. Repository Map And Mandatory Reading
 
-Core paths: `ww/net/` owns networking, `ww/bufio/` buffers, `tunnels/`
-implementations, and `tests/` native/integration coverage. `CMakePresets.json` and
-`ww/cmake/preset/` define supported builds. Developer contracts live in
-`WaterWall-Docs/docs/05-devguides/`; node settings in
-`WaterWall-Docs/docs/02-noderefs/`.
+Networking, buffers, and nodes live in `ww/net/`, `ww/bufio/`, and `tunnels/`.
+`tests/` holds native/integration tests. Build presets use `CMakePresets.json` and
+`ww/cmake/preset/`. Node settings use `WaterWall-Docs/docs/02-noderefs/`.
 
-Before substantive work and when scope expands, read matching sources and applicable
-[`reference/`](WaterWall-Docs/docs/05-devguides/reference/) contracts.
-The guide's `must`/`never` rules join this policy.
+Read applicable [reference contracts](WaterWall-Docs/docs/05-devguides/reference/).
+Guide `must`/`never` rules apply.
 
 | Trigger | Required sources |
 | --- | --- |
-| Any behavioral work in `tunnels/`, `ww/net/`, or code invoking tunnel/line contracts | Target, immediate neighbors, `ww/net/tunnel.h`, `ww/net/line.h`, `ww/net/chain.c`, [Part 1](WaterWall-Docs/docs/05-devguides/doc1.mdx), and [Part 2](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx) |
-| Worker identity/WID, worker-local storage, or cross-thread posting | [Part 1](WaterWall-Docs/docs/05-devguides/doc1.mdx), especially “Choosing a Worker-Context Helper,” plus the relevant worker/runtime implementation |
+| Behavior in `tunnels/`, `ww/net/`, or tunnel/line callers | Target, immediate neighbors, `ww/net/tunnel.h`, `ww/net/line.h`, `ww/net/chain.c`, [Part 1](WaterWall-Docs/docs/05-devguides/doc1.mdx), and [Part 2](WaterWall-Docs/docs/05-devguides/part2-lines-and-callbacks.mdx) |
+| Worker identity/WID, worker-local storage, or cross-thread posting | [Part 1](WaterWall-Docs/docs/05-devguides/doc1.mdx), “Choosing a Worker-Context Helper,” and the worker/runtime implementation |
+| Shared atomics, compare/exchange, publication flags, or cross-thread counters | [watomic.h](ww/libc/watomic.h) and [Shared atomic state](WaterWall-Docs/docs/05-devguides/doc1.mdx#shared-atomic-state). For fields shared with external nodes, see [External-node ABI](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx#external-node-abi). |
 | Framing, prepend, padding, buffer pools, or buffer ownership | `ww/bufio/shiftbuffer.h`, `ww/bufio/buffer_pool.h`, relevant `node.c`, and [Part 3](WaterWall-Docs/docs/05-devguides/part3-buffers-and-padding.mdx) |
 | Layer-3 nodes, packet lines, or packet/stream bridges | `ww/net/packet_tunnel.{h,c}` and [Part 4](WaterWall-Docs/docs/05-devguides/part4-packet-tunnels.mdx) |
 | New/structurally changed tunnel, constructor, node metadata, or HTTP tunnel | [Part 5](WaterWall-Docs/docs/05-devguides/part5-tunnel-anatomy.mdx) |
 | Build, formatting, tests, code review, benchmark, or validation infrastructure | [Part 6](WaterWall-Docs/docs/05-devguides/part6-build-test-review.mdx) |
 | Shutdown, signals, lifecycle-v2, worker messages, quiescence/drain, or external callback roots | [Part 7](WaterWall-Docs/docs/05-devguides/part7-shutdown-and-signals.mdx) and relevant core implementation |
 
-Documentation-only and unrelated tooling work need not load networking contracts
-unless describing or exercising them. For new or structurally changed tunnels,
-compare multiple mature implementations when practical; Part 1 lists examples.
-Existing patterns remain evidence, not proof.
+Docs and unrelated tooling read networking contracts when describing or exercising them.
+For new or restructured tunnels, compare mature examples from Part 1 when practical.
 
 ## 3. Always-On WaterWall Safety Kernel
 
