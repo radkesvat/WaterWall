@@ -52,9 +52,13 @@ endif()
 # The node layer uses the WaterWall API: settings, the port between the library's
 # threads and a worker, and the engine calls on top of it.
 if(TARGET GnsCommon)
+  # Keep ww's C compiler flags on the C fixture by compiling the GNS emitter separately.
+  add_library(gns_test_logging OBJECT ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_test_logging.cc)
+  target_link_libraries(gns_test_logging PRIVATE WaterWall::Gns waterwall_cpu_options)
+  waterwall_configure_runtime_dependency(gns_test_logging)
   waterwall_add_native_executable(gns_settings_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_settings_test.c
-            ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_test_logging.cc
+            $<TARGET_OBJECTS:gns_test_logging>
     LIBRARIES GnsCommon ww WaterWall::Gns)
   add_waterwall_unit_test(waterwall.gns_settings_unit gns_settings_test "unit;tunnels;gns;settings")
   waterwall_add_native_executable(gns_port_test SUPPORT
