@@ -63,10 +63,12 @@ function(waterwall_register_native_test test_name target_name labels)
       "-DUNIT_TEST_BASH=${BASH_EXECUTABLE}")
   endif()
   math(EXPR outer_timeout "${TEST_TIMEOUT} + 95")
+  # The runner builds missing executables under its lock. Path components keep CTest 4.5+ from
+  # requiring the executable to exist before it can start the runner.
   add_test(NAME ${test_name} COMMAND "${CMAKE_COMMAND}"
     "-DUNIT_TEST_TARGET=${target_name}"
     "-DUNIT_TEST_CONFIG=$<CONFIG>"
-    "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE:${target_name}>"
+    "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE_DIR:${target_name}>/$<TARGET_FILE_NAME:${target_name}>"
     "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
     "-DUNIT_TEST_NAME=${test_name}"
     "-DUNIT_TEST_SOURCE_DIR=${TEST_SOURCE_DIR}"
