@@ -57,14 +57,14 @@ Set `send-rate` for the path; the default is about 2 Mbit/s.
 
 ### Settings
 
-Settings are integers. A value of another type, a fraction, null, or a number
-outside the range rejects startup with a message that names the setting.
+`settings` can be omitted or supplied as an object. Each setting value must
+be an integer in its documented range.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `send-mtu` | core `misc.mtu` | IPv4 packet budget for outgoing datagrams, from `228` to `65535`. See [Sending MTU](#sending-mtu). |
+| `send-mtu` | core `misc.mtu` | IPv4 packet budget for outgoing data datagrams, from `228` to `65535`. See [Sending MTU](#sending-mtu). |
 | `send-rate` | `262144` | Bytes per second that one connection sends, from `1024` to `104857600`. See [Send rate](#send-rate). |
-| `no-recv-timeout-ms` | `30000` | Liveness timeout `T`, from `1` to `2147483647`. A connection ends when nothing arrives from the peer for `T`, and when the peer acknowledges nothing of what waits for `T`. |
+| `no-recv-timeout-ms` | `30000` | Liveness timeout `T`, from `1` to `2147483647`. Sets the native receive timeout and the maximum wait for acknowledgement progress on outstanding data. |
 | `timeout-initial-ms` | `10000` | How long the connection attempt may take, from `1` to `2147483647`. |
 | `send-buffer-limit` | `524288` | Accepted but unacknowledged bytes above which the previous node is paused, from `4096` to `134217728`. A value above half of GNS's packet window, which is 9,600,000 bytes with a `send-mtu` of 1328 or more, is lowered to that with a warning. |
 | `receive-buffer-limit` | `1048576` | Limit for received data that waits behind a missing packet, from `131072` to `268435456`. The largest accepted GNS message is half of it. |
@@ -77,8 +77,8 @@ different rates.
 
 ## Sending MTU
 
-`send-mtu` is an IPv4 packet budget, with the same meaning as in `KcpClient`.
-GNS's datagram limit is:
+`send-mtu` is an IPv4 packet budget for outgoing GNS data datagrams. The
+data datagram limit is
 
 ```text
 GNS packet size = min(send-mtu - 28, 1300)
@@ -90,9 +90,10 @@ valid and uses 1300. A budget below `228` rejects startup, whether it is written
 in the node or inherited from core `misc.mtu`, because GNS's smallest packet
 size is 200 bytes.
 
-Each side limits only what it sends. Receiving does not depend on the local
-budget: a datagram of up to 1300 bytes is accepted. The first packet of every
-connection attempt is 512 bytes, whatever the budget.
+Each endpoint applies its own setting to outgoing data. The carrier must pass
+native control datagrams in both directions. Handshake packets can exceed the
+data budget, including the 512-byte initial client packet. Either endpoint can
+send a CLOSE datagram padded to at least 512 bytes.
 
 This is not path-MTU discovery. An IPv6 header needs 20 more bytes than the
 fixed IPv4 allowance, and tunnels after this node add their own bytes. Lower
@@ -157,17 +158,19 @@ removed without giving up native compatibility.
   received 265 Mbit/s used a little more than one core.
 - **A process holds about 65,000 GNS connections,** counting those that closed
   within the last five seconds.
-- **At most 16,000 packets may wait for acknowledgement.** GNS numbers packets
-  with 16 bits. The node therefore never lets more than 16,000 packets' worth of
-  bytes, and never more than 8,192 messages, wait on one connection, whatever
-  `send-buffer-limit` says, and it ends a connection whose round trip holds more
-  packets than that at the current rate.
+- **The native send window bounds bytes and messages.** Each connection can
+  have at most 16,000 packets' worth of framed data and 8,192 pending or
+  unacknowledged messages. At `send-mtu=228`, the byte window is 1,600,000
+  bytes. Framing counts toward that window.
 - **The close notice is sent once.** A peer that misses it, and sends nothing
   itself, sees the end of the connection only by its liveness timeout.
-- **A dead peer is found through missing answers.** The connection ends
-  `no-recv-timeout-ms` after the first packet that got no answer, and an idle
-  connection sends such a packet every ten seconds. With the defaults the frozen
-  peer of an idle connection was detected 39 seconds after it stopped.
+- **Liveness checks track traffic and acknowledgement progress.** GNS
+  detects an unresponsive peer through its own receive timeout. WaterWall
+  also starts a `no-recv-timeout-ms` deadline when a connected session has
+  outstanding data, including data queued during connection setup.
+  Acknowledgement progress refreshes the deadline. It clears when the
+  outstanding bytes reach zero, giving the first write after an idle period
+  a fresh interval.
 - **A connection is bound to its carrier.** If the client's UDP source address
   changes, the server sees a new carrier, and the old connection times out.
 
@@ -178,9 +181,11 @@ removed without giving up native compatibility.
   that. A pause from the next node also pauses the previous node; either reason
   alone keeps it paused. GNS counts one to three framing bytes with every
   message, so the pause comes slightly before the limit.
-- A payload offered while more than twice `send-buffer-limit` bytes are
-  outstanding is refused, and that connection is closed. A previous node that
-  honors Pause does not reach this.
+- A whole write can cross the ordinary Pause threshold and the refusal threshold
+  of twice `send-buffer-limit` if it fits the absolute native limits. Further
+  writes while already above the refusal threshold close the session. A write
+  that exceeds the remaining native byte or message window closes the session
+  before any chunk of that write is submitted.
 - When the previous node pauses the downstream direction, `GnsClient` pauses
   the next node, which stops datagram intake. That also stops acknowledgements:
   a pause longer than the liveness timeout can end the connection.
@@ -194,13 +199,12 @@ removed without giving up native compatibility.
 
 ## Close and timeouts
 
-- When the previous node finishes the stream, `GnsClient` accepts no more
-  bytes, lets GNS deliver every byte it already accepted, and then closes the
-  connection natively. The connection keeps its own carrier line for this after
-  the application line is gone, and for one more second after the close, so
-  that the notice and the answers to late packets can pass. Bytes that arrive
-  from the peer after that Finish are discarded: a Finish closes both directions
-  of the stream.
+- On a full Finish from the previous node, `GnsClient` immediately detaches
+  the application line and releases that line's hold on carrier reads. The
+  separate carrier can then receive acknowledgements for bytes already
+  accepted by GNS. The carrier stays open for delivery and for one second
+  after native close so the notice and answers to late packets can pass.
+  Incoming application bytes are discarded after Finish.
 - `close-drain-timeout-ms` after that Finish the node stops waiting, sends the
   close notice and closes. It logs a warning with the number of unacknowledged
   bytes.
@@ -221,7 +225,7 @@ removed without giving up native compatibility.
 | Transfers are slow, while the link has capacity | `send-rate` is the limit. The default is 262144 bytes per second. Raise it on the side that sends, and raise `send-buffer-limit` there and `receive-buffer-limit` on the other side with it. |
 | Raising `send-rate` does not make transfers faster | Either `send-buffer-limit` holds the sender back, or the rate is above what the path carries and GNS repeats the dropped packets. Raise the limits with the rate, and keep the rate at or below the path's capacity. |
 | Startup fails and names `send-mtu`, although the node does not set it | Core `misc.mtu` is below `228`. Set `send-mtu` in the node. |
-| Log line `the send limit refused a payload` | The previous node kept sending after Pause. Check the nodes before `GnsClient`, or raise `send-buffer-limit`. |
+| Log line `the send limit refused a payload` | A write exceeded the remaining native send window, or the previous node offered data after the refusal threshold was crossed. Check write sizes and whether the application producer honors Pause. |
 | Log line `close delivery unconfirmed at the fixed deadline` | The peer did not acknowledge the last bytes within `close-drain-timeout-ms`. Check loss on the path, or raise the timeout for slow paths. |
 | Debug log line `the peer acknowledged nothing for no-recv-timeout-ms` | The peer's packets arrive, but it confirms none of this side's. Check the direction from this node to the peer. |
 

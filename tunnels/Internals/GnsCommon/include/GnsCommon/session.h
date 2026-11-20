@@ -33,11 +33,12 @@ typedef enum gns_session_result_e
 
 typedef struct gns_session_config_s
 {
-    gns_settings_t settings;
-    bool           client; /* true connects; false waits for the one connection of its carrier */
-    wid_t          wid;    /* the worker that owns the session */
-    buffer_pool_t *pool;   /* that worker's pool; outlives the session */
-    wloop_t       *loop;   /* that worker's loop */
+    gns_settings_t     settings;
+    bool               client;         /* true connects; false waits for the one connection of its carrier */
+    wid_t              wid;            /* the worker that owns the session */
+    buffer_pool_t     *pool;           /* that worker's pool; outlives the session */
+    wloop_t           *loop;           /* that worker's loop */
+    quiescence_gate_t *port_admission; /* shared external callback admission; outlives the session's port */
 } gns_session_config_t;
 
 typedef struct gns_session_callbacks_s
@@ -71,7 +72,7 @@ void gnsSessionInput(gns_session_t *session, sbuf_t *packet);
 void gnsSessionAppFinish(gns_session_t *session);
 /* Ends the session now and runs the terminal callback before returning. Nothing is emitted. */
 void gnsSessionAbort(gns_session_t *session, gns_session_result_t result);
-/* Worker quiescence: detaches the timer and stops every callback except the terminal one. */
+/* Worker quiescence after closing port admission: detaches the timer and stops every callback except terminal. */
 void gnsSessionQuiesce(gns_session_t *session);
 bool gnsSessionIsAlive(const gns_session_t *session);
 bool gnsSessionIsConnected(const gns_session_t *session);

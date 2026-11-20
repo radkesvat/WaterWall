@@ -4,6 +4,9 @@
  * GNS's 16-bit limits. Runs inside an initialized worker runtime because the default send-mtu comes from the core
  * settings. */
 
+#include "loggers/network_logger.h"
+
+#include "GnsCommon/port.h"
 #include "GnsCommon/settings.h"
 
 #include "gns_runtime.h"
@@ -160,6 +163,42 @@ static void testPacketWindow(void)
     TEST_EQUAL_UINT(TEST_FAILURE_EXIT, settings.send_hard_limit, 1048576, "a limit inside the window was changed");
 }
 
+void gnsTestEmitNativeDiagnostics(void);
+
+static int native_warning_level;
+static int native_error_level;
+
+static void captureNativeDiagnostics(int level, const char *message, int length)
+{
+    char      text[256];
+    const int used = min(length, (int) sizeof(text) - 1);
+    memoryCopy(text, message, (size_t) used);
+    text[used] = '\0';
+    if (strstr(text, "native GNS fixture warning") != NULL)
+    {
+        native_warning_level = level;
+    }
+    if (strstr(text, "native GNS fixture error") != NULL)
+    {
+        native_error_level = level;
+    }
+}
+
+static void testNativeDiagnostics(void)
+{
+    logger_t            *logger = getNetworkLogger();
+    const logger_handler saved  = loggerGetHandle(logger);
+    loggerSetHandler(logger, captureNativeDiagnostics);
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
+    gnsRequire(gnsRuntimeAcquire("GnsTest"), "GameNetworkingSockets did not start");
+    gnsTestEmitNativeDiagnostics();
+    gnsRuntimeRelease();
+    loggerSetLevel(logger, LOG_LEVEL_SILENT);
+    loggerSetHandler(logger, saved);
+    gnsRequire(native_warning_level == LOG_LEVEL_WARN, "a native warning was missing at the warning log level");
+    gnsRequire(native_error_level == LOG_LEVEL_ERROR, "a native error was missing or had the wrong log level");
+}
+
 int main(void)
 {
     gnsTestRuntimeStart();
@@ -168,6 +207,7 @@ int main(void)
     TEST_RUN_CASE(testInheritedMtu);
     TEST_RUN_CASE(testRanges);
     TEST_RUN_CASE(testPacketWindow);
+    TEST_RUN_CASE(testNativeDiagnostics);
     gnsTestRuntimeStop();
     return 0;
 }

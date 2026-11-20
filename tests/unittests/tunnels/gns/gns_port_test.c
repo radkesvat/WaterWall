@@ -3,8 +3,8 @@
  * First the port alone, fed from a second thread: the bound of its list, the refusal that tells GNS to offer a
  * datagram again, one wake for many arrivals, no wake while the owner is at it, an owner that yields, and a wake
  * that is still on its way when the session ends. Then two ports joined by hand under the real library: listen,
- * connect, the accept callback with its token, data in both directions, status, close, and a token that has gone
- * stale. */
+ * connect, data in both directions, status, close, and accepts refused by stale tokens or closed admission.
+ * On Linux, quiescence races a foreign submission and cancels an already queued wake. */
 
 #include "GnsCommon/engine.h"
 #include "GnsCommon/port.h"
@@ -17,6 +17,8 @@ enum
     kStreamBytes  = 262144,
     kWindowBytes  = 131072, /* the sender stays this far ahead of the receiver at most; GNS has no flow control */
 };
+
+static quiescence_gate_t test_admission;
 
 static void countWake(void *user)
 {
@@ -93,7 +95,7 @@ static uint32_t takeSequence(gns_port_t *port, uint32_t first)
 static void testBoundAndWake(void)
 {
     uint32_t    wakes = 0;
-    gns_port_t *port  = gnsPortCreate(0, 16, countWake, &wakes);
+    gns_port_t *port  = gnsPortCreate(0, 16, &test_admission, countWake, &wakes);
 
     /* Forty datagrams from another thread: sixteen fit, the rest are refused, and the worker hears once. */
     producer_t burst = {.port = port, .first = 100, .count = 40};
@@ -149,7 +151,7 @@ static void testBoundAndWake(void)
 static void testDetachBeforeWake(void)
 {
     uint32_t    wakes   = 0;
-    gns_port_t *port    = gnsPortCreate(0, 4, countWake, &wakes);
+    gns_port_t *port    = gnsPortCreate(0, 4, &test_admission, countWake, &wakes);
     producer_t  arrival = {.port = port, .first = 1, .count = 3};
     produceFromAnotherThread(&arrival);
     gnsPortDetach(port);
@@ -162,7 +164,7 @@ static void testDetachBeforeWake(void)
     gnsRequire(wakes == 0, "a detached port woke its owner");
 
     /* A detached port takes a datagram as sent and keeps nothing. */
-    gns_port_t *gone = gnsPortCreate(0, 4, countWake, &wakes);
+    gns_port_t *gone = gnsPortCreate(0, 4, &test_admission, countWake, &wakes);
     gnsPortDetach(gone);
     const uint8_t byte = 7;
     gnsRequire(gnsPortSend(gone, &byte, 1, NULL), "a detached port refused a datagram");
@@ -170,6 +172,128 @@ static void testDetachBeforeWake(void)
     gnsTestStep();
     gnsRequire(wakes == 0, "a detached port woke its owner");
 }
+
+#ifdef GNS_PORT_TEST_WRAP
+static atomic_uintptr_t queued_port;
+static atomic_uintptr_t racing_port;
+static atomic_bool      at_wake_submission;
+static atomic_bool      release_wake_submission;
+static atomic_uint      submissions;
+static atomic_uint      freed_ports;
+
+worker_message_submit_result_e __real_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3);
+
+worker_message_submit_result_e __wrap_sendWorkerMessageForceQueueWithCleanup(wid_t wid, WorkerMessageCallback cb,
+                                                                             WorkerMessageCleanupCallback cleanup,
+                                                                             void *arg1, void *arg2, void *arg3)
+{
+    const bool queued = arg1 != NULL && (uintptr_t) arg1 == atomicLoadRelaxed(&queued_port);
+    const bool racing = arg1 != NULL && (uintptr_t) arg1 == atomicLoadRelaxed(&racing_port);
+    if (queued || racing)
+    {
+        discard atomicIncRelaxed(&submissions);
+    }
+    if (racing)
+    {
+        atomicStoreExplicit(&at_wake_submission, true, memory_order_release);
+        const uint64_t deadline = gnsTestNowMs() + kGnsTestDeadlineMs;
+        while (! atomicLoadExplicit(&release_wake_submission, memory_order_acquire))
+        {
+            gnsRequire(gnsTestNowMs() < deadline, "shutdown did not release the racing wake");
+            wwSleepMS(1);
+        }
+    }
+    const worker_message_submit_result_e result =
+        __real_sendWorkerMessageForceQueueWithCleanup(wid, cb, cleanup, arg1, arg2, arg3);
+    if (queued || racing)
+    {
+        gnsRequire(result == (queued ? kWorkerMessageSubmitAccepted : kWorkerMessageSubmitRejectedCleanupRan),
+                   "the worker did not settle the wake submission as expected");
+    }
+    return result;
+}
+
+void __real_memoryFree(void *ptr);
+void __wrap_memoryFree(void *ptr);
+
+void __wrap_memoryFree(void *ptr)
+{
+    if (ptr != NULL &&
+        ((uintptr_t) ptr == atomicLoadRelaxed(&queued_port) || (uintptr_t) ptr == atomicLoadRelaxed(&racing_port)))
+    {
+        discard atomicIncRelaxed(&freed_ports);
+    }
+    __real_memoryFree(ptr);
+}
+
+static void releaseRacingWake(void *context)
+{
+    atomicStoreExplicit(&release_wake_submission, true, memory_order_release);
+    quiescenceGateYieldThread(context);
+}
+
+/* Keep one wake queued and park a second producer after it reserved its wake reference. The worker cancels
+ * the queued wake before the port fence lets the second submission return from its refusal cleanup. */
+static void testQuiescenceFence(void)
+{
+    quiescence_gate_t admission;
+    quiescenceGateInit(&admission);
+    gnsRequire(quiescenceGateOpen(&admission), "port admission did not open");
+    uint32_t    wakes  = 0;
+    gns_port_t *queued = gnsPortCreate(0, 16, &admission, countWake, &wakes);
+    gns_port_t *racing = gnsPortCreate(0, 16, &admission, countWake, &wakes);
+    atomicStoreRelaxed(&queued_port, (uintptr_t) queued);
+    atomicStoreRelaxed(&racing_port, (uintptr_t) racing);
+
+    producer_t before = {.port = queued, .first = 10, .count = 1};
+    produceFromAnotherThread(&before);
+    gnsRequire(before.accepted == 1 && atomicLoadRelaxed(&submissions) == 1 && wakes == 0,
+               "shutdown had no already-queued wake");
+
+    producer_t during = {.port = racing, .first = 20, .count = 1};
+    wthread_t  thread;
+    gnsRequire(threadCreate(&thread, produce, &during) == kWThreadErrorNone, "the racing producer did not start");
+    const uint64_t deadline = gnsTestNowMs() + kGnsTestDeadlineMs;
+    while (! atomicLoadExplicit(&at_wake_submission, memory_order_acquire))
+    {
+        gnsRequire(gnsTestNowMs() < deadline, "the racing producer did not reach submission");
+        wwSleepMS(1);
+    }
+
+    quiescenceGateClose(&admission);
+    gnsRequire(! quiescenceGateIsClosedAndQuiesced(&admission), "the callback left admission before posting its wake");
+    const ww_lifecycle_context_t *context = wwLifecycleStartupRollback();
+    gnsRequire(workerInstallApplicationQuiesceRequest(getWorker(0), context) != kWorkerQuiesceRequestUnavailable,
+               "the worker refused quiescence");
+    workerPerformQuiesce(getWorker(0), context);
+    quiescenceGateWaitQuiesced(&admission, releaseRacingWake, NULL);
+    threadJoin(thread);
+    gnsRequire(during.accepted == 1 && wakes == 0, "an admitted wake ran during worker quiescence");
+
+    producer_t after_queue = {.port = queued, .first = 30, .count = 3};
+    producer_t after_race  = {.port = racing, .first = 40, .count = 3};
+    produceFromAnotherThread(&after_queue);
+    produceFromAnotherThread(&after_race);
+    gnsPortEnter(queued);
+    gnsPortYield(queued);
+    gnsRequire(takeSequence(queued, 10) == 1 && takeSequence(racing, 20) == 1,
+               "a port took new datagrams after the quiescence fence");
+    gnsRequire(atomicLoadRelaxed(&submissions) == 2, "a port submitted a new wake after the quiescence fence");
+    gnsRequire(atomicLoadRelaxed(&freed_ports) == 0, "a wake released an owner reference");
+    gnsPortDetach(queued);
+    gnsPortRelease(queued);
+    gnsPortDetach(racing);
+    gnsPortRelease(racing);
+    gnsRequire(atomicLoadRelaxed(&freed_ports) == 2, "a wake stranded a port reference");
+    atomicStoreRelaxed(&queued_port, 0);
+    atomicStoreRelaxed(&racing_port, 0);
+}
+#endif
 
 /* One end of a connection: its port, its endpoint and what it learned from them. */
 typedef struct side_s
@@ -298,7 +422,7 @@ static void transfer(side_t *server, side_t *client, uint32_t from, uint32_t to,
 static void sideOpen(side_t *side)
 {
     *side      = (side_t) {0};
-    side->port = gnsPortCreate(0, 256, countWake, &side->wakes);
+    side->port = gnsPortCreate(0, 256, &test_admission, countWake, &side->wakes);
 }
 
 static void sideClose(side_t *side)
@@ -354,15 +478,8 @@ static void testEngineOverPorts(void)
     sideClose(&client);
 }
 
-/* A listen socket whose session has ended refuses what still arrives for it: the token names nothing. */
-static void testStaleToken(void)
+static void requireRefusedToken(int64_t token)
 {
-    side_t gone;
-    sideOpen(&gone);
-    const int64_t stale = gnsPortToken(gone.port);
-    gnsPortDetach(gone.port);
-    gnsPortRelease(gone.port);
-
     side_t server;
     side_t client;
     sideOpen(&server);
@@ -370,13 +487,12 @@ static void testStaleToken(void)
     server.endpoint = gns_external_endpoint_create_listen(&kServerAddress, gnsPortSend, server.port);
     client.endpoint = gns_external_endpoint_create_connect(&kServerAddress, gnsPortSend, client.port);
     gnsRequire(server.endpoint != NULL && client.endpoint != NULL, "an endpoint was not registered");
-    server.listen     = gnsEngineListen(&kServerAddress, &kOptions, stale);
+    server.listen     = gnsEngineListen(&kServerAddress, &kOptions, token);
     client.connection = gnsEngineConnect(&kServerAddress, &kOptions);
     gnsRequire(server.listen != 0 && client.connection != 0, "the listen socket or the connection did not open");
 
-    pumpUntil(stateOf(client.connection) == kGnsEngineClosedByPeer || stateOf(client.connection) == kGnsEngineFailed,
-              "a connection behind a stale token was not turned away");
-    gnsRequire(server.connection == 0, "a stale token delivered a connection to a port");
+    pumpUntil(stateOf(client.connection) != kGnsEngineConnecting, "the peer never settled the connection attempt");
+    gnsRequire(stateOf(client.connection) == kGnsEngineClosedByPeer, "the peer did not refuse the connection");
 
     gnsEngineClose(client.connection);
     gnsEngineCloseListen(server.listen);
@@ -384,19 +500,52 @@ static void testStaleToken(void)
     sideClose(&client);
 }
 
+/* A listen socket whose session has ended refuses what still arrives for it: the token names nothing. */
+static void testStaleToken(void)
+{
+    uint32_t      wakes = 0;
+    gns_port_t   *gone  = gnsPortCreate(0, 4, &test_admission, countWake, &wakes);
+    const int64_t stale = gnsPortToken(gone);
+    gnsPortDetach(gone);
+    gnsPortRelease(gone);
+    requireRefusedToken(stale);
+}
+
+/* Keep the wire on an open port so the native handshake reaches the accept callback and carries its refusal. */
+static void testClosedAdmissionToken(void)
+{
+    quiescence_gate_t admission;
+    quiescenceGateInit(&admission);
+    gnsRequire(quiescenceGateOpen(&admission), "port admission did not open");
+    uint32_t    wakes  = 0;
+    gns_port_t *closed = gnsPortCreate(0, 4, &admission, countWake, &wakes);
+    quiescenceGateCloseAndQuiesce(&admission, quiescenceGateYieldThread, NULL);
+    requireRefusedToken(gnsPortToken(closed));
+    gnsRequire(takeSequence(closed, 0) == 0 && wakes == 0, "closed admission published an incoming connection");
+    gnsPortDetach(closed);
+    gnsPortRelease(closed);
+}
+
 int main(void)
 {
+    quiescenceGateInit(&test_admission);
+    gnsRequire(quiescenceGateOpen(&test_admission), "port admission did not open");
     gnsTestRuntimeStart();
     gnsRequire(gnsRuntimeAcquire("GnsTest"), "GameNetworkingSockets did not start");
     TEST_RUN_CASE(testBoundAndWake);
     TEST_RUN_CASE(testDetachBeforeWake);
     TEST_RUN_CASE(testEngineOverPorts);
     TEST_RUN_CASE(testStaleToken);
+    TEST_RUN_CASE(testClosedAdmissionToken);
     gnsRuntimeRelease();
     /* A second start of the library and the token table after a complete stop. */
     gnsRequire(gnsRuntimeAcquire("GnsTest"), "GameNetworkingSockets did not start a second time");
     TEST_RUN_CASE(testEngineOverPorts);
+#ifdef GNS_PORT_TEST_WRAP
+    TEST_RUN_CASE(testQuiescenceFence);
+#endif
     gnsRuntimeRelease();
+    quiescenceGateCloseAndQuiesce(&test_admission, quiescenceGateYieldThread, NULL);
     gnsTestRuntimeStop();
     return 0;
 }

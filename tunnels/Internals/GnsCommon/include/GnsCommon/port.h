@@ -12,8 +12,12 @@
  * a leaf lock, a bounded list of copied datagrams, a few flags and a reference count. The session's worker empties
  * it. A port asks for one wake of that worker when something arrives while the worker is not already at it.
  *
- * Lock order: GNS's locks, then the port lock. The port lock is released before the wake is posted, and it is
- * never held around a call into GNS or into a tunnel.
+ * Lock order: GNS's locks, the token table lock, then the port lock. Both WaterWall locks are released before
+ * posting a wake, and neither is held around a call into GNS or into a tunnel.
+ *
+ * Ports share their node's admission gate. The node closes it in onQuiesceRequest and waits for admitted
+ * sends, accepts and wake submissions in onQuiesceWait. A queued wake has its own port reference and settles
+ * through worker-message delivery or cancellation.
  */
 
 typedef struct gns_port_s gns_port_t;
@@ -34,14 +38,16 @@ typedef void (*gns_port_wake_fn)(void *user);
 bool gnsRuntimeAcquire(const char *node_type);
 void gnsRuntimeRelease(void);
 
-/* The creator owns one reference and is the only one that calls the owner-side functions below. */
-gns_port_t *gnsPortCreate(wid_t owner, uint32_t queue_limit, gns_port_wake_fn wake, void *user);
+/* The creator owns one reference and is the only one that calls the owner-side functions below. The gate must
+ * outlive the port's registration, external endpoint and admitted callbacks. */
+gns_port_t *gnsPortCreate(wid_t owner, uint32_t queue_limit, quiescence_gate_t *admission, gns_port_wake_fn wake,
+                          void *user);
 void        gnsPortRelease(gns_port_t *port);
 /* Identifies the port to the accept callback through GNS's connection user data. Stale after gnsPortDetach(). */
 int64_t gnsPortToken(const gns_port_t *port);
 
 /* For gns_external_endpoint_create_*(): user is the port. Any thread, with GNS locks held. A full list refuses the
- * datagram, and GNS offers its data again a moment later. */
+ * datagram, and GNS offers its data again a moment later. After admission closes, sends act as wire loss. */
 bool gnsPortSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to);
 
 /* Owner worker only. Enter before calling GNS for this session or before draining; while entered, arrivals do not

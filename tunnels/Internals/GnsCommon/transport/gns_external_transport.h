@@ -37,6 +37,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Private slot in SteamNetConnectionRealTimeStatus_t, populated by the pinned SNP source overlay. */
+#define GNS_REALTIME_OUTSTANDING_MESSAGES_SLOT 0
+
 #ifdef __cplusplus
 extern "C" {
 #endif

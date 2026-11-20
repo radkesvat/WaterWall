@@ -21,6 +21,12 @@ static bool settingsReadInteger(const cJSON *json, const char *node_type, const 
 
 bool gnsSettingsParse(gns_settings_t *settings, const cJSON *json, const char *node_type)
 {
+    if (json != NULL && ! cJSON_IsObject(json))
+    {
+        LOGF("JSON Error: %s->settings must be an object", node_type);
+        return false;
+    }
+
     *settings = (gns_settings_t) {
         .no_recv_timeout_ms     = kGnsNoRecvTimeoutDefault,
         .timeout_initial_ms     = kGnsTimeoutInitialDefault,
@@ -72,7 +78,7 @@ bool gnsSettingsParse(gns_settings_t *settings, const cJSON *json, const char *n
     }
 
     /* Twice the hold, as for ENet, but never more data than GNS's packet numbering can keep apart. */
-    const uint64_t window     = (uint64_t) kGnsWindowPackets * (settings->packet_size - kGnsPacketOverhead);
+    const uint64_t window     = gnsSettingsNativeSendWindow(settings);
     settings->send_hard_limit = (uint32_t) min((uint64_t) settings->send_buffer_limit * 2U, window);
     if (settings->send_buffer_limit > settings->send_hard_limit / 2U)
     {

@@ -47,7 +47,7 @@ endfunction()
 # Existing-target registration keeps the accepted portable CMake runner and its
 # exact lock/build/execution budgets. The fixture root is independent of CWD.
 function(waterwall_register_native_test test_name target_name labels)
-  cmake_parse_arguments(TEST "" "TIMEOUT;AGGREGATE;SOURCE_DIR" "" ${ARGN})
+  cmake_parse_arguments(TEST "NETWORK_NAMESPACE" "TIMEOUT;AGGREGATE;SOURCE_DIR" "" ${ARGN})
   if(TEST_UNPARSED_ARGUMENTS)
     message(FATAL_ERROR "Invalid native registration arguments: ${test_name}")
   endif()
@@ -56,6 +56,11 @@ function(waterwall_register_native_test test_name target_name labels)
   endif()
   if(NOT TEST_TIMEOUT)
     set(TEST_TIMEOUT 120)
+  endif()
+  if(TEST_NETWORK_NAMESPACE)
+    set(network_namespace_args
+      "-DUNIT_TEST_NETWORK_NAMESPACE_WRAPPER=${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
+      "-DUNIT_TEST_BASH=${BASH_EXECUTABLE}")
   endif()
   math(EXPR outer_timeout "${TEST_TIMEOUT} + 95")
   add_test(NAME ${test_name} COMMAND "${CMAKE_COMMAND}"
@@ -67,6 +72,7 @@ function(waterwall_register_native_test test_name target_name labels)
     "-DUNIT_TEST_SOURCE_DIR=${TEST_SOURCE_DIR}"
     "-DUNIT_TEST_FIXTURE_DIR=${WATERWALL_UNIT_SOURCE_ROOT}/fixtures"
     "-DUNIT_TEST_TIMEOUT=${TEST_TIMEOUT}"
+    ${network_namespace_args}
     -P "${WATERWALL_UNIT_TEST_RUNNER}")
   set_tests_properties(${test_name} PROPERTIES TIMEOUT "${outer_timeout}"
     LABELS "${labels}" RESOURCE_LOCK waterwall_unit_test_build)

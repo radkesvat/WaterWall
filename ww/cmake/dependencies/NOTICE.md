@@ -71,15 +71,18 @@ upstream's `timeBeginPeriod(1)` for the service thread's millisecond sleeps.
 The library is built at upstream's release self-check level
 (`STEAMNETWORKINGSOCKETS_SNP_PARANOIA=1`) in every configuration, because the
 debug level validates the whole in-flight packet map on every packet.
-Six generated overlay files adapt the downloaded sources, which stay unchanged.
+Seven generated overlay files adapt the downloaded sources, which stay unchanged.
 The three message definitions select `LITE_RUNTIME`.
 `steamnetworkingsockets_certs.cpp` tests unknown fields with `empty()`, because
 protobuf-lite keeps them as a string. `crypto_digest_opensslevp.cpp` computes
 HMAC-SHA256 with the one-shot `HMAC()` that its SHA-1 variant already uses,
 because BoringSSL has no `EVP_PKEY_new_mac_key`. `opensslwrapper.cpp` skips the
 custom `RAND` method and `CRYPTO_cleanup_all_ex_data` under
-`OPENSSL_IS_BORINGSSL`. Each replacement must match its upstream text exactly
-once, or the configuration stops.
+`OPENSSL_IS_BORINGSSL`. `steamnetworkingsockets_snp.cpp` publishes the number
+of retained reliable messages in a reserved slot of the connection's realtime
+status. WaterWall reads it with the native byte counters under the same lock.
+Each replacement must match its upstream text exactly once, or the
+configuration stops.
 
 Runtime dependencies use WaterWall's compiler/runtime, CPU and IPO policy.
 BoringSSL builds the linked `ssl`/`crypto` targets; its unused

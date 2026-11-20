@@ -47,10 +47,11 @@ extern "C"
     typedef struct gns_engine_status_s
     {
         gns_engine_state_t state;
-        uint32_t           queued_bytes;       /* reliable bytes that have not been sent */
-        uint32_t           unacked_bytes;      /* reliable bytes that were sent and are not acknowledged */
-        uint32_t           ping_ms;            /* the library's round-trip estimate */
-        uint32_t           packets_per_second; /* outgoing packets, as the library measures them */
+        uint32_t           queued_bytes;         /* reliable bytes that have not been sent */
+        uint32_t           unacked_bytes;        /* reliable bytes that were sent and are not acknowledged */
+        uint32_t           outstanding_messages; /* messages that still have native sender state */
+        uint32_t           ping_ms;              /* the library's round-trip estimate */
+        uint32_t           packets_per_second;   /* outgoing packets, as the library measures them */
     } gns_engine_status_t;
 
     typedef enum gns_engine_send_e
@@ -70,8 +71,8 @@ extern "C"
     typedef enum gns_engine_log_e
     {
         kGnsEngineLogError,   /* a failed assertion or an error inside the library */
-        kGnsEngineLogWarning, /* something the library calls important */
-        kGnsEngineLogDebug,   /* its warnings, which include lock timing under load */
+        kGnsEngineLogWarning, /* native Important and Warning output */
+        kGnsEngineLogDebug,   /* more verbose library output */
     } gns_engine_log_t;
 
     /* The library's own messages. Called on any thread, with library locks held: log and return. */

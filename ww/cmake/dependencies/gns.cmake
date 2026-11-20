@@ -108,6 +108,15 @@ function(waterwall_enable_gns)
     "#ifndef OPENSSL_IS_BORINGSSL\n\t\tCRYPTO_cleanup_all_ex_data();\n#endif\n")
   waterwall_gns_write("${overlay}/opensslwrapper.cpp" "${text}")
 
+  # Snapshot the native message queues with the byte counters under the same
+  # connection lock. Aggregate ACKed bytes cannot identify ACKed messages.
+  file(READ "${source}/steamnetworkingsockets/clientlib/steamnetworkingsockets_snp.cpp" text)
+  string(PREPEND text "#include \"gns_external_transport.h\"\n")
+  set(snp_status "\t\tpStatus->m_cbSentUnackedReliable = m_senderState.m_cbSentUnackedReliable;")
+  waterwall_gns_replace(text "${snp_status}"
+    "${snp_status}\n\t\tpStatus->reserved[GNS_REALTIME_OUTSTANDING_MESSAGES_SLOT] = m_senderState.m_messagesQueued.m_nMessageCount + m_senderState.m_unackedReliableMessages.m_nMessageCount;")
+  waterwall_gns_write("${overlay}/steamnetworkingsockets_snp.cpp" "${text}")
+
   # Upstream's GNS_COMMON_SRCS, GNS_CLIENTLIB_SRCS and its OpenSSL crypto
   # sources. Not compiled: the socket file named above, the ICE and WebRTC
   # transports, ISteamNetworkingMessages and the flat C interface.
@@ -123,7 +132,6 @@ function(waterwall_enable_gns)
       steamnetworkingsockets/clientlib/steamnetworkingsockets_connections.cpp
       steamnetworkingsockets/clientlib/steamnetworkingsockets_lowlevel_misc.cpp
       steamnetworkingsockets/clientlib/steamnetworkingsockets_p2p.cpp
-      steamnetworkingsockets/clientlib/steamnetworkingsockets_snp.cpp
       steamnetworkingsockets/clientlib/steamnetworkingsockets_spew.cpp
       steamnetworkingsockets/clientlib/steamnetworkingsockets_taskqueue.cpp
       steamnetworkingsockets/clientlib/steamnetworkingsockets_udp.cpp
@@ -134,6 +142,7 @@ function(waterwall_enable_gns)
   endforeach()
   list(APPEND gns_sources "${overlay}/steamnetworkingsockets_certs.cpp"
     "${overlay}/crypto_digest_opensslevp.cpp" "${overlay}/opensslwrapper.cpp"
+    "${overlay}/steamnetworkingsockets_snp.cpp"
     "${transport}/steamnetworkingsockets_externaltransport.cpp")
 
   add_library(waterwall_gns STATIC ${gns_sources})

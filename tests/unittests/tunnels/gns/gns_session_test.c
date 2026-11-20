@@ -2,11 +2,10 @@
  * Two GNS sessions, a client and a server, joined by a wire that the test owns: every datagram one session emits
  * is handed to the other, unless the test holds or loses it. Everything runs on the test's thread as worker 0,
  * except GameNetworkingSockets' own service thread. Covered: the handshake and the server's promotion, verified
- * transfer in both directions, echo from inside the payload callback, the send hold and its release, the hard cap,
- * the limits on unacknowledged messages and bytes that keep a connection inside GNS's 16-bit bounds, a peer that
- * acknowledges nothing, a carrier queue that refuses, graceful close with data in flight from either side, the
- * drain and connect deadlines, abort and quiesce. The library runs in real time: the cases wait with deadlines and
- * assert no timing. */
+ * transfer in both directions, reentrant admission, the send hold and its release, whole-write admission at the
+ * native bounds, reordered ACKs, ACK deadlines at connection and after idle, a carrier queue that refuses,
+ * graceful close with data in flight from either side, the drain and connect deadlines, abort and quiesce.
+ * The library runs in real time, and the cases wait with deadlines. */
 
 #include "GnsCommon/port.h"
 #include "GnsCommon/session.h"
@@ -23,6 +22,7 @@ typedef struct end_s
 {
     gns_session_t       *session;
     struct end_s        *other;
+    quiescence_gate_t    port_admission;
     sbuf_t              *wire[kWireSlots]; /* datagrams this end emitted that the other end has not been given */
     size_t               wire_count;
     uint64_t             emitted;
@@ -37,6 +37,7 @@ typedef struct end_s
     bool                 hold; /* keep what this end emits instead of delivering it */
     bool                 lose; /* drop what this end emits */
     bool                 echo; /* send every received byte back from inside the payload callback */
+    sbuf_t              *send_from_payload;
 } end_t;
 
 typedef struct pair_s
@@ -47,7 +48,7 @@ typedef struct pair_s
 
 static uint8_t patternByte(size_t offset, uint8_t seed)
 {
-    return (uint8_t) (offset * 31U + seed);
+    return (uint8_t) (offset * 31U + (offset >> 8U) + (offset >> 16U) + seed);
 }
 
 static void endEmit(void *user, sbuf_t *packet)
@@ -73,6 +74,13 @@ static void endPayload(void *user, sbuf_t *payload)
                    "received bytes differ from the bytes that were sent");
     }
     end->received += size;
+    if (end->send_from_payload != NULL)
+    {
+        sbuf_t *reply          = end->send_from_payload;
+        end->send_from_payload = NULL;
+        end->sent += sbufGetLength(reply);
+        gnsSessionSend(end->session, reply);
+    }
     if (end->echo)
     {
         /* A call from inside a callback: the session queues it behind the call that is driving. */
@@ -105,11 +113,15 @@ static void endTerminal(void *user, gns_session_result_t result)
 
 static void endStart(end_t *end, end_t *other, bool client, const char *settings_json, uint8_t seed)
 {
+    *end = (end_t) {.other = other, .seed = seed};
+    quiescenceGateInit(&end->port_admission);
+    gnsRequire(quiescenceGateOpen(&end->port_admission), "could not open port admission");
     gns_session_config_t config = {
-        .client = client,
-        .wid    = 0,
-        .pool   = getWorkerBufferPool(0),
-        .loop   = getWorkerLoop(0),
+        .client         = client,
+        .wid            = 0,
+        .pool           = getWorkerBufferPool(0),
+        .loop           = getWorkerLoop(0),
+        .port_admission = &end->port_admission,
     };
     cJSON *json = cJSON_Parse(settings_json);
     gnsRequire(json != NULL && gnsSettingsParse(&config.settings, json, "GnsTest"), "fixture settings were refused");
@@ -121,7 +133,6 @@ static void endStart(end_t *end, end_t *other, bool client, const char *settings
         .pressure  = endPressure,
         .terminal  = endTerminal,
     };
-    *end         = (end_t) {.other = other, .seed = seed};
     end->session = gnsSessionCreate(&config, &callbacks, end);
     gnsRequire(end->session != NULL, "a session was not created");
     gnsSessionStart(end->session);
@@ -134,6 +145,10 @@ static void endStop(end_t *end)
         gnsSessionAbort(end->session, kGnsSessionAborted);
     }
     gnsSessionRelease(end->session);
+    if (end->send_from_payload != NULL)
+    {
+        bufferpoolReuseBuffer(getWorkerBufferPool(0), end->send_from_payload);
+    }
     for (size_t i = 0; i < end->wire_count; ++i)
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(0), end->wire[i]);
@@ -203,21 +218,32 @@ static void pairConnect(pair_t *pair)
                "the end of the handshake was not reported exactly once");
 }
 
+static sbuf_t *endMakePayload(const end_t *end, size_t size, size_t capacity)
+{
+    sbuf_t *buffer = bufferpoolGetBestFit(getWorkerBufferPool(0), capacity, 0);
+    sbufSetLength(buffer, size);
+    uint8_t *bytes = sbufGetMutablePtr(buffer);
+    for (size_t i = 0; i < size; ++i)
+    {
+        bytes[i] = patternByte(end->sent + i, end->seed);
+    }
+    return buffer;
+}
+
+static void endSendOne(end_t *end, size_t size)
+{
+    sbuf_t *buffer = endMakePayload(end, size, size);
+    end->sent += size;
+    gnsSessionSend(end->session, buffer);
+}
+
 /* Hands size bytes of this end's pattern to its session, in chunks. */
 static void endSend(end_t *end, size_t size)
 {
     while (size > 0 && ! end->terminal)
     {
-        const size_t chunk  = min(size, (size_t) kChunk);
-        sbuf_t      *buffer = bufferpoolGetBestFit(getWorkerBufferPool(0), chunk, 0);
-        sbufSetLength(buffer, chunk);
-        uint8_t *bytes = sbufGetMutablePtr(buffer);
-        for (size_t i = 0; i < chunk; ++i)
-        {
-            bytes[i] = patternByte(end->sent + i, end->seed);
-        }
-        end->sent += chunk;
-        gnsSessionSend(end->session, buffer);
+        const size_t chunk = min(size, (size_t) kChunk);
+        endSendOne(end, chunk);
         size -= chunk;
     }
 }
@@ -250,7 +276,8 @@ static uint64_t loopNowMs(void)
     return wloopNowMonotonicMS(getWorkerLoop(0));
 }
 
-static const char kFast[] = "{\"send-rate\":20000000}";
+static const char kFast[]            = "{\"send-rate\":20000000}";
+static const char kShortAckTimeout[] = "{\"send-rate\":20000000,\"no-recv-timeout-ms\":600}";
 /* A liveness timeout that never comes. For the cases that keep one direction of the wire closed for as long as a
  * slow build needs, and for the close cases: a close notice that does not arrive must fail the case at its
  * deadline, not pass as a peer that timed out. */
@@ -304,6 +331,51 @@ static void caseEcho(void)
         pairUntil(&pair, pair.client.received == pair.client.sent, "the echo did not come back");
     }
     gnsRequire(pair.server.received == pair.client.sent, "the server did not get what it echoed");
+    pairStop(&pair);
+}
+
+static const char kLargeWrites[] =
+    "{\"send-rate\":20000000,\"send-buffer-limit\":4194304,\"no-recv-timeout-ms\":600000}";
+
+static void caseLargeDirectWrite(void)
+{
+    pair_t pair;
+    pairStart(&pair, kLargeWrites, kPatient);
+    pairConnect(&pair);
+    endSendOne(&pair.client, 3 * 1024 * 1024);
+    gnsRequire(! pair.client.terminal, "a direct write was charged to nested input");
+    pairUntil(&pair, pair.server.received == pair.client.sent, "the single large write did not arrive");
+    pairStop(&pair);
+}
+
+static void caseNestedWriteLimit(void)
+{
+    const size_t payload_limit    = 2 * 1024 * 1024;
+    const size_t allocation_limit = 8 * 1024 * 1024;
+    pair_t       pair;
+    pairStart(&pair, kPatient, kLargeWrites);
+    pairConnect(&pair);
+    pair.server.send_from_payload = endMakePayload(&pair.server, 3 * 1024 * 1024, 3 * 1024 * 1024);
+    gnsRequire(sbufGetLength(pair.server.send_from_payload) > payload_limit &&
+                   sbufGetAllocationCharge(pair.server.send_from_payload) < allocation_limit,
+               "the large nested write must isolate the payload-byte limit");
+    endSendOne(&pair.client, 1);
+    pairUntil(&pair, pair.server.terminal, "a reentrant write above the nested byte limit was accepted");
+    gnsRequire(pair.server.result == kGnsSessionCapacityFailure &&
+                   gnsSessionOutstandingMessages(pair.server.session) == 0,
+               "the nested byte refusal allowed a prefix into GNS");
+    pairStop(&pair);
+
+    pairStart(&pair, kPatient, kLargeWrites);
+    pairConnect(&pair);
+    pair.server.send_from_payload = endMakePayload(&pair.server, 1, allocation_limit);
+    gnsRequire(sbufGetAllocationCharge(pair.server.send_from_payload) > allocation_limit,
+               "the tiny nested write must exceed the allocation charge limit");
+    endSendOne(&pair.client, 1);
+    pairUntil(&pair, pair.server.terminal, "a reentrant write above the nested allocation charge was accepted");
+    gnsRequire(pair.server.result == kGnsSessionCapacityFailure &&
+                   gnsSessionOutstandingMessages(pair.server.session) == 0,
+               "the nested allocation refusal allowed a prefix into GNS");
     pairStop(&pair);
 }
 
@@ -368,27 +440,35 @@ static void caseHardCap(void)
  * unacknowledged messages and refuses at 8,192, long before that. */
 static void caseMessageLimit(void)
 {
-    pair_t pair;
-    pairStart(&pair, kPatient, kPatient);
-    pairConnect(&pair);
-    pair.client.hold = true;
-    for (int i = 0; i < kGnsMessagesHold; ++i)
+    for (int slots = 0; slots <= 1; ++slots)
     {
-        endSend(&pair.client, 1);
+        pair_t pair;
+        pairStart(&pair, kPatient, kPatient);
+        pairConnect(&pair);
+        pair.client.lose = true;
+        for (int i = 0; i < kGnsMessagesHold; ++i)
+        {
+            endSendOne(&pair.client, 1);
+        }
+        gnsRequire(pair.client.pressured, "thousands of unacknowledged messages did not hold the producer");
+        gnsRequire(gnsSessionOutstandingBytes(pair.client.session) < 65536, "the hold was not the message limit's");
+        const size_t messages = kGnsMessagesHardLimit - slots;
+        for (size_t i = kGnsMessagesHold; i < messages; ++i)
+        {
+            endSendOne(&pair.client, 1);
+        }
+        gnsRequire(! pair.client.terminal, "messages within the hard limit ended the session");
+        gnsRequire(gnsSessionOutstandingMessages(pair.client.session) == messages,
+                   "outstanding messages were not counted one by one");
+        const uint64_t outstanding = gnsSessionOutstandingBytes(pair.client.session);
+        endSendOne(&pair.client, slots == 0 ? 1 : kGnsMessageBytesMaximum + 1);
+        gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure,
+                   "a write that needed more than the remaining message slots was accepted");
+        gnsRequire(gnsSessionOutstandingMessages(pair.client.session) == messages &&
+                       gnsSessionOutstandingBytes(pair.client.session) == outstanding,
+                   "message limit refusal submitted a prefix of the write");
+        pairStop(&pair);
     }
-    pairUntil(&pair, pair.client.pressured, "thousands of unacknowledged messages did not hold the producer");
-    gnsRequire(gnsSessionOutstandingBytes(pair.client.session) < 65536, "the hold was not the message limit's");
-    for (int i = kGnsMessagesHold; i < kGnsMessagesHardLimit; ++i)
-    {
-        endSend(&pair.client, 1);
-    }
-    gnsRequire(! pair.client.terminal, "messages below the hard limit ended the session");
-    gnsRequire(gnsSessionOutstandingMessages(pair.client.session) == kGnsMessagesHardLimit,
-               "unacknowledged messages were not counted one by one");
-    endSend(&pair.client, 1);
-    gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure,
-               "a message above the hard limit did not end the session");
-    pairStop(&pair);
 }
 
 /* When the peer acknowledges, the messages leave the count again and the producer is released. */
@@ -411,46 +491,156 @@ static void caseMessagesAcknowledged(void)
     pairStop(&pair);
 }
 
-/* GNS carries 16 bits of each packet number, so the session never lets more than 16,000 packets' worth of bytes
- * wait for acknowledgement, whatever send-buffer-limit says. Here the peer hears nothing, the producer ignores the
- * hold, and the library has sent the whole window when the next payload is refused. */
-static void caseWindowLimit(void)
+/* Each selected message fits one data datagram. Smaller control datagrams can wait in the fixture wire. */
+static sbuf_t *endTakeDataPacket(end_t *end, size_t payload_bytes)
 {
-    static const char settings[] =
-        "{\"send-rate\":20000000,\"send-buffer-limit\":134217728,\"no-recv-timeout-ms\":600000}";
-    const uint64_t window = (uint64_t) kGnsWindowPackets * (kGnsPacketSizeMaximum - kGnsPacketOverhead);
-    pair_t         pair;
-    pairStart(&pair, settings, kPatient);
-    pairConnect(&pair);
-    pair.client.lose = true;
-    while (! pair.client.terminal && gnsSessionOutstandingBytes(pair.client.session) <= window)
+    for (size_t i = 0; i < end->wire_count; ++i)
     {
-        endSend(&pair.client, kChunk);
+        sbuf_t *packet = end->wire[i];
+        if (sbufGetLength(packet) > payload_bytes)
+        {
+            --end->wire_count;
+            memmove(end->wire + i, end->wire + i + 1, (end->wire_count - i) * sizeof(packet));
+            return packet;
+        }
     }
-    gnsRequire(! pair.client.terminal, "bytes inside the packet window were refused");
-    gnsRequire(pair.client.pressured, "half a packet window of unacknowledged bytes did not hold the producer");
-    pairUntil(&pair, pair.client.emitted >= kGnsWindowPackets, "the library did not send the whole window");
-    gnsRequire(! pair.client.terminal, "a full packet window ended the session");
-    endSend(&pair.client, 1);
-    gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure,
-               "a payload beyond the packet window was not refused");
-    pairStop(&pair);
+    return NULL;
 }
 
-/* The peer keeps talking and acknowledges nothing: this side's datagrams are lost, the peer's arrive. GNS sees a
- * live peer and would wait for ever, so the session ends the wait itself after no-recv-timeout-ms. */
-static void caseUnacknowledged(void)
+static void caseReorderedAcknowledgements(void)
 {
-    static const char settings[] = "{\"send-rate\":20000000,\"no-recv-timeout-ms\":600}";
+    static const char settings[] = "{\"send-rate\":20000000,\"send-buffer-limit\":4096,\"no-recv-timeout-ms\":600000}";
     pair_t            pair;
     pairStart(&pair, settings, kPatient);
     pairConnect(&pair);
+    pair.client.hold = true;
+
+    sbuf_t *first  = NULL;
+    sbuf_t *second = NULL;
+    sbuf_t *later  = NULL;
+    endSendOne(&pair.client, 181);
+    pairUntil(&pair, (first = endTakeDataPacket(&pair.client, 181)) != NULL, "the first message did not emit");
+    endSendOne(&pair.client, 401);
+    pairUntil(&pair, (second = endTakeDataPacket(&pair.client, 401)) != NULL, "the second message did not emit");
+    const uint64_t gap_bytes = gnsSessionOutstandingBytes(pair.client.session);
+    endSendOne(&pair.client, 1200);
+    pairUntil(&pair, (later = endTakeDataPacket(&pair.client, 1200)) != NULL, "the later message did not emit");
+    gnsSessionInput(pair.server.session, later);
+    pairUntil(&pair,
+              gnsSessionOutstandingBytes(pair.client.session) == gap_bytes,
+              "the later message was not acknowledged ahead of the gap");
+    gnsRequire(pair.server.received == 0 && gnsSessionOutstandingMessages(pair.client.session) >= 2,
+               "an ACK past the gap allowed undelivered messages to leave the count");
+    pairUntil(&pair,
+              gnsSessionOutstandingMessages(pair.client.session) == 2,
+              "the acknowledged later message did not release its slot");
+
+    endSendOne(&pair.client, 8192);
+    gnsRequire(pair.client.pressured, "the write across a gap did not hold the producer");
+    gnsSessionInput(pair.server.session, first);
+    gnsSessionInput(pair.server.session, second);
+    pair.client.hold = false;
+    pairUntil(&pair,
+              ! pair.client.pressured && pair.server.received == pair.client.sent,
+              "closing the gap did not release pressure and deliver all accepted bytes in order");
+    pairUntil(&pair,
+              gnsSessionOutstandingMessages(pair.client.session) == 0,
+              "the native message count did not release after delivery");
+    pairStop(&pair);
+}
+
+/* GNS carries 16 bits of each packet number, so the session never lets more than 16,000 packets' worth of bytes
+ * wait for acknowledgement. The absolute boundary includes the reliable message headers. */
+static void caseWindowLimit(void)
+{
+    static const char settings[] =
+        "{\"send-mtu\":228,\"send-rate\":20000000,\"send-buffer-limit\":134217728,\"no-recv-timeout-ms\":600000}";
+    const size_t window = 1600000;
+    pair_t       pair;
+    pairStart(&pair, settings, kPatient);
+    pairConnect(&pair);
+    pair.client.lose = true;
+    endSendOne(&pair.client, window - 3 * 25);
+    gnsRequire(! pair.client.terminal && pair.client.pressured &&
+                   gnsSessionOutstandingBytes(pair.client.session) == window &&
+                   gnsSessionOutstandingMessages(pair.client.session) == 25,
+               "a whole write at the native framed-byte window was refused or miscounted");
+    endSendOne(&pair.client, 1);
+    gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure,
+               "a payload beyond the packet window was not refused");
+    pairStop(&pair);
+
+    pairStart(&pair, settings, kPatient);
+    pairConnect(&pair);
+    pair.client.lose               = true;
+    const size_t full_chunk_framed = kGnsMessageBytesMaximum + 3;
+    endSendOne(&pair.client, window - full_chunk_framed - 3 * 24);
+    gnsRequire(! pair.client.terminal &&
+                   gnsSessionOutstandingBytes(pair.client.session) == window - full_chunk_framed &&
+                   gnsSessionOutstandingMessages(pair.client.session) == 24,
+               "the native window fixture did not leave one full chunk of room");
+    endSendOne(&pair.client, kGnsMessageBytesMaximum + 1);
+    gnsRequire(pair.client.terminal && pair.client.result == kGnsSessionCapacityFailure &&
+                   gnsSessionOutstandingBytes(pair.client.session) == window - full_chunk_framed &&
+                   gnsSessionOutstandingMessages(pair.client.session) == 24,
+               "byte-window refusal submitted a prefix of the write");
+    pairStop(&pair);
+}
+
+static void caseFirstWriteAfterIdle(void)
+{
+    pair_t pair;
+    pairStart(&pair, kShortAckTimeout, kPatient);
+    pairConnect(&pair);
+    /* The idle interval outlasts the ACK deadline but finishes before the next idle maintenance poll. */
+    wwSleepMS(650);
+    discard loopNowMs();
+    endSendOne(&pair.client, 1);
+    gnsRequire(! pair.client.terminal, "a first write after idle expired before there was time to acknowledge it");
+    pairUntil(&pair, pair.server.received == 1, "the first write after idle did not arrive");
+    pairUntil(&pair, gnsSessionOutstandingBytes(pair.client.session) == 0, "the first write was not acknowledged");
+    gnsRequire(gnsSessionIsConnected(pair.client.session), "the healthy session closed after the first write");
+    pairStop(&pair);
+}
+
+static void caseQueuedDuringHandshake(void)
+{
+    pair_t pair;
+    pairStart(&pair, kShortAckTimeout, kPatient);
+    pair.client.hold = true;
+    endSendOne(&pair.client, 1);
+    gnsRequire(gnsSessionOutstandingMessages(pair.client.session) == 1,
+               "the connecting session did not queue its write");
+    const uint64_t connect_after = gnsTestNowMs() + 650;
+    while (gnsTestNowMs() < connect_after)
+    {
+        pairStep(&pair);
+        wwSleepMS(1);
+    }
+    gnsRequire(! pair.client.terminal && ! gnsSessionIsConnected(pair.client.session),
+               "the ACK deadline ran before the connection was ready");
+    pair.client.hold = false;
+    pairConnect(&pair);
+    pairUntil(&pair, pair.server.received == 1, "the write queued during the handshake did not arrive");
+    pairUntil(&pair,
+              gnsSessionOutstandingBytes(pair.client.session) == 0,
+              "the write queued during the handshake was not acknowledged");
+    pairStop(&pair);
+}
+
+/* The peer keeps talking while this side's packets are lost. New writes cannot extend the active ACK wait. */
+static void caseUnacknowledged(void)
+{
+    pair_t pair;
+    pairStart(&pair, kShortAckTimeout, kPatient);
+    pairConnect(&pair);
     pair.client.lose = true;
     endSend(&pair.client, kChunk);
-    const uint64_t deadline = gnsTestNowMs() + kGnsTestDeadlineMs;
+    const uint64_t deadline = gnsTestNowMs() + 3000;
     while (! pair.client.terminal)
     {
         gnsRequire(gnsTestNowMs() < deadline, "a peer that acknowledges nothing never ended the session");
+        endSendOne(&pair.client, 1);
         endSend(&pair.server, 64);
         pairStep(&pair);
         wwSleepMS(1);
@@ -536,6 +726,8 @@ static void caseAbortAndQuiesce(void)
     gnsRequire(! gnsSessionIsAlive(pair.client.session), "an aborted session is still alive");
 
     /* A quiesced session takes no more work, and its application's Finish settles it at once. */
+    quiescenceGateClose(&pair.server.port_admission);
+    quiescenceGateWaitQuiesced(&pair.server.port_admission, quiescenceGateYieldThread, NULL);
     gnsSessionQuiesce(pair.server.session);
     endSend(&pair.server, kChunk);
     gnsSessionAppFinish(pair.server.session);
@@ -549,11 +741,16 @@ static void runCases(void)
     TEST_RUN_CASE(caseTransferAndClose);
     TEST_RUN_CASE(caseServerCloses);
     TEST_RUN_CASE(caseEcho);
+    TEST_RUN_CASE(caseLargeDirectWrite);
+    TEST_RUN_CASE(caseNestedWriteLimit);
     TEST_RUN_CASE(casePressure);
     TEST_RUN_CASE(caseHardCap);
     TEST_RUN_CASE(caseMessageLimit);
     TEST_RUN_CASE(caseMessagesAcknowledged);
+    TEST_RUN_CASE(caseReorderedAcknowledgements);
     TEST_RUN_CASE(caseWindowLimit);
+    TEST_RUN_CASE(caseFirstWriteAfterIdle);
+    TEST_RUN_CASE(caseQueuedDuringHandshake);
     TEST_RUN_CASE(caseUnacknowledged);
     TEST_RUN_CASE(caseCarrierQueueRefuses);
     TEST_RUN_CASE(caseDrainTimeout);

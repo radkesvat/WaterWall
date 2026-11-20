@@ -4,7 +4,7 @@
  * file. This side is the worker session that GnsClient and GnsServer use. The test stands where the UDP adapter
  * would be: it moves each datagram between the session and one socket, and steps the worker loop.
  * Covers the native handshake, stream bytes in both directions across messages of many sizes, the send hold, and a
- * close started by either side. Linux only. */
+ * close started by either side. CTest runs both processes in one private Linux network namespace. */
 
 #include "GnsCommon/port.h"
 #include "GnsCommon/session.h"
@@ -26,12 +26,14 @@ enum
     kTransferBytes = 2 * 1024 * 1024,
     kChunk         = 16384,
     kDeadlineMs    = 30000,
-    kDatagramBytes = 2048, /* more than any datagram GNS sends */
+    kDatagramBytes = 2048,  /* more than any datagram GNS sends */
+    kStockPeerPort = 27020, /* GNS requires an explicit listen port, private to the test namespace. */
 };
 
 typedef struct link_s
 {
     gns_session_t       *session;
+    quiescence_gate_t    admission;
     int                  socket_fd;
     struct sockaddr_in   peer;
     bool                 peer_known;
@@ -113,13 +115,16 @@ static int loopbackSocket(uint16_t *port)
 static void linkOpen(link_t *link, bool client, uint16_t *port)
 {
     memoryZero(link, sizeof(*link));
-    link->echo                  = ! client;
-    link->socket_fd             = loopbackSocket(port);
+    link->echo      = ! client;
+    link->socket_fd = loopbackSocket(port);
+    quiescenceGateInit(&link->admission);
+    gnsRequire(quiescenceGateOpen(&link->admission), "port admission did not open");
     gns_session_config_t config = {
-        .client = client,
-        .wid    = 0,
-        .pool   = getWorkerBufferPool(0),
-        .loop   = getWorkerLoop(0),
+        .client         = client,
+        .wid            = 0,
+        .pool           = getWorkerBufferPool(0),
+        .loop           = getWorkerLoop(0),
+        .port_admission = &link->admission,
     };
     /* The application sends at the same rate. At GNS's default the transfer would take eight seconds each way. */
     cJSON *json = cJSON_Parse("{\"send-rate\":8388608}");
@@ -252,6 +257,7 @@ static void peerWaitReady(int output)
         gnsRequire(got > 0, "the GNS application closed its output");
         used += (size_t) got;
     }
+    gnsRequire(strcmp(text, "ready\n") == 0, "the GNS application did not confirm its listen socket");
 }
 
 /* The application's exit status is its own verdict on the exchange. */
@@ -277,12 +283,8 @@ static void peerRequireSuccess(pid_t child)
 /* GnsClient's role: the session connects to a native GNS server, sends, reads the echo and closes first. */
 static void caseNativeServer(void)
 {
-    /* The library cannot report a port it chose, so the test chooses one: the port a socket just had. */
-    uint16_t  server_port = 0;
-    const int probe       = loopbackSocket(&server_port);
-    close(probe);
     char port[8];
-    snprintf(port, sizeof(port), "%u", (unsigned) server_port);
+    snprintf(port, sizeof(port), "%u", (unsigned) kStockPeerPort);
     int         output = -1;
     const pid_t peer   = peerStart("server", port, NULL, &output);
     peerWaitReady(output);
@@ -291,7 +293,7 @@ static void caseNativeServer(void)
     uint16_t local_port = 0;
     linkOpen(&link, true, &local_port);
     link.peer = (struct sockaddr_in) {
-        .sin_family = AF_INET, .sin_port = htons(server_port), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+        .sin_family = AF_INET, .sin_port = htons(kStockPeerPort), .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
     link.peer_known = true;
     gnsSessionStart(link.session);
     gnsRequire(linkRun(&link, linkEchoComplete) && link.terminal_calls == 0,

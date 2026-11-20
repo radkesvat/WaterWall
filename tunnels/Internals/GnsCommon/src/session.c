@@ -42,10 +42,6 @@ typedef struct gns_staged_s
 #define i_key  gns_staged_t
 #include "stc/deque.h"
 
-#define i_type gns_offset_queue_t
-#define i_key  uint64_t
-#include "stc/deque.h"
-
 struct gns_session_s
 {
     gns_session_config_t     config;
@@ -61,14 +57,13 @@ struct gns_session_s
     wtimer_t                *timer;
     gns_work_queue_t         work;        /* input not yet given to GNS, oldest first */
     gns_staged_queue_t       inbound;     /* stream bytes taken from GNS and not yet handed to the owner */
-    gns_offset_queue_t       messages;    /* stream offsets at which unacknowledged messages end, oldest first */
     buffer_budget_t          budget;      /* bounds what work may retain */
-    uint64_t                 submitted;   /* stream bytes given to GNS so far */
     uint64_t                 outstanding; /* queued plus unacknowledged bytes: last reading plus later writes */
+    size_t                   outstanding_messages; /* native queued and retained messages, plus later writes */
     uint64_t                 connect_deadline;
     uint64_t                 close_deadline;
     uint64_t                 linger_deadline;
-    uint64_t                 progress_deadline; /* until when the peer has to acknowledge something */
+    uint64_t                 progress_deadline; /* zero when no ACK wait is active */
     bool                     opened : 1;        /* the listen socket or the connection was asked for */
     bool                     started : 1;
     bool                     driving : 1;
@@ -137,7 +132,6 @@ void gnsSessionRelease(gns_session_t *s)
     gns_work_queue_t_drop(&s->work);
     sessionDiscardInbound(s);
     gns_staged_queue_t_drop(&s->inbound);
-    gns_offset_queue_t_drop(&s->messages);
     bufferbudgetAssertEmpty(&s->budget);
     gnsPortRelease(s->port);
     if (s->callbacks.destroy_user != NULL)
@@ -279,31 +273,48 @@ static bool sessionOpen(gns_session_t *s)
     return s->listen != 0;
 }
 
-/* Gives accepted application bytes to GNS as messages of at most 65,536 bytes. Returns false when a limit refused
- * them; a payload that is accepted below the limits is admitted whole. */
+/* GNS's reliable stream header has one byte and a length varint above 31 bytes. This session exclusively
+ * sends reliable messages on lane zero, so the native header has no message number gaps to encode. */
+static uint32_t sessionFramingSize(uint32_t length)
+{
+    assert(length <= kGnsMessageBytesMaximum);
+    return 1U + (length >= 32U) + (length >= 4096U);
+}
+
+/* Gives accepted application bytes to GNS as messages of at most 65,536 bytes. Check the absolute window
+ * and native message ceiling before submitting any part of this write. */
 static bool sessionWrite(gns_session_t *s, const sbuf_t *payload)
 {
-    const uint32_t length = (uint32_t) sbufGetLength(payload);
+    const size_t length = sbufGetLength(payload);
     if (length == 0 || s->connection == 0 || s->close_sent)
     {
         return true;
     }
-    const size_t waiting = (size_t) gns_offset_queue_t_size(&s->messages);
-    if (s->outstanding > s->config.settings.send_hard_limit || waiting >= kGnsMessagesHardLimit)
+    const size_t   full_chunks = length / kGnsMessageBytesMaximum;
+    const uint32_t tail        = (uint32_t) (length % kGnsMessageBytesMaximum);
+    const size_t   chunks      = full_chunks + (tail != 0);
+    const uint64_t framing     = (uint64_t) full_chunks * sessionFramingSize(kGnsMessageBytesMaximum) +
+                             (tail != 0 ? sessionFramingSize(tail) : 0);
+    const uint64_t window = gnsSettingsNativeSendWindow(&s->config.settings);
+    assert(s->config.settings.send_hard_limit <= window);
+    assert(s->outstanding_messages <= kGnsMessagesHardLimit);
+    if (length > window || s->outstanding > s->config.settings.send_hard_limit ||
+        (uint64_t) length + framing > window - s->outstanding ||
+        chunks > kGnsMessagesHardLimit - s->outstanding_messages)
     {
         LOGW("Gns%s: closing session: the send limit refused a payload "
-             "(unacknowledged_bytes=%llu, unacknowledged_messages=%zu, send-buffer-limit=%u, payload_bytes=%u)",
+             "(unacknowledged_bytes=%llu, unacknowledged_messages=%zu, send-buffer-limit=%u, payload_bytes=%zu)",
              sessionRole(s),
              (unsigned long long) s->outstanding,
-             waiting,
+             s->outstanding_messages,
              s->config.settings.send_buffer_limit,
              length);
         return false;
     }
     const uint8_t *bytes = sbufGetRawPtr(payload);
-    for (uint32_t offset = 0; offset < length;)
+    for (size_t offset = 0; offset < length;)
     {
-        const uint32_t          chunk  = min(length - offset, (uint32_t) kGnsMessageBytesMaximum);
+        const uint32_t          chunk  = (uint32_t) min(length - offset, (size_t) kGnsMessageBytesMaximum);
         const gns_engine_send_t result = gnsEngineSend(s->connection, bytes + offset, chunk);
         if (result == kGnsEngineSendFailed)
         {
@@ -314,10 +325,13 @@ static bool sessionWrite(gns_session_t *s, const sbuf_t *payload)
             LOGW("Gns%s: closing session: GNS refused a message below the session's own limit", sessionRole(s));
             return false;
         }
+        if (s->connected && s->outstanding == 0)
+        {
+            s->progress_deadline = sessionDeadline(sessionNow(s), s->config.settings.no_recv_timeout_ms);
+        }
         offset += chunk;
-        s->submitted += chunk;
-        s->outstanding += chunk;
-        gns_offset_queue_t_push_back(&s->messages, s->submitted);
+        s->outstanding += chunk + sessionFramingSize(chunk);
+        ++s->outstanding_messages;
     }
     return true;
 }
@@ -409,12 +423,17 @@ static void sessionPoll(gns_session_t *s)
         }
     }
 
-    /* GNS ends a connection that hears nothing. A peer that keeps talking and acknowledges nothing would hold
-     * the stream for ever, so the session ends that wait itself. What GNS holds is its last reading plus what
-     * was written since, unless the peer acknowledged something. */
-    const uint64_t reading = (uint64_t) status.queued_bytes + status.unacked_bytes;
-    const uint64_t now     = sessionNow(s);
-    if (! s->connected || reading == 0 || reading < s->outstanding)
+    /* Retries move bytes between the native counters. Only acknowledgement reduces their sum. */
+    const uint64_t reading  = (uint64_t) status.queued_bytes + status.unacked_bytes;
+    const uint64_t now      = sessionNow(s);
+    const bool     progress = reading < s->outstanding;
+    s->outstanding          = reading;
+    s->outstanding_messages = status.outstanding_messages;
+    if (! s->connected || reading == 0)
+    {
+        s->progress_deadline = 0;
+    }
+    else if (s->progress_deadline == 0 || progress)
     {
         s->progress_deadline = sessionDeadline(now, s->config.settings.no_recv_timeout_ms);
     }
@@ -427,15 +446,6 @@ static void sessionPoll(gns_session_t *s)
              (unsigned long long) reading);
         sessionFail(s, kGnsSessionPeerClosed);
         return;
-    }
-
-    /* Messages whose last byte is acknowledged leave the ring. GNS counts a few header bytes per message as
-     * outstanding, so a message can stay a little longer than it has to; it never leaves early. */
-    s->outstanding              = reading;
-    const uint64_t acknowledged = s->submitted - min(s->submitted, s->outstanding);
-    while (! gns_offset_queue_t_is_empty(&s->messages) && *gns_offset_queue_t_front(&s->messages) <= acknowledged)
-    {
-        gns_offset_queue_t_pop_front(&s->messages);
     }
 
     /* GNS carries 16 bits of each packet number. A round trip that holds this many of the packets being sent is
@@ -455,7 +465,7 @@ static void sessionPoll(gns_session_t *s)
         return;
     }
     const uint32_t limit   = s->config.settings.send_buffer_limit;
-    const size_t   waiting = (size_t) gns_offset_queue_t_size(&s->messages);
+    const size_t   waiting = s->outstanding_messages;
     bool           hold    = s->pressure;
     if (s->outstanding > limit || waiting >= kGnsMessagesHold)
     {
@@ -493,6 +503,10 @@ static void sessionArmTimer(gns_session_t *s, uint64_t now)
     else if (! s->config.client && ! s->connected)
     {
         delay = min(delay, s->connect_deadline > now ? s->connect_deadline - now : 1U);
+    }
+    if (! s->close_sent && s->progress_deadline != 0)
+    {
+        delay = min(delay, s->progress_deadline > now ? s->progress_deadline - now : 1U);
     }
     wtimerReset(s->timer, max((uint32_t) delay, 1U));
 }
@@ -614,7 +628,9 @@ static void sessionSubmit(gns_session_t *s, sbuf_t *buffer, bool wire)
     else
     {
         gns_work_t event = {.buffer = buffer, .wire = wire};
-        if (! bufferbudgetTryReserve(&s->budget, buffer, &event.reservation))
+        /* Only input still waiting for startup or an older drive retains its buffer across work. */
+        const bool must_wait = ! s->started || s->driving;
+        if (must_wait && ! bufferbudgetTryReserve(&s->budget, buffer, &event.reservation))
         {
             const buffer_budget_cost_t used   = bufferbudgetGetUsage(&s->budget);
             const buffer_budget_cost_t limits = bufferbudgetGetLimits(&s->budget);
@@ -677,6 +693,7 @@ void gnsSessionStart(gns_session_t *s)
 
 void gnsSessionQuiesce(gns_session_t *s)
 {
+    assert(! quiescenceGateIsActive(s->config.port_admission));
     s->quiesced = true;
     sessionDeleteTimer(s);
 }
@@ -697,15 +714,15 @@ static void sessionWake(void *user)
 gns_session_t *gnsSessionCreate(const gns_session_config_t *config, const gns_session_callbacks_t *callbacks,
                                 void *user)
 {
-    assert(config != NULL && callbacks != NULL && config->pool != NULL && config->loop != NULL);
+    assert(config != NULL && callbacks != NULL && config->pool != NULL && config->loop != NULL &&
+           config->port_admission != NULL);
     assert(callbacks->emit != NULL && callbacks->terminal != NULL);
     gns_session_t *s = memoryAllocate(sizeof(*s));
     *s               = (gns_session_t) {.config = *config, .callbacks = *callbacks, .user = user, .references = 1};
     bufferbudgetInit(&s->budget,
                      (buffer_budget_cost_t) {.bytes = kGnsSessionNestedBytes, .charge = kGnsSessionNestedCharge});
-    s->connect_deadline  = sessionDeadline(sessionNow(s), config->settings.timeout_initial_ms);
-    s->progress_deadline = UINT64_MAX;
-    s->port              = gnsPortCreate(config->wid, config->settings.carrier_queue_limit, sessionWake, s);
+    s->connect_deadline = sessionDeadline(sessionNow(s), config->settings.timeout_initial_ms);
+    s->port = gnsPortCreate(config->wid, config->settings.carrier_queue_limit, config->port_admission, sessionWake, s);
 
     /* Synthetic addresses are only registration keys. The port's token is unique among the ports that exist. */
     const uint64_t key = (uint64_t) gnsPortToken(s->port);
@@ -753,7 +770,7 @@ uint64_t gnsSessionOutstandingBytes(const gns_session_t *s)
 
 size_t gnsSessionOutstandingMessages(const gns_session_t *s)
 {
-    return (size_t) gns_offset_queue_t_size(&s->messages);
+    return s->outstanding_messages;
 }
 
 uint64_t gnsSessionRefusedDatagrams(const gns_session_t *s)

@@ -45,13 +45,18 @@ typedef struct gns_settings_s
     uint32_t timeout_initial_ms;     /* GNS TimeoutInitial */
     uint32_t send_rate;              /* bytes per second; GNS SendRateMin and SendRateMax */
     uint32_t send_buffer_limit;      /* producer hold threshold for queued plus unacknowledged bytes */
-    uint32_t send_hard_limit;        /* refusal threshold: twice the hold, at most kGnsWindowPackets packets' worth */
+    uint32_t send_hard_limit;        /* pre-write refusal threshold: twice the hold, capped at the native window */
     uint32_t receive_buffer_limit;   /* GNS RecvBufferSize; the largest accepted message is half of it */
     uint32_t receive_messages_limit; /* GNS RecvBufferMessages, derived from the byte limit */
     uint32_t carrier_queue_limit;    /* outgoing datagrams that may wait for the carrier per session */
     uint32_t close_drain_timeout_ms; /* how long a graceful close may wait for the peer */
 } gns_settings_t;
 
-/* Reads the node's "settings" object. A missing object or field keeps its default. On the first invalid field it
- * logs a message that names node_type and the field, and returns false. */
+static inline uint32_t gnsSettingsNativeSendWindow(const gns_settings_t *settings)
+{
+    return kGnsWindowPackets * (settings->packet_size - kGnsPacketOverhead);
+}
+
+/* Reads an optional settings object. An omitted object or key keeps its default. Invalid settings are logged
+ * with the node type and the offending key when applicable. */
 bool gnsSettingsParse(gns_settings_t *settings, const cJSON *json, const char *node_type);

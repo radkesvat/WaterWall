@@ -20,6 +20,7 @@ struct gns_port_s
     bool                 detached;
     wid_t                owner;
     int64_t              token;
+    quiescence_gate_t   *admission;
     gns_port_wake_fn     wake;
     void                *user;
 };
@@ -51,17 +52,18 @@ static void portUnref(gns_port_t *port)
     }
 }
 
-static void portWakeOnWorker(worker_t *worker, void *arg1, void *arg2, void *arg3)
+static void portWakeOnWorker(void *worker, void *arg1, void *arg2, void *arg3)
 {
     discard     worker;
     discard     arg2;
     discard     arg3;
     gns_port_t *port = arg1;
+    assert(((const worker_t *) worker)->wid == port->owner);
     mutexLock(&port->lock);
     port->wake_pending  = false;
-    const bool detached = port->detached;
+    const bool dispatch = ! port->detached && quiescenceGateIsActive(port->admission);
     mutexUnlock(&port->lock);
-    if (! detached)
+    if (dispatch)
     {
         port->wake(port->user);
     }
@@ -99,19 +101,21 @@ static void portPostWake(gns_port_t *port)
 {
     /* Accepted work runs portWakeOnWorker or, when the worker is going away, portWakeCancelled; a refusal runs the
      * cancellation before this returns. Either way the reference is released exactly once. */
-    const worker_message_submit_result_e result = sendWorkerMessageForceQueueWithCleanup(
-        port->owner, (WorkerMessageCallback) portWakeOnWorker, portWakeCancelled, port, NULL, NULL);
+    const worker_message_submit_result_e result =
+        sendWorkerMessageForceQueueWithCleanup(port->owner, portWakeOnWorker, portWakeCancelled, port, NULL, NULL);
     discard result;
 }
 
-gns_port_t *gnsPortCreate(wid_t owner, uint32_t queue_limit, gns_port_wake_fn wake, void *user)
+gns_port_t *gnsPortCreate(wid_t owner, uint32_t queue_limit, quiescence_gate_t *admission, gns_port_wake_fn wake,
+                          void *user)
 {
-    assert(wake != NULL && queue_limit > 0);
+    assert(wake != NULL && queue_limit > 0 && admission != NULL);
     gns_port_t *port = memoryAllocateZero(sizeof(*port));
     mutexInit(&port->lock);
     port->references = 1;
     port->limit      = queue_limit;
     port->owner      = owner;
+    port->admission  = admission;
     port->wake       = wake;
     port->user       = user;
 
@@ -150,18 +154,25 @@ int64_t gnsPortToken(const gns_port_t *port)
 
 bool gnsPortSend(void *user, const uint8_t *data, size_t length, const gns_external_addr_t *to)
 {
-    discard     to;
-    gns_port_t *port = user;
+    discard            to;
+    gns_port_t        *port      = user;
+    quiescence_gate_t *admission = port->admission;
+    if (! quiescenceGateEnter(admission))
+    {
+        return true; /* the wire is closed */
+    }
     mutexLock(&port->lock);
     if (port->detached)
     {
         mutexUnlock(&port->lock);
+        quiescenceGateLeave(admission);
         return true; /* the session is gone and so is its wire */
     }
     if (port->count >= port->limit)
     {
         ++port->refused;
         mutexUnlock(&port->lock);
+        quiescenceGateLeave(admission);
         return false;
     }
     gns_port_datagram_t *datagram = memoryAllocate(sizeof(*datagram) + length);
@@ -184,6 +195,7 @@ bool gnsPortSend(void *user, const uint8_t *data, size_t length, const gns_exter
     {
         portPostWake(port);
     }
+    quiescenceGateLeave(admission);
     return true;
 }
 
@@ -192,35 +204,35 @@ static bool portAdmit(int64_t token, uint32_t connection)
 {
     const uint32_t slot       = (uint32_t) ((uint64_t) token & UINT32_MAX);
     const uint32_t generation = (uint32_t) ((uint64_t) token >> 32);
-    gns_port_t    *port       = NULL;
     mutexLock(&g_ports.lock);
-    if (slot < g_ports.capacity && g_ports.generations[slot] == generation && g_ports.ports[slot] != NULL)
-    {
-        port = g_ports.ports[slot];
-        mutexLock(&port->lock);
-        ++port->references;
-        mutexUnlock(&port->lock);
-    }
-    mutexUnlock(&g_ports.lock);
+    gns_port_t *port = slot < g_ports.capacity && g_ports.generations[slot] == generation ? g_ports.ports[slot] : NULL;
     if (port == NULL)
     {
+        mutexUnlock(&g_ports.lock);
         return false;
     }
-    bool admitted = false;
-    bool wake     = false;
+    /* Detach retires the token under the table lock. Enter the node's gate before releasing that protection. */
+    quiescence_gate_t *admission = port->admission;
+    if (! quiescenceGateEnter(admission))
+    {
+        mutexUnlock(&g_ports.lock);
+        return false;
+    }
     mutexLock(&port->lock);
-    if (! port->detached && port->incoming == 0)
+    const bool admitted = ! port->detached && port->incoming == 0;
+    bool       wake     = false;
+    if (admitted)
     {
         port->incoming = connection;
-        admitted       = true;
         wake           = portArrivedLocked(port);
     }
     mutexUnlock(&port->lock);
+    mutexUnlock(&g_ports.lock);
     if (wake)
     {
         portPostWake(port);
     }
-    portUnref(port);
+    quiescenceGateLeave(admission);
     return admitted;
 }
 
@@ -257,10 +269,12 @@ bool gnsPortLeave(gns_port_t *port)
 
 void gnsPortYield(gns_port_t *port)
 {
-    bool wake = false;
+    quiescence_gate_t *admission = port->admission;
+    const bool         admitted  = quiescenceGateEnter(admission);
+    bool               wake      = false;
     mutexLock(&port->lock);
     port->driving = false;
-    if (port->dirty && ! port->detached)
+    if (admitted && port->dirty && ! port->detached)
     {
         wake = portArrivedLocked(port);
     }
@@ -268,6 +282,10 @@ void gnsPortYield(gns_port_t *port)
     if (wake)
     {
         portPostWake(port);
+    }
+    if (admitted)
+    {
+        quiescenceGateLeave(admission);
     }
 }
 

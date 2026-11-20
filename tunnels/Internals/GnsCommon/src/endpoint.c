@@ -18,7 +18,7 @@ typedef struct gns_endpoint_tstate_s
     gns_settings_t         settings; /* immutable after construction */
     gns_endpoint_role_t    role;
     const gns_output_t    *output;
-    atomic_bool            stopping;
+    quiescence_gate_t      port_admission;
     wid_t                  workers_count;
     gns_endpoint_worker_t *workers;
 } gns_endpoint_tstate_t;
@@ -49,7 +49,9 @@ struct gns_association_s
     bool               owned_init_entered; /* Init was sent on the line this node created */
     bool               carrier_finished;   /* the carrier's neighbour finished it, or was told it is finished */
     bool               carrier_established;
+    bool               application_established;
     bool               carrier_paused;
+    bool               application_paused;
 };
 
 static void endpointLinestateDestroy(gns_endpoint_lstate_t *ls)
@@ -68,7 +70,7 @@ static void endpointSignal(tunnel_t *t, line_t *line, TunnelFlowRoutineEst signa
 
 static bool endpointAdmissionOpen(const gns_endpoint_tstate_t *ts, wid_t wid)
 {
-    return ! atomicLoadRelaxed(&ts->stopping) && ! ts->workers[wid].quiescing &&
+    return quiescenceGateIsActive(&ts->port_admission) && ! ts->workers[wid].quiescing &&
            wloopNormalDispatchAllowed(getWorkerLoop(wid));
 }
 
@@ -116,31 +118,26 @@ static void associationPressure(void *user, bool paused)
     endpointSignal(a->tunnel, a->application, paused ? ts->output->application_pause : ts->output->application_resume);
 }
 
-static void serverCopyContext(line_t *service, line_t *carrier)
+static void copyCompanionContext(line_t *companion, const line_t *original, uint8_t protocol)
 {
-    addresscontextCopy(lineGetSourceAddressContext(service), lineGetSourceAddressContext(carrier));
-    addresscontextCopy(lineGetDestinationAddressContext(service), lineGetDestinationAddressContext(carrier));
-    lineGetRoutingContext(service)->local_listener_port = lineGetRoutingContext(carrier)->local_listener_port;
-    lineGetRoutingContext(service)->peer_source_port    = lineGetRoutingContext(carrier)->peer_source_port;
-    lineCopyUsers(service, carrier);
-    if (lineIsFallback(carrier))
+    lineCopyContext(companion, original);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(companion), protocol);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(companion), protocol);
+    if (lineIsFallback(original))
     {
-        lineMarkFallback(service);
-        if (lineHasCloseLingerReason(carrier, kLineCloseLingerPeerWriteShutdown))
+        lineMarkFallback(companion);
+        if (lineHasCloseLingerReason(original, kLineCloseLingerPeerWriteShutdown))
         {
-            lineRequestCloseLinger(service, kLineCloseLingerPeerWriteShutdown);
+            lineRequestCloseLinger(companion, kLineCloseLingerPeerWriteShutdown);
         }
     }
-    /* The service carries a reliable stream; the carrier stays UDP. */
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(service), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(service), IP_PROTO_TCP);
-    if (linePrefersOrdinaryReadUpstream(carrier))
+    if (linePrefersOrdinaryReadUpstream(original))
     {
-        linePreferOrdinaryReadUpstream(service);
+        linePreferOrdinaryReadUpstream(companion);
     }
-    if (linePrefersOrdinaryReadDownstream(carrier))
+    if (linePrefersOrdinaryReadDownstream(original))
     {
-        linePreferOrdinaryReadDownstream(service);
+        linePreferOrdinaryReadDownstream(companion);
     }
 }
 
@@ -155,10 +152,13 @@ static void serverPromote(gns_association_t *a)
         return;
     }
     line_t *service = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), a->wid);
-    serverCopyContext(service, a->carrier);
+    copyCompanionContext(service, a->carrier, IP_PROTO_TCP);
     gns_endpoint_lstate_t *service_ls = lineGetState(service, t);
     *service_ls                       = (gns_endpoint_lstate_t) {.association = a, .role = kGnsApplicationLine};
-    a->application                    = service;
+    /* Take the earlier carrier Est before publishing the service. Any first Est during Init or Pause is
+     * forwarded by its handler, without becoming pending here. */
+    const bool pending_est = a->carrier_established;
+    a->application         = service;
 
     /* Init can finish the service, the carrier or both. Each step checks the association again. */
     gns_session_t *session = a->session;
@@ -173,7 +173,7 @@ static void serverPromote(gns_association_t *a)
         ts->output->application_pause(t, service);
         attached = lineIsAlive(service) && a->application == service;
     }
-    if (attached && a->carrier_established)
+    if (attached && pending_est)
     {
         ts->output->application_est(t, service);
     }
@@ -297,11 +297,12 @@ static gns_association_t *associationCreate(tunnel_t *t, wid_t wid, line_t *appl
     a->wid                            = wid;
     a->pool                           = getWorkerBufferPool(wid);
     const gns_session_config_t config = {
-        .settings = ts->settings,
-        .client   = ts->role == kGnsClientEndpoint,
-        .wid      = wid,
-        .pool     = a->pool,
-        .loop     = getWorkerLoop(wid),
+        .settings       = ts->settings,
+        .client         = ts->role == kGnsClientEndpoint,
+        .wid            = wid,
+        .pool           = a->pool,
+        .loop           = getWorkerLoop(wid),
+        .port_admission = &ts->port_admission,
     };
     const gns_session_callbacks_t callbacks = {
         .emit         = associationEmit,
@@ -331,7 +332,7 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
 {
     gns_endpoint_tstate_t *ts  = tunnelGetState(t);
     const wid_t            wid = lineGetWID(application);
-    assert(wid < ts->workers_count);
+    assert(lineIsOnCurrentWorker(application) && wid < ts->workers_count);
     gns_endpoint_lstate_t *application_ls = lineGetState(application, t);
     endpointLinestateDestroy(application_ls);
     if (! endpointAdmissionOpen(ts, wid))
@@ -340,23 +341,11 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
     }
 
     line_t *carrier = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
-    addresscontextCopy(lineGetSourceAddressContext(carrier), lineGetSourceAddressContext(application));
-    addresscontextCopy(lineGetDestinationAddressContext(carrier), lineGetDestinationAddressContext(application));
-    carrier->routing_context.local_listener_port = application->routing_context.local_listener_port;
-    carrier->routing_context.peer_source_port    = application->routing_context.peer_source_port;
-    lineCopyUsers(carrier, application);
-    carrier->prefer_ordinary_read_u = application->prefer_ordinary_read_u;
-    carrier->prefer_ordinary_read_d = application->prefer_ordinary_read_d;
-    carrier->fallback_mode          = application->fallback_mode;
-    if (lineHasCloseLingerReason(application, kLineCloseLingerPeerWriteShutdown))
-    {
-        lineRequestCloseLinger(carrier, kLineCloseLingerPeerWriteShutdown);
-    }
-    /* The application carries a reliable stream; the carrier is UDP. */
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
+    copyCompanionContext(carrier, application, IP_PROTO_UDP);
+    /* The UDP adapter routes this carrier independently of the application's destination. */
+    address_context_t *destination = lineGetDestinationAddressContext(carrier);
+    addresscontextSetDestinationPinned(destination, false);
+    addresscontextSetResolverDns(destination, false);
 
     gns_association_t *a = associationCreate(t, wid, application, carrier);
     if (a == NULL)
@@ -373,7 +362,7 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
     lineRef(carrier);
     a->owned_init_entered = true;
     ts->output->init_owned(t, carrier);
-    if (lineIsAlive(carrier) && gnsSessionIsAlive(session))
+    if (lineIsAlive(carrier) && a->carrier == carrier && a->session == session)
     {
         gnsSessionStart(session);
     }
@@ -408,8 +397,6 @@ void gnsEndpointServerInit(tunnel_t *t, line_t *carrier)
     }
     lineRef(carrier); /* physical reference only; the UDP owner destroys the line */
     *ls = (gns_endpoint_lstate_t) {.association = a, .role = kGnsCarrierLine};
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(carrier), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(carrier), IP_PROTO_UDP);
     gnsSessionStart(a->session);
 }
 
@@ -439,8 +426,9 @@ void gnsEndpointApplicationEst(tunnel_t *t, line_t *line)
     assert(ls->role == kGnsApplicationLine && ls->association != NULL);
     gns_association_t           *a  = ls->association;
     const gns_endpoint_tstate_t *ts = tunnelGetState(t);
-    if (ts->output->carrier_est != NULL && ! a->carrier_finished)
+    if (ts->output->carrier_est != NULL && ! a->carrier_finished && ! a->application_established)
     {
+        a->application_established = true;
         endpointSignal(t, a->carrier, ts->output->carrier_est);
     }
 }
@@ -452,6 +440,10 @@ void gnsEndpointCarrierEst(tunnel_t *t, line_t *line)
     gns_association_t           *a  = ls->association;
     const gns_endpoint_tstate_t *ts = tunnelGetState(t);
     /* Transport readiness, not protocol readiness. A server remembers it for a service that does not exist yet. */
+    if (a->carrier_established)
+    {
+        return;
+    }
     a->carrier_established = true;
     if (a->session != NULL && a->application != NULL)
     {
@@ -468,6 +460,7 @@ void gnsEndpointSetApplicationPaused(tunnel_t *t, line_t *line, bool paused)
     /* The stream's consumer is full or ready again: stop or restart datagram ingress at the UDP adapter. */
     if (! a->carrier_finished)
     {
+        a->application_paused = paused;
         endpointSignal(t, a->carrier, paused ? ts->output->carrier_pause : ts->output->carrier_resume);
     }
 }
@@ -496,20 +489,31 @@ void gnsEndpointApplicationFinish(tunnel_t *t, line_t *line)
     gns_session_t         *session = a->session;
     gnsSessionRetain(session);
     /* Clear both directions first. No later payload or pressure notice targets this application. */
-    a->application = NULL;
+    const bool release_read_hold = a->application_paused;
+    a->application               = NULL;
+    a->application_paused        = false;
     endpointLinestateDestroy(ls);
     if (ts->role == kGnsServerEndpoint)
     {
         /* This node created the service line. It is dead before this handler returns. */
         lineDestroy(line);
     }
-    if (a->carrier_finished || atomicLoadRelaxed(&ts->stopping) || ts->workers[a->wid].quiescing)
+    if (a->carrier_finished || ! endpointAdmissionOpen(ts, a->wid))
     {
         gnsSessionAbort(session, kGnsSessionAborted);
     }
     else
     {
+        line_t *carrier = a->carrier;
+        lineRef(carrier);
         gnsSessionAppFinish(session);
+        /* A detached application cannot release its hold. Reopen carrier ingress for the remaining ACKs. */
+        if (release_read_hold && lineIsAlive(carrier) && a->carrier == carrier && a->session == session &&
+            ! a->carrier_finished && endpointAdmissionOpen(ts, a->wid))
+        {
+            ts->output->carrier_resume(t, carrier);
+        }
+        lineUnref(carrier);
     }
     gnsSessionRelease(session);
 }
@@ -541,7 +545,7 @@ static void endpointOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *
 {
     discard                context;
     gns_endpoint_tstate_t *ts = tunnelGetState(t);
-    atomicStoreRelaxed(&ts->stopping, true);
+    quiescenceGateClose(&ts->port_admission);
 }
 
 static void endpointOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
@@ -554,6 +558,13 @@ static void endpointOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_c
     {
         gnsSessionQuiesce(a->session);
     }
+}
+
+static void endpointOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context)
+{
+    discard                context;
+    gns_endpoint_tstate_t *ts = tunnelGetState(t);
+    quiescenceGateWaitQuiesced(&ts->port_admission, quiescenceGateYieldThread, NULL);
 }
 
 static void endpointOnWorkerStop(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
@@ -606,11 +617,17 @@ tunnel_t *gnsEndpointCreate(node_t *node, gns_endpoint_role_t role, const gns_ou
         tunnelDestroy(t);
         return NULL;
     }
-    atomic_init(&ts->stopping, false);
+    quiescenceGateInit(&ts->port_admission);
+    if (UNLIKELY(! quiescenceGateOpen(&ts->port_admission)))
+    {
+        LOGF("%s: could not open a new port admission gate", node_type);
+        abortProgramNow(1);
+    }
     ts->workers_count   = getWorkersCount();
     ts->workers         = memoryAllocateZero(sizeof(*ts->workers) * ts->workers_count);
     t->onQuiesceRequest = endpointOnQuiesceRequest;
     t->onWorkerQuiesce  = endpointOnWorkerQuiesce;
+    t->onQuiesceWait    = endpointOnQuiesceWait;
     t->onWorkerStop     = endpointOnWorkerStop;
     t->onDestroy        = endpointOnDestroy;
     return t;

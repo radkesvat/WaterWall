@@ -1,5 +1,5 @@
 # GameNetworkingSockets keeps its own service thread and reads its own clock, so
-# these tests run in real time. They use an in-memory link and no socket.
+# these tests run in real time. Only the stock-peer interop case uses UDP sockets.
 
 # Under ThreadSanitizer the library's own lock is invisible (see the suppression
 # file), so memory that the uninstrumented library touches through intercepted
@@ -35,11 +35,17 @@ endif()
 if(TARGET GnsCommon)
   waterwall_add_native_executable(gns_settings_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_settings_test.c
-    LIBRARIES GnsCommon ww)
+            ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_test_logging.cc
+    LIBRARIES GnsCommon ww WaterWall::Gns)
   add_waterwall_unit_test(waterwall.gns_settings_unit gns_settings_test "unit;tunnels;gns;settings")
   waterwall_add_native_executable(gns_port_test SUPPORT
     SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/gns/gns_port_test.c
     LIBRARIES GnsCommon ww)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_compile_definitions(gns_port_test PRIVATE GNS_PORT_TEST_WRAP)
+    target_link_options(gns_port_test PRIVATE
+      "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup" "-Wl,--wrap=memoryFree")
+  endif()
   add_waterwall_unit_test(waterwall.gns_port_unit gns_port_test "unit;tunnels;gns;port;engine;close" 180)
   set_property(TEST waterwall.gns_port_unit APPEND PROPERTY
     ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
@@ -60,7 +66,7 @@ if(TARGET GnsCommon)
       ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
   endif()
   # The socket interop test runs a plain GameNetworkingSockets application in a
-  # second process. That program compiles upstream's own socket file, which
+  # second process in the same private network namespace. It compiles upstream's own socket file, which
   # defines every low-level function the library calls, so the linker never
   # takes the external transport out of the archive: two definitions of those
   # functions would stop the link.
@@ -83,8 +89,9 @@ if(TARGET GnsCommon)
       LIBRARIES GnsCommon ww
       DEFINITIONS GNS_STOCK_PEER="$<TARGET_FILE:gns_stock_peer>")
     add_dependencies(gns_socket_interop_test gns_stock_peer)
-    add_waterwall_unit_test(waterwall.gns_socket_interop_unit gns_socket_interop_test
-      "unit;tunnels;gns;session;interop" 120)
+    waterwall_register_native_test(waterwall.gns_socket_interop_unit gns_socket_interop_test
+      "unit;tunnels;gns;session;interop"
+      TIMEOUT 120 AGGREGATE waterwall_unit_tests NETWORK_NAMESPACE)
     set_property(TEST waterwall.gns_socket_interop_unit APPEND PROPERTY
       ENVIRONMENT "TSAN_OPTIONS=${WATERWALL_GNS_TSAN_OPTIONS}")
   endif()

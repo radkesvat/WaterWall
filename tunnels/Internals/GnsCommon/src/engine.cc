@@ -35,7 +35,7 @@ void onLibraryOutput(ESteamNetworkingSocketsDebugOutputType type, const char *te
     {
         g_log(kGnsEngineLogError, text);
     }
-    else if (type == k_ESteamNetworkingSocketsDebugOutputType_Important)
+    else if (type <= k_ESteamNetworkingSocketsDebugOutputType_Warning)
     {
         g_log(kGnsEngineLogWarning, text);
     }
@@ -185,10 +185,11 @@ void gnsEngineStatus(uint32_t connection, gns_engine_status_t *status)
     default:
         return; /* closed by this side: the handle is no longer the application's */
     }
-    status->queued_bytes       = (uint32_t) now.m_cbPendingReliable;
-    status->unacked_bytes      = (uint32_t) now.m_cbSentUnackedReliable;
-    status->ping_ms            = now.m_nPing > 0 ? (uint32_t) now.m_nPing : 0;
-    status->packets_per_second = now.m_flOutPacketsPerSec > 0 ? (uint32_t) now.m_flOutPacketsPerSec : 0;
+    status->queued_bytes         = (uint32_t) now.m_cbPendingReliable;
+    status->unacked_bytes        = (uint32_t) now.m_cbSentUnackedReliable;
+    status->outstanding_messages = now.reserved[GNS_REALTIME_OUTSTANDING_MESSAGES_SLOT];
+    status->ping_ms              = now.m_nPing > 0 ? (uint32_t) now.m_nPing : 0;
+    status->packets_per_second   = now.m_flOutPacketsPerSec > 0 ? (uint32_t) now.m_flOutPacketsPerSec : 0;
 }
 
 gns_engine_send_t gnsEngineSend(uint32_t connection, const uint8_t *data, uint32_t length)
