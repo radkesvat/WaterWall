@@ -274,6 +274,17 @@ static bool softiplimiterRowExpired(const softiplimiter_ip_row_t *row, uint64_t 
     return now_ms > last_seen && now_ms - last_seen > tolerance_ms;
 }
 
+/* Workers sample time before taking the table lock. Preserve the newest sample
+ * when a delayed admission or payload refresh reaches a live row. */
+static void softiplimiterRefreshRow(softiplimiter_ip_row_t *row, uint64_t now_ms)
+{
+    uint64_t seen = atomicLoadU64Relaxed(&row->last_seen_ms);
+    while (seen < now_ms && ! atomicCompareExchangeWeakU64Explicit(
+                                &row->last_seen_ms, &seen, now_ms, memory_order_relaxed, memory_order_relaxed))
+    {
+    }
+}
+
 static void softiplimiterEntryRemoveAt(softiplimiter_identity_entry_t *entry, uint8_t index)
 {
     assert(index < entry->ip_count);
@@ -355,7 +366,7 @@ bool softiplimiterTableAdmit(softiplimiter_identity_map_t *table, uint64_t *gene
     {
         softiplimiter_ip_row_t *row = &entry->ips[row_index];
         row->refs += 1U;
-        atomicStoreU64Relaxed(&row->last_seen_ms, now_ms);
+        softiplimiterRefreshRow(row, now_ms);
         softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit, row->generation);
         return true;
     }
@@ -407,7 +418,7 @@ bool softiplimiterTableTouch(softiplimiter_identity_map_t *table, hash_t identif
         return false;
     }
 
-    atomicStoreU64Relaxed(&entry->ips[row_index].last_seen_ms, now_ms);
+    softiplimiterRefreshRow(&entry->ips[row_index], now_ms);
     softiplimiterTableResultSet(result, kSoftIpLimiterTableOk, entry->ip_count, limit, generation);
     return true;
 }
@@ -436,7 +447,7 @@ static bool softiplimiterTableTouchShared(softiplimiter_identity_map_t *table, h
             {
                 return false; // The exclusive path prunes expired rows and reports rejection.
             }
-            atomicStoreU64Relaxed(&entry->ips[i].last_seen_ms, now_ms);
+            softiplimiterRefreshRow(&entry->ips[i], now_ms);
             return true;
         }
     }

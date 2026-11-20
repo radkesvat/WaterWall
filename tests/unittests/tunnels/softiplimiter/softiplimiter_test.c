@@ -203,12 +203,17 @@ static void testTouchRefreshKeepsRowAlive(void)
     require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 100, &result), "refresh: admit failed");
     const uint64_t generation = result.generation;
 
-    // Periodic touches refresh last_seen (atomic store/load round-trip) so the row
+    // Periodic touches refresh last_seen so the row
     // survives well past the raw tolerance window of 10ms.
     require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 108, &result), "refresh: touch at 108 failed");
     require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 116, &result), "refresh: touch at 116 failed");
     require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 124, &result), "refresh: touch at 124 failed");
 
+    require(softiplimiterTableTouch(&table, id, &ip, generation, 1, 10, 112, &result),
+            "refresh: older touch of a live row should succeed");
+    require(softiplimiterTableAdmit(&table, &generation_cursor, id, &ip, 1, 10, 110, &result) &&
+                result.generation == generation,
+            "refresh: delayed admission should share the live generation");
     const softiplimiter_identity_entry_t *entry = findEntry(&table, id);
     require(entry != NULL && entry->ip_count == 1, "refresh: row should remain alive after refreshes");
     require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 124,
@@ -290,6 +295,9 @@ static void testExpiredLineCannotTouchReplacement(void)
     require(softiplimiterTouchLine(t, &old_line, 113, &result), "replacement: current line shared touch failed");
     require(atomicLoadU64Relaxed(&entry->ips[0].last_seen_ms) == 113,
             "replacement: current line shared touch did not refresh row");
+    require(softiplimiterTouchLine(t, &old_line, 101, &result), "replacement: delayed shared touch failed");
+    require(softiplimiterTouchLine(t, &old_line, 123, &result),
+            "replacement: delayed shared touch moved the expiry deadline backwards");
 
     softiplimiterTunnelstateDestroy(ts);
     tunnelDestroy(t);
