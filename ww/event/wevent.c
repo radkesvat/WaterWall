@@ -9,17 +9,16 @@
 #include "overlapio.h"
 #endif
 
-// todo (invesitage) how a dynamic node can have these?
 uint64_t wloopGetNextEventID(void)
 {
-    static atomic_long s_id = (0);
-    return (uint64_t) (++s_id);
+    static atomic_ullong last_id;
+    return atomicIncU64Relaxed(&last_id) + UINT64_C(1);
 }
 
 uint32_t wioSetNextID(void)
 {
-    static atomic_long s_id = (0);
-    return (uint32_t) (++s_id);
+    static atomic_u32_t last_id;
+    return atomicIncU32Relaxed(&last_id) + UINT32_C(1);
 }
 
 static void fillIoType(wio_t *io)

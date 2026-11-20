@@ -15,12 +15,12 @@ static atomic_long s_free_cnt  = (0);
 
 long eventloopAllocCount(void)
 {
-    return (long) s_alloc_cnt;
+    return (long) atomicLoadRelaxed(&s_alloc_cnt);
 }
 
 long eventloopFreeCount(void)
 {
-    return (long) s_free_cnt;
+    return (long) atomicLoadRelaxed(&s_free_cnt);
 }
 
 void *eventloopMalloc(size_t size)

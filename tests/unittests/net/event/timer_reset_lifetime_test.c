@@ -1,13 +1,12 @@
 /*
- * Covers: timer reset lifetime; the explicit inputs, callbacks and expected results below define this suite.
- * Setup: Isolated wloop and timer APIs with real collection/dispatch and heap/pooled memory tracking.
- * Cases: Scheduled reset, pending reset kept, self-rearm, self-reset then delete, other pending different/same
- * priority, multiple pending resets kept/cancelled, finite repetition, repeating self-rearm, infinite repetition,
- * allocation during cancellation, and shutdown/quiescence routes.
- * Checks: Assertion labels include: timer installation failed; timer lost pool provenance; reset must keep pending;
- * replacement timer must not reuse pending timer storage; quiescence recycled timers before owner drain.
- * Limits: Component fixtures do not establish host-network or application-throughput behavior.
- * CTest: waterwall.timer_reset_lifetime_unit
+ * Covers: concurrent event and WIO IDs, timer reset lifetime; the explicit inputs, callbacks and expected results below
+ * define this suite. Setup: Isolated wloop and timer APIs with real collection/dispatch and heap/pooled memory
+ * tracking. Cases: Scheduled reset, pending reset kept, self-rearm, self-reset then delete, other pending
+ * different/same priority, multiple pending resets kept/cancelled, finite repetition, repeating self-rearm, infinite
+ * repetition, allocation during cancellation, and shutdown/quiescence routes. Checks: Assertion labels include: timer
+ * installation failed; timer lost pool provenance; reset must keep pending; replacement timer must not reuse pending
+ * timer storage; quiescence recycled timers before owner drain. Limits: Component fixtures do not establish
+ * host-network or application-throughput behavior. CTest: waterwall.timer_reset_lifetime_unit
  */
 #include "ev_memory.h"
 #include "test_assert.h"
@@ -1468,9 +1467,57 @@ static void testShutdownResetDeleteBeforeCleanupDirect(test_mode_t mode)
 /* Main test runner                                                          */
 /* ========================================================================= */
 
+/* The event and WIO generators are shared by independent worker loops. Before starting the fixture, this process is
+ * their only caller, so the counter deltas must include every ID issued by the producer threads. */
+enum
+{
+    kIdThreads    = 4,
+    kIdsPerThread = 10000
+};
+
+typedef struct id_start_s
+{
+    atomic_uint ready;
+    atomic_bool start;
+} id_start_t;
+
+static WTHREAD_ROUTINE(generateIds)
+{
+    id_start_t *barrier = userdata;
+    atomicIncExplicit(&barrier->ready, memory_order_release);
+    while (! atomicLoadExplicit(&barrier->start, memory_order_acquire))
+        YIELD_THREAD();
+    for (unsigned i = 0; i < kIdsPerThread; ++i)
+    {
+        discard wloopGetNextEventID();
+        discard wioSetNextID();
+    }
+    return 0;
+}
+
+static void testConcurrentIdGeneration(void)
+{
+    const uint64_t first_event = wloopGetNextEventID();
+    const uint32_t first_io    = wioSetNextID();
+    require(first_event == 1 && first_io == 1, "event and WIO IDs must start at one");
+    id_start_t barrier = {0};
+    wthread_t  threads[kIdThreads];
+    for (unsigned i = 0; i < kIdThreads; ++i)
+        require(threadCreate(&threads[i], generateIds, &barrier) == kWThreadErrorNone, "could not start ID generator");
+    while (atomicLoadExplicit(&barrier.ready, memory_order_acquire) < kIdThreads)
+        YIELD_THREAD();
+    atomicStoreExplicit(&barrier.start, true, memory_order_release);
+    for (unsigned i = 0; i < kIdThreads; ++i)
+        require(threadJoin(threads[i]) == 0, "could not join ID generator");
+    require(wloopGetNextEventID() - first_event == kIdThreads * kIdsPerThread + 1,
+            "concurrent event IDs lost increments");
+    require(wioSetNextID() - first_io == kIdThreads * kIdsPerThread + 1, "concurrent WIO IDs lost increments");
+}
+
 int main(void)
 {
     testCaseSet("timer_reset_lifetime_test");
+    testConcurrentIdGeneration();
     test_worker_registry_t registry = {0};
     GSTATE.workers_count            = 1;
     testWorkerRegistryInstall(&registry);
