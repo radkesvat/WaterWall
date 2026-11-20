@@ -128,10 +128,6 @@ static int caseNormalDefaultDownstreamInit(void)
 
 static int casePacketLifecycleAnchorFinish(bool upstream)
 {
-    line_t line;
-    memset(&line, 0, sizeof(line));
-    line.wid = 0;
-
     tunnel_t *anchor = packettunnelCreate(NULL, sizeof(packet_lifecycle_anchor_t), 0);
     if (anchor == NULL ||
         ! packettunnelConfigureLifecycleAnchor(
@@ -140,14 +136,19 @@ static int casePacketLifecycleAnchorFinish(bool upstream)
         return kAbortCaseAllocationFailed;
     }
 
+    // The Finish guards only read the worker ID, so the fixture needs no trailing line state.
+    line_t *line = memoryAllocateCacheAlignedZero(sizeof(*line));
     if (upstream)
     {
-        anchor->fnFinU(anchor, &line);
+        anchor->fnFinU(anchor, line);
     }
     else
     {
-        anchor->fnFinD(anchor, &line);
+        anchor->fnFinD(anchor, line);
     }
+
+    memoryFreeAligned(line);
+    tunnelDestroy(anchor);
     return 0;
 }
 
