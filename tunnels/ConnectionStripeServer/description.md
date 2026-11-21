@@ -7,6 +7,9 @@
 eight-member group, it accepts eight transports and creates exactly one line
 through its `next` path. Every member may carry both upload and download.
 
+The server selects TCP on each incoming transport line. The reconstructed
+application line offers exact TCP before its first upstream `Init`.
+
 ## Typical placement
 
 ```text
@@ -213,8 +216,8 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `24` bytes (`kStripeHeaderSize`) |
 
 `can_have_next` describes topology capability; this node's constructor requires

@@ -115,6 +115,8 @@ static void setup(reverse_fixture_t *f)
     twfLinePoolSetup(&f->lines, f->reverse->lstate_size, 4);
     f->u = twfLinePoolCreateLine(&f->lines);
     f->d = twfLinePoolCreateLine(&f->lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->u), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->d), IP_PROTO_TCP);
     lineRef(f->u);
     lineRef(f->d);
     reverseserverTunnelUpStreamInit(f->reverse, f->d);
@@ -796,6 +798,7 @@ static void testDrainingHalfCannotMatchAgain(bool reverse_survives, bool during_
     reverse_fixture_t f;
     setup(&f);
     f.second = twfLinePoolCreateLine(&f.lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.second), IP_PROTO_TCP);
     if (reverse_survives)
     {
         f.prev->fnPauseD = closeFirstPairWhileMatching;

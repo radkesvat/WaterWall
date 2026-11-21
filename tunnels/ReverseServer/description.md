@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used on the reachable side of a reverse tunnel setup.
 
+Both incoming roles require an offer that allows TCP. The server commits
+that choice before admitting a line to pairing.
+
 ## Typical placement
 
 The reverse-link transport/listener feeds `ReverseServer`, whose next node must be the `Bridge` connecting it to the local/user traffic branch: `ReverseServer -> Bridge`. No node may intervene between them. The companion client-side rule is `Bridge -> ReverseClient`, also with no intervening nodes.
@@ -238,8 +241,8 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
 
 Application retention uses the same 2 MiB / 1,024-buffer limits in every RAM profile.

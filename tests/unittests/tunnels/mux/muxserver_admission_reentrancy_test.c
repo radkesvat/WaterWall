@@ -107,6 +107,7 @@ static line_t *fixtureCreateParent(muxserver_admission_fixture_t *fixture)
     twfRequire(fixture->parent_count < kServerTestMaxParents, "too many MuxServer parents in one fixture");
     line_t *parent_l                          = twfLinePoolCreateLine(&fixture->parent_lines);
     fixture->parents[fixture->parent_count++] = parent_l;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(parent_l), IP_PROTO_TCP);
     muxserverTunnelUpStreamInit(fixture->mux, parent_l);
     return parent_l;
 }

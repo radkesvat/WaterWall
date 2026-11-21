@@ -4,6 +4,14 @@
 
 void reverseserverTunnelDownStreamInit(tunnel_t *t, line_t *u)
 {
+    address_context_t *destination = lineGetDestinationAddressContext(u);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        tunnelNextUpStreamFinish(t, u);
+        return;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportTcp);
+
     reverseserver_lstate_t *uls = lineGetState(u, t);
     reverseserverLinestateInitialize(uls, u, NULL);
     reverseserver_tstate_t     *ts  = tunnelGetState(t);

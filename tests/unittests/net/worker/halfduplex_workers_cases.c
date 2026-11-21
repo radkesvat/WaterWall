@@ -111,6 +111,7 @@ static void halfWorkerCreate(worker_t *worker, void *arg1, void *arg2, void *arg
     const unsigned index = worker->wid;
     line_t        *line  = lineCreate(tunnelchainGetLinePools(hw.chain), worker->wid);
     hw.halves[index]     = line;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     tunnelUpStreamInit(hw.transport_wrapper[index], line);
     bool    download  = (index == 0) == hw.download_first;
     if (download)

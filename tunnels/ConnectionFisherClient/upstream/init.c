@@ -15,6 +15,15 @@ static bool connectionfisherclientMainLineStillOpen(tunnel_t *t, line_t *main_l)
 
 void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
 {
+    address_context_t *destination = lineGetDestinationAddressContext(main_l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        LOGW("ConnectionFisherClient: refusing a line without a TCP destination offer");
+        tunnelPrevDownStreamFinish(t, main_l);
+        return;
+    }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+
     connectionfisherclient_tstate_t *ts      = tunnelGetState(t);
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_l, t);
 

@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used together with `HalfDuplexClient` on the other side of the transport.
 
+The server selects TCP on each incoming transport line. The reconstructed
+application line offers exact TCP before its first upstream `Init`.
+
 ## Typical placement
 
 A common layout is:
@@ -324,12 +327,12 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainEnd` / `kNodeFlagSupportsSplice` |
+| node flags | `kNodeFlagChainEnd \| kNodeFlagSupportsSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
 
 The waiting bound applies at initial publication and on later appends. Close occurs at or above 262,140 bytes in S1/S2 or 4,194,240 bytes in higher profiles; available peers pair before waiting limits apply.

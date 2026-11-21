@@ -113,6 +113,7 @@ static void idleFixtureSetup(muxserver_idle_fixture_t *fixture)
 
     twfLinePoolSetup(&fixture->parent_lines, fixture->mux->lstate_size, 2);
     fixture->parent_l = twfLinePoolCreateLine(&fixture->parent_lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fixture->parent_l), IP_PROTO_TCP);
     muxserverTunnelUpStreamInit(fixture->mux, fixture->parent_l);
     g_idle_fixture = fixture;
 }
@@ -474,6 +475,7 @@ static void caseShutdownFullInventory(unsigned order, unsigned reentrant)
             muxserverHandleParentLoss(fixture.mux, fixture.parent_l, false);
             lineDestroy(fixture.parent_l);
             fixture.parent_l = twfLinePoolCreateLine(&fixture.parent_lines);
+            addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fixture.parent_l), IP_PROTO_TCP);
             muxserverTunnelUpStreamInit(fixture.mux, fixture.parent_l);
         }
     }

@@ -99,6 +99,8 @@ static void caseUdpSourceDrainsBeforeMuxWorkerStop(uint8_t mode)
     }
 
     line_t *child = twfLinePoolCreateLine(&lines);
+    // Supply the stream offer at the seam that stands in for intervening framing.
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(child), IP_PROTO_TCP);
     lineRef(child);
 
     local_idle_table_t *idle_table = localIdleTableCreate(env.loop);

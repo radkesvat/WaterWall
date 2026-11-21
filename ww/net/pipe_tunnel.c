@@ -991,6 +991,12 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
         LOGE("PipeTunnel: source line %p is already attached to a cross-worker pair", (void *) line);
         return false;
     }
+    const uint8_t offer = addresscontextGetTransportOffer(lineGetDestinationAddressContext(line));
+    if (offer == 0)
+    {
+        LOGE("PipeTunnel: source line %p has no valid destination transport offer", (void *) line);
+        return false;
+    }
 
 #ifdef WW_PIPE_TUNNEL_TEST_SEAM
     /* Deterministically lets a test place PreStop between the fast rejection
@@ -1002,6 +1008,7 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
 
     line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
     lineCopyIngressContext(owned, line);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(owned), offer);
 
     /* Stage all metadata without publishing either line state. */
     *pair = (pipe_pair_t) {

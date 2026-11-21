@@ -146,6 +146,7 @@ static void setup(void)
     twfLinePoolSetup(&f.lines, f.server->lstate_size, 8);
     f.line = twfLinePoolCreateLine(&f.lines);
     lineRef(f.line);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_TCP);
     tunnelUpStreamInit(f.server, f.line);
 }
 static void teardown(void)

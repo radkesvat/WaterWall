@@ -397,6 +397,7 @@ static void runtimeSetup(void)
     r.client->chain = r.chain;
     r.main          = lineCreate(tunnelchainGetLinePools(r.chain), 0);
     lineRef(r.main);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(r.main), IP_PROTO_TCP);
     halfduplexclientTunnelUpStreamInit(r.client, r.main);
 }
 

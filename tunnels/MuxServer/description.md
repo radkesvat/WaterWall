@@ -22,6 +22,9 @@ In practice, this node is used together with `MuxClient` on the other side of th
 
 This node does not create a transport by itself. It expects its previous side to already provide the shared connection that carries MUX traffic.
 
+The server selects TCP from the incoming parent line’s destination offer.
+Each new child line offers TCP before its service branch starts.
+
 ## Typical placement
 
 A common layout is:
@@ -627,6 +630,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `8` bytes |

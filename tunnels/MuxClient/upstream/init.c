@@ -4,6 +4,14 @@
 
 void muxclientTunnelUpStreamInit(tunnel_t *t, line_t *child_l)
 {
+    address_context_t *destination = lineGetDestinationAddressContext(child_l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        tunnelPrevDownStreamFinish(t, child_l);
+        return;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportTcp);
+
     muxclient_lstate_t *child_ls = lineGetState(child_l, t);
     // Selection can close/refill a parent and re-enter the source. Publish the
     // borrowed child's state before those callbacks, even before it has a CID.

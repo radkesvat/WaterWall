@@ -267,6 +267,7 @@ static void caseIdleStalledParent(unsigned action)
     f.next->fnFinU = healthClosingParent;
     healthTime(&f, 11000);
     line_t *fresh = twfLinePoolCreateLine(&f.child_lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fresh), IP_PROTO_TCP);
     fixtureTrackChild(&f, fresh);
     health_new_child             = action >= 2 ? fresh : NULL;
     health_destroy_child         = action == 2;

@@ -311,6 +311,7 @@ static void fixtureSetup(halfduplexserver_fixture_t *fixture)
 static line_t *createTransportLine(halfduplexserver_fixture_t *fixture, bool upload)
 {
     line_t *line = lineCreate(tunnelchainGetLinePools(fixture->chain), 0);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     halfduplexserverTunnelUpStreamInit(upload ? fixture->upload_tunnel : fixture->download_tunnel, line);
     return line;
 }
@@ -595,6 +596,7 @@ static line_t *protocolCreateTransport(halfduplexserver_protocol_fixture_t *fixt
             fixture->transport_tunnels[index] =
                 ingress_mode == 3 || (ingress_mode != 0 && index % 2 == ingress_mode - 1) ? fixture->peer
                                                                                           : fixture->halfduplex;
+            addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
             halfduplexserverTunnelUpStreamInit(fixture->transport_tunnels[index], line);
             return line;
         }

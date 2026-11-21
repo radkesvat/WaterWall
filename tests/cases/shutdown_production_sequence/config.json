@@ -26,6 +26,11 @@
         "address": "127.0.0.1",
         "port": 3998
       },
+      "next": "datagram-encoder"
+    },
+    {
+      "name": "datagram-encoder",
+      "type": "UdpOverTcpClient",
       "next": "mux-client"
     },
     {
@@ -44,6 +49,11 @@
       "settings": {
         "log-main-line-stats": true
       },
+      "next": "datagram-decoder"
+    },
+    {
+      "name": "datagram-decoder",
+      "type": "UdpOverTcpServer",
       "next": "tester-server"
     },
     {

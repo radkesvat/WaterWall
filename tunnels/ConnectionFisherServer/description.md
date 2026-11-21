@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 It delays upstream `Init` until it has validated the fixed `5`-byte client probe, sends the fixed `5`-byte reply, and only then turns the line into a normal forwarding stream.
 
+The server selects TCP from the incoming destination offer at `Init` and
+retains that selection when the winning line continues upstream.
+
 ## Typical placement
 
 ### Intended Placement
@@ -109,6 +112,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

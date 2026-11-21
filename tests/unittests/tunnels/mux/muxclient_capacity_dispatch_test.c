@@ -126,6 +126,7 @@ static void fixtureSetup(muxclient_capacity_fixture_t *fixture, uint8_t mode, ui
 static line_t *fixtureOpenChild(muxclient_capacity_fixture_t *fixture)
 {
     line_t *child_l = twfLinePoolCreateLine(&fixture->child_lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(child_l), IP_PROTO_TCP);
     fixtureTrackChild(fixture, child_l);
     muxclientTunnelUpStreamInit(fixture->mux, child_l);
     return child_l;

@@ -971,6 +971,14 @@ void connectionstripeClientInit(tunnel_t *t, line_t *app)
 {
     stripe_state_t *ts = stripeState(t);
     assert(ts->role == kStripeClientEndpoint);
+    address_context_t *destination = lineGetDestinationAddressContext(app);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        LOGW("ConnectionStripeClient: refusing a line without a TCP destination offer");
+        ts->output->application_finish(t, app);
+        return;
+    }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
     wid_t wid = lineGetWID(app);
     if (! wloopNormalDispatchAllowed(getWorkerLoop(wid)))
     {
@@ -1029,15 +1037,24 @@ void connectionstripeClientInit(tunnel_t *t, line_t *app)
 
 void connectionstripeServerInit(tunnel_t *t, line_t *line)
 {
-    assert(stripeState(t)->role == kStripeServerEndpoint);
+    stripe_state_t *ts = stripeState(t);
+    assert(ts->role == kStripeServerEndpoint);
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        LOGW("ConnectionStripeServer: refusing a line without a TCP destination offer");
+        ts->output->transport_finish(t, line);
+        return;
+    }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
     wid_t            wid = lineGetWID(line);
     stripe_worker_t *w   = stripeWorker(t, wid);
     stripeLineInit(t, line, NULL, kStripeTransportLine, 0);
-    if (w->quiesced || ! wloopNormalDispatchAllowed(getWorkerLoop(wid)) ||
-        w->pending_count >= stripeState(t)->max_pending || ! stripeTryInitTimers(w, wid))
+    if (w->quiesced || ! wloopNormalDispatchAllowed(getWorkerLoop(wid)) || w->pending_count >= ts->max_pending ||
+        ! stripeTryInitTimers(w, wid))
     {
         stripeLineClear(t, line);
-        stripeState(t)->output->transport_finish(t, line);
+        ts->output->transport_finish(t, line);
         return;
     }
     stripe_line_t *ls = lineGetState(line, t);
@@ -1047,10 +1064,10 @@ void connectionstripeServerInit(tunnel_t *t, line_t *line)
         w->pending->pending_prev = ls;
     w->pending = ls;
     ++w->pending_count;
-    ls->deadline = localidletableCreateItem(
-        w->timers, (hash_t) (uintptr_t) ls, ls, stripePendingExpired, stripeState(t)->setup_timeout);
+    ls->deadline =
+        localidletableCreateItem(w->timers, (hash_t) (uintptr_t) ls, ls, stripePendingExpired, ts->setup_timeout);
     assert(ls->deadline);
-    stripeState(t)->output->est_borrowed(t, line);
+    ts->output->est_borrowed(t, line);
 }
 
 static void stripeFinish(tunnel_t *t, line_t *line, stripe_line_role_t role)

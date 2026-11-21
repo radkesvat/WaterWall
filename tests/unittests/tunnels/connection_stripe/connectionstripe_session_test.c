@@ -367,6 +367,7 @@ static void clientTransportInit(tunnel_t *t, line_t *line)
     route->src_ctx.port = route->local_listener_port = kTestListenerPort;
     route->peer_source_port                          = (uint16_t) (kTestFirstPeerPort + f.lane_count - 1);
     lineRef(lane->server);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(lane->server), IP_PROTO_TCP);
     tunnelNextUpStreamInit(f.server_transport, lane->server);
     if (lineIsAlive(line))
         tunnelPrevDownStreamEst(t, line);
@@ -451,6 +452,7 @@ static void setupWithSplicePolicy(unsigned count, bool disable_splice)
         t->onStart(t);
     }
     f.client_main = lineCreate(tunnelchainGetLinePools(f.client_chain), 0);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.client_main), IP_PROTO_TCP);
     lineRef(f.client_main);
 }
 

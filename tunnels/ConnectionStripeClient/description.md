@@ -7,6 +7,9 @@ full-duplex transport connections. `ConnectionStripeServer` joins those connecti
 and reconstructs one ordered stream toward the destination. Upload and download
 are striped independently; every transport can carry data in both directions.
 
+The client selects TCP from the application line's destination offer at `Init`.
+It publishes exact TCP on every transport line before that line's `Init`.
+
 ## Typical placement
 
 ```text
@@ -230,8 +233,8 @@ Source-backed values from `instance/node.c` and the shared framing constants:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `24` bytes (`kStripeHeaderSize`) |
 
 `can_have_next` describes topology capability; this node's constructor requires

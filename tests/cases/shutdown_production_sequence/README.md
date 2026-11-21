@@ -7,9 +7,11 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 
 - `tester-client`: `TesterClient` → `udp-connector`
 - `udp-connector`: `UdpConnector` (terminal or independently bound endpoint)
-- `udp-listener`: `UdpListener` → `mux-client`
+- `udp-listener`: `UdpListener` → `datagram-encoder`
+- `datagram-encoder`: `UdpOverTcpClient` → `mux-client`
 - `mux-client`: `MuxClient` → `mux-server`
-- `mux-server`: `MuxServer` → `tester-server`
+- `mux-server`: `MuxServer` → `datagram-decoder`
+- `datagram-decoder`: `UdpOverTcpServer` → `tester-server`
 - `tester-server`: `TesterServer` (terminal or independently bound endpoint)
 
 Scenario choices: `mux-client.mode="fixed-connections-count"`, `mux-client.per-worker-connections-count=2`. These values define the workload/edge case and are not tuning advice.

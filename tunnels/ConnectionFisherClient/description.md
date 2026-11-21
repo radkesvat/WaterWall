@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 It is meant for stream chains. The original line stays on the previous side of the tunnel, while the candidate lines are internal helper lines that only exist toward the next side of the chain.
 
+The client selects TCP from the incoming destination offer at `Init`. Each
+candidate line offers exact TCP before its own `Init`.
+
 ## Typical placement
 
 ### Intended Placement
@@ -125,6 +128,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

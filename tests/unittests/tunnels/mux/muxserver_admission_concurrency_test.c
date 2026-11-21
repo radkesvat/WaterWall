@@ -196,6 +196,7 @@ static WTHREAD_ROUTINE(admissionRaceMain)
     const wid_t               wid     = task->wid;
     testWorkerBindWID(wid);
     fixture->parents[wid] = lineCreate(fixture->parent_pools, wid);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fixture->parents[wid]), IP_PROTO_TCP);
     muxserverTunnelUpStreamInit(fixture->mux, fixture->parents[wid]);
     atomicIncExplicit(&fixture->ready, memory_order_release);
 

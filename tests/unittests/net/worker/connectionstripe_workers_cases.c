@@ -140,6 +140,7 @@ static void stripeWorkerCreateLane(worker_t *worker, void *arg1, void *arg2, voi
     routing_context_t *route   = lineGetRoutingContext(line);
     route->local_listener_port = route->src_ctx.port;
     route->peer_source_port    = (uint16_t) (kStripeWorkerFirstPeerPort + index);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     tunnelUpStreamInit(sw.wrapper, line);
     uint8_t intro[kStripeJoinSize + kStripeHeaderSize + 5] = {0};
     intro[0]                                               = kStripeJoin;

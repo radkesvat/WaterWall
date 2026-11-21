@@ -51,6 +51,8 @@ static void runCase(uint32_t large, uint32_t length, bool local_first, bool avai
     ts->handshake_length                = sizeof(handshake);
     ts->activation_min_size = ts->activation_max_size = 4;
     line_t *u = twfLineCreate(reverse->lstate_size), *d = twfLineCreate(reverse->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(u), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(d), IP_PROTO_TCP);
     reverseserverTunnelUpStreamInit(reverse, d);
     if (local_first)
         reverseserverTunnelDownStreamInit(reverse, u);

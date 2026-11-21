@@ -415,6 +415,7 @@ static void caseTimeoutAdmissionClosureClosesEveryRoleOnce(void)
     timeoutFixtureSetup(&fixture, &main_line);
 
     workerMessagesCloseAdmission(&fixture.env.worker);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main_line), IP_PROTO_TCP);
     connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
 
     twfRequireEqualU32((uint32_t) fixture.env.loop->ntimers, 0, "failed ConnectionFisher timeout remained armed");
@@ -448,6 +449,7 @@ static void caseSynchronousTransportAndAlreadyEstablishedChild(void)
             timeoutFixtureSetup(&fixture, &main_line);
             fixture.transport_mode = mode;
             fixture.close_at_est   = close != 0;
+            addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main_line), IP_PROTO_TCP);
             connectionfisherclientTunnelUpStreamInit(fixture.fisher, main_line);
             twfRequire(fixture.main_est_count == 1 && fixture.child_init_count == 1,
                        "synchronous selected/closed transport spawned more children or repeated Est");

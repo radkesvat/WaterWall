@@ -254,6 +254,7 @@ static void setup(void)
     main_line = twfLinePoolCreateLine(&lines);
     lineRef(main_line);
 #ifdef TEST_FISHER_SERVER
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main_line), IP_PROTO_TCP);
     tunnelUpStreamInit(node, main_line);
 #else
     connectionfisherclient_lstate_t *main_ls = lineGetState(main_line, node);
