@@ -147,6 +147,14 @@ void httpserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     // receive a reflected Finish; we still own the single state destruction here.
     bool prev_already_finished = ls->prev_finished;
 
+    if (ls->runtime_proto == kHttpServerRuntimeHttp2 && ! prev_already_finished)
+    {
+        /* The client grants flow-control credit as it reads, so its WINDOW_UPDATE
+         * frames can follow this close. An ordinary TCP close answers them with a
+         * reset and drops the response bytes the socket has not sent yet. */
+        lineRequestCloseLinger(l, kLineCloseLingerProtocolDrain);
+    }
+
     ls->prev_finished = true;
     httpserverLinestateDestroy(ls);
     if (! prev_already_finished)

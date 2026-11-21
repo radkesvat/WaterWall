@@ -12,9 +12,11 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `service`: `TcpConnector` (the probe's service)
 
 In each production-pair round, the service reads a short request and writes a 16 MiB response.
-The client acknowledges receipt of all but the final byte through the same chain. The service then
-writes the final byte and immediately closes. The client requires the exact response and EOF.
-The receipt keeps outstanding bulk flow-control updates from racing ordinary TCP close.
+In the first three rounds the client acknowledges receipt of all but the final byte through the same
+chain. The service then writes the final byte and immediately closes. In the last three rounds the
+service closes right after writing the response, as a backend without keep-alive does, so the client's
+flow-control updates for the bytes still in transit follow that close. The client requires the exact
+response and EOF in every round.
 
 Two focused cases connect directly to `carrier-in` with a raw HTTP/2 client. A
 1 KiB receive window leaves a 128 KiB response blocked after the service closes.
