@@ -134,11 +134,23 @@ enum node_layer_group
     kNodeLayerSameAsNext   = (1 << 4),
     kNodeLayerSameAsPrev   = (1 << 5),
     kNodeLayerOppositeNext = (1 << 6), // must be ORed with a base layer (3, 4, or Anything) to constrain this side and require opposite layer on next side
-    kNodeLayerOppositePrev = (1 << 7)  // must be ORed with a base layer (3, 4, or Anything) to constrain this side and require opposite layer on prev side
+    kNodeLayerOppositePrev = (1 << 7), // must be ORed with a base layer (3, 4, or Anything) to constrain this side and
+                                       // require opposite layer on prev side
+    kNodeLayer4Stream        = kNodeLayer4 | (1 << 8),
+    kNodeLayer4Datagram      = kNodeLayer4 | (1 << 9),
+    kNodeLayer4QualifierMask = (kNodeLayer4Stream | kNodeLayer4Datagram) & ~kNodeLayer4
 };
 
 static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
 {
+    if ((layer & kNodeLayer4QualifierMask) != 0 && (layer & kNodeLayer4) == 0)
+    {
+        return "unknown";
+    }
+    if ((layer & kNodeLayer4QualifierMask) == kNodeLayer4QualifierMask)
+    {
+        layer &= ~kNodeLayer4QualifierMask;
+    }
     switch ((int)layer)
     {
     case kNodeLayerNone:
@@ -173,6 +185,22 @@ static inline const char *nodeLayerGroupToString(enum node_layer_group layer)
         break;
     }
 
+    if ((layer & kNodeLayer4QualifierMask) != 0)
+    {
+        switch (layer & (kNodeLayerAnything | kNodeLayer4QualifierMask))
+        {
+        case kNodeLayer4Stream:
+            return "kNodeLayer4Stream";
+        case kNodeLayer4Datagram:
+            return "kNodeLayer4Datagram";
+        case kNodeLayer3 | kNodeLayer4Stream:
+            return "kNodeLayer3|kNodeLayer4Stream";
+        case kNodeLayer3 | kNodeLayer4Datagram:
+            return "kNodeLayer3|kNodeLayer4Datagram";
+        default:
+            return "unknown";
+        }
+    }
     if ((layer & kNodeLayerAnything) == kNodeLayerAnything)
     {
         return "kNodeLayerAnything";

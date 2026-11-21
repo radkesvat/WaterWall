@@ -1,5 +1,6 @@
 #include "input_hints.h"
 #include "loggers/internal_logger.h"
+#include "net/node_layer_solver.h"
 
 static tunnel_t *refuseInputHint(node_t *node);
 
@@ -10,8 +11,9 @@ const char *nodeInputHintUnresolvedDiagnostic(const node_t *node)
         return NULL;
     }
 
-    assert(node->layer_group == kNodeLayer3 || node->layer_group == kNodeLayer4);
-    if (node->layer_group == kNodeLayer3)
+    const node_layer_domain_t layer = nodeLayerGroupToDomain(node->layer_group);
+    assert(layer == kLayerDomainL3 || layer == kLayerDomainL4);
+    if (layer == kLayerDomainL3)
     {
         return "HintPacketIN requires a packet input. Replace this hint with a concrete input before starting "
                "WaterWall.";

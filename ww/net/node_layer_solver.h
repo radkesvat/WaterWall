@@ -119,3 +119,11 @@ bool nodeLayerValidateNodeMetadata(const node_t *node, node_layer_solver_status_
  * @return true if solved successfully, false if validation or solving failed.
  */
 bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *status);
+
+/* Return the L4 qualifier bits admitted by this configured face. A relative
+ * side may still resolve to L3 when the chain is solved. */
+unsigned nodeLayerDeclaredL4Kinds(const node_t *node, tunnel_layer_side_t side);
+
+/* Check a configured next link after solving the assembled sides. The physical
+ * callback edge can include private helpers, such as an embedded resolver. */
+bool nodeLayerValidateL4Link(const tunnel_t *from, const tunnel_t *to, node_layer_solver_status_t *status);

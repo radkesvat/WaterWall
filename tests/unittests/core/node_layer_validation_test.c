@@ -147,6 +147,70 @@ static void testValidL4Chain(void)
     require(chain.resolved_prev_layer[2] == kLayerDomainL4, "tail prev layer not L4");
 }
 
+static void testConfiguredL4Links(void)
+{
+    node_t source = {
+        .name                  = (char *) "source",
+        .flags                 = kNodeFlagChainHead,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayer4Stream,
+        .layer_group_prev_node = kNodeLayerNone,
+        .can_have_next         = true,
+        .hash_next             = 1,
+    };
+    node_t helper = {
+        .name                  = (char *) "helper",
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerSameAsPrev,
+        .layer_group_prev_node = kNodeLayerSameAsNext,
+        .can_have_next         = true,
+        .can_have_prev         = true,
+    };
+    node_t sink = {
+        .name                  = (char *) "sink",
+        .flags                 = kNodeFlagChainEnd,
+        .layer_group           = kNodeLayer4,
+        .layer_group_next_node = kNodeLayerNone,
+        .layer_group_prev_node = kNodeLayer4Datagram,
+        .can_have_prev         = true,
+    };
+    tunnel_chain_t chain   = {0};
+    tunnel_t       from    = {.node = &source, .chain = &chain};
+    tunnel_t       between = {.node = &helper, .chain = &chain};
+    tunnel_t       to      = {.node = &sink, .chain = &chain};
+    sink.instance          = &to;
+
+    bindTunnels(&from, &between);
+    bindTunnels(&between, &to);
+    tunnelarrayInsert(&chain.tunnels, &from);
+    tunnelarrayInsert(&chain.tunnels, &between);
+    tunnelarrayInsert(&chain.tunnels, &to);
+
+    node_layer_solver_status_t status = {0};
+    require(nodeLayerSolveChain(&chain, &status), "coarse solve refused compatible L4 layers");
+    require(nodeLayerValidateL4Link(&from, &between, &status), "bare L4 helper did not admit stream");
+    require(nodeLayerValidateL4Link(&between, &to, &status), "bare L4 helper did not admit datagram");
+    require(! nodeLayerValidateL4Link(&from, &to, &status), "accepted mismatched configured L4 sides");
+    require(status.code == kNodeLayerSolverErrConflict && status.primary_tunnel == &from &&
+                status.secondary_tunnel == &to && strstr(status.message, "source.next supports stream") != NULL &&
+                strstr(status.message, "sink.prev supports datagram") != NULL,
+            "configured mismatch diagnostic did not identify both sides and kinds");
+
+    node_manager_config_t config = {0};
+    require(map_node_t_insert(&config.node_map, source.hash_next, &sink).inserted, "could not add config target");
+    tunnel_t            *configured[] = {&from, &to};
+    ww_startup_context_t startup      = {0};
+    wwStartupContextBegin(&startup);
+    validateConfiguredL4Links(&config, configured, ARRAY_SIZE(configured));
+    require(wwStartupContextEnd(&startup).exit_code == 1, "startup accepted mismatch behind a private helper");
+
+    source.layer_group_next_node = kNodeLayer4;
+    wwStartupContextBegin(&startup);
+    validateConfiguredL4Links(&config, configured, ARRAY_SIZE(configured));
+    require(wwStartupContextEnd(&startup).exit_code == 0, "startup refused a broad L4 source");
+    map_node_t_drop(&config.node_map);
+}
+
 static void testInputHintMetadata(void)
 {
     node_t                             hints[]   = {nodeHintConnectionINGet(), nodeHintPacketINGet()};
@@ -1634,18 +1698,18 @@ static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flag
         .type                  = (char *) "TestHead",
         .flags                 = kNodeFlagChainHead | kNodeFlagSupportsSplice,
         .layer_group           = packet_chain ? kNodeLayer3 : kNodeLayer4,
-        .layer_group_next_node = packet_chain ? kNodeLayer3 : kNodeLayer4,
+        .layer_group_next_node = packet_chain ? kNodeLayer3 : kNodeLayer4Datagram,
         .layer_group_prev_node = kNodeLayerNone,
         .can_have_next         = true,
         .can_have_prev         = false,
     };
     node_t n_inserted = {
         .name                  = (char *) "inserted",
-        .type                  = (char *) "Transparent",
+        .type                  = (char *) (packet_chain ? "Transparent" : "L4Converter"),
         .flags                 = helper_splice_flags,
         .layer_group           = kNodeLayerAnything,
-        .layer_group_next_node = kNodeLayerSameAsPrev,
-        .layer_group_prev_node = kNodeLayerSameAsNext,
+        .layer_group_next_node = packet_chain ? kNodeLayerSameAsPrev : kNodeLayer4Stream,
+        .layer_group_prev_node = packet_chain ? kNodeLayerSameAsNext : kNodeLayer4Datagram,
         .can_have_next         = true,
         .can_have_prev         = true,
     };
@@ -1655,7 +1719,7 @@ static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flag
         .flags                 = kNodeFlagChainEnd | kNodeFlagSupportsSplice,
         .layer_group           = packet_chain ? kNodeLayer3 : kNodeLayer4,
         .layer_group_next_node = kNodeLayerNone,
-        .layer_group_prev_node = packet_chain ? kNodeLayer3 : kNodeLayer4,
+        .layer_group_prev_node = packet_chain ? kNodeLayer3 : kNodeLayer4Stream,
         .can_have_next         = false,
         .can_have_prev         = true,
     };
@@ -1668,8 +1732,8 @@ static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flag
 
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
-    tunnel_chain_t *chain       = tunnelchainCreate(0);
-    tunnel_chain_t *other_chain = tunnelchainCreate(0);
+    tunnel_chain_t *chain       = tunnelchainCreate(packet_chain ? 0 : 1);
+    tunnel_chain_t *other_chain = tunnelchainCreate(packet_chain ? 0 : 1);
     require(chain != NULL && other_chain != NULL, "failed to create topology-expansion chains");
     tunnelchainInsert(chain, &t_head);
     tunnelchainInsert(other_chain, &t_tail);
@@ -1690,7 +1754,7 @@ static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flag
     require(chain->layer_solution_ready, "expanded chain did not retain its final layer solution");
     const uint8_t expected_layer = packet_chain ? kLayerDomainL3 : kLayerDomainL4;
     require(chain->resolved_prev_layer[1] == expected_layer && chain->resolved_next_layer[1] == expected_layer,
-            "expanded transparent tunnel resolved to the wrong layer");
+            "expanded tunnel resolved to the wrong layer");
     require(chain->contains_packet_node == packet_chain, "expanded chain has the wrong packet classification");
     require(! chain->supports_splice, "solved but unfinalized chain advertised splice support");
 
@@ -1703,6 +1767,10 @@ static void testSolvedTopologyExpansionIsRevalidated(unsigned helper_splice_flag
                                                        helper_splice_flags == kNodeFlagSupportsSplice),
         "final splice support ignored runtime policy, platform support, packet classification, or the inserted helper");
     require(t_inserted.chain_index == 1, "inserted helper was omitted from final indexing");
+    if (! packet_chain)
+    {
+        require(tunnelchainGetWorkerPacketLine(chain, 0) == NULL, "normal datagrams created a worker packet line");
+    }
     vec_chains_t_drop(&cfg.chains);
     tunnelchainDestroy(chain);
 }
@@ -1857,7 +1925,7 @@ static void testSocksSpliceCapability(void)
 {
     node_t nodes[]  = {nodeSocks5ClientGet(), nodeSocks5ServerGet()};
     node_t resolver = nodeDomainResolverGet();
-    require(resolver.flags == kNodeFlagSupportsSplice, "SOCKS resolver lost splice capability");
+    require((resolver.flags & kNodeFlagSupportsSplice) != 0, "SOCKS resolver lost splice capability");
     for (unsigned i = 0; i < ARRAY_SIZE(nodes); ++i)
     {
         require(nodes[i].flags == kNodeFlagSupportsSplice && nodes[i].required_padding_left == 4 + 1 + UINT8_MAX + 2,
@@ -2024,14 +2092,14 @@ static void testEasyNodeSpliceCapability(void)
         require(node->required_padding_left == (i == 0 ? 108 : 0), "easy node padding changed");
         const bool dual = i == 1 || i == 3 || i == 5;
         require(node->layer_group == (dual ? kNodeLayerAnything : kNodeLayer4), "easy node layer changed");
-        require(node->layer_group_next_node == (i == 3   ? kNodeLayerNone
-                                                : i == 5 ? kNodeLayerSameAsPrev
-                                                : dual   ? kNodeLayerAnything
-                                                         : kNodeLayer4),
+        require((node->layer_group_next_node & ~kNodeLayer4QualifierMask) == (i == 3   ? kNodeLayerNone
+                                                                              : i == 5 ? kNodeLayerSameAsPrev
+                                                                              : dual   ? kNodeLayerAnything
+                                                                                       : kNodeLayer4),
                 "easy node next layer changed");
-        require(node->layer_group_prev_node == (i == 5 ? kNodeLayerSameAsNext
-                                                : dual ? kNodeLayerAnything
-                                                       : kNodeLayer4),
+        require((node->layer_group_prev_node & ~kNodeLayer4QualifierMask) == (i == 5 ? kNodeLayerSameAsNext
+                                                                              : dual ? kNodeLayerAnything
+                                                                                     : kNodeLayer4),
                 "easy node previous layer changed");
         require(node->can_have_prev && node->can_have_next == (i != 3) && node->is_adapter == (i == 3),
                 "easy node placement constraints changed");
@@ -2178,6 +2246,7 @@ int main(void)
 {
     testCaseSet("node_layer_validation_test");
     testValidL4Chain();
+    testConfiguredL4Links();
     testInputHintMetadata();
     testValidTransparentMiddleChainL4();
     testValidTransparentMiddleChainL3();

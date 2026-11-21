@@ -364,6 +364,28 @@ static void validateTunnelChains(tunnel_t **t_array, int tunnels_count)
     }
 }
 
+static void validateConfiguredL4Links(node_manager_config_t *cfg, tunnel_t **t_array, int tunnels_count)
+{
+    /* Use configured neighbors even if onChain inserted a private resolver. */
+    for (int i = 0; i < tunnels_count; ++i)
+    {
+        const tunnel_t *from = t_array[i];
+        if (from->node->hash_next == 0)
+        {
+            continue;
+        }
+        const node_t *target = nodemanagerGetConfigNodeByHash(cfg, from->node->hash_next);
+        assert(target != NULL && target->instance != NULL);
+        node_layer_solver_status_t status = {0};
+        if (! nodeLayerValidateL4Link(from, target->instance, &status))
+        {
+            LOGF("NodeManager: node startup failure: %s", configPolicyDiagnostic(status.message));
+            startupFailureRecord(1);
+            return;
+        }
+    }
+}
+
 typedef void (*TunnelLifecycleFn)(tunnel_t *t);
 
 static void runTunnelOnPrepare(tunnel_t *t)
@@ -562,6 +584,11 @@ static void buildNodes(node_manager_config_t *cfg)
         return;
     }
     validateTunnelChains(t_array, tunnels_count);
+    if (UNLIKELY(startupFailurePending()))
+    {
+        return;
+    }
+    validateConfiguredL4Links(cfg, t_array, tunnels_count);
     if (UNLIKELY(startupFailurePending()))
     {
         return;

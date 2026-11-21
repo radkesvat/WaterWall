@@ -5,7 +5,7 @@
  * and topology validation.
  */
 
-
+#include "loggers/internal_logger.h"
 #include "net/chain.h"
 #include "net/tunnel.h"
 #include "objects/node.h"
@@ -114,6 +114,25 @@ static void addRelation(node_layer_relation_t *relations, int *relation_count,
     r->right_side            = right_side;
 }
 
+static bool validLayerBase(enum node_layer_group group)
+{
+    return (group & ~(kNodeLayerAnything | kNodeLayer4QualifierMask)) == 0 && (group & kNodeLayerAnything) != 0 &&
+           ((group & kNodeLayer4QualifierMask) == 0 || (group & kNodeLayer4) != 0);
+}
+
+static bool validSideMask(enum node_layer_group group, enum node_layer_group same, enum node_layer_group opposite)
+{
+    if (group == kNodeLayerNone || group == same)
+    {
+        return true;
+    }
+    if ((group & same) != 0)
+    {
+        return (group & kNodeLayer4QualifierMask) != 0 && validLayerBase(group & ~same);
+    }
+    return validLayerBase(group & ~opposite);
+}
+
 bool nodeLayerValidateNodeMetadata(const node_t *node, node_layer_solver_status_t *status)
 {
     if (node == NULL)
@@ -128,9 +147,8 @@ bool nodeLayerValidateNodeMetadata(const node_t *node, node_layer_solver_status_
 
     const char *name = node->name != NULL ? node->name : (node->type != NULL ? node->type : "unnamed");
 
-    // 1. Validate layer_group: must be exactly one of None, 3, 4, Anything.
     const enum node_layer_group lg = node->layer_group;
-    if (lg != kNodeLayerNone && lg != kNodeLayer3 && lg != kNodeLayer4 && lg != kNodeLayerAnything)
+    if (lg != kNodeLayerNone && ! validLayerBase(lg))
     {
         if (status != NULL)
         {
@@ -152,25 +170,8 @@ bool nodeLayerValidateNodeMetadata(const node_t *node, node_layer_solver_status_
         return false;
     }
 
-    // 2. Validate layer_group_next_node:
-    // Exact legal forms:
-    // - kNodeLayerNone
-    // - kNodeLayer3
-    // - kNodeLayer4
-    // - kNodeLayerAnything
-    // - kNodeLayerSameAsPrev
-    // - kNodeLayer3 | kNodeLayerOppositePrev
-    // - kNodeLayer4 | kNodeLayerOppositePrev
-    // - kNodeLayerAnything | kNodeLayerOppositePrev
     const enum node_layer_group req_next = node->layer_group_next_node;
-    bool next_legal = (req_next == kNodeLayerNone ||
-                       req_next == kNodeLayer3 ||
-                       req_next == kNodeLayer4 ||
-                       req_next == kNodeLayerAnything ||
-                       req_next == kNodeLayerSameAsPrev ||
-                       req_next == (kNodeLayer3 | kNodeLayerOppositePrev) ||
-                       req_next == (kNodeLayer4 | kNodeLayerOppositePrev) ||
-                       req_next == (kNodeLayerAnything | kNodeLayerOppositePrev));
+    const bool                  next_legal = validSideMask(req_next, kNodeLayerSameAsPrev, kNodeLayerOppositePrev);
 
     if (! next_legal)
     {
@@ -200,25 +201,8 @@ bool nodeLayerValidateNodeMetadata(const node_t *node, node_layer_solver_status_
         return false;
     }
 
-    // 3. Validate layer_group_prev_node:
-    // Exact legal forms:
-    // - kNodeLayerNone
-    // - kNodeLayer3
-    // - kNodeLayer4
-    // - kNodeLayerAnything
-    // - kNodeLayerSameAsNext
-    // - kNodeLayer3 | kNodeLayerOppositeNext
-    // - kNodeLayer4 | kNodeLayerOppositeNext
-    // - kNodeLayerAnything | kNodeLayerOppositeNext
     const enum node_layer_group req_prev = node->layer_group_prev_node;
-    bool prev_legal = (req_prev == kNodeLayerNone ||
-                       req_prev == kNodeLayer3 ||
-                       req_prev == kNodeLayer4 ||
-                       req_prev == kNodeLayerAnything ||
-                       req_prev == kNodeLayerSameAsNext ||
-                       req_prev == (kNodeLayer3 | kNodeLayerOppositeNext) ||
-                       req_prev == (kNodeLayer4 | kNodeLayerOppositeNext) ||
-                       req_prev == (kNodeLayerAnything | kNodeLayerOppositeNext));
+    const bool                  prev_legal = validSideMask(req_prev, kNodeLayerSameAsNext, kNodeLayerOppositeNext);
 
     if (! prev_legal)
     {
@@ -652,7 +636,7 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
 
             if (e_prev != NULL && e_prev->to_participates && e_next != NULL && e_next->from_participates)
             {
-                if (t->node->layer_group_next_node == kNodeLayerSameAsPrev)
+                if ((t->node->layer_group_next_node & kNodeLayerSameAsPrev) != 0)
                 {
                     addRelation(relations, &relation_count, kRelationSameAs, e_prev, e_next, t, NULL, kTunnelLayerSidePrev, kTunnelLayerSideNext);
                 }
@@ -660,7 +644,7 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
                 {
                     addRelation(relations, &relation_count, kRelationOpposite, e_prev, e_next, t, NULL, kTunnelLayerSidePrev, kTunnelLayerSideNext);
                 }
-                if (t->node->layer_group_prev_node == kNodeLayerSameAsNext)
+                if ((t->node->layer_group_prev_node & kNodeLayerSameAsNext) != 0)
                 {
                     addRelation(relations, &relation_count, kRelationSameAs, e_prev, e_next, t, NULL, kTunnelLayerSidePrev, kTunnelLayerSideNext);
                 }
@@ -978,4 +962,82 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
     chain->layer_solution_ready = true;
 
     return true;
+}
+
+static uint8_t resolvedSideLayer(const tunnel_t *t, tunnel_layer_side_t side)
+{
+    const tunnel_chain_t *chain = t->chain;
+    assert(chain != NULL && chain->layer_solution_ready);
+    for (uint16_t i = 0; i < chain->tunnels.len; ++i)
+    {
+        if (chain->tunnels.tuns[i] == t)
+        {
+            return side == kTunnelLayerSideNext ? tunnelchainGetResolvedNextLayer(chain, i)
+                                                : tunnelchainGetResolvedPrevLayer(chain, i);
+        }
+    }
+    LOGF("Layer solver: configured node '%s' is absent from its chain", t->node->name);
+    abortProgramNow(1);
+}
+
+static unsigned l4Kinds(enum node_layer_group group)
+{
+    if (group == kNodeLayerNone || (group & kNodeLayerAnything) == kNodeLayer3)
+        return 0;
+    const unsigned qualifiers = group & kNodeLayer4QualifierMask;
+    return qualifiers == 0 ? kNodeLayer4QualifierMask : qualifiers;
+}
+
+unsigned nodeLayerDeclaredL4Kinds(const node_t *node, tunnel_layer_side_t side)
+{
+    const enum node_layer_group face =
+        side == kTunnelLayerSidePrev ? node->layer_group_prev_node : node->layer_group_next_node;
+    return l4Kinds(node->layer_group) & l4Kinds(face);
+}
+
+static const char *l4KindsName(unsigned kinds)
+{
+    switch (kinds)
+    {
+    case kNodeLayer4Stream &kNodeLayer4QualifierMask:
+        return "stream";
+    case kNodeLayer4Datagram &kNodeLayer4QualifierMask:
+        return "datagram";
+    case kNodeLayer4QualifierMask:
+        return "stream or datagram";
+    default:
+        return "no L4 payload kind";
+    }
+}
+
+bool nodeLayerValidateL4Link(const tunnel_t *from, const tunnel_t *to, node_layer_solver_status_t *status)
+{
+    const uint8_t domain = resolvedSideLayer(from, kTunnelLayerSideNext) & resolvedSideLayer(to, kTunnelLayerSidePrev);
+    if (domain != kLayerDomainL4)
+    {
+        return true;
+    }
+
+    const node_t  *source     = from->node;
+    const node_t  *target     = to->node;
+    const unsigned from_kinds = nodeLayerDeclaredL4Kinds(source, kTunnelLayerSideNext);
+    const unsigned to_kinds   = nodeLayerDeclaredL4Kinds(target, kTunnelLayerSidePrev);
+    if ((from_kinds & to_kinds) != 0)
+    {
+        return true;
+    }
+    if (status != NULL)
+    {
+        status->code             = kNodeLayerSolverErrConflict;
+        status->primary_tunnel   = from;
+        status->secondary_tunnel = to;
+        snprintf(status->message,
+                 sizeof(status->message),
+                 "L4 payload conflict: %s.next supports %s, but %s.prev supports %s",
+                 source->name != NULL ? source->name : source->type,
+                 l4KindsName(from_kinds),
+                 target->name != NULL ? target->name : target->type,
+                 l4KindsName(to_kinds));
+    }
+    return false;
 }
