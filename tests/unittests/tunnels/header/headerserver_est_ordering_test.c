@@ -440,8 +440,7 @@ static void headerRequireContext(const address_context_t *actual, const address_
                    actual->domain_constant == expected->domain_constant &&
                    actual->domain_resolved == expected->domain_resolved && actual->proto_tcp == expected->proto_tcp &&
                    actual->proto_udp == expected->proto_udp && actual->proto_icmp == expected->proto_icmp &&
-                   actual->proto_packet == expected->proto_packet &&
-                   actual->optional_flags.detected_protocols == expected->optional_flags.detected_protocols,
+                   actual->proto_packet == expected->proto_packet && actual->metadata_flags == expected->metadata_flags,
                "protocol override changed unrelated address metadata");
 }
 
@@ -454,12 +453,12 @@ static void headerProtocolContexts(line_t *l, uint8_t protocol)
     twfRequire(addresscontextSetObservedDomain(src, (const uint8_t *) "source.example", 14) &&
                    addresscontextSetObservedDomain(dest, (const uint8_t *) "destination.example", 19),
                "protocol fixture domain setup");
-    src->port                               = 1234;
-    dest->port                              = 443;
-    src->domain_strategy                    = kDsOnlyIpV6;
-    dest->domain_strategy                   = kDsPreferIpV4;
-    src->optional_flags.detected_protocols  = kAddressContextProtocolTls;
-    dest->optional_flags.detected_protocols = kAddressContextProtocolHttp1 | kAddressContextRouteFlagPinnedDestination;
+    src->port             = 1234;
+    dest->port            = 443;
+    src->domain_strategy  = kDsOnlyIpV6;
+    dest->domain_strategy = kDsPreferIpV4;
+    src->metadata_flags   = kAddressContextProtocolTls;
+    dest->metadata_flags  = kAddressContextProtocolHttp1 | kAddressContextRouteFlagPinnedDestination;
     addresscontextSetOnlyProtocol(src, IP_PROTO_UDP);
     addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
 

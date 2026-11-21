@@ -747,7 +747,7 @@ of them implies another:
 | fact | switched on by | stored in | matched by |
 |------|----------------|-----------|------------|
 | destination domain — HTTP `Host`, HTTP/2 `:authority`, TLS/QUIC SNI | root `sniffing` setting | `dest_ctx.domain` | `destination-domain` |
-| application protocol — `http1`, `tls`, `bittorrent` | automatic: any rule that uses `protocol` | `dest_ctx.optional_flags.detected_protocols` | `protocol` |
+| application protocol — `http1`, `tls`, `bittorrent` | automatic: any rule that uses `protocol` | `dest_ctx.metadata_flags` | `protocol` |
 | HTTP `Upgrade:` header present | a rule that uses `attributes`, plus `sniffing` containing `http1` | Router's per-line state | `attributes` |
 
 All three read the same buffered first payload and share the same bounded
@@ -867,7 +867,7 @@ first upstream payload. It needs no root `sniffing`: if any rule uses
   verb token is flagged `http1`, even if it is not really HTTP. `tls` and
   `bittorrent` are stronger structural/signature checks.
 
-Detected bits live in `dest_ctx.optional_flags.detected_protocols`. They are
+Detected bits live in `dest_ctx.metadata_flags`. They are
 **optional routing metadata, not endpoint identity**: Router's sniffing sets
 the detected-protocol subset, and Router clears only that subset in upstream
 `Init` before each classification — so chaining two Routers never lets the

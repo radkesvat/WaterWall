@@ -1044,11 +1044,11 @@ static void testResolverDnsMetadataLifetime(void)
     addresscontextSetResolverDns(&dns, true);
     addresscontextCopy(&copy, &dns);
     require(addresscontextIsResolverDns(&copy), "logical context copy lost resolver DNS origin");
-    copy.optional_flags.detected_protocols = kAddressContextProtocolTls | kAddressContextRouteFlagPinnedDestination;
+    copy.metadata_flags = kAddressContextProtocolTls | kAddressContextRouteFlagPinnedDestination;
     addresscontextClearDetectedProtocols(&copy);
     addresscontextSetOnlyProtocol(&copy, IP_PROTO_TCP);
     require(addresscontextIsResolverDns(&copy), "sniff or transport reset lost resolver DNS origin");
-    require(copy.optional_flags.detected_protocols == kAddressContextRouteFlagPinnedDestination,
+    require(copy.metadata_flags == kAddressContextRouteFlagPinnedDestination,
             "sniff reset changed independent route-control metadata");
     const uint8_t observed[] = "dns.example.test";
     require(addresscontextSetObservedDomain(&copy, observed, sizeof(observed) - 1U),
@@ -1081,7 +1081,7 @@ static void testRouterInitMatchesResolverDns(void)
             require(addresscontextSetIpAddressPortProtocol(dest, "203.0.113.53", 53, protocols[protocol]),
                     "failed to set resolver DNS Router destination");
             addresscontextSetResolverDns(dest, marked);
-            dest->optional_flags.detected_protocols = kAddressContextProtocolTls;
+            dest->metadata_flags = kAddressContextProtocolTls;
 
             tunnel_t *router   = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
             tunnel_t *target   = tunnelCreate(NULL, 0, 0);
@@ -1115,7 +1115,7 @@ static void testRouterInitMatchesResolverDns(void)
             require(gRouterFallbackInitCalls == (marked != wanted),
                     "resolver DNS fallback selected incorrectly during Init");
             require(addresscontextIsResolverDns(dest) == marked, "Router Init changed resolver DNS origin");
-            require(dest->optional_flags.detected_protocols == 0, "Router Init did not clear detected protocols");
+            require(dest->metadata_flags == 0, "Router Init did not clear detected protocols");
             require(! addresscontextIsResolverDns(lineGetSourceAddressContext(line)),
                     "DNS destination marker contaminated source metadata");
 
@@ -1341,7 +1341,7 @@ static void testRouterInitClearsDetectedProtocolsAndPreservesRouteControl(void)
 {
     line_t *line = testLineCreate();
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
-    line->routing_context.dest_ctx.optional_flags.detected_protocols =
+    line->routing_context.dest_ctx.metadata_flags =
         kAddressContextProtocolHttp1 | kAddressContextProtocolBittorrent | kAddressContextRouteFlagPinnedDestination;
     addresscontextSetResolverDns(&line->routing_context.dest_ctx, true);
 
@@ -1358,8 +1358,7 @@ static void testRouterInitClearsDetectedProtocolsAndPreservesRouteControl(void)
     routerTunnelUpStreamInit(router, line);
 
     router_lstate_t *ls = lineGetState(line, router);
-    require(line->routing_context.dest_ctx.optional_flags.detected_protocols ==
-                kAddressContextRouteFlagPinnedDestination,
+    require(line->routing_context.dest_ctx.metadata_flags == kAddressContextRouteFlagPinnedDestination,
             "Router upstream Init did not preserve route-control metadata while clearing detected protocols");
     require(addresscontextIsResolverDns(&line->routing_context.dest_ctx),
             "Router sniffing Init erased resolver DNS origin");
@@ -1516,7 +1515,7 @@ static void testTlsSniffingAcrossRecords(void)
                     kRouterClassifyTarget,
                     target);
         requireDomain(&line->routing_context.dest_ctx, "fragment.example.test");
-        require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolTls) != 0,
+        require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolTls) != 0,
                 "fragmented TLS protocol was not detected");
         routerDestinationDomainDestroy(&rule);
         testLineDestroy(line);
@@ -1732,7 +1731,7 @@ static void testProtocolHttp1MatchesOnlyHttp1(void)
                 classifyOneRule(&ts, &rule, line, request, (uint32_t) sizeof(request) - 1U),
                 kRouterClassifyTarget,
                 target);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolHttp1) != 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolHttp1) != 0,
             "HTTP/1 protocol bit was not set");
 
     testLineDestroy(line);
@@ -1743,7 +1742,7 @@ static void testProtocolHttp1MatchesOnlyHttp1(void)
                 classifyOneRule(&ts, &rule, line, http2_preface, (uint32_t) sizeof(http2_preface) - 1U),
                 kRouterClassifyDefault,
                 NULL);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolHttp1) == 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolHttp1) == 0,
             "HTTP/2 preface set the HTTP/1 protocol bit");
 
     routerProtocolDestroy(&rule);
@@ -1766,7 +1765,7 @@ static void testProtocolBittorrentMatches(void)
                 classifyOneRule(&ts, &rule, line, payload, (uint32_t) sizeof(payload)),
                 kRouterClassifyTarget,
                 target);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) != 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolBittorrent) != 0,
             "BitTorrent protocol bit was not set");
 
     routerProtocolDestroy(&rule);
@@ -1786,7 +1785,7 @@ static void testProtocolBittorrentNeedMore(void)
                 classifyOneRule(&ts, &rule, line, partial, (uint32_t) sizeof(partial)),
                 kRouterClassifyNeedMore,
                 NULL);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) == 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolBittorrent) == 0,
             "partial BitTorrent prefix set the protocol bit too early");
 
     routerProtocolDestroy(&rule);
@@ -1806,7 +1805,7 @@ static void testProtocolNonMatchFallsThrough(void)
                 classifyOneRule(&ts, &rule, line, payload, (uint32_t) sizeof(payload) - 1U),
                 kRouterClassifyDefault,
                 NULL);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolBittorrent) == 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolBittorrent) == 0,
             "nonmatching payload set the BitTorrent protocol bit");
 
     routerProtocolDestroy(&rule);
@@ -1825,7 +1824,7 @@ static void testProtocolOrMatchesTls(void)
     uint32_t hello_len = makeClientHello(hello, "protocol.example.test");
     expectMatch(
         "protocol OR TLS route", classifyOneRule(&ts, &rule, line, hello, hello_len), kRouterClassifyTarget, target);
-    require((line->routing_context.dest_ctx.optional_flags.detected_protocols & kAddressContextProtocolTls) != 0,
+    require((line->routing_context.dest_ctx.metadata_flags & kAddressContextProtocolTls) != 0,
             "TLS protocol bit was not set");
 
     routerProtocolDestroy(&rule);

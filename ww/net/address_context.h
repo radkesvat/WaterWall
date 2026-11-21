@@ -56,28 +56,18 @@ enum connection_context_type
     (kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent)
 #define kAddressContextRouteControlMask kAddressContextRouteFlagPinnedDestination
 
-/*
- * Optional routing metadata. These flags are not intrinsic endpoint identity.
- * Router/sniffers own the detected-protocol subset; route-control flags are
- * carried by protocol tunnels until their designated consumer accepts them.
- */
-typedef struct address_context_optional_flags_s
-{
-    uint32_t detected_protocols;
-} address_context_optional_flags_t;
-
 /**
  * Connction context provieds complete information about a connection. It can be used to connecto to somewhere.
  * in a line, there is 2 of this struct, one for source and one for destination.
  */
 typedef struct address_context_s
 {
-    ip_addr_t                        ip_address;      // IP address in network byte order
-    uint16_t                         port;            // Port number in host byte order
-    char                            *domain;          // Domain name if applicable
-    enum domain_strategy             domain_strategy; // DNS resolution strategy
-    uint8_t                          domain_len;      // Length of domain name
-    address_context_optional_flags_t optional_flags;  // sniff and route-control metadata
+    ip_addr_t            ip_address;      // IP address in network byte order
+    uint16_t             port;            // Port number in host byte order
+    char                *domain;          // Domain name if applicable
+    enum domain_strategy domain_strategy; // DNS resolution strategy
+    uint8_t              domain_len;      // Length of domain name
+    uint32_t             metadata_flags;  // Detected application protocols and route-control flags
 
     // Flags for address properties
     uint8_t type_ip : 1;         // True for IP address, false for domain
@@ -117,7 +107,7 @@ static inline void addresscontextReset(address_context_t *ctx)
  */
 static inline void addresscontextClearOptionalFlags(address_context_t *ctx)
 {
-    ctx->optional_flags = (address_context_optional_flags_t) {0};
+    ctx->metadata_flags = 0;
     ctx->resolver_dns   = false;
 }
 
@@ -130,7 +120,7 @@ static inline void addresscontextClearOptionalFlags(address_context_t *ctx)
  */
 static inline void addresscontextClearDetectedProtocols(address_context_t *ctx)
 {
-    ctx->optional_flags.detected_protocols &= ~kAddressContextDetectedProtocolMask;
+    ctx->metadata_flags &= ~kAddressContextDetectedProtocolMask;
 }
 
 /**
@@ -165,17 +155,17 @@ static inline void addresscontextSetDestinationPinned(address_context_t *ctx, bo
 {
     if (pinned)
     {
-        ctx->optional_flags.detected_protocols |= kAddressContextRouteFlagPinnedDestination;
+        ctx->metadata_flags |= kAddressContextRouteFlagPinnedDestination;
     }
     else
     {
-        ctx->optional_flags.detected_protocols &= ~kAddressContextRouteFlagPinnedDestination;
+        ctx->metadata_flags &= ~kAddressContextRouteFlagPinnedDestination;
     }
 }
 
 static inline bool addresscontextDestinationIsPinned(const address_context_t *ctx)
 {
-    return (ctx->optional_flags.detected_protocols & kAddressContextRouteFlagPinnedDestination) != 0;
+    return (ctx->metadata_flags & kAddressContextRouteFlagPinnedDestination) != 0;
 }
 
 /**
@@ -697,7 +687,7 @@ static inline void addresscontextCopy(address_context_t *dest, const address_con
     dest->proto_packet    = source->proto_packet;
     dest->domain_resolved = source->domain_resolved;
     dest->port            = source->port;
-    dest->optional_flags  = source->optional_flags;
+    dest->metadata_flags  = source->metadata_flags;
     dest->resolver_dns    = source->resolver_dns;
 }
 

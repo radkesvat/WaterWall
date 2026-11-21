@@ -445,8 +445,7 @@ static void checkSplitLineContextAtInit(est_fixture_t *f, line_t *l)
     const address_context_t *copied   = lineGetDestinationAddressContext(l);
     twfRequire(lineGetSourceAddressContext(l)->port == 12345 && copied->port == 443 &&
                    strcmp(copied->domain, "fixture.example") == 0 && copied->domain != original->domain &&
-                   (copied->optional_flags.detected_protocols & kAddressContextDetectedProtocolMask) ==
-                       kAddressContextProtocolTls,
+                   (copied->metadata_flags & kAddressContextDetectedProtocolMask) == kAddressContextProtocolTls,
                "split QUIC line lost endpoint identity or aliased owned domain memory");
     twfRequire(addresscontextDestinationIsPinned(original) && addresscontextIsResolverDns(original),
                "QUIC handoff cleared the borrowed line's resolver metadata");
@@ -480,7 +479,7 @@ static void testSplitLineContexts(void)
             addresscontextDomainSetByString(destination, "fixture.example");
             addresscontextSetPort(destination, 443);
             addresscontextSetOnlyProtocol(destination, client ? IP_PROTO_TCP : IP_PROTO_UDP);
-            destination->optional_flags.detected_protocols = kAddressContextProtocolTls;
+            destination->metadata_flags = kAddressContextProtocolTls;
             addresscontextSetDestinationPinned(destination, true);
             addresscontextSetResolverDns(destination, true);
             lineGetRoutingContext(f.line)->local_listener_port = 8443;

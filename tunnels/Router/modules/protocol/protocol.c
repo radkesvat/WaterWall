@@ -98,7 +98,7 @@ bool routerProtocolMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
     }
 
     const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
-    return (dest->optional_flags.detected_protocols & rule->protocol.wanted_flags) != 0;
+    return (dest->metadata_flags & rule->protocol.wanted_flags) != 0;
 }
 
 void routerProtocolDestroy(router_rule_t *rule)

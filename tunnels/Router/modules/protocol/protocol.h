@@ -8,7 +8,7 @@
  * "protocol" matcher.
  *
  * Matches optional application-protocol flags detected by Router from the first
- * upstream payload and stored on dest_ctx.optional_flags.
+ * upstream payload and stored on dest_ctx.metadata_flags.
  */
 typedef generic_sniffer_result_t (*router_generic_sniffer_fn)(const uint8_t *payload, uint32_t payload_len);
 

@@ -39,7 +39,7 @@ static void setAddress(address_context_t *context, unsigned form, bool configure
     }
     context->port            = configured ? 443 : 5353;
     context->domain_strategy = configured ? kDsPreferIpV6 : kDsOnlyIpV4;
-    context->optional_flags.detected_protocols  = configured ? kAddressContextProtocolTls : kAddressContextProtocolHttp1;
+    context->metadata_flags  = configured ? kAddressContextProtocolTls : kAddressContextProtocolHttp1;
     addresscontextSetOnlyProtocol(context, configured ? IP_PROTO_TCP : IP_PROTO_UDP);
 }
 
@@ -47,7 +47,7 @@ static void requireAddress(const address_context_t *actual, const address_contex
 {
     require(actual->type_ip == expected->type_ip, "selected address type changed");
     require(actual->domain_strategy == expected->domain_strategy, "selected address strategy changed");
-    require(actual->optional_flags.detected_protocols == expected->optional_flags.detected_protocols, "selected address metadata changed");
+    require(actual->metadata_flags == expected->metadata_flags, "selected address metadata changed");
     require(actual->domain_constant == expected->domain_constant, "selected domain ownership changed");
     require(actual->domain_resolved == expected->domain_resolved, "selected domain resolution state changed");
     if (expected->type_ip || expected->domain_resolved)

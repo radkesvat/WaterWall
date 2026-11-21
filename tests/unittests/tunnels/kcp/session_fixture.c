@@ -433,8 +433,7 @@ static void checkMetadata(line_t *copy, line_t *original, bool udp)
             "split line changed the original destination flags");
     require(addresscontextDestinationIsPinned(dest) == ! udp && addresscontextIsResolverDns(dest) == ! udp,
             "destination flags did not follow the logical application flow");
-    require((dest->optional_flags.detected_protocols & kAddressContextDetectedProtocolMask) ==
-                kAddressContextProtocolTls,
+    require((dest->metadata_flags & kAddressContextDetectedProtocolMask) == kAddressContextProtocolTls,
             "split line lost detected-protocol metadata");
     require(copy->routing_context.local_listener_port == 34567 && copy->routing_context.peer_source_port == 45678,
             "split line lost listener/peer port context");
@@ -957,7 +956,7 @@ static endpoint_t *openApp(void)
     addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(ep->app), IP_PROTO_TCP);
     addresscontextSetDestinationPinned(lineGetDestinationAddressContext(ep->app), true);
     addresscontextSetResolverDns(lineGetDestinationAddressContext(ep->app), true);
-    lineGetDestinationAddressContext(ep->app)->optional_flags.detected_protocols |= kAddressContextProtocolTls;
+    lineGetDestinationAddressContext(ep->app)->metadata_flags |= kAddressContextProtocolTls;
     ep->app->routing_context.local_listener_port = 34567;
     ep->app->routing_context.peer_source_port    = 45678;
     lineAddAuthenticatedCredentials(ep->app, "fixture-user", "fixture-password");

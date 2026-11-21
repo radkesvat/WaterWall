@@ -231,7 +231,7 @@ static bool routerSniffDetectProtocols(router_tstate_t *ts, router_match_ctx_t *
     }
 
     address_context_t *dest              = lineGetDestinationAddressContext(mctx->line);
-    uint32_t           missing_protocols = needed_protocols & ~dest->optional_flags.detected_protocols;
+    uint32_t           missing_protocols = needed_protocols & ~dest->metadata_flags;
     bool               need_more         = false;
 
     uint32_t                            protocol_count = 0;
@@ -247,7 +247,7 @@ static bool routerSniffDetectProtocols(router_tstate_t *ts, router_match_ctx_t *
         switch (protocols[i].sniff(mctx->payload, mctx->payload_len))
         {
         case kGenericSnifferFound:
-            dest->optional_flags.detected_protocols |= flag;
+            dest->metadata_flags |= flag;
             break;
         case kGenericSnifferNeedMore:
             need_more = true;
