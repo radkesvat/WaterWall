@@ -14,7 +14,7 @@ It can be used in two broad styles:
 - `pause` mode for stream-style chains such as TCP, where traffic should wait instead of being discarded
 - `drop` mode for packet-style chains such as packet tunnels or UDP-style datagrams, where excess traffic may be thrown away
 
-This tunnel does not change protocol data. It only decides how quickly payload is allowed to pass.
+The node preserves the payload bytes, address and port. On a normal line, `pause` selects TCP and `drop` preserves the transport offer.
 
 ## Typical placement
 
@@ -255,12 +255,22 @@ If there are not enough tokens for that packet or datagram chunk, it drops that 
 - `SpeedLimit` must not intervene between `Bridge` and `ReverseClient`; those nodes must be directly adjacent when connected in that topology
 - `required_padding_left` is `0`, because this tunnel does not prepend protocol bytes
 
+On normal lines, `pause` mode selects TCP from the destination offer at Init.
+Use `drop` mode for UDP datagrams.
+
+On worker packet lines, `pause` waits for enough tokens to send the whole packet.
+The bucket holds one second of credit. A packet larger than that capacity is dropped
+immediately, so later packets can progress. If the queue is full, only the arriving
+packet is dropped. If its drain timer fails, the affected direction discards its
+queue and releases its local pause. The worker packet line and the opposite queue
+remain available.
+
 In stream `pause` mode, orderly `Finish` cancels pacing and hands queued bytes to
 the surviving neighbor in FIFO order before returning. The final handoff can burst
 through the configured rate and an outstanding consumer Pause. If the receiver
 closes during a handoff, the node releases the remainder and sends nothing further.
 After `UdpOverTcpClient` this rule applies to the framed TCP stream. After
-`UdpOverTcpServer` the output is UDP and queued datagrams are released at close.
+`UdpOverTcpServer` the UDP output uses `drop` mode.
 
 ### Splice support and bounded retention
 
@@ -271,7 +281,7 @@ and releases both queues; accepted TCP bytes are never silently dropped.
 During normal operation, a consumer Pause stops the corresponding timer drain. The queued data stays owned
 by this node, without repeated timer polling while paused. Resume rearms the drain,
 but the source remains paused until both the local queue hold and external pressure
-have cleared. If creating or rearming the drain timer is refused, both queues are
+have cleared. On a normal line, if creating or rearming the drain timer is refused, both queues are
 released and the affected connection closes through its owner. Notification
 callbacks can close the line safely.
 
@@ -295,6 +305,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
-| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
-| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext`, with `kNodeLayer3` and `kNodeLayer4Stream` in `pause` mode |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev`, with `kNodeLayer3` and `kNodeLayer4Stream` in `pause` mode |
 | `required_padding_left` | `0` bytes |

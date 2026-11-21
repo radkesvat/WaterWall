@@ -25,6 +25,5 @@ void speedlimitTunnelDownStreamPayload(tunnel_t *tunnel, line_t *line, sbuf_t *b
         }
         return;
     }
-    if (trafficshaperSubmit(&state->down, buffer) == kTrafficShaperRefused)
-        speedlimitCloseLineOnDrainFailure(state, buffer);
+    speedlimitSubmit(&state->down_context, buffer);
 }

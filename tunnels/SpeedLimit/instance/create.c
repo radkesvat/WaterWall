@@ -224,5 +224,10 @@ tunnel_t *speedlimitTunnelCreate(node_t *node)
 
     atomicLogRateLimiterInitialize(&state->drop_log_limiter);
     atomicStoreU64Relaxed(&state->dropped_payloads, 0);
+    if (state->work_mode == kSpeedLimitWorkModePause)
+    {
+        node->layer_group_prev_node = kNodeLayer3 | kNodeLayer4Stream | kNodeLayerSameAsNext;
+        node->layer_group_next_node = kNodeLayer3 | kNodeLayer4Stream | kNodeLayerSameAsPrev;
+    }
     return t;
 }

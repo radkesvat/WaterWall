@@ -175,6 +175,7 @@ static void requireSiblingLineStillWorks(speedlimit_fixture_t *fixture)
     timerInjectionReset(0);
 
     line_t *sibling = twfLineCreate(fixture->speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(sibling), IP_PROTO_TCP);
 
     const uint32_t before_next_payload = fixture->trace.next_payload;
     const uint32_t before_next_init    = fixture->trace.next_init;
@@ -219,6 +220,7 @@ static void caseFirstUpstreamScheduleFails(void)
     fixtureSetup(&fixture);
 
     line_t        *l              = twfLineCreate(fixture.speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     const uint32_t refc_at_start  = twfLineRefCount(l);
     const uint32_t recycled_start = twfRecycleCount();
 
@@ -250,6 +252,7 @@ static void caseFirstDownstreamScheduleFails(void)
     fixtureSetup(&fixture);
 
     line_t        *l              = twfLineCreate(fixture.speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     const uint32_t refc_at_start  = twfLineRefCount(l);
     const uint32_t recycled_start = twfRecycleCount();
 
@@ -280,6 +283,7 @@ static void caseRescheduleAfterPartialSliceFails(void)
     fixtureSetup(&fixture);
 
     line_t        *l              = twfLineCreate(fixture.speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     const uint32_t refc_at_start  = twfLineRefCount(l);
     const uint32_t recycled_start = twfRecycleCount();
 
@@ -329,6 +333,7 @@ static void caseFinalResumeTickFails(void)
     fixtureSetup(&fixture);
 
     line_t        *l              = twfLineCreate(fixture.speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     const uint32_t refc_at_start  = twfLineRefCount(l);
     const uint32_t recycled_start = twfRecycleCount();
 
@@ -370,6 +375,7 @@ static void caseResumeScheduleFails(bool upstream)
     speedlimit_fixture_t fixture;
     fixtureSetup(&fixture);
     line_t *l = twfLineCreate(fixture.speedlimit->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     timerInjectionReset(0);
     speedlimitTunnelUpStreamInit(fixture.speedlimit, l);
     drainLineTokens(&fixture, l);
@@ -406,6 +412,71 @@ static void caseResumeScheduleFails(bool upstream)
     fixtureTeardown(&fixture);
 }
 
+static void runPacketDrain(traffic_shaper_t *shaper)
+{
+    wtimer_t *timer = shaper->timer;
+    twfRequire(timer != NULL, "packet FIFO had no drain timer");
+    trafficshaperTimerCallback(timer);
+    if (g_last_timer == timer)
+        g_last_timer = NULL;
+    weventSetUserData(timer, NULL);
+    wtimerDelete(timer);
+}
+
+static void casePacketPacingAndFailure(bool upstream)
+{
+    twfSetCase("SpeedLimit shared packet line preserves packet boundaries and survives refused timers");
+    speedlimit_fixture_t fixture;
+    fixtureSetup(&fixture);
+    tunnel_t      *t     = fixture.speedlimit;
+    line_t        *line  = twfLineCreate(t->lstate_size);
+    tunnel_chain_t chain = {.workers_count = 1, .packet_lines = &line, .contains_packet_node = true};
+    t->chain             = &chain;
+    timerInjectionReset(0);
+    speedlimitTunnelUpStreamInit(t, line);
+    speedlimit_lstate_t *state    = lineGetState(line, t);
+    traffic_shaper_t    *shaper   = upstream ? &state->up : &state->down;
+    traffic_shaper_t    *opposite = upstream ? &state->down : &state->up;
+    const uint32_t      *sent     = upstream ? &fixture.trace.next_payload_bytes : &fixture.trace.prev_payload_bytes;
+    LineTaskFnWithBuf    send     = upstream ? speedlimitTunnelUpStreamPayload : speedlimitTunnelDownStreamPayload;
+    LineTaskFnWithBuf    reply    = upstream ? speedlimitTunnelDownStreamPayload : speedlimitTunnelUpStreamPayload;
+
+    send(t, line, makePayload(&fixture, kTestBytesPerSecond + 1));
+    twfRequire(*sent == 0 && trafficshaperPending(shaper) == 0, "unpayable packet blocked or escaped the FIFO");
+
+    drainLineTokens(&fixture, line);
+    send(t, line, makePayload(&fixture, 8));
+    grantLineTokens(&fixture, line, 4);
+    runPacketDrain(shaper);
+    twfRequire(*sent == 0 && trafficshaperPending(shaper) == 1, "partial packet escaped the limiter");
+    grantLineTokens(&fixture, line, 8);
+    runPacketDrain(shaper);
+    twfRequire(*sent == 8 && trafficshaperPending(shaper) == 0, "whole packet did not leave the FIFO");
+    runPacketDrain(shaper);
+    twfRequire(! shaper->locally_paused, "successful packet delivery held its producer");
+
+    drainLineTokens(&fixture, line);
+    /* Force ordinary queue admission refusal while one packet waits. */
+    bufferbudgetInit(shaper->budget, (buffer_budget_cost_t) {8, kSpeedLimitMaxQueueCharge});
+    send(t, line, makePayload(&fixture, 8));
+    send(t, line, makePayload(&fixture, 1));
+    twfRequire(trafficshaperPending(shaper) == 1 && shaper->locally_paused, "refusal discarded admitted packets");
+    reply(t, line, makePayload(&fixture, 3));
+    timerInjectionReset(1);
+    runPacketDrain(shaper);
+    twfRequire(trafficshaperPending(shaper) == 0 && ! shaper->locally_paused && trafficshaperPending(opposite) == 1 &&
+                   lineIsAlive(line) && fixture.trace.prev_finish == 0 && fixture.trace.next_finish == 0,
+               "timer refusal damaged the shared packet line, sibling direction or producer hold");
+    grantLineTokens(&fixture, line, 4);
+    send(t, line, makePayload(&fixture, 4));
+    twfRequire(*sent == 12, "the packet direction did not recover after timer refusal");
+
+    speedlimitTunnelWorkerStop(t, 0, wwLifecycleStartupRollback());
+    twfRequireLineStateZeroed(line, t, "worker stop retained packet pacing state");
+    twfLineDestroy(line);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     caseFirstUpstreamScheduleFails();
@@ -414,6 +485,8 @@ int main(void)
     caseFinalResumeTickFails();
     caseResumeScheduleFails(true);
     caseResumeScheduleFails(false);
+    casePacketPacingAndFailure(true);
+    casePacketPacingAndFailure(false);
 
     printf("speedlimit_line_failure_test: all cases passed\n");
     return 0;

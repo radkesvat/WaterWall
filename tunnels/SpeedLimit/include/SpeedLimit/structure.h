@@ -56,7 +56,7 @@ struct speedlimit_lstate_s
     tunnel_t                *tunnel;
     line_t                  *line;
     speedlimit_close_phase_t close_phase;
-    bool                     flush_on_finish;
+    bool                     packet_line;
     traffic_shaper_t         up;
     traffic_shaper_t         down;
     speedlimit_direction_t   up_context;
@@ -110,6 +110,8 @@ void speedlimitTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void speedlimitTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void                              speedlimitLogDrop(tunnel_t *t, line_t *line, size_t bytes, bool upstream);
+void                              speedlimitInitShaper(speedlimit_direction_t *direction);
+void                              speedlimitSubmit(speedlimit_direction_t *direction, sbuf_t *buffer);
 void                              speedlimitLinestateInitialize(speedlimit_lstate_t *ls, tunnel_t *t, line_t *l);
 void                              speedlimitLinestateDestroy(speedlimit_lstate_t *ls);
 extern const traffic_shaper_ops_t speedlimitShaperOps;
@@ -118,7 +120,7 @@ void speedlimitTunnelWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_co
 
 uint64_t speedlimitPeekAvailableUnits(tunnel_t *t, line_t *l);
 size_t   speedlimitGrantBytes(tunnel_t *t, line_t *l, size_t requested_bytes, bool allow_partial);
-uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l);
+uint32_t speedlimitGetRetryDelayMs(tunnel_t *t, line_t *l, size_t wanted);
 /* Drain scheduling requires a positive delay; false means timer admission was refused. */
 bool speedlimitScheduleUpstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);
 bool speedlimitScheduleDownstreamDrain(speedlimit_lstate_t *ls, uint32_t delay_ms);

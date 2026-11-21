@@ -1,5 +1,18 @@
 #include "structure.h"
 
+void speedlimitInitShaper(speedlimit_direction_t *direction)
+{
+    speedlimit_lstate_t *state = direction->state;
+    trafficshaperInit(direction->upstream ? &state->up : &state->down,
+                      state->line,
+                      direction->upstream ? &state->up_budget : &state->down_budget,
+                      &speedlimitShaperOps,
+                      direction,
+                      kTrafficShaperStream,
+                      kSpeedLimitImmediateMs,
+                      false);
+}
+
 void speedlimitLinestateInitialize(speedlimit_lstate_t *state, tunnel_t *tunnel, line_t *line)
 {
     speedlimit_tstate_t *settings = tunnelGetState(tunnel);
@@ -11,35 +24,14 @@ void speedlimitLinestateInitialize(speedlimit_lstate_t *state, tunnel_t *tunnel,
     const buffer_budget_cost_t limits = {kSpeedLimitMaxQueueBytes, kSpeedLimitMaxQueueCharge};
     bufferbudgetInit(&state->up_budget, limits);
     bufferbudgetInit(&state->down_budget, limits);
-    trafficshaperInit(&state->up,
-                      line,
-                      &state->up_budget,
-                      &speedlimitShaperOps,
-                      &state->up_context,
-                      kTrafficShaperStream,
-                      kSpeedLimitImmediateMs,
-                      false);
-    trafficshaperInit(&state->down,
-                      line,
-                      &state->down_budget,
-                      &speedlimitShaperOps,
-                      &state->down_context,
-                      kTrafficShaperStream,
-                      kSpeedLimitImmediateMs,
-                      false);
+    state->packet_line = tunnelchainIsWorkerPacketLine(tunnel->chain, line);
+    speedlimitInitShaper(&state->up_context);
+    speedlimitInitShaper(&state->down_context);
     speedlimit_lstate_t **head = &settings->worker_buckets[lineGetWID(line)].active_lines;
     state->active_next         = *head;
     if (*head != NULL)
         (*head)->active_prev = state;
     *head = state;
-
-    /* A TCP/UDP bridge publishes its outgoing framing on the destination. */
-    address_context_transport_t transport = addresscontextClassifyTransport(lineGetDestinationAddressContext(line));
-    if (transport == kAddressContextTransportNone || transport == kAddressContextTransportUnsupported)
-        transport = addresscontextClassifyTransport(lineGetSourceAddressContext(line));
-    state->flush_on_finish = settings->work_mode == kSpeedLimitWorkModePause &&
-                             ! tunnelchainIsWorkerPacketLine(tunnel->chain, line) &&
-                             transport != kAddressContextTransportUdp;
 }
 
 void speedlimitLinestateDestroy(speedlimit_lstate_t *state)
@@ -75,7 +67,7 @@ void speedlimitFinish(tunnel_t *tunnel, line_t *line, bool upstream)
     }
     assert(state->close_phase == kSpeedLimitOpen);
     traffic_shaper_t *output = upstream ? &state->up : &state->down;
-    if (state->flush_on_finish && ! output->stopped && trafficshaperPending(output) != 0)
+    if (! state->packet_line && ! output->stopped && trafficshaperPending(output) != 0)
     {
         state->close_phase = kSpeedLimitFlushing;
         trafficshaperQuiesce(&state->up);

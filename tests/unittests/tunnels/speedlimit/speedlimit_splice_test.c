@@ -251,7 +251,7 @@ static void setupWithProtocols(bool up, const char *work_mode, const char *limit
 
 static void setup(bool up, const char *work_mode, const char *limit_mode)
 {
-    setupWithProtocols(up, work_mode, limit_mode, 0, 0);
+    setupWithProtocols(up, work_mode, limit_mode, 0, IP_PROTO_TCP);
 }
 
 static void tokens(uint32_t bytes)
@@ -576,10 +576,10 @@ static void testRetryRounding(void)
     ts->recharge_interval_ms  = 997;
     ts->refill_units_per_step = 997;
     tokens(0);
-    twfRequire(speedlimitGetRetryDelayMs(node, line) == 1994, "retry lost a partial recharge step");
+    twfRequire(speedlimitGetRetryDelayMs(node, line, 1) == 1994, "retry lost a partial recharge step");
     ts->recharge_interval_ms  = INT_MAX;
     ts->refill_units_per_step = INT_MAX;
-    twfRequire(speedlimitGetRetryDelayMs(node, line) == INT_MAX, "maximum recharge interval did not remain valid");
+    twfRequire(speedlimitGetRetryDelayMs(node, line, 1) == INT_MAX, "maximum recharge interval did not remain valid");
     teardown();
 }
 
@@ -732,6 +732,10 @@ static void testDatagramFinish(void)
 {
     /* UdpOverTcpServer decodes TCP-framed input to datagrams. */
     setupWithProtocols(true, "pause", "per-line", IP_PROTO_TCP, IP_PROTO_UDP);
+    twfRequire(! lineIsAlive(line) && finishes == 1, "normal UDP line entered the stream shaper");
+    teardown();
+
+    setupWithProtocols(true, "drop", "per-line", IP_PROTO_TCP, IP_PROTO_UDP);
     tokens(0);
     pauseConsumer();
     submit(ordinary("ABCDEFGH", 8));
