@@ -176,6 +176,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Datagram` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `2` bytes |

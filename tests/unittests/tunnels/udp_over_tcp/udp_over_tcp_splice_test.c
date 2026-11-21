@@ -293,6 +293,7 @@ static void setup(uint8_t source_protocol)
     line = twfLinePoolCreateLine(&lines);
     lineRef(line);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), source_protocol);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     node->fnInitU(node, line);
 }
 

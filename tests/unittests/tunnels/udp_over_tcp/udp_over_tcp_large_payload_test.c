@@ -75,6 +75,7 @@ static void testPayload(uint8_t source_protocol, uint32_t length)
     tunnelBind(uot, next);
     line_t *line = twfLineCreate(uot->lstate_size);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), source_protocol);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     uot->fnInitU(uot, line);
 #ifdef TEST_UOT_SERVER
     twfRequire(lineGetDestinationAddressContext(line)->proto_udp && ! lineGetDestinationAddressContext(line)->proto_tcp,

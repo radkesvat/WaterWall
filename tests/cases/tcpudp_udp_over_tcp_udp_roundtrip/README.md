@@ -7,7 +7,9 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 
 - `tester-client`: `TesterClient` → `outer-udp-connector`
 - `outer-udp-connector`: `UdpConnector` (terminal or independently bound endpoint)
-- `tcpudp-listener`: `TcpUdpListener` → `uot-client`
+- `tcpudp-listener`: `TcpUdpListener` → `select-transport`
+- `select-transport`: `Router` sends UDP to `uot-client` and other traffic to `discard-stream`
+- `discard-stream`: `BlackHole` (passive TCP default)
 - `uot-client`: `UdpOverTcpClient` → `carrier-tcp-connector`
 - `carrier-tcp-connector`: `TcpConnector` (terminal or independently bound endpoint)
 - `carrier-tcp-listener`: `TcpListener` → `uot-server`
