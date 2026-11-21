@@ -167,6 +167,16 @@ void lineCopyContext(line_t *const dest, const line_t *const src)
     addresscontextCopy(&dest->routing_context.dest_ctx, &src->routing_context.dest_ctx);
 }
 
+bool lineMarkParseHex(const char *hex, line_mark_t *out)
+{
+    assert(hex != NULL && out != NULL);
+    line_mark_t mark;
+    if (! asciiHexDecodeBytes((const uint8_t *) hex, stringLength(hex), mark.bytes, sizeof(mark.bytes)))
+        return false;
+    *out = mark;
+    return true;
+}
+
 void lineClearUsers(line_t *const line)
 {
     if (line == NULL)

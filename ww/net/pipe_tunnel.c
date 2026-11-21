@@ -1008,6 +1008,9 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
 
     line_t *owned = lineCreateForWorker(wid, tunnelchainGetLinePools(tunnelGetChain(t)), wid_to);
     lineCopyIngressContext(owned, line);
+    const line_mark_t *mark = lineGetMark(line);
+    if (mark != NULL)
+        lineSetMark(owned, mark);
     addresscontextSetTransportOffer(lineGetDestinationAddressContext(owned), offer);
 
     /* Stage all metadata without publishing either line state. */

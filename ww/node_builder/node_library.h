@@ -10,7 +10,7 @@
 
 /* The historical descriptor symbol name is retained, but the version gates the
  * complete external-node ABI, including buffer and device APIs. */
-#define WW_EXTERNAL_NODE_ABI_REVISION 10u
+#define WW_EXTERNAL_NODE_ABI_REVISION 11u
 #ifdef OS_WIN
 /* The high bits identify the layout of atomics embedded in public structures.
  * Both tagged values must differ from descriptors built before this check. */

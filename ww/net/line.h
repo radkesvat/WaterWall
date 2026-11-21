@@ -207,7 +207,7 @@ void lineCopyUsers(line_t *const dest, const line_t *const src);
  * Both arguments must be distinct, live normal lines. The current worker
  * must own the source and have exclusive access to the newly created,
  * unpublished destination with no user markers. The destination may already
- * be assigned to another worker. Its destination address is caller-managed.
+ * be assigned to another worker. Its destination address and line mark are caller-managed.
  */
 void lineCopyIngressContext(line_t *const dest, const line_t *const src);
 
@@ -220,7 +220,8 @@ void lineCopyIngressContext(line_t *const dest, const line_t *const src);
  *
  * Copies both address contexts, including their protocol and optional metadata,
  * the listener/source ports, and all user markers and credentials through the
- * existing copy helpers. The caller selects the final endpoints and protocols
+ * existing copy helpers. The new companion keeps its own line mark.
+ * The caller selects the final endpoints and protocols
  * before Init. No callback is dispatched and no association is created.
  *
  * Lifetime, pool/worker ownership, established state, tunnel state and bypass
@@ -231,6 +232,24 @@ void lineCopyIngressContext(line_t *const dest, const line_t *const src);
  * @param src Source line whose routing context and user identity are inherited.
  */
 void lineCopyContext(line_t *const dest, const line_t *const src);
+
+/** Return the line-owned routing mark, or NULL when absent. Reading leaves the mark in place. */
+static inline const line_mark_t *lineGetMark(const line_t *line)
+{
+    assert(line != NULL && lineIsAlive(line));
+    return line->has_mark ? &line->mark : NULL;
+}
+
+/** Set or replace the mark on a live normal line. An all-zero mark is a present value. */
+static inline void lineSetMark(line_t *line, const line_mark_t *mark)
+{
+    assert(line != NULL && lineIsAlive(line) && ! line->is_packet_line && mark != NULL);
+    line->mark     = *mark;
+    line->has_mark = true;
+}
+
+/** Decode exactly 32 ASCII hexadecimal digits in wire order. Failure leaves the output untouched. */
+bool lineMarkParseHex(const char *hex, line_mark_t *out);
 
 /**
  * @brief Returns the latest user handle marker added to the line.

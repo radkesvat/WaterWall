@@ -14,8 +14,14 @@ typedef atomic_u32_t line_refc_t;
 
 enum
 {
-    kLineMaxUsers = 4
+    kLineMaxUsers = 4,
+    kLineMarkSize = 16
 };
+
+typedef struct line_mark_s
+{
+    uint8_t bytes[kLineMarkSize];
+} line_mark_t;
 
 typedef struct line_user_credentials_s
 {
@@ -70,9 +76,12 @@ typedef struct line_s
     uint8_t           prefer_ordinary_read_d : 1;
     uint8_t           fallback_mode : 1;
     uint8_t           close_linger_reasons : 2;
+    uint8_t           has_mark : 1;
+    uint8_t           is_packet_line : 1;
     routing_context_t routing_context;
 
     generic_pool_t **pools;
+    line_mark_t      mark;
 
     MSVC_ATTR_ALIGNED_LINE_CACHE uintptr_t *tunnels_line_state[] GNU_ATTR_ALIGNED_LINE_CACHE;
 

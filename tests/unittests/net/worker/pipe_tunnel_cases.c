@@ -11,11 +11,13 @@ static atomic_uint       g_pipe_borrowed_finish_count;
 static atomic_uint       g_pipe_owned_payload_count;
 static atomic_uint       g_pipe_borrowed_payload_count;
 static _Atomic(line_t *) g_pipe_owned_line;
+static const line_mark_t kPipeMark = {.bytes = {0xFF, [kLineMarkSize - 1] = 0xAC}};
 
 static line_t *pipeTestCreateSourceLine(tunnel_chain_t *chain)
 {
     line_t *line = lineCreate(tunnelchainGetLinePools(chain), 0);
     addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
+    lineSetMark(line, &kPipeMark);
     return line;
 }
 
@@ -34,6 +36,9 @@ static void pipeTestOwnedInit(tunnel_t *t, line_t *line)
     require(currentThreadOwnsWorker(lineGetWID(line)), "pipe Init ran outside its target worker");
     require(addresscontextGetTransportOffer(lineGetDestinationAddressContext(line)) == kAddressContextTransportBoth,
             "pipe Init changed the source line transport offer");
+    const line_mark_t *mark = lineGetMark(line);
+    require(mark != NULL && memoryCompare(mark->bytes, kPipeMark.bytes, kLineMarkSize) == 0,
+            "cross-worker pipe Init lost the logical connection's mark");
     atomicStoreExplicit(&g_pipe_owned_line, line, memory_order_release);
     atomicAddExplicit(&g_pipe_init_count, 1, memory_order_relaxed);
 }
@@ -261,6 +266,21 @@ static void testIngressContextCopy(tunnel_chain_t *chain)
     line_t            *child   = lineCreate(tunnelchainGetLinePools(chain), 0);
     routing_context_t *ingress = lineGetRoutingContext(source);
     routing_context_t *copy    = lineGetRoutingContext(child);
+    require(lineGetMark(source) == NULL, "fresh line inherited a mark from its pool");
+    line_mark_t mark;
+    require(lineMarkParseHex("00000000000000000000000000000000", &mark), "all-zero mark failed to parse");
+    lineSetMark(source, &mark);
+    require(lineGetMark(source) != NULL && memoryCompare(lineGetMark(source)->bytes, mark.bytes, kLineMarkSize) == 0,
+            "all-zero mark was treated as absent");
+    require(lineMarkParseHex("fF0000000000000000000000000000Ac", &mark) &&
+                memoryCompare(mark.bytes, kPipeMark.bytes, kLineMarkSize) == 0,
+            "hex parser changed the order or case handling of mark bytes");
+    require(! lineMarkParseHex("", &mark) && ! lineMarkParseHex("ff0000000000000000000000000000a", &mark) &&
+                ! lineMarkParseHex("ff0000000000000000000000000000acc", &mark) &&
+                ! lineMarkParseHex("0000000000000000000000000000000z", &mark) &&
+                memoryCompare(mark.bytes, kPipeMark.bytes, kLineMarkSize) == 0,
+            "invalid mark length or digits were accepted or partially changed the output");
+    lineSetMark(source, &mark);
     addresscontextDomainSetByString(&ingress->src_ctx, "ingress.example");
     addresscontextSetOnlyProtocol(&ingress->src_ctx, IP_PROTO_TCP);
     addresscontextSetPort(&ingress->src_ctx, 8080);
@@ -281,6 +301,16 @@ static void testIngressContextCopy(tunnel_chain_t *chain)
             "ingress copy changed the child's selected destination");
     require(lineGetAuthenticatedPassword(child) != lineGetAuthenticatedPassword(source),
             "ingress copy shared owned credential storage");
+    require(lineGetMark(child) == NULL, "copying ingress identity marked an independent line");
+    line_t *companion = lineCreate(tunnelchainGetLinePools(chain), 0);
+    addresscontextSetOnlyProtocol(&ingress->dest_ctx, IP_PROTO_TCP);
+    lineCopyContext(companion, source);
+    require(lineGetMark(source) != NULL && memoryCompare(lineGetMark(source)->bytes, mark.bytes, kLineMarkSize) == 0 &&
+                lineGetMark(companion) == NULL &&
+                addresscontextGetTransportOffer(lineGetDestinationAddressContext(companion)) ==
+                    kAddressContextTransportTcp,
+            "copying endpoints must preserve the transport and keep the mark on the original line");
+    lineDestroy(companion);
     lineDestroy(source);
     require(stringCompare(copy->src_ctx.domain, "ingress.example") == 0,
             "ingress copy lost its source hostname after source teardown");

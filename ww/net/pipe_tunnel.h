@@ -24,7 +24,7 @@ void pipetunnelDestroy(tunnel_t *t, const ww_lifecycle_context_t *context);
 
 /**
  * @brief Pipe to a specific WID.
- * Copies ingress metadata and publishes the source line's destination transport
+ * Copies ingress metadata, the source line's current mark and destination transport
  * offer before destination-worker Init.
  *
  * @param t Pointer to the tunnel.
