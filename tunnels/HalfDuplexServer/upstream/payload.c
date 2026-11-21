@@ -148,6 +148,7 @@ static line_t *createAndInitializeMainLine(tunnel_t *t, line_t *upload_line, lin
                                            halfduplexserver_lstate_t *upload_ls, halfduplexserver_lstate_t *download_ls)
 {
     line_t *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main_line), IP_PROTO_TCP);
 
     upload_ls->main_line   = main_line;
     download_ls->main_line = main_line;
@@ -290,6 +291,7 @@ static void handleDownloadConnectionFound(tunnel_t *t, line_t *l, sbuf_t *buf, h
         }
         tunnel_t                  *owner   = halfduplexserverOwner(t);
         line_t                    *main    = lineCreate(tunnelchainGetLinePools(tunnelGetChain(owner)), lineGetWID(l));
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main), IP_PROTO_TCP);
         halfduplexserver_lstate_t *service = lineGetState(main, owner);
         halfduplexserverLinestateInitialize(service);
         service->main_line       = main;

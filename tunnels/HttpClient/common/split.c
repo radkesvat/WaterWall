@@ -40,6 +40,7 @@ static void httpclientSplitInitTransportState(tunnel_t *t, line_t *transport, li
 {
     httpclient_lstate_t *ls = lineGetState(transport, t);
     httpclientLinestateInitialize(ls, t, transport);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(transport), IP_PROTO_TCP);
     ls->runtime_proto       = kHttpClientRuntimeHttp1;
     ls->split_role          = role;
     ls->split_main_line     = main_line;

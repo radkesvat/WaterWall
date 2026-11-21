@@ -71,6 +71,7 @@ void authenticationclientOpenControlLine(tunnel_t *t)
     authenticationclientResetFirstUsagePushRuntime(t);
 
     line_t                        *line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), 0);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     authenticationclient_lstate_t *ls   = lineGetState(line, t);
     authenticationclientLinestateInitialize(ls, lineGetBufferPool(line));
 

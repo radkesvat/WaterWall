@@ -386,6 +386,7 @@ void muxclientUnregisterParent(muxclient_tstate_t *ts, muxclient_lstate_t *ls)
 static bool muxclientCreateParentLine(tunnel_t *t, wid_t wid, line_t **selection_slot)
 {
     line_t             *parent_l  = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(parent_l), IP_PROTO_TCP);
     muxclient_lstate_t *parent_ls = lineGetState(parent_l, t);
 
     muxclientLinestateInitialize(t, parent_ls, parent_l, false, 0);

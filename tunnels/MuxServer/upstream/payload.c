@@ -93,6 +93,7 @@ static bool handleOpenFrame(tunnel_t *t, line_t *parent_l, muxserver_lstate_t *p
     }
 
     line_t             *child_l      = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(parent_l));
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(child_l), IP_PROTO_TCP);
     muxserver_lstate_t *new_child_ls = lineGetState(child_l, t);
     muxserverLinestateInitialize(t, new_child_ls, child_l, true, frame->cid);
     new_child_ls->child_slot_reserved = true;

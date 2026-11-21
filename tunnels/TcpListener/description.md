@@ -9,6 +9,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `TcpListener` is a TCP server node. It listens for inbound TCP connections, creates a new line for each accepted client, and passes that line upstream to the next node in the chain.
 
+Each accepted line records TCP as its source protocol and offers only TCP in
+its destination context before upstream `Init`.
+
 In practice, this node is used at the beginning of a chain.
 
 ### What It Does
@@ -319,5 +322,5 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayerNone` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

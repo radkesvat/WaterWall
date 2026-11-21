@@ -170,6 +170,8 @@ static void reverseclientBeginConnectMessageReceived(worker_t *worker, void *arg
     reverseclient_pair_t *pair = memoryAllocateZero(sizeof(*pair));
     line_t *ul = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     line_t *dl = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(ul), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(dl), IP_PROTO_TCP);
 
     *pair = (reverseclient_pair_t) {.t = t, .u = ul, .d = dl, .phase = kReverseClientPairConnecting};
     bufferbudgetInit(&pair->activation_budget,

@@ -299,5 +299,7 @@ tunnel_t *speedtestclientTunnelCreate(node_t *node)
     state->completed_streams = 0;
     state->failed_streams    = 0;
 
+    const bool udp              = state->mode == kSpeedTestClientModeUdp;
+    node->layer_group_next_node = udp ? kNodeLayer4Datagram : kNodeLayer4Stream;
     return t;
 }

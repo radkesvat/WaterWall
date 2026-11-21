@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 the same listener settings so TCP and UDP traffic can be accepted on the same address and port set, then forwards both
 transports into one shared next node.
 
+Each accepted line offers its own exact destination transport before `Init`. A
+TCP client creates a TCP line and a UDP peer creates a UDP line.
+
 It does not create connection lines itself. The internal `TcpListener` owns TCP line creation and destruction, and the
 internal `UdpListener` owns UDP peer-line creation and destruction.
 
@@ -26,7 +29,8 @@ TcpUdpListener -> SomeProtocolServer -> ...
 TcpUdpListener -> [optional middle tunnels] -> Socks5Server -> TcpUdpConnector
 ```
 
-The next node must be able to handle both TCP and UDP line semantics if both transports are expected in production.
+To carry both services, configure a path that accepts TCP byte streams and
+complete UDP datagrams or routes each to a compatible branch.
 
 `TcpUdpListener` is the standard built-in entry node for `Socks5Server` with `udp: true`: its TCP child accepts the
 SOCKS5 control connection, while its UDP child supplies the dynamic endpoint provider. A plain `TcpListener` supports
@@ -184,7 +188,7 @@ close or message the associated TCP control line.
 - creates one internal `UdpListener`
 - passes the same `settings` object to both child listeners
 - forwards upstream `Init`, `Payload`, `Pause`, `Resume`, `Est`, and `Finish` from either child listener to the next node
-- routes downstream callbacks back to the correct child listener using the line source protocol flags
+- routes downstream callbacks back to the correct child listener using the exact line source protocol
 - includes both child listeners in the chain so their line states are allocated normally
 
 ### Lifecycle And Direction Rules

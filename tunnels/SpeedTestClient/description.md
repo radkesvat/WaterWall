@@ -110,7 +110,7 @@ Server side:
 ### Optional `settings`
 
 - `mode` `(string)`
-  Transport framing mode. Supported values:
+  Selects the framing mode and the exact destination transport published before `Init`. Supported values are
   - `"tcp"`: stream mode. Frames are read from a byte stream.
   - `"udp"`: datagram mode. Each WaterWall payload buffer is one speed-test frame.
 
@@ -348,5 +348,5 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayerNone` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4Stream` in TCP mode or `kNodeLayer4Datagram` in UDP mode |
 | `required_padding_left` | `0` bytes |

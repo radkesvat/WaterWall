@@ -846,6 +846,7 @@ static void stripeServerReady(stripe_session_t *s)
     stripeLineInit(t, app, s, kStripeApplicationLine, 0);
     s->application = app;
     lineCopyIngressContext(app, s->lanes[0]);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(app), IP_PROTO_TCP);
     lineRef(app);
     stripeState(t)->output->init_owned(t, app);
     if (! s->closed)

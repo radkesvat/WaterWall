@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used at the beginning of a chain.
 
+Each new normal line publishes exact UDP in both its source and destination
+contexts before upstream `Init`.
+
 ## Typical placement
 
 ```text
@@ -309,7 +312,7 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
 | `layer_group_prev_node` | `kNodeLayerNone` |
-| `layer_group_next_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayer3 \| kNodeLayer4Datagram` |
 | `required_padding_left` | `0` bytes |
 
 ### UDP splice sending

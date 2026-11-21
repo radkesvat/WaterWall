@@ -327,7 +327,7 @@ MANIFEST = [
      ("TcpUdpConnector: upstream callback received before init selected a connector",),
      "helper/line-state invariant: TcpUdpConnector helpers internal connector"),
     ("tunnels/TcpUdpListener/common/helpers.c", "tcpudplistenerSelectDownStreamTunnel", 1,
-     ("TcpUdpListener: line has ambiguous or missing source protocol flags (tcp=%u, udp=%u)",),
+     ("TcpUdpListener: expected an exact TCP or UDP source protocol on the accepted line",),
      "helper/line-state invariant: TcpUdpListener helpers protocol flags"),
     ("tunnels/TesterServer/common/helpers.c", "testerserverResponseSendTask", 2,
      ("TesterServer: packet line died during packet-mode response send",

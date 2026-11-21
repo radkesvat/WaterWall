@@ -689,6 +689,7 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
     httpserver_lstate_t *dls = lineGetState(download_line, t);
 
     line_t              *main_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(upload_line));
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(main_line), IP_PROTO_TCP);
     httpserver_lstate_t *mls       = lineGetState(main_line, t);
     httpserverLinestateInitialize(mls, t, main_line);
 

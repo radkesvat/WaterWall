@@ -10,10 +10,12 @@ void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
     generic_pool_t **pools = tunnelchainGetLinePools(tunnelGetChain(t));
     wid_t            wid   = lineGetWID(main);
     pair->upload           = lineCreate(pools, wid);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(pair->upload), IP_PROTO_TCP);
     halfduplexclientSetPair(t, pair->upload, pair);
     if (lineCallWithRef(pair->upload, tunnelUpStreamInit, ts->upload_tunnel) && lineIsAlive(main) && pair->main != NULL)
     {
         pair->download = lineCreate(pools, wid);
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(pair->download), IP_PROTO_TCP);
         halfduplexclientSetPair(t, pair->download, pair);
         if (lineCallWithRef(pair->download, tunnelUpStreamInit, ts->download_tunnel) && lineIsAlive(main) &&
             pair->main != NULL)

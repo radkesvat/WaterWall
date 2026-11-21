@@ -105,6 +105,7 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
     s->child_eof   = false;
     s->connect_at  = hpsNowMs(s);
     lineCopyIngressContext(l, s->client);
+    address_context_t *dest = lineGetDestinationAddressContext(l);
     if (s->phase != kHpsFallback)
     {
         if (s->auth_mode == kHpsAuthLocal)
@@ -113,14 +114,13 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
         {
             lineAddUser(l, &s->identity, username, password);
         }
-        address_context_t *dest = lineGetDestinationAddressContext(l);
         if (s->authority.literal)
             addresscontextSetIp(dest, &s->authority.ip);
         else
             addresscontextDomainSetByString(dest, s->authority.host);
         addresscontextSetPort(dest, s->authority.port);
-        addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
     }
+    addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
     if (s->phase == kHpsExchange)
         linePreferOrdinaryReadDownstream(l);
     lineRef(l);
