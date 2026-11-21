@@ -22,7 +22,7 @@ from wwtest.run_directory import RunDirectory
 from wwtest.sockets import connect_when_ready, exact
 
 
-def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise=None):
+def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise=None, restricted=False):
     with RunDirectory("waterwall-l4-" + config["name"] + "-") as root:
         if quic:
             for filename in ("server.crt", "server.key"):
@@ -30,7 +30,8 @@ def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise
         (root / "core.json").write_text(json.dumps(core_config()))
         (root / "config.json").write_text(json.dumps(config))
         output_path = root / "stdout.log"
-        with Process([binary], cwd=root, log_path=output_path) as process:
+        command = [binary, "--restricted-config"] if restricted else [binary]
+        with Process(command, cwd=root, log_path=output_path) as process:
             deadline = time.monotonic() + 8
             while process.poll() is None and time.monotonic() < deadline:
                 if STARTED_MARKER in output_path.read_text(errors="replace"):
@@ -46,6 +47,8 @@ def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise
             assert (conflict or error_terms) and process.poll() == 1 and STARTED_MARKER not in output, output
             required = (*conflict, "stream", "datagram") if conflict else error_terms
             assert any(all(term in line.lower() for term in required) for line in output.splitlines()), output
+            if restricted:
+                assert all(node["name"] not in output for node in config["nodes"]), output
 
 
 def quic_cases(binary):
@@ -128,6 +131,12 @@ def dispatch_cases(binary):
             socket_node("ingress", listener, ingress_port, next_node="egress"),
             socket_node("egress", connector, backend_port)]}
         startup(binary, config, conflict=("ingress", "egress", "next", "prev"))
+
+    restricted_nodes = [socket_node("private-source-name", "TcpListener", ingress_port, next_node="private-target-name"),
+                        socket_node("private-target-name", "UdpConnector", backend_port)]
+    startup(binary, {"name": "restricted-edge", "nodes": restricted_nodes}, restricted=True,
+            error_terms=("l4 payload conflict", "<restricted>.next supports stream",
+                         "<restricted>.prev supports datagram"))
 
     cases = (("TcpConnector", None, False, "tcp"),
              ("UdpConnector", None, False, "udp"),

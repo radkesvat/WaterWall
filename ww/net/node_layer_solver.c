@@ -8,6 +8,7 @@
 #include "loggers/internal_logger.h"
 #include "net/chain.h"
 #include "net/tunnel.h"
+#include "node_builder/config_policy.h"
 #include "objects/node.h"
 
 typedef struct node_layer_edge_s
@@ -1034,9 +1035,9 @@ bool nodeLayerValidateL4Link(const tunnel_t *from, const tunnel_t *to, node_laye
         snprintf(status->message,
                  sizeof(status->message),
                  "L4 payload conflict: %s.next supports %s, but %s.prev supports %s",
-                 source->name != NULL ? source->name : source->type,
+                 configPolicyDiagnostic(source->name != NULL ? source->name : source->type),
                  l4KindsName(from_kinds),
-                 target->name != NULL ? target->name : target->type,
+                 configPolicyDiagnostic(target->name != NULL ? target->name : target->type),
                  l4KindsName(to_kinds));
     }
     return false;

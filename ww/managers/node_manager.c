@@ -379,7 +379,7 @@ static void validateConfiguredL4Links(node_manager_config_t *cfg, tunnel_t **t_a
         node_layer_solver_status_t status = {0};
         if (! nodeLayerValidateL4Link(from, target->instance, &status))
         {
-            LOGF("NodeManager: node startup failure: %s", configPolicyDiagnostic(status.message));
+            LOGF("NodeManager: node startup failure: %s", status.message);
             startupFailureRecord(1);
             return;
         }

@@ -125,5 +125,6 @@ bool nodeLayerSolveChain(tunnel_chain_t *chain, node_layer_solver_status_t *stat
 unsigned nodeLayerDeclaredL4Kinds(const node_t *node, tunnel_layer_side_t side);
 
 /* Check a configured next link after solving the assembled sides. The physical
- * callback edge can include private helpers, such as an embedded resolver. */
+ * callback edge can include private helpers, such as an embedded resolver.
+ * The returned diagnostic redacts both endpoint identifiers under restricted config. */
 bool nodeLayerValidateL4Link(const tunnel_t *from, const tunnel_t *to, node_layer_solver_status_t *status);
