@@ -33,5 +33,10 @@ tunnel_t *junkdatagramsenderTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (junkdatagramsenderGenerationEnabled(ts))
+    {
+        node->layer_group_prev_node = kNodeLayer3 | kNodeLayer4Datagram | kNodeLayerSameAsNext;
+        node->layer_group_next_node = kNodeLayer3 | kNodeLayer4Datagram | kNodeLayerSameAsPrev;
+    }
     return t;
 }

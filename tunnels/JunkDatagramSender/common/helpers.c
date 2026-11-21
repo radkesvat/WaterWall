@@ -2,6 +2,23 @@
 
 #include "loggers/network_logger.h"
 
+bool junkdatagramsenderSelectTransport(tunnel_t *t, line_t *l)
+{
+    const junkdatagramsender_tstate_t *ts = tunnelGetState(t);
+    if (! junkdatagramsenderGenerationEnabled(ts) || junkdatagramsenderIsWorkerPacketLine(t, l))
+    {
+        return true;
+    }
+
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    {
+        return false;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportUdp);
+    return true;
+}
+
 void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts)
 {
     *ls = (junkdatagramsender_lstate_t) {

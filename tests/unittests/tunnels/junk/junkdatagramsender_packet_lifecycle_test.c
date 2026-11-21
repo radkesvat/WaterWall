@@ -81,6 +81,7 @@ static void fixtureSetup(junk_fixture_t *fixture, bool packet_role)
          * neighbour owns it, so their Finish callbacks may keep draining. */
         twfLinePoolSetup(&fixture->line_pool, fixture->junk->lstate_size, 2);
         fixture->line = twfLinePoolCreateLine(&fixture->line_pool);
+        addresscontextSetTransportOffer(lineGetDestinationAddressContext(fixture->line), kAddressContextTransportBoth);
     }
     twfRequire(junkdatagramsenderIsWorkerPacketLine(fixture->junk, fixture->line) == packet_role,
                "fixture line role does not match the chain's packet slot");
@@ -94,6 +95,9 @@ static void fixtureSetup(junk_fixture_t *fixture, bool packet_role)
 
     const wid_t previous_wid = tosSetCurrentWorker(0);
     junkdatagramsenderTunnelUpStreamInit(fixture->junk, fixture->line);
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(fixture->line)) ==
+                   (packet_role ? kAddressContextTransportNone : kAddressContextTransportUdp),
+               "JunkDatagramSender selected the wrong normal-line transport or modified a packet line");
     discard tosSetCurrentWorker(previous_wid);
     g_fixture = fixture;
 }
@@ -419,6 +423,44 @@ static void caseConstructorPreservesUpstreamEst(void)
     fixtureTeardown(&fixture);
 }
 
+static void caseDisabledTriggerPreservesOffer(void)
+{
+    twfSetCase("JunkDatagramSender with zero triggers preserves streams and flexible offers");
+    junk_fixture_t fixture;
+    fixtureSetup(&fixture, true);
+    cJSON *settings = cJSON_CreateObject();
+    cJSON_AddNumberToObject(settings, "resend-again-times", 0);
+    node_t    node = {.node_settings_json    = settings,
+                      .layer_group_prev_node = kNodeLayerSameAsNext,
+                      .layer_group_next_node = kNodeLayerSameAsPrev};
+    tunnel_t *t    = junkdatagramsenderTunnelCreate(&node);
+    twfRequire(t != NULL && node.layer_group_prev_node == kNodeLayerSameAsNext &&
+                   node.layer_group_next_node == kNodeLayerSameAsPrev,
+               "disabled generation restricted the configured links to datagrams");
+    t->prev                = fixture.prev;
+    t->next                = fixture.next;
+    t->chain               = fixture.chain;
+    const uint8_t offers[] = {kAddressContextTransportTcp, kAddressContextTransportBoth};
+    for (size_t i = 0; i < ARRAY_SIZE(offers); ++i)
+    {
+        line_t *line = twfLineCreate(t->lstate_size);
+        addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), offers[i]);
+        const uint32_t initial_inits    = fixture.trace.next_init;
+        const uint32_t initial_payloads = fixture.trace.next_payload;
+        t->fnInitU(t, line);
+        twfRequire(fixture.trace.next_init == initial_inits + 1 &&
+                       addresscontextGetTransportOffer(lineGetDestinationAddressContext(line)) == offers[i],
+                   "zero triggers refused or narrowed the live offer");
+        t->fnPayloadU(t, line, fixturePayload(line));
+        twfRequireEqualU32(fixture.trace.next_payload, initial_payloads + 1, "disabled node emitted junk");
+        t->fnFinU(t, line);
+        twfLineDestroy(line);
+    }
+    tunnelDestroy(t);
+    cJSON_Delete(settings);
+    fixtureTeardown(&fixture);
+}
+
 int main(void)
 {
     twfRequire(globalstateInitializeSecureRandom(), "secure random provider initialization failed");
@@ -426,6 +468,7 @@ int main(void)
     frandInit();
 
     caseConstructorPreservesUpstreamEst();
+    caseDisabledTriggerPreservesOffer();
     caseReentrantPacketFinishStopsImmediateProgress();
     casePacketFinishSuppressesDelayedJunk();
     caseNormalActivePublication();

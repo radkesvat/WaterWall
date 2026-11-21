@@ -52,11 +52,17 @@ void junkdatagramsenderTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *b
 
 bool junkdatagramsenderLoadSettings(junkdatagramsender_tstate_t *ts, const cJSON *settings);
 
+bool junkdatagramsenderSelectTransport(tunnel_t *t, line_t *l);
 void junkdatagramsenderLinestateInitialize(junkdatagramsender_lstate_t *ls, const junkdatagramsender_tstate_t *ts);
 void junkdatagramsenderLinestateDestroy(junkdatagramsender_lstate_t *ls);
 bool junkdatagramsenderSendJunk(tunnel_t *t, line_t *l, junkdatagramsender_direction_t direction);
 bool junkdatagramsenderIsWorkerPacketLine(tunnel_t *t, line_t *l);
 void junkdatagramsenderPacketLineFinish(tunnel_t *t, line_t *l);
+
+static inline bool junkdatagramsenderGenerationEnabled(const junkdatagramsender_tstate_t *ts)
+{
+    return ts->resend_again_times != 0 && ts->packet_count_max != 0 && ts->selected_protocol_mask != 0;
+}
 
 static inline bool junkdatagramsenderCanPublish(const junkdatagramsender_lstate_t *ls,
                                                 junkdatagramsender_direction_t     direction)

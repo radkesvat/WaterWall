@@ -11,6 +11,11 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 The node forwards `Init` normally, then sends generated junk payloads when upstream payload callbacks arrive. The real upstream payload is forwarded after that junk batch has been sent. Regular payloads after the configured trigger count, downstream payloads, `Est`, pause/resume, and finish callbacks are otherwise pass-through.
 
+When datagram generation is enabled, a normal line selects UDP from the
+destination offer before `Init` continues. A line without a UDP offer is
+closed. With zero triggers (`resend-again-times: 0`), no selected protocols,
+or an effective maximum packet count of zero, the node preserves the offer.
+
 ## Typical placement
 
 ### Observe generated datagrams in a controlled UDP test
@@ -146,6 +151,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
-| `layer_group_prev_node` | `kNodeLayerSameAsNext` |
-| `layer_group_next_node` | `kNodeLayerSameAsPrev` |
+| `layer_group_prev_node` | `kNodeLayerSameAsNext`, with `kNodeLayer3` and `kNodeLayer4Datagram` when generation is enabled |
+| `layer_group_next_node` | `kNodeLayerSameAsPrev`, with `kNodeLayer3` and `kNodeLayer4Datagram` when generation is enabled |
 | `required_padding_left` | `0` bytes |
