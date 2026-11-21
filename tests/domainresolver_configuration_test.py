@@ -165,9 +165,22 @@ def embedded_configuration(binary, consumers):
                 run(binary, f"vmess-entry-{framing}-{'embedded' if embedded else 'standalone'}", nodes, valid)
 
 
+def dns_entry_payload_modes(binary):
+    for payload_mode in ("stream", "datagram", "dest_context->protocol"):
+        nodes = config("chain", "127.0.0.1:53")
+        nodes[-1] = node("dns-out", "UserController", {
+            "auth-client-node-name": "accounts", "payload-mode": payload_mode}, "dns-peer")
+        nodes.extend([connector("dns-peer"),
+                      node("accounts", "AuthenticationClient", {"name": "edge", "secret": "fixture"}, "auth-out"),
+                      node("auth-out", "BlackHole", {"mode": "passive"})])
+        run(binary, "dns-entry-" + payload_mode, nodes, valid=payload_mode == "dest_context->protocol",
+            diagnostic_name="DNS entry dns-out (UserController) must support both UDP queries and TCP fallback")
+
+
 def main():
     binary = sys.argv[1]
     install_termination_handler()
+    dns_entry_payload_modes(binary)
     for mode in ("omitted", "native", "direct", "direct6", "chain", "chain-default", "shared", "shared-explicit"):
         run(binary, "valid-" + mode, config(mode, "[::1]:53" if mode == "direct6" else "127.0.0.1:53"), True)
     # TcpUdpConnector inserts private resolver preparation before its public inlet.

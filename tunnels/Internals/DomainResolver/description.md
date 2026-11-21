@@ -448,8 +448,10 @@ The override changes only DNS egress; it does not change the application `next`.
 
 A distinct branch must not already belong to another predecessor. Startup
 rejects self-targets, structural cycles, conflicting predecessors and non-L4 DNS
-entries. Private predecessor helpers are included when resolving the callable
-entry. This is not arbitrary many-to-one sharing of an existing VPN chain, and
+entries. The selected node's configured input must accept both datagrams for
+UDP queries and streams for TCP fallback. Startup checks this after the node
+parses its settings. If the node inserts a private resolver before its input,
+DNS callbacks enter through that helper. This is not arbitrary many-to-one sharing of an existing VPN chain, and
 structural checks cannot detect every runtime bootstrap dependency.
 
 ### DNS Servers and Options for Direct and Chain
@@ -734,9 +736,9 @@ a handoff, the resolver discards the rest. The resolver releases local state bef
 no callbacks toward the finished source.
 
 The resolver records the application transport after its prepare hook, before the next node
-can change the address metadata. A normal line with no protocol on either address uses
-stream close behavior. An explicit destination protocol takes precedence over the source.
-UDP, unsupported protocol combinations and worker packet lines discard the pending FIFO on close.
+can change the address metadata. Only a normal line with an exact TCP
+destination drains queued bytes at close. Flexible offers pass through for a
+later selector. Other pending input is released when the line closes.
 
 Failed hard-limit admission is reported through the DNS logger: `ERROR` when
 application retention or incoming DNS transport limits close a connection, and

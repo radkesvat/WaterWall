@@ -25,6 +25,7 @@ typedef struct resolver_framing_case_s
     uint8_t     carrier_protocol;
     bool        packet_line;
     unsigned    expected_bytes;
+    bool        flexible_offer;
 } resolver_framing_case_t;
 
 static const resolver_framing_case_t *finish_framing;
@@ -64,7 +65,7 @@ static bool prepareLine(tunnel_t *t, tunnel_t *owner, line_t *l, void *state)
                "prepare hook received the wrong line or owner");
     domainresolver_tstate_t *ts = tunnelGetState(t);
     memorySet(state, 0x5A, ts->user_lstate_size);
-    if (finish_framing != NULL)
+    if (finish_framing != NULL && ! finish_framing->flexible_offer)
         addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), finish_framing->prepared_protocol);
     return true;
 }
@@ -253,6 +254,9 @@ static void onInit(tunnel_t *t, line_t *l)
         tunnelDownStreamFin(resolver, l);
         return;
     }
+    if (finish_framing != NULL && finish_framing->flexible_offer)
+        twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportBoth,
+                   "an observing resolver narrowed the destination offer");
     if (finish_framing != NULL && finish_framing->carrier_protocol != 0)
         addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), finish_framing->carrier_protocol);
     tunnelDownStreamEst(resolver, l);
@@ -339,7 +343,11 @@ static void run(bool close_now, bool literal, enum resolver_finish_case mode, co
     if (framing == NULL)
         addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
     else
+    {
         addresscontextSetOnlyProtocol(lineGetSourceAddressContext(line), framing->source_protocol);
+        if (framing->flexible_offer)
+            addresscontextSetTransportOffer(dest, kAddressContextTransportBoth);
+    }
     pressure_only    = false;
     held_pause_count = held_resume_count = pressure_action = 0;
     initiating_source_paused                               = false;
@@ -750,15 +758,16 @@ int main(void)
             run(close_now, literal, kResolverKeepOpen, NULL);
     run(false, false, kResolverDestinationCloses, NULL);
     const resolver_framing_case_t framing[] = {
-        /* Source, prepared destination, later carrier tag, packet-line identity, delivered bytes. */
-        {"untagged normal stream", 0, 0, 0, false, 2},
-        {"prepared TCP stream", 0, IP_PROTO_TCP, 0, false, 2},
-        {"prepared UDP datagrams", 0, IP_PROTO_UDP, 0, false, 0},
-        {"UDP input framed as a stream before resolver", IP_PROTO_UDP, IP_PROTO_TCP, IP_PROTO_UDP, false, 2},
-        {"TCP input decoded into datagrams before resolver", IP_PROTO_TCP, IP_PROTO_UDP, IP_PROTO_TCP, false, 0},
-        {"source-only UDP", IP_PROTO_UDP, 0, 0, false, 0},
-        {"unsupported destination with TCP source", IP_PROTO_TCP, IP_PROTO_ICMP, 0, false, 0},
-        {"worker packet line with TCP metadata", 0, IP_PROTO_TCP, 0, true, 0},
+        /* Source, prepared destination, later carrier tag, packet-line identity, delivered bytes, flexible offer. */
+        {"unset destination", 0, 0, 0, false, 0, false},
+        {"prepared TCP stream", 0, IP_PROTO_TCP, 0, false, 2, false},
+        {"prepared UDP datagrams", 0, IP_PROTO_UDP, 0, false, 0, false},
+        {"UDP input framed as a stream before resolver", IP_PROTO_UDP, IP_PROTO_TCP, IP_PROTO_UDP, false, 2, false},
+        {"TCP input decoded into datagrams before resolver", IP_PROTO_TCP, IP_PROTO_UDP, IP_PROTO_TCP, false, 0, false},
+        {"source-only UDP", IP_PROTO_UDP, 0, 0, false, 0, false},
+        {"unsupported destination with TCP source", IP_PROTO_TCP, IP_PROTO_ICMP, 0, false, 0, false},
+        {"worker packet line with TCP metadata", 0, IP_PROTO_TCP, 0, true, 0, false},
+        {"flexible destination survives resolution", IP_PROTO_TCP, 0, IP_PROTO_UDP, false, 0, true},
     };
     for (size_t i = 0; i < ARRAY_SIZE(framing); ++i)
         run(false, false, kResolverFinalDelivery, &framing[i]);

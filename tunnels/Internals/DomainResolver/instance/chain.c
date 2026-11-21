@@ -77,7 +77,7 @@ static tunnel_t *domainresolverCreateDnsHead(tunnel_t *owner)
     return head;
 }
 
-static bool domainresolverDnsEntrySupportsTransport(tunnel_t *entry)
+static bool domainresolverDnsEntrySupportsTransport(const tunnel_t *entry)
 {
     const char *type = entry->node->type;
     if ((entry->node->flags & kNodeFlagDnsTransportUnsupported) != 0)
@@ -86,11 +86,11 @@ static bool domainresolverDnsEntrySupportsTransport(tunnel_t *entry)
              type != NULL ? type : "<unnamed>");
         return false;
     }
-    if (type != NULL && (strcmp(type, "TcpConnector") == 0 || strcmp(type, "UdpConnector") == 0 ||
-                         strcmp(type, "HttpProxyClient") == 0 || strcmp(type, "HttpClient") == 0 ||
-                         strcmp(type, "TlsClient") == 0 || strcmp(type, "UdpStatelessSocket") == 0))
+    if (nodeLayerDeclaredL4Kinds(entry->node, kTunnelLayerSidePrev) != kNodeLayer4QualifierMask)
     {
-        LOGF("DomainResolver: DNS entry %s must support both UDP queries and TCP fallback", type);
+        LOGF("DomainResolver: DNS entry %s (%s) must support both UDP queries and TCP fallback on its input",
+             entry->node->name != NULL ? entry->node->name : "<unnamed>",
+             type != NULL ? type : "<unnamed>");
         return false;
     }
     return true;

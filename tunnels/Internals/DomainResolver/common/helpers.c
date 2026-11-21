@@ -177,8 +177,11 @@ bool domainresolverStartResolveIfNeeded(tunnel_t *t, line_t *l, domainresolver_l
 
     addresscontextSetDomainStrategy(dest_ctx, domainresolverStrategyForLine(ts, dest_ctx));
 
-    const char *domain   = dest_ctx->domain;
-    int         socktype = addresscontextGetSockType(dest_ctx);
+    const char   *domain   = dest_ctx->domain;
+    const uint8_t offer    = addresscontextGetTransportOffer(dest_ctx);
+    const int     socktype = offer == kAddressContextTransportTcp   ? SOCK_STREAM
+                             : offer == kAddressContextTransportUdp ? SOCK_DGRAM
+                                                                    : 0;
 
     if (ts->verbose)
     {
@@ -246,7 +249,7 @@ static void domainresolverLogPendingRefusal(tunnel_t *t, line_t *l, domainresolv
         const sockaddr_u peer = addresscontextToSockAddr(dest);
         destination           = SOCKADDR_STR(&peer, address);
     }
-    const int socktype = addresscontextGetSockType(dest);
+    const uint8_t offer = addresscontextGetTransportOffer(dest);
     loggerPrint(getDnsLogger(),
                 LOG_LEVEL_ERROR,
                 "DomainResolver: node=%s worker=%u destination=%s port=%u transport=%s reason=%s "
@@ -255,9 +258,10 @@ static void domainresolverLogPendingRefusal(tunnel_t *t, line_t *l, domainresolv
                 (unsigned) wid,
                 destination,
                 (unsigned) dest->port,
-                socktype == SOCK_STREAM  ? "tcp"
-                : socktype == SOCK_DGRAM ? "udp"
-                                         : "unknown",
+                offer == kAddressContextTransportTcp    ? "tcp"
+                : offer == kAddressContextTransportUdp  ? "udp"
+                : offer == kAddressContextTransportBoth ? "tcp/udp"
+                                                        : "unknown",
                 name,
                 current,
                 incoming,

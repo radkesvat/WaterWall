@@ -13,12 +13,11 @@ void domainresolverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    /* A later tunnel may set a different protocol for its own carrier. */
-    address_context_transport_t transport = addresscontextClassifyTransport(lineGetDestinationAddressContext(l));
-    if (transport == kAddressContextTransportNone)
-        transport = addresscontextClassifyTransport(lineGetSourceAddressContext(l));
-    ls->drain_on_finish = (transport == kAddressContextTransportTcp || transport == kAddressContextTransportNone) &&
-                          ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+    /* Only an exact stream can drain like a stream. A flexible offer belongs
+     * to the next selector, so preserve its deliveries and the offer. */
+    ls->drain_on_finish =
+        addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp &&
+        ! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
 
     bool resolving = false;
     if (UNLIKELY(! domainresolverStartResolveIfNeeded(t, l, ls, &resolving)))
