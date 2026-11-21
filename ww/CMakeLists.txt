@@ -164,6 +164,7 @@ add_library(ww STATIC
     net/dns_policy.c
     net/adapter.c
     net/tunnel.c
+    net/tunnel_diagnostics.c
     net/line.c
     net/chain.c
     net/node_layer_solver.c

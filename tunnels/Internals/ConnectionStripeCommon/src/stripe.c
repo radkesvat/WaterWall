@@ -974,7 +974,7 @@ void connectionstripeClientInit(tunnel_t *t, line_t *app)
     address_context_t *destination = lineGetDestinationAddressContext(app);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
-        LOGW("ConnectionStripeClient: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         ts->output->application_finish(t, app);
         return;
     }
@@ -1042,7 +1042,7 @@ void connectionstripeServerInit(tunnel_t *t, line_t *line)
     address_context_t *destination = lineGetDestinationAddressContext(line);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
-        LOGW("ConnectionStripeServer: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         ts->output->transport_finish(t, line);
         return;
     }

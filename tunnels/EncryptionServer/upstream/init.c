@@ -8,7 +8,7 @@ void encryptionserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const uint8_t      transport   = addresscontextSelectTransport(destination, kAddressContextTransportBoth);
     if (transport == 0)
     {
-        LOGW("EncryptionServer: line does not offer TCP or UDP");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportBoth);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }

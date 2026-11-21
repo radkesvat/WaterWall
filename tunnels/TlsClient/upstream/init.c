@@ -8,7 +8,7 @@ void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const uint8_t      transport = addresscontextSelectTransport(dest, kAddressContextTransportTcp);
     if (transport == 0)
     {
-        LOGW("TlsClient: destination does not offer TCP");
+        tunnelLogTransportRefusal(t, dest, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }

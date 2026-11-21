@@ -17,12 +17,16 @@ static bool append(char *out, size_t cap, size_t *at, const char *s)
     return true;
 }
 /* Copy the authority before any address-context setter can release its domain. */
-static bool selectAuthority(const hpc_tstate_t *ts, line_t *l, bool prepared, hps_authority_t *authority)
+static bool selectAuthority(tunnel_t *t, line_t *l, bool prepared, hps_authority_t *authority)
 {
+    const hpc_tstate_t *ts     = tunnelGetState(t);
     address_context_t *dest   = lineGetDestinationAddressContext(l);
     const bool         pinned = addresscontextDestinationIsPinned(dest);
     if (addresscontextSelectTransport(dest, kAddressContextTransportTcp) == 0)
+    {
+        tunnelLogTransportRefusal(t, dest, kAddressContextTransportTcp);
         return false;
+    }
     uint16_t port = prepared || pinned || ts->dynamic_port ? dest->port : ts->port;
     if (! port)
         return false;
@@ -60,7 +64,7 @@ bool hpcDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
     discard         user_lstate;
     hpc_tstate_t   *ts = tunnelGetState(owner);
     hps_authority_t authority;
-    if (! hpcAllowed(owner, l) || ! selectAuthority(ts, l, false, &authority))
+    if (! hpcAllowed(owner, l) || ! selectAuthority(owner, l, false, &authority))
         return false;
     address_context_t *dest = lineGetDestinationAddressContext(l);
     if (addresscontextDestinationIsPinned(dest))
@@ -85,7 +89,7 @@ bool hpcBuildRequest(tunnel_t *t, line_t *l)
     hpc_lstate_t      *ls   = lineGetState(l, t);
     address_context_t *dest = lineGetDestinationAddressContext(l);
     hps_authority_t    authority;
-    if (! selectAuthority(ts, l, ts->resolve_domains, &authority))
+    if (! selectAuthority(t, l, ts->resolve_domains, &authority))
         return false;
     char  *text = memoryAllocate((size_t) ts->max_header + 1);
     size_t at   = 0;

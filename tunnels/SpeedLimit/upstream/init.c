@@ -11,7 +11,7 @@ void speedlimitTunnelUpStreamInit(tunnel_t *t, line_t *l)
         const uint8_t      transport = addresscontextSelectTransport(dest, kAddressContextTransportTcp);
         if (transport == 0)
         {
-            LOGW("SpeedLimit: pause mode requires a TCP offer on normal lines");
+            tunnelLogTransportRequirement(t, dest, "TCP for settings.work-mode=pause");
             tunnelPrevDownStreamFinish(t, l);
             return;
         }

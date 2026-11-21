@@ -991,10 +991,11 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
         LOGE("PipeTunnel: source line %p is already attached to a cross-worker pair", (void *) line);
         return false;
     }
-    const uint8_t offer = addresscontextGetTransportOffer(lineGetDestinationAddressContext(line));
+    const address_context_t *destination = lineGetDestinationAddressContext(line);
+    const uint8_t            offer       = addresscontextGetTransportOffer(destination);
     if (offer == 0)
     {
-        LOGE("PipeTunnel: source line %p has no valid destination transport offer", (void *) line);
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportBoth);
         return false;
     }
 

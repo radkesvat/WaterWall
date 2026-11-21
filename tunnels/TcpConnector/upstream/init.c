@@ -345,14 +345,20 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         socket_options     = getDestinationSocketOptions(selected_destination);
     }
 
-    if (addresscontextDestinationIsPinned(dest_ctx))
+    const bool pinned = addresscontextDestinationIsPinned(dest_ctx);
+    if (pinned && (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx)))
     {
-        if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
-            addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportTcp)
-        {
-            LOGE("TcpConnector: pinned destination requires an address, port and exact TCP transport");
-            return false;
-        }
+        LOGE("TcpConnector: pinned destination requires a valid address and port");
+        return false;
+    }
+    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportTcp) == 0)
+    {
+        tunnelLogTransportRefusal(connector, dest_ctx, kAddressContextTransportTcp);
+        return false;
+    }
+
+    if (pinned)
+    {
         addresscontextSetDestinationPinned(dest_ctx, false);
         // Socket/interface options remain selected, but neither a configured
         // endpoint nor CIDR host randomization may rewrite this logical peer.
@@ -361,11 +367,6 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         return true;
     }
 
-    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportTcp) == 0)
-    {
-        LOGW("TcpConnector: destination does not offer TCP");
-        return false;
-    }
 
     address_context_t original_dest_ctx = {0};
     addresscontextCopy(&original_dest_ctx, dest_ctx);

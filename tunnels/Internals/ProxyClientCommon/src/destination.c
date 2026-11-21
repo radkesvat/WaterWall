@@ -1,38 +1,41 @@
 #include "ProxyClientCommon/destination.h"
 
 #include "loggers/network_logger.h"
+#include "objects/node.h"
 
-bool proxyClientApplyDestination(address_context_t *destination, const proxy_client_destination_t *selection,
-                                 const char *client_name)
+bool proxyClientApplyDestination(tunnel_t *client, address_context_t *destination,
+                                 const proxy_client_destination_t *selection)
 {
-    assert(destination != NULL && selection != NULL && selection->target != NULL && client_name != NULL);
+    assert(client != NULL && destination != NULL && selection != NULL && selection->target != NULL);
     assert(destination != selection->target);
     assert(selection->protocol == kProxyClientProtocolTcp || selection->protocol == kProxyClientProtocolUdp ||
            selection->protocol == kProxyClientProtocolDestContext);
 
-    if (addresscontextDestinationIsPinned(destination))
+    const node_t *node        = tunnelGetNode(client);
+    const char   *client_name = node != NULL && node->type != NULL ? node->type : "ProxyClient";
+    const bool    pinned      = addresscontextDestinationIsPinned(destination);
+    if (pinned && (! addresscontextIsValid(destination) || ! addresscontextHasPort(destination)))
     {
-        const address_context_transport_t transport = addresscontextClassifyTransport(destination);
-        if (! addresscontextIsValid(destination) || ! addresscontextHasPort(destination) ||
-            (transport != kAddressContextTransportTcp && transport != kAddressContextTransportUdp))
-        {
-            LOGE("%s: pinned destination requires an address, port and exact TCP or UDP transport", client_name);
-            return false;
-        }
+        LOGE("%s: pinned destination requires a valid address and port", client_name);
+        return false;
+    }
+    const uint8_t allowed   = pinned || selection->protocol == kProxyClientProtocolDestContext
+                                  ? kAddressContextTransportBoth
+                              : selection->protocol == kProxyClientProtocolTcp ? kAddressContextTransportTcp
+                                                                               : kAddressContextTransportUdp;
+    const uint8_t transport = addresscontextSelectTransport(destination, allowed);
+    if (transport == 0)
+    {
+        tunnelLogTransportRefusal(client, destination, allowed);
+        return false;
+    }
+
+    if (pinned)
+    {
         // This proxy encodes the logical endpoint. Its independent outer
         // carrier must still select the configured VPN/proxy server normally.
         addresscontextSetDestinationPinned(destination, false);
         return true;
-    }
-
-    const uint8_t allowed   = selection->protocol == kProxyClientProtocolTcp   ? kAddressContextTransportTcp
-                              : selection->protocol == kProxyClientProtocolUdp ? kAddressContextTransportUdp
-                                                                               : kAddressContextTransportBoth;
-    const uint8_t transport = addresscontextSelectTransport(destination, allowed);
-    if (transport == 0)
-    {
-        LOGW("%s: destination offers no transport permitted by the configured protocol", client_name);
-        return false;
     }
 
     address_context_t current = {0};

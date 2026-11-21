@@ -7,6 +7,7 @@ void reverseserverTunnelDownStreamInit(tunnel_t *t, line_t *u)
     address_context_t *destination = lineGetDestinationAddressContext(u);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelNextUpStreamFinish(t, u);
         return;
     }

@@ -13,7 +13,7 @@ void headerserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         const uint8_t      transport = addresscontextSelectTransport(dest, kAddressContextTransportTcp);
         if (transport == 0)
         {
-            LOGW("HeaderServer: header parsing requires a TCP offer");
+            tunnelLogTransportRefusal(t, dest, kAddressContextTransportTcp);
             tunnelPrevDownStreamFinish(t, l);
             return;
         }

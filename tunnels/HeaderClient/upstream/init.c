@@ -12,7 +12,7 @@ void headerclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const uint8_t incoming = addresscontextSelectTransport(dest, allowed);
     if (incoming == 0)
     {
-        LOGW("HeaderClient: incompatible destination transport offer");
+        tunnelLogTransportRefusal(t, dest, allowed);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }
@@ -21,10 +21,12 @@ void headerclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
     switch (ts->data_mode)
     {
     case kHeaderClientDataModeSourceProtocol: {
-        const address_context_transport_t observed = addresscontextClassifyTransport(lineGetSourceAddressContext(l));
+        const address_context_t          *source   = lineGetSourceAddressContext(l);
+        const address_context_transport_t observed = addresscontextClassifyTransport(source);
         if (observed != kAddressContextTransportTcp && observed != kAddressContextTransportUdp)
         {
-            LOGW("HeaderClient: protocol header requires an exact TCP or UDP source");
+            tunnelLogTransportRequirement(
+                t, source, "an exact TCP or UDP source for settings.data=src_context->protocol");
             tunnelPrevDownStreamFinish(t, l);
             return;
         }
@@ -43,7 +45,7 @@ void headerclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
         const line_mark_t *mark = lineGetMark(l);
         if (mark == NULL)
         {
-            LOGW("HeaderClient: line-mark mode requires a mark");
+            LOGW("HeaderClient: line has no mark. Set settings.mark or mark the line before HeaderClient");
             tunnelPrevDownStreamFinish(t, l);
             return;
         }

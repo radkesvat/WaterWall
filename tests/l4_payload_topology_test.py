@@ -332,6 +332,33 @@ def header_direct_connector_cases(binary):
                              "nodes": nodes}, exercise=exchange)
 
 
+def runtime_refusal_log_case(binary):
+    ports = (29845, 29846)
+    nodes = []
+    for port in ports:
+        nodes.extend([socket_node(f"in-{port}", "TcpListener", port, next_node=f"header-{port}"),
+                      {"name": f"header-{port}", "type": "HeaderServer", "settings": {"override": "dest_context->protocol"},
+                       "next": f"heartbeat-{port}"},
+                      {"name": f"heartbeat-{port}", "type": "KeepAliveServer", "next": f"out-{port}"},
+                      socket_node(f"out-{port}", "TcpConnector", 29847)])
+
+    def exercise(process, deadline):
+        for port in ports:
+            start = time.monotonic()
+            for _ in range(3):
+                with connect_when_ready(process, ("127.0.0.1", port), deadline=deadline, timeout=5,
+                                        failure=lambda: AssertionError("TCP ingress did not start")) as client:
+                    client.settimeout(5)
+                    client.sendall(b"\x11")  # HeaderServer publishes UDP before the next Init.
+                    assert client.recv(1) == b"", "refused line remained open"
+            elapsed = time.monotonic() - start
+            message = f"KeepAliveServer 'heartbeat-{port}' refused line: requires TCP, line specifies UDP"
+            count = process.log_path.read_text(errors="replace").count(message)
+            assert 1 <= count <= 1 + int(elapsed + 0.002), (message, count, elapsed)
+
+    startup(binary, {"name": "runtime-refusal-log", "nodes": nodes}, exercise=exercise)
+
+
 def proxy_cases(binary):
     listener = socket_node("ingress", "TcpListener", 29845, next_node="proxy")
     stream = socket_node("egress", "TcpConnector", 29846)
@@ -400,7 +427,7 @@ def mixed_encryption_cases(binary):
 
     def refused(process, deadline):
         while time.monotonic() < deadline:
-            if "UdpConnector: destination does not offer UDP" in process.log_path.read_text(errors="replace"):
+            if "UdpConnector 'egress' refused line: requires UDP, line specifies TCP" in process.log_path.read_text(errors="replace"):
                 break
             process.check_running("a live transport mismatch stopped the runtime")
             time.sleep(0.01)
@@ -489,6 +516,7 @@ if __name__ == "__main__":
         "quic": quic_cases,
         "routing": routing_cases,
         "routing-context": routing_context_cases,
+        "runtime-refusal-log": runtime_refusal_log_case,
         "socks-udp-ingress": socks_udp_ingress_cases,
     }
     parser.add_argument("cases", choices=cases)

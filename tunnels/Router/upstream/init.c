@@ -11,7 +11,7 @@ void routerTunnelUpStreamInit(tunnel_t *t, line_t *l)
     routerLinestateInitialize(ls, dest);
     if (ls->network_offer == 0)
     {
-        LOGE("Router: invalid destination transport offer, closing this line");
+        tunnelLogTransportRequirement(t, dest, "a valid network for routing");
         routerLinestateDestroy(l, ls);
         tunnelPrevDownStreamFinish(t, l);
         return;

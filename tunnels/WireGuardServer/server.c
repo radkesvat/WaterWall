@@ -550,9 +550,14 @@ static void initUp(tunnel_t *t, line_t *line)
     address_context_t       *destination = lineGetDestinationAddressContext(line);
     /* UDP ingress keeps the remote port separately from its local listener port. */
     const uint16_t peer_port = lineGetRoutingContext(line)->peer_source_port;
-    if (UNLIKELY(! atomicLoad(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0 ||
-                 addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0))
+    if (UNLIKELY(! atomicLoad(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0))
     {
+        tunnelPrevDownStreamFinish(t, line);
+        return;
+    }
+    if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    {
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportUdp);
         tunnelPrevDownStreamFinish(t, line);
         return;
     }

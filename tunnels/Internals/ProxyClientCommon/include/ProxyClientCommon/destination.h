@@ -1,6 +1,6 @@
 #pragma once
 
-#include "address_context.h"
+#include "tunnel.h"
 
 typedef enum proxy_client_protocol_e
 {
@@ -28,5 +28,5 @@ typedef struct proxy_client_destination_s
 /* An authoritative pinned destination bypasses configured endpoint/protocol
  * selection once. It requires a valid address/port and exact TCP or UDP, and
  * consumes the pin before an independent outer carrier selects its target. */
-bool proxyClientApplyDestination(address_context_t *destination, const proxy_client_destination_t *selection,
-                                 const char *client_name);
+bool proxyClientApplyDestination(tunnel_t *client, address_context_t *destination,
+                                 const proxy_client_destination_t *selection);

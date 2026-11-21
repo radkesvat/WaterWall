@@ -167,7 +167,10 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
         return false;
     address_context_t *application_destination = lineGetDestinationAddressContext(application);
     if (addresscontextSelectTransport(application_destination, kAddressContextTransportTcp) == 0)
+    {
+        tunnelLogTransportRefusal(t, application_destination, kAddressContextTransportTcp);
         return false;
+    }
     addresscontextSetTransportOffer(application_destination, kAddressContextTransportTcp);
 
     line_t *transport = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);

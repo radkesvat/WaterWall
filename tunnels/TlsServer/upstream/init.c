@@ -11,7 +11,7 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const uint8_t      transport   = addresscontextSelectTransport(destination, kAddressContextTransportTcp);
     if (transport == 0)
     {
-        LOGW("TlsServer: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, l);
         return;
     }

@@ -1,7 +1,5 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void tcpudpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     // the connector is selected before any line state is committed, so a rejected line never reaches
@@ -11,7 +9,7 @@ void tcpudpconnectorTunnelUpStreamInit(tunnel_t *t, line_t *l)
 
     if (connector == NULL)
     {
-        LOGE("TcpUdpConnector: no connector matches this line, closing it");
+        tunnelLogTransportRefusal(t, lineGetDestinationAddressContext(l), kAddressContextTransportBoth);
         tcpudpconnectorLinestateDestroy(ls);
         tunnelPrevDownStreamFinish(t, l);
         return;

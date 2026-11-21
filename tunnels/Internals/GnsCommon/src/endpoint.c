@@ -340,9 +340,11 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
     gns_endpoint_lstate_t *application_ls = lineGetState(application, t);
     endpointLinestateDestroy(application_ls);
     address_context_t *application_destination = lineGetDestinationAddressContext(application);
-    if (! endpointAdmissionOpen(ts, wid) ||
-        addresscontextSelectTransport(application_destination, kAddressContextTransportTcp) == 0)
+    if (! endpointAdmissionOpen(ts, wid))
+        return false;
+    if (addresscontextSelectTransport(application_destination, kAddressContextTransportTcp) == 0)
     {
+        tunnelLogTransportRefusal(t, application_destination, kAddressContextTransportTcp);
         return false;
     }
     addresscontextSetTransportOffer(application_destination, kAddressContextTransportTcp);
@@ -397,9 +399,14 @@ void gnsEndpointServerInit(tunnel_t *t, line_t *carrier)
     gns_endpoint_lstate_t *ls = lineGetState(carrier, t);
     endpointLinestateDestroy(ls);
     address_context_t *destination = lineGetDestinationAddressContext(carrier);
-    if (! endpointAdmissionOpen(ts, wid) ||
-        addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    if (! endpointAdmissionOpen(ts, wid))
     {
+        ts->output->carrier_finish(t, carrier);
+        return;
+    }
+    if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    {
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportUdp);
         ts->output->carrier_finish(t, carrier);
         return;
     }

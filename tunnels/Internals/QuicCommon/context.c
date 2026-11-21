@@ -160,7 +160,10 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     address_context_t *destination = lineGetDestinationAddressContext(l);
     const uint8_t      transport   = state->client ? kAddressContextTransportTcp : kAddressContextTransportUdp;
     if (addresscontextSelectTransport(destination, transport) == 0)
+    {
+        tunnelLogTransportRefusal(t, destination, transport);
         return NULL;
+    }
     addresscontextSetTransportOffer(destination, transport);
 
     quic_context_t *context = memoryCalloc(1, sizeof(*context));

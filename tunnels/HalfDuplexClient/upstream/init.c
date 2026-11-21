@@ -1,13 +1,11 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void halfduplexclientTunnelUpStreamInit(tunnel_t *t, line_t *main)
 {
     address_context_t *destination = lineGetDestinationAddressContext(main);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
-        LOGW("HalfDuplexClient: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, main);
         return;
     }

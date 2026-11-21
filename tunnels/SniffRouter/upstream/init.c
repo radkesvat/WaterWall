@@ -1,7 +1,5 @@
 #include "structure.h"
 
-#include "loggers/network_logger.h"
-
 void sniffrouterTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     sniffrouter_lstate_t *ls = lineGetState(l, t);
@@ -11,7 +9,7 @@ void sniffrouterTunnelUpStreamInit(tunnel_t *t, line_t *l)
     const uint8_t      transport = addresscontextSelectTransport(dest, kAddressContextTransportBoth);
     if (transport == 0)
     {
-        LOGE("SniffRouter: invalid destination transport offer, closing this line");
+        tunnelLogTransportRefusal(t, dest, kAddressContextTransportBoth);
         sniffrouterLinestateDestroy(l, ls);
         tunnelPrevDownStreamFinish(t, l);
         return;

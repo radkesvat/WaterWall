@@ -7,6 +7,7 @@ void muxserverTunnelUpStreamInit(tunnel_t *t, line_t *parent_l)
     address_context_t *destination = lineGetDestinationAddressContext(parent_l);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, parent_l);
         return;
     }

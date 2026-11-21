@@ -20,8 +20,7 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         address_context_t *destination = lineGetDestinationAddressContext(l);
         if (addresscontextSelectTransport(destination, transport) == 0)
         {
-            LOGW("Socks5Server: destination does not offer %s for this ingress",
-                 transport == kAddressContextTransportTcp ? "TCP control" : "UDP relay");
+            tunnelLogTransportRefusal(t, destination, transport);
             tunnelPrevDownStreamFinish(t, l);
             return;
         }

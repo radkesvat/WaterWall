@@ -28,6 +28,14 @@ if(INCLUDE_TESTER_CLIENT AND INCLUDE_TESTER_SERVER AND INCLUDE_TCP_LISTENER AND 
   add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_large_udp_roundtrip tcpudp_udp_over_tcp_large_udp_roundtrip)
 endif()
 if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TCP_LISTENER AND INCLUDE_HEADER_SERVER
+   AND INCLUDE_KEEPALIVE_SERVER AND INCLUDE_TCPCONNECTOR)
+  add_waterwall_isolated_test(waterwall.live_transport_refusal_log
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" runtime-refusal-log)
+  set_tests_properties(waterwall.live_transport_refusal_log PROPERTIES TIMEOUT 30)
+  add_waterwall_test_labels(waterwall.live_transport_refusal_log "integration" "tunnels" "routing")
+endif()
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TCP_LISTENER AND INCLUDE_HEADER_SERVER
    AND INCLUDE_TCP_UDP_CONNECTOR)
   add_waterwall_isolated_test(waterwall.l4_payload_header_direct_connector
     "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"

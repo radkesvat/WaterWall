@@ -10,7 +10,7 @@ bool vmessclientApplyTargetContext(tunnel_t *t, line_t *l)
     const uint8_t         supported = addresscontextGetTransportOffer(dest_ctx) & ts->framing_transports;
     if (supported == 0)
     {
-        LOGW("VmessClient: destination offers no transport supported by the configured framing");
+        tunnelLogTransportRefusal(t, dest_ctx, ts->framing_transports);
         return false;
     }
     addresscontextSetTransportOffer(dest_ctx, supported);
@@ -22,7 +22,7 @@ bool vmessclientApplyTargetContext(tunnel_t *t, line_t *l)
         .address_from_context = ts->target_addr_source != kDvsConstant,
         .port_from_context    = ts->target_port_source != kDvsConstant,
     };
-    if (! proxyClientApplyDestination(dest_ctx, &selection, "VmessClient"))
+    if (! proxyClientApplyDestination(t, dest_ctx, &selection))
         return false;
 
     if (! addresscontextIsValid(dest_ctx) || dest_ctx->port == 0 ||

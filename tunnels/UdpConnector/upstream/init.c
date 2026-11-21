@@ -116,26 +116,24 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         ts->destinations_count > 0 ? &ts->destinations[selected_destination_index] : NULL;
 
     ls->route_destination_pinned = addresscontextDestinationIsPinned(dest_ctx);
+    if (ls->route_destination_pinned && (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx)))
+    {
+        LOGE("UdpConnector: pinned destination requires a valid address and port");
+        return false;
+    }
+    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportUdp) == 0)
+    {
+        tunnelLogTransportRefusal(connector, dest_ctx, kAddressContextTransportUdp);
+        return false;
+    }
+
     if (ls->route_destination_pinned)
     {
-        /* A protocol tunnel or resolver made this endpoint authoritative.
-         * Preserve it, including its exact transport, through this adapter. */
-        if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
-            addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportUdp)
-        {
-            LOGE("UdpConnector: pinned destination requires an address, port and exact UDP transport");
-            return false;
-        }
         addresscontextSetDestinationPinned(dest_ctx, false);
         addresscontextSetDomainStrategy(dest_ctx, (enum domain_strategy) ts->domain_strategy);
         return true;
     }
 
-    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportUdp) == 0)
-    {
-        LOGW("UdpConnector: destination does not offer UDP");
-        return false;
-    }
 
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {

@@ -18,7 +18,7 @@ void connectionfisherclientTunnelUpStreamInit(tunnel_t *t, line_t *main_l)
     address_context_t *destination = lineGetDestinationAddressContext(main_l);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
-        LOGW("ConnectionFisherClient: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, main_l);
         return;
     }

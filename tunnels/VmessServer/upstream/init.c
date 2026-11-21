@@ -1,14 +1,12 @@
 #include "auth.h"
 #include "internal.h"
 
-#include "loggers/network_logger.h"
-
 void vmessserverTunnelUpStreamInit(tunnel_t *t, line_t *line)
 {
     address_context_t *destination = lineGetDestinationAddressContext(line);
     if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
     {
-        LOGW("VmessServer: refusing a line without a TCP destination offer");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportTcp);
         tunnelPrevDownStreamFinish(t, line);
         return;
     }

@@ -32,7 +32,7 @@ bool usercontrollerResolvePayloadMode(tunnel_t *t, line_t *l, usercontroller_pay
     const uint8_t transport = addresscontextSelectTransport(dest, allowed);
     if (transport == 0)
     {
-        LOGW("UserController: destination offers no transport compatible with the payload mode");
+        tunnelLogTransportRefusal(t, dest, allowed);
         return false;
     }
     *mode = transport == kAddressContextTransportTcp ? kUserControllerPayloadStream : kUserControllerPayloadDatagram;

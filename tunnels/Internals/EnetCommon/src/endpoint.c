@@ -310,8 +310,13 @@ bool enetEndpointPrepareInit(tunnel_t *t, line_t *line)
     address_context_t *destination = lineGetDestinationAddressContext(line);
     const uint8_t      transport =
         ts->role == kEnetClientEndpoint ? kAddressContextTransportTcp : kAddressContextTransportUdp;
-    if (! endpointAdmissionOpen(ts, wid) || addresscontextSelectTransport(destination, transport) == 0)
+    if (! endpointAdmissionOpen(ts, wid))
         return false;
+    if (addresscontextSelectTransport(destination, transport) == 0)
+    {
+        tunnelLogTransportRefusal(t, destination, transport);
+        return false;
+    }
     addresscontextSetTransportOffer(destination, transport);
     return true;
 }

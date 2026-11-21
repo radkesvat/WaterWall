@@ -14,7 +14,7 @@ bool vlessclientApplyTargetContext(tunnel_t *t, line_t *l)
         .address_from_context = ts->target_addr_source != kDvsConstant,
         .port_from_context    = ts->target_port_source != kDvsConstant,
     };
-    if (! proxyClientApplyDestination(dest_ctx, &selection, "VlessClient"))
+    if (! proxyClientApplyDestination(t, dest_ctx, &selection))
         return false;
 
     if (ts->resolve_domains)

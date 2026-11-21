@@ -382,6 +382,7 @@ tunnel_t *tunnelCreate(node_t *node, size_t tstate_size, size_t lstate_size)
                               .tstate_size      = aligned_tstate_size,
                               .lstate_size      = aligned_lstate_size,
                               .node             = node};
+    atomicLogRateLimiterInitialize(&tunnel_ptr->transport_refusal_log);
 
     return tunnel_ptr;
 }

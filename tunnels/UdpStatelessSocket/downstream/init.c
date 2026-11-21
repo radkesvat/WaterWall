@@ -10,7 +10,7 @@ void udpstatelesssocketTunnelDownStreamInit(tunnel_t *t, line_t *l)
     address_context_t *destination = lineGetDestinationAddressContext(l);
     if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
     {
-        LOGW("UdpStatelessSocket: borrowed line does not offer UDP");
+        tunnelLogTransportRefusal(t, destination, kAddressContextTransportUdp);
         tunnelNextUpStreamFinish(t, l);
         return;
     }

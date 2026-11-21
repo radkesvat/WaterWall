@@ -14,7 +14,7 @@ bool socks5clientApplyTargetContext(tunnel_t *t, line_t *l)
         .address_from_context = ts->target_addr_source != kDvsConstant,
         .port_from_context    = ts->target_port_source != kDvsConstant,
     };
-    if (! proxyClientApplyDestination(dest_ctx, &selection, "Socks5Client"))
+    if (! proxyClientApplyDestination(t, dest_ctx, &selection))
         return false;
 
     // Target preparation also runs before local DNS can retain early input.
