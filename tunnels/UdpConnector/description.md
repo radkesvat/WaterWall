@@ -17,6 +17,11 @@ WireGuardClient. In `TunDevice -> WireGuardClient -> UdpConnector`, use
 endpoint, or configure another destination such as a UDP relay. Compatible
 datagram transforms may appear between the client and connector.
 
+UdpConnector selects UDP from the line's destination transport offer before
+resolver preparation. A line offering UDP alone or both protocols can use
+this adapter. A missing or incompatible offer closes the line before
+a socket is opened.
+
 ## Typical placement
 
 ```text
@@ -404,7 +409,7 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Datagram` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |
 

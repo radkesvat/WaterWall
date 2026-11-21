@@ -4,7 +4,15 @@
 
 void udpstatelesssocketTunnelDownStreamInit(tunnel_t *t, line_t *l)
 {
-    discard t;
-    discard l;
-    // Borrowed transport and packet lines need no per-line state at this endpoint.
+    if (tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l) || udpstatelesssocketLinestateOwnsLine(lineGetState(l, t)))
+        return;
+
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    {
+        LOGW("UdpStatelessSocket: borrowed line does not offer UDP");
+        tunnelNextUpStreamFinish(t, l);
+        return;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportUdp);
 }

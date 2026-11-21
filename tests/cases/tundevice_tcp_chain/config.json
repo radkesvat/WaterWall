@@ -17,8 +17,21 @@
     {
       "name": "stack",
       "type": "PacketsToConnection",
-      "next": "out",
+      "next": "select-transport",
       "settings": { "mtu": 1500, "fake-dns": false }
+    },
+    {
+      "name": "select-transport",
+      "type": "Router",
+      "settings": {
+        "rules": [{"network": "tcp", "target": "out"}]
+      },
+      "next": "discard-other-transport"
+    },
+    {
+      "name": "discard-other-transport",
+      "type": "BlackHole",
+      "settings": {"mode": "passive"}
     },
     {
       "name": "out",

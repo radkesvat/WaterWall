@@ -84,6 +84,8 @@ typedef struct router_fixture_s
     sbuf_t         *expected_buffer;
     const uint8_t  *expected_bytes;
     uint32_t        expected_length;
+    uint8_t         expected_transport;
+    uint8_t         rewrite_transport;
     unsigned        inits;
     unsigned        payloads;
     unsigned        finishes;
@@ -241,6 +243,12 @@ static void finish(tunnel_t *t, line_t *l)
 static void init(tunnel_t *t, line_t *l)
 {
     require(t == fixture->expected_receiver, "initialized the wrong route");
+    address_context_t *dest = lineGetDestinationAddressContext(l);
+    if (fixture->expected_transport != 0)
+        require(addresscontextGetTransportOffer(dest) == fixture->expected_transport,
+                "branch Init did not receive the selected transport");
+    if (fixture->rewrite_transport != 0)
+        addresscontextSetTransportOffer(dest, fixture->rewrite_transport);
     recordCallback('I');
     ++fixture->inits;
     fixture->init_running = true;
@@ -549,6 +557,213 @@ static void testMetadataRouting(bool target, bool splice)
     teardown(&f);
 }
 
+static void setTransportRules(router_fixture_t *f, const char *json_text, bool same_target)
+{
+    router_tstate_t *ts = tunnelGetState(f->router);
+    routerRuleTableDestroy(ts);
+    cJSON *rules = cJSON_Parse(json_text);
+    require(cJSON_IsArray(rules), "invalid transport rules fixture");
+    ts->rules_count = (uint32_t) cJSON_GetArraySize(rules);
+    ts->rules       = memoryAllocateZero(ts->rules_count * sizeof(*ts->rules));
+    for (uint32_t i = 0; i < ts->rules_count; ++i)
+    {
+        router_rule_t *rule  = &ts->rules[i];
+        uint32_t       count = 0;
+        require(routerRuleParseConditions(rule, cJSON_GetArrayItem(rules, (int) i), i, &count),
+                "failed to parse transport rule");
+        rule->target_tunnel = i == 0 || same_target ? f->target : f->next;
+        ts->needed_protocols |= rule->protocol.wanted_flags;
+    }
+    cJSON_Delete(rules);
+}
+
+static void testOrderedOffers(void)
+{
+    static const struct
+    {
+        const char *name;
+        const char *rules;
+        uint8_t     offer;
+        uint8_t     expected_transport;
+        bool        target;
+        bool        same_target;
+        bool        pin;
+    } cases[] = {
+        {"UDP rule first",
+         "[{\"network\":\"udp\"},{\"network\":\"tcp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportUdp,
+         true,
+         false,
+         false},
+        {"TCP rule first",
+         "[{\"network\":\"tcp\"},{\"network\":\"udp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         true,
+         false,
+         false},
+        {"UDP rule first with a shared target",
+         "[{\"network\":\"udp\"},{\"network\":\"tcp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportUdp,
+         true,
+         true,
+         false},
+        {"TCP rule first with a shared target",
+         "[{\"network\":\"tcp\"},{\"network\":\"udp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         true,
+         true,
+         false},
+        {"UDP rule fails its port predicate",
+         "[{\"network\":\"udp\",\"destination-port\":53},{\"network\":\"tcp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         true,
+         true,
+         false},
+        {"An incompatible UDP rule cannot defer a TCP input",
+         "[{\"network\":\"udp\",\"protocol\":\"tls\"},{\"network\":\"tcp\"}]",
+         kAddressContextTransportTcp,
+         kAddressContextTransportTcp,
+         false,
+         false,
+         false},
+        {"Combined rule",
+         "[{\"network\":\"tcp,udp\"}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         true,
+         false,
+         false},
+        {"Rule without a network",
+         "[{\"destination-port\":80}]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         true,
+         false,
+         false},
+        {"Default route with both",
+         "[]",
+         kAddressContextTransportBoth,
+         kAddressContextTransportTcp,
+         false,
+         false,
+         false},
+        {"Default route with UDP", "[]", kAddressContextTransportUdp, kAddressContextTransportUdp, false, false, false},
+        {"Pinned UDP stays exact",
+         "[{\"network\":\"tcp\"},{\"network\":\"udp\"}]",
+         kAddressContextTransportUdp,
+         kAddressContextTransportUdp,
+         false,
+         false,
+         true},
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i)
+    {
+        testCaseSet(cases[i].name);
+        router_fixture_t f;
+        setupBeforeInit(&f, false, cases[i].target, false, false);
+        setTransportRules(&f, cases[i].rules, cases[i].same_target);
+        f.expected_transport    = cases[i].expected_transport;
+        address_context_t *dest = lineGetDestinationAddressContext(f.line);
+        address_context_t *src  = lineGetSourceAddressContext(f.line);
+        require(addresscontextSetIpAddressPortProtocol(dest, "203.0.113.2", 80, IP_PROTO_TCP),
+                "could not set fixture destination");
+        addresscontextSetTransportOffer(dest, cases[i].offer);
+        addresscontextSetOnlyProtocol(src, IP_PROTO_TCP);
+        addresscontextSetDestinationPinned(dest, cases[i].pin);
+        addresscontextSetResolverDns(dest, cases[i].pin);
+        tunnelUpStreamInit(f.router, f.line);
+        require(f.inits == 1, "transport rule did not commit during Init");
+        require(addresscontextClassifyTransport(src) == kAddressContextTransportTcp,
+                "Router rewrote the source protocol");
+        require(dest->port == 80 && dest->type_ip && ! addresscontextIsAnyIp(dest),
+                "Router rewrote the destination endpoint");
+        require(addresscontextDestinationIsPinned(dest) == cases[i].pin &&
+                    addresscontextIsResolverDns(dest) == cases[i].pin,
+                "Router changed destination metadata");
+        teardown(&f);
+    }
+}
+
+static void testDeferredOfferReplay(bool sniffrouter, uint8_t selected_transport)
+{
+    static const uint8_t request[] = "GET / HTTP/1.1\r\nHost: route.test\r\n\r\n";
+    const uint32_t       split     = 2;
+    const uint32_t       length    = sizeof(request) - 1;
+    router_fixture_t     f;
+    setupBeforeInit(&f, sniffrouter, true, false, false);
+    if (! sniffrouter)
+    {
+        setTransportRules(&f,
+                          selected_transport == kAddressContextTransportUdp
+                              ? "[{\"network\":\"udp\",\"protocol\":\"http1\"},{\"network\":\"tcp\"}]"
+                              : "[{\"network\":\"tcp\",\"protocol\":\"http1\"},{\"network\":\"udp\"}]",
+                          true);
+    }
+    address_context_t *dest = lineGetDestinationAddressContext(f.line);
+    addresscontextSetTransportOffer(dest, kAddressContextTransportBoth);
+    f.expected_transport = selected_transport;
+    f.rewrite_transport =
+        selected_transport == kAddressContextTransportUdp ? kAddressContextTransportTcp : kAddressContextTransportUdp;
+    if (sniffrouter)
+    {
+        expect(&f, request, length, false, NULL);
+    }
+    else
+    {
+        f.datagram_bytes[0]   = request;
+        f.datagram_lengths[0] = split;
+        f.datagram_bytes[1]   = (const uint8_t *) "";
+        f.datagram_bytes[2]   = request + split;
+        f.datagram_lengths[2] = length - split;
+        f.datagram_bytes[3]   = (const uint8_t *) "I";
+        f.datagram_lengths[3] = 1;
+        f.datagram_count      = 4;
+        f.reenter_init        = true;
+    }
+
+    tunnelUpStreamInit(f.router, f.line);
+    require(addresscontextGetTransportOffer(dest) ==
+                (sniffrouter ? kAddressContextTransportTcp : kAddressContextTransportBoth),
+            "router narrowed the offer at the wrong phase");
+    tunnelUpStreamPayload(f.router, f.line, payload(request, split, false, 0));
+    tunnelUpStreamPayload(f.router, f.line, payload("", 0, false, 0));
+    require(f.inits == 0 && f.payloads == 0, "incomplete sniffed input committed early");
+    tunnelUpStreamPayload(f.router, f.line, payload(request + split, length - split, false, 0));
+    require(f.inits == 1 && f.payloads == (sniffrouter ? 1U : 4U),
+            "replay did not follow the queue retaining the original input");
+    teardown(&f);
+}
+
+static void testInvalidOffer(bool sniffrouter)
+{
+    for (unsigned mode = 0; mode < 3; ++mode)
+    {
+        router_fixture_t f;
+        setupBeforeInit(&f, sniffrouter, true, false, false);
+        address_context_t *dest = lineGetDestinationAddressContext(f.line);
+        if (mode == 0)
+            addresscontextClearProtocols(dest);
+        else if (mode == 1)
+            addresscontextSetProtocol(dest, IP_PROTO_PACKET);
+        else
+        {
+            addresscontextSetTransportOffer(dest, kAddressContextTransportBoth);
+            addresscontextSetDestinationPinned(dest, true);
+        }
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(f.line), IP_PROTO_TCP);
+        tunnelUpStreamInit(f.router, f.line);
+        require(f.line == NULL && f.inits == 0 && f.finishes == 1,
+                "invalid destination transport reached a selected branch");
+        teardown(&f);
+    }
+}
+
 static void testStartupReplay(bool sniffrouter, bool target, bool metadata)
 {
     router_fixture_t f;
@@ -787,7 +1002,7 @@ static void testCapabilities(void)
         if (! sniffrouter)
         {
             router_tstate_t *ts = tunnelGetState(f.router);
-            require(ts->domain_resolver_node.flags == kNodeFlagSupportsSplice,
+            require((ts->domain_resolver_node.flags & kNodeFlagSupportsSplice) != 0,
                     "Router cleared internal resolver splice capability");
         }
         teardown(&f);
@@ -1035,6 +1250,8 @@ int main(void)
     }
     for (unsigned sniffrouter = 0; sniffrouter < 2; ++sniffrouter)
     {
+        testDeferredOfferReplay(sniffrouter != 0, kAddressContextTransportTcp);
+        testInvalidOffer(sniffrouter != 0);
         testLargeCompleteHeader(sniffrouter != 0, false);
         testLargeCompleteHeader(sniffrouter != 0, true);
         testExplicitNextTarget(sniffrouter != 0);
@@ -1054,6 +1271,8 @@ int main(void)
             testBorrowedFinish(sniffrouter != 0, target != 0, false);
         }
     }
+    testOrderedOffers();
+    testDeferredOfferReplay(false, kAddressContextTransportUdp);
     testCapabilities();
     for (unsigned target = 0; target < 2; ++target)
         for (unsigned empty_first = 0; empty_first < 2; ++empty_first)

@@ -55,7 +55,8 @@ static void testDirectPacketGeneratorPlacementIsRejected(void)
     connector.name = (char *) "udp-connector";
 
     require(connector.layer_group == kNodeLayer4, "UdpConnector does not advertise Layer 4");
-    require(connector.layer_group_prev_node == kNodeLayer4, "UdpConnector does not require a Layer-4 previous node");
+    require(connector.layer_group_prev_node == kNodeLayer4Datagram,
+            "UdpConnector does not require a datagram previous node");
     require(connector.layer_group_next_node == kNodeLayerNone, "UdpConnector unexpectedly permits a following node");
 
     tunnel_t sender_tunnel    = {.node = &sender};

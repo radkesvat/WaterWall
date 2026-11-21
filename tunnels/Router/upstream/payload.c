@@ -89,8 +89,14 @@ static void routerAppendDatagramSniffView(router_lstate_t *ls, const sbuf_t *buf
     sbufConcatNoCheck(ls->pending, buf);
 }
 
-void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *target, sbuf_t *first)
+void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, router_match_t match, sbuf_t *first)
 {
+    const uint8_t transport = addresscontextChooseTransport(ls->network_offer & kAddressContextTransportBoth,
+                                                            match.eligible_networks & kAddressContextTransportBoth);
+    if (transport != 0)
+        addresscontextSetTransportOffer(lineGetDestinationAddressContext(l), transport);
+
+    tunnel_t *target = match.target;
     lineRef(l);
 
     ls->target    = target;
@@ -117,7 +123,7 @@ void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *ta
     {
         if (first == NULL)
         {
-            if (ls->datagram_input)
+            if (ls->preserve_deliveries)
                 first = bufferqueuePopFront(&ls->datagrams);
             else
             {
@@ -151,7 +157,7 @@ void routerCommitRoute(tunnel_t *t, line_t *l, router_lstate_t *ls, tunnel_t *ta
 
 static void routerBufferReentrantPayload(tunnel_t *t, line_t *l, router_lstate_t *ls, sbuf_t *buf)
 {
-    if (ls->datagram_input)
+    if (ls->preserve_deliveries)
     {
         discard routerQueueDatagram(t, l, ls, &buf);
         return;
@@ -193,7 +199,7 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     // Sniffing and pending storage use ordinary memory until the route is committed.
     buf = sbufEnsureOrdinary(lineGetBufferPool(l), buf);
 
-    if (ls->datagram_input)
+    if (ls->preserve_deliveries)
     {
         if (! routerQueueDatagram(t, l, ls, &buf))
             return;
@@ -229,13 +235,13 @@ void routerTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 
     sbuf_t *first = ls->pending;
     ls->pending   = NULL;
-    if (ls->datagram_input)
+    if (ls->preserve_deliveries)
     {
-        // This UDP sniff view was allocated directly, without a pool checkout.
+        // This view was allocated directly, without a pool checkout.
         // Recycling it would incorrectly decrement the pool's debug in-use count.
         sbufDestroy(first);
         first = NULL;
     }
 
-    routerCommitRoute(t, l, ls, match.result == kRouterClassifyTarget ? match.target : NULL, first);
+    routerCommitRoute(t, l, ls, match, first);
 }

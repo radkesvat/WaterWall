@@ -17,6 +17,7 @@ typedef struct packetstostream_tstate_s
     uint32_t                                  interval_ms;
     uint32_t                                  tolerance_ms;
     packetstostream_packet_validation_level_t packet_validation_level;
+    uint8_t                                   transport_offer;
     bool                                      sensitive_mode;
 } packetstostream_tstate_t;
 

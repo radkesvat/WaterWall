@@ -23,7 +23,7 @@ TcpUdpListener -> SniffRouter -> TcpUdpConnector
 PacketsToConnection -> TcpUdpConnector
 ```
 
-The previous node must set either the destination protocol or the source protocol to TCP or UDP.
+The line must offer TCP, UDP, or both in its destination context.
 
 
 ## Minimal practical example
@@ -185,25 +185,29 @@ See [DomainResolver](../../WaterWall-Docs/docs/02-noderefs/DomainResolver.mdx) f
 ### Notes And Caveats
 
 - Both child connectors receive the same settings. This node is not for separate TCP and UDP destination settings.
-- If a previous node can set destination protocol, that protocol wins over source protocol.
-- If neither source nor destination has an exact TCP or UDP protocol flag, the line is rejected as a configuration or routing error.
 - No payload bytes are added or removed, so the node requires no left padding.
 
 ## Advanced behavior
 
 ### Protocol Selection
 
-During upstream `Init`, `TcpUdpConnector` first checks `lineGetDestinationAddressContext(line)`.
+The TCP child requires a byte stream. The UDP child requires one complete
+datagram per payload. The same selection applies to replies.
 
-- exact TCP destination protocol selects `TcpConnector`
-- exact UDP destination protocol selects `UdpConnector`
-- unsupported or ambiguous destination protocol flags are rejected
+On upstream `Init`, the wrapper selects a child from the destination transport
+offer. The table applies to each line.
 
-If the destination context has no protocol flags, `TcpUdpConnector` falls back to `lineGetSourceAddressContext(line)`. This
-keeps simple TCP-in-to-TCP-out and UDP-in-to-UDP-out chains usable with constant outbound destinations.
+| Destination offer | Result |
+| --- | --- |
+| TCP | `TcpConnector` |
+| UDP | `UdpConnector` |
+| Both TCP and UDP | `TcpConnector` |
+| Unset or invalid | Close the line before socket I/O |
 
-The selected child connector is stored in this node's line state. Later upstream callbacks use the stored child instead
-of re-reading `dest_ctx`, because the selected connector may rewrite the destination context during its own init.
+The wrapper publishes the exact protocol before invoking the child's entry and
+retains the selected child in line state for later callbacks. Set
+`PacketsToStream.settings.protocol` to `"udp"` to use the UDP child with that
+producer. A pinned DNS or SOCKS relay destination supplies one exact protocol.
 
 ## Implementation details
 

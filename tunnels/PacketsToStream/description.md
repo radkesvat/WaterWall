@@ -7,7 +7,11 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 ## Overview
 
-`PacketsToStream` adapts a packet-oriented side of the chain to a stream-oriented side.
+`PacketsToStream` connects a packet side of the chain to a normal L4 line on
+each worker. It sends each IPv4 packet as one payload delivery. Those deliveries
+can also be concatenated into a byte stream, so the output line offers both TCP
+and UDP by default. The IPv4 protocol inside each packet is independent of the
+selected carrier.
 
 The current implementation is **IPv4-only**. It does not add any framing header: each outgoing IPv4 packet
 is written to the stream as-is, and the on-wire format is a raw concatenation of IPv4 packets. Packet
@@ -69,6 +73,10 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 There are no required tunnel-specific settings in the current implementation.
 
 ### Optional `settings` Fields
+
+- `protocol` `(string, default: "both")`
+  Sets the destination transport offer for each new output line. Use `"tcp"`
+  for TCP only or `"udp"` for UDP only.
 
 - `sensitive-mode` `(boolean)`
   Enables sensitive-mode heartbeat handling for the worker-local stream line.
@@ -154,7 +162,7 @@ This tunnel is a packet-to-stream adapter based on IPv4 header parsing, not expl
 When traffic is initialized on that worker:
 
 - the tunnel creates a new line toward the next node
-- stores it in worker-local state
+- stores it in worker-local state and publishes the configured transport offer
 - initializes the next node with that new line
 
 That data line is then reused for packet payload arriving on the same worker.
@@ -293,5 +301,5 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer3` &#124; `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer3` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4` for `"both"`, `kNodeLayer4Stream` for `"tcp"`, or `kNodeLayer4Datagram` for `"udp"` |
 | `required_padding_left` | `0` bytes |

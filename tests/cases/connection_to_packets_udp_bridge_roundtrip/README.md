@@ -11,7 +11,9 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `proxy-listener`: `TcpUdpListener` → `socks5-server`
 - `socks5-server`: `Socks5Server` → `connection-to-packets`
 - `connection-to-packets`: `ConnectionToPackets` → `packets-to-connection`
-- `packets-to-connection`: `PacketsToConnection` → `target-connector`
+- `packets-to-connection`: `PacketsToConnection` → `select-transport`
+- `select-transport`: `Router` sends UDP to `target-connector` and other traffic to `discard-other-transport`
+- `discard-other-transport`: `BlackHole` (passive default)
 - `target-connector`: `UdpConnector` (terminal or independently bound endpoint)
 - `target-listener`: `UdpListener` → `tester-server`
 - `tester-server`: `TesterServer` (terminal or independently bound endpoint)

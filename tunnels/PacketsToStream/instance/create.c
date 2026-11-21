@@ -2,6 +2,40 @@
 
 #include "loggers/network_logger.h"
 
+static bool packetstostreamLoadTransportOffer(packetstostream_tstate_t *ts, node_t *node)
+{
+    const cJSON *settings = node->node_settings_json;
+    if (! jsonObjectFieldStringsAreExact(settings, "protocol"))
+    {
+        LOGF("JSON Error: PacketsToStream->settings->protocol must be an exact string");
+        return false;
+    }
+    const cJSON *protocol = cJSON_GetObjectItemCaseSensitive(settings, "protocol");
+    const char  *name     = protocol == NULL ? "both" : cJSON_GetStringValue(protocol);
+    if (name != NULL && stringCompare(name, "both") == 0)
+    {
+        ts->transport_offer = kAddressContextTransportBoth;
+        return true;
+    }
+
+    if (name != NULL && stringCompare(name, "tcp") == 0)
+    {
+        ts->transport_offer         = kAddressContextTransportTcp;
+        node->layer_group_next_node = kNodeLayer4Stream;
+        return true;
+    }
+
+    if (name != NULL && stringCompare(name, "udp") == 0)
+    {
+        ts->transport_offer         = kAddressContextTransportUdp;
+        node->layer_group_next_node = kNodeLayer4Datagram;
+        return true;
+    }
+
+    LOGF("JSON Error: PacketsToStream->settings->protocol must be both, tcp, or udp");
+    return false;
+}
+
 static bool packetstostreamLoadPacketValidationLevel(packetstostream_packet_validation_level_t *level,
                                                      const cJSON                               *settings)
 {
@@ -113,7 +147,7 @@ tunnel_t *packetstostreamTunnelCreate(node_t *node)
     ts->packet_validation_level = kPacketsToStreamPacketValidationNone;
     ts->sensitive_mode          = false;
 
-    if (! packetstostreamLoadSettings(ts, node->node_settings_json))
+    if (! packetstostreamLoadSettings(ts, node->node_settings_json) || ! packetstostreamLoadTransportOffer(ts, node))
     {
         tunnelDestroy(t);
         return NULL;

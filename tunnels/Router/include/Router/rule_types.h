@@ -36,8 +36,8 @@ typedef struct router_port_range_s
 
 enum
 {
-    kRouterNetworkTcp    = 1U << 0U,
-    kRouterNetworkUdp    = 1U << 1U,
+    kRouterNetworkTcp    = kAddressContextTransportTcp,
+    kRouterNetworkUdp    = kAddressContextTransportUdp,
     kRouterNetworkIcmp   = 1U << 2U,
     kRouterNetworkPacket = 1U << 3U
 };

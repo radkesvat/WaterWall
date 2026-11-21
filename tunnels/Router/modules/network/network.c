@@ -113,37 +113,21 @@ router_field_parse_t routerNetworkParse(router_rule_t *rule, const cJSON *rule_j
     return kRouterFieldPresent;
 }
 
+uint8_t routerNetworkOffer(const address_context_t *dest)
+{
+    const uint8_t offer = addresscontextGetTransportOffer(dest);
+    if (offer != 0 || dest->proto_tcp || dest->proto_udp || addresscontextDestinationIsPinned(dest))
+        return offer;
+
+    // Keep the existing non-L4 network match flags on their own paths.
+    return (dest->proto_icmp ? kRouterNetworkIcmp : 0) | (dest->proto_packet ? kRouterNetworkPacket : 0);
+}
+
 bool routerNetworkMatch(const router_rule_t *rule, router_match_ctx_t *mctx)
 {
-    if (! rule->network.present)
-    {
-        return true;
-    }
-
-    // Match against the destination context's protocol bit flags.
-    const address_context_t *dest = lineGetDestinationAddressContext(mctx->line);
-
-    uint8_t have = 0;
-    if (dest->proto_tcp)
-    {
-        have |= kRouterNetworkTcp;
-    }
-    if (dest->proto_udp)
-    {
-        have |= kRouterNetworkUdp;
-    }
-    if (dest->proto_icmp)
-    {
-        have |= kRouterNetworkIcmp;
-    }
-    if (dest->proto_packet)
-    {
-        have |= kRouterNetworkPacket;
-    }
-
-    // The rule matches if any requested network type is present (OR semantics
-    // within the field, e.g. "tcp,udp").
-    return (rule->network.wanted & have) != 0;
+    const uint8_t offer     = mctx->line_state->network_offer;
+    mctx->eligible_networks = rule->network.present ? offer & rule->network.wanted : offer;
+    return ! rule->network.present || mctx->eligible_networks != 0;
 }
 
 void routerNetworkDestroy(router_rule_t *rule)

@@ -6,7 +6,9 @@ Exercises the tundevice tcp chain scenario with the topology in this directory.
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
 - `tun`: `TunDevice` → `stack`
-- `stack`: `PacketsToConnection` → `out`
+- `stack`: `PacketsToConnection` → `select-transport`
+- `select-transport`: `Router` sends TCP to `out` and other traffic to `discard-other-transport`
+- `discard-other-transport`: `BlackHole` (passive default)
 - `out`: `TcpConnector` (terminal or independently bound endpoint)
 
 Scenario choices: `tun.device-mtu=1500`, `tun.gso=true`, `stack.mtu=1500`. These values define the workload/edge case and are not tuning advice.

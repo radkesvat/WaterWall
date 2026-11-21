@@ -192,70 +192,20 @@ bool ctpLineIsPacketLine(tunnel_t *t, line_t *l)
 // Destination selection
 // ---------------------------------------------------------------------------
 
-static bool ctpProtocolFromContext(const address_context_t *ctx, uint8_t *out_protocol)
-{
-    switch (addresscontextClassifyTransport(ctx))
-    {
-    case kAddressContextTransportTcp:
-        *out_protocol = IP_PROTO_TCP;
-        return true;
-    case kAddressContextTransportUdp:
-        *out_protocol = IP_PROTO_UDP;
-        return true;
-    default:
-        return false;
-    }
-}
-
-static void ctpLogUnsupportedContext(const char *label, const address_context_t *ctx)
-{
-    LOGE("ConnectionToPackets: line has unsupported or ambiguous %s protocol flags "
-         "(tcp=%u, udp=%u, icmp=%u, packet=%u)",
-         label,
-         (unsigned int) ctx->proto_tcp,
-         (unsigned int) ctx->proto_udp,
-         (unsigned int) ctx->proto_icmp,
-         (unsigned int) ctx->proto_packet);
-}
-
-/*
- * Deliberately identical to TcpUdpConnector's rule so the two nodes accept the
- * same lines: an exact destination protocol wins, otherwise an exact source
- * protocol is used, and anything missing or ambiguous rejects the line.
- */
 bool ctpSelectProtocol(tunnel_t *t, line_t *l, uint8_t *out_protocol)
 {
     discard t;
 
-    const address_context_t *dest_ctx = lineGetDestinationAddressContext(l);
-    const address_context_t *src_ctx  = lineGetSourceAddressContext(l);
-
-    if (addresscontextClassifyTransport(dest_ctx) != kAddressContextTransportNone)
+    const uint8_t transport =
+        addresscontextSelectTransport(lineGetDestinationAddressContext(l), kAddressContextTransportBoth);
+    if (transport == 0)
     {
-        if (ctpProtocolFromContext(dest_ctx, out_protocol))
-        {
-            return true;
-        }
-
-        ctpLogUnsupportedContext("destination", dest_ctx);
+        LOGE("ConnectionToPackets: destination does not offer TCP or UDP");
         return false;
     }
 
-    if (ctpProtocolFromContext(src_ctx, out_protocol))
-    {
-        return true;
-    }
-
-    if (addresscontextClassifyTransport(src_ctx) != kAddressContextTransportNone)
-    {
-        ctpLogUnsupportedContext("source", src_ctx);
-    }
-    else
-    {
-        LOGE("ConnectionToPackets: line has no TCP/UDP protocol flags in destination or source context");
-    }
-
-    return false;
+    *out_protocol = transport == kAddressContextTransportTcp ? IP_PROTO_TCP : IP_PROTO_UDP;
+    return true;
 }
 
 bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, void *user_lstate)
@@ -270,7 +220,7 @@ bool ctpDomainResolverPrepare(tunnel_t *resolver, tunnel_t *owner, line_t *l, vo
     if (addresscontextDestinationIsPinned(dest_ctx))
     {
         if (! addresscontextIsValid(dest_ctx) || ! addresscontextHasPort(dest_ctx) ||
-            ! ctpProtocolFromContext(dest_ctx, &protocol))
+            ! ctpSelectProtocol(owner, l, &protocol))
         {
             LOGE("ConnectionToPackets: pinned destination requires an address, port and exact TCP or UDP transport");
             return false;

@@ -134,7 +134,9 @@ Stream mode:
   - `port` `(integer)`
     Optional destination port.
   - `protocol` `(string)`
-    Optional transport protocol flag. Supported values: `tcp`, `udp`.
+    Accepts `tcp` or `udp`. A normal line offers both when this field is omitted.
+    The configured address and port accompany the offer. Synthetic IPv4 packet
+    headers use the separate `packet-ipv4` settings.
 
 - `packet-ipv4` `(object)`
   Optional synthetic IPv4 envelope mode for `packet-mode`.
@@ -312,6 +314,7 @@ On tunnel start, `TesterClient` schedules one startup task per chain worker. Eac
 
 - picks the worker packet line when `packet-mode` is enabled, otherwise creates a fresh normal line
 - initializes this tunnel's per-line state immediately
+- publishes the destination transport offer on a normal line
 - sends upstream `Init` to the next tunnel while holding a temporary line reference
 - arms a `30000 ms` watchdog for that worker line
 

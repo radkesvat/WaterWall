@@ -77,7 +77,7 @@ typedef struct sniffrouter_lstate_s
     tunnel_t      *target;         // selected route tunnel; NULL means normal next branch
     uint8_t        decided;        // enum sniffrouter_route_e
     bool           replaying;      // selected Init and initial FIFO replay are on the stack
-    bool           datagram_input; // incoming transport, preserved across branch context rewrites
+    bool           datagram_input; // selected in Init and retained across branch context rewrites
     bool           pending_pause;  // receiver Pause waiting for the selected branch's Init
 } sniffrouter_lstate_t;
 

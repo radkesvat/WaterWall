@@ -39,7 +39,7 @@ static const classifier_case_t kCases[] = {
     {"udp", FLAGS(0, 1, 0, 0), IP_PROTO_UDP},
     {"icmp", FLAGS(0, 0, 1, 0), 0},
     {"packet", FLAGS(0, 0, 0, 1), 0},
-    {"tcp+udp", FLAGS(1, 1, 0, 0), 0},
+    {"tcp+udp", FLAGS(1, 1, 0, 0), IP_PROTO_TCP},
     {"tcp+icmp", FLAGS(1, 0, 1, 0), 0},
     {"tcp+packet", FLAGS(1, 0, 0, 1), 0},
     {"udp+icmp", FLAGS(0, 1, 1, 0), 0},
@@ -90,8 +90,7 @@ int main(void)
             line.routing_context.dest_ctx   = dest->context;
             line.routing_context.src_ctx    = source->context;
 
-            /* A nonempty destination always wins, including unsupported combinations. */
-            const uint8_t expected = dest_index == 0 ? source->expected_protocol : dest->expected_protocol;
+            const uint8_t expected = dest->expected_protocol;
 
             uint8_t protocol = UINT8_C(0xA5);
             bool    accepted = ctpSelectProtocol(NULL, &line, &protocol);

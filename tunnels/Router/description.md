@@ -34,6 +34,16 @@ it (`username`, `password`). The full list is in the
 - **Across rules** → first match wins, in JSON order; later rules are skipped.
 - **No match anywhere** → the default `next` route.
 
+Router compares each rule's `network` condition with the line's saved destination
+offer. Only the first rule whose full set of conditions matches narrows the
+offer. On a line offering both transports, an earlier UDP rule can choose UDP,
+and a later TCP rule remains eligible when the UDP rule fails another condition.
+A winning rule that permits both, a rule without `network`, and the default
+route prefer TCP when the offer permits it. Router publishes the exact choice
+before initializing the branch. `TcpUdpListener` emits an exact offer for every
+accepted line. Startup checks directly configured neighbors, and each branch
+admits the selected live line according to its own transport requirements.
+
 ## Typical placement
 
 ```text
@@ -122,7 +132,7 @@ are ignored with a warning.
 | `destination-port` | integer or array of integers | Match `dest_ctx.port` against exact ports, e.g. `53` or `[80, 443]`. |
 | `destination-port-range` | two-integer array | Match `dest_ctx.port` against an inclusive range, e.g. `[1000, 2000]`. If combined with `destination-port`, the exact ports and range are OR-combined. |
 | `destination-domain` | string or array | Match `dest_ctx.domain`, case-insensitive: exact (`google.com`), wildcard (`*.google.com`, subdomains only), `*` (any domain), or GeoSite lists (`geosite:cn`, see [GeoSite](#geosite)). The domain may come from an earlier tunnel or from [domain sniffing](#domain-sniffing). |
-| `network` | string or array | Match the destination transport flags: `tcp`, `udp`, `icmp`, `packet`, or combined in one string `"tcp,udp"`. OR within the field. |
+| `network` | string or array | Match the destination offer against `tcp`, `udp`, `icmp`, `packet`, or a combination such as `"tcp,udp"`. OR within the field. |
 | `resolver-dns` | boolean | Match resolver-generated logical DNS traffic (`true`) or lines without that marker (`false`). Available at Init without sniffing. |
 | `protocol` | string or array | Match an application protocol detected from the first upstream payload: `http1`, `tls`, `bittorrent`. OR within the field. See [Protocol detection](#protocol-detection). |
 | `attributes` | non-empty array | Match sniffed facts. Currently supports `"http_upgrade_present"`. See [Attribute sniffing](#attribute-sniffing). |
@@ -661,13 +671,13 @@ first payload -> buffer/sniff -> ordered rules -> branch Init -> replay
 Input submitted reentrantly during the selected `Init` or initial replay waits
 behind the accepted first delivery. For stream input, the temporary nested-input
 backlog is one ordinary buffer with a 2 MiB logical-byte limit. This limit does
-not shrink the existing accepted first sniffing delivery. UDP retains each
-datagram, including empty datagrams, in a separate FIFO and copies bytes into a
-sniffing view. The FIFO admits at most 2 MiB of payload, 4 MiB of buffer capacity
-charge, and 1,024 datagrams, including startup reentry. Overflow closes the line
-through its initialized directions. Replay preserves UDP contents, boundaries,
-and order and stops immediately on Finish, even when a borrowed line's owner has
-not yet destroyed the line.
+not shrink the existing accepted first sniffing delivery. When the incoming
+offer allows UDP, Router keeps each delivery, including empty ones, in a FIFO
+and copies the bytes into a sniffing view. The FIFO admits at most 2 MiB of
+payload, 4 MiB of buffer capacity charge, and 1,024 deliveries, including startup
+reentry. Overflow closes the line through its initialized directions. Replay
+drains the original deliveries in order even when the selected branch uses TCP
+or changes its destination in `Init`. Finish stops replay immediately.
 
 After selected Init and all initial replay settle, Router destroys its line
 state and permanently bypasses itself when the route is its actual `next` link.
@@ -757,9 +767,9 @@ Details:
   domain sniffing entirely.
 - `http` intentionally does **not** include HTTP/3; use `["http", "http3"]`
   when you want HTTP/1, cleartext HTTP/2, and HTTP/3 domain sniffing together.
-- `http2` applies only to TCP-only destinations and only to prior-knowledge
-  cleartext HTTP/2; h2c **upgrade** requests are covered by `http1` Host
-  sniffing. `quic`/`http3` applies only to UDP-only destinations.
+- `http2` applies to prior-knowledge cleartext HTTP/2 when the offer allows TCP.
+  Use `http1` Host sniffing for h2c upgrade requests. `quic`/`http3` applies
+  when the offer allows UDP.
 - HTTP/2 reads `:authority`, or the fallback `host`, only from the first
   completed request HEADERS. Later request streams cannot replace that domain,
   even when several requests arrive in one payload.

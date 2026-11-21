@@ -16,7 +16,20 @@
     {
       "name": "stack",
       "type": "PacketsToConnection",
-      "next": "out"
+      "next": "select-transport"
+    },
+    {
+      "name": "select-transport",
+      "type": "Router",
+      "settings": {
+        "rules": [{"network": "udp", "target": "out"}]
+      },
+      "next": "discard-other-transport"
+    },
+    {
+      "name": "discard-other-transport",
+      "type": "BlackHole",
+      "settings": {"mode": "passive"}
     },
     {
       "name": "out",

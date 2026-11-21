@@ -22,7 +22,7 @@ node_t nodeUdpStatelessSocketGet(void)
              .flags                 = kNodeFlagChainHead | kNodeFlagSupportsSplice,
              .required_padding_left = 0,
              .layer_group           = kNodeLayerAnything,
-             .layer_group_next_node = kNodeLayerAnything,
+             .layer_group_next_node = kNodeLayer3 | kNodeLayer4Datagram,
              .layer_group_prev_node = kNodeLayerNone,
              .can_have_next         = true,
              .can_have_prev         = false,

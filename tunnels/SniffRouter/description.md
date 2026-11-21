@@ -180,12 +180,13 @@ uses `destination-domain` and `target`.
   replay stays behind the original bytes. For streams, this additional input
   is coalesced into one ordinary buffer with a 2 MiB logical-byte limit. The
   original accepted stream sniff batch keeps its existing size behavior.
-- UDP input is identified during `Init`, before a selected branch can change
-  its destination context. Each datagram, including an empty datagram, remains
-  a separate FIFO entry; a separate byte view supplies the sniffer. The queue
-  admits at most 2 MiB of payload, 4 MiB of buffer capacity charge, and 1,024
-  datagrams, including startup reentry. Overflow closes only initialized sides.
-  Replay preserves datagram contents, boundaries and order.
+- SniffRouter selects a transport during `Init`, preferring TCP when the line
+  offers both. The selected branch sees the exact protocol in `Init`. For UDP,
+  a FIFO keeps each delivery, including empty datagrams, and supplies a separate
+  byte view for sniffing. It admits at most 2 MiB of payload, 4 MiB of buffer
+  capacity charge, and 1,024 deliveries, including startup reentry. Overflow
+  closes only initialized sides. Replay preserves UDP contents, boundaries and
+  order even if the branch changes the destination.
 - `Pause` and `Resume` are advisory. Once a branch is selected, every notification
   follows that branch, including duplicates; initial replay does not wait for
   `Resume`. Before selection there is no initialized upstream recipient.

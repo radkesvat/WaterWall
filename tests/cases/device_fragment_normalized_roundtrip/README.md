@@ -6,7 +6,9 @@ Exercises the device fragment normalized roundtrip scenario with the topology in
 Configured nodes and onward edges (`next`; listeners/connectors form the OS transport boundaries):
 
 - `tun`: `TunDevice` → `stack`
-- `stack`: `PacketsToConnection` → `out`
+- `stack`: `PacketsToConnection` → `select-transport`
+- `select-transport`: `Router` sends UDP to `out` and other traffic to `discard-other-transport`
+- `discard-other-transport`: `BlackHole` (passive default)
 - `out`: `UdpConnector` (terminal or independently bound endpoint)
 
 Scenario choices: `tun.device-mtu=1500`. These values define the workload/edge case and are not tuning advice.

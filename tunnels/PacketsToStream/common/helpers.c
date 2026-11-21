@@ -297,6 +297,8 @@ line_t *packetstostreamEnsureOutputLine(tunnel_t *t, line_t *packet_line, packet
     ipv4streamInputReset(&ls->read_input);
 
     line_t *new_line = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), lineGetWID(packet_line));
+    const packetstostream_tstate_t *ts = tunnelGetState(t);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(new_line), ts->transport_offer);
     ls->line         = new_line;
 
     if (! lineCallWithRef(new_line, tunnelNextUpStreamInit, t))

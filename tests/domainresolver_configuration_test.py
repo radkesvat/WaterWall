@@ -74,7 +74,8 @@ def consumer_config(kind, policy="omitted", extra=None):
     if kind == "UdpStatelessSocket":
         nodes = [node("consumer", kind, settings, "app-out")]
     else:
-        nodes = [node("in", "TcpListener", {"address": "127.0.0.1", "port": 26750}, "consumer"),
+        listener = "UdpListener" if kind == "UdpConnector" else "TcpListener"
+        nodes = [node("in", listener, {"address": "127.0.0.1", "port": 26750}, "consumer"),
                  node("consumer", kind, settings)]
         if kind not in {"TcpConnector", "UdpConnector", "TcpUdpConnector"}:
             nodes[-1]["next"] = "app-out"

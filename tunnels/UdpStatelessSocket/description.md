@@ -264,7 +264,7 @@ This adapter serves protocols that need shared-socket datagrams and distinct inb
 
 #### Chain integration
 
-`UdpStatelessSocket` always owns new peer lines at the head. It sends upstream `Init`, payload, and local/idle-expiry `Finish` toward `next`. Downstream `Finish` from `next` closes an owned peer line without reflecting a callback. Downstream sends on borrowed transport or packet lines remain supported. Calls into the adapter from a previous/upstream node are disabled.
+`UdpStatelessSocket` always owns new peer lines at the head. It sends upstream `Init`, payload, and local/idle-expiry `Finish` toward `next`. Downstream `Finish` from `next` closes an owned peer line without reflecting a callback. On downstream `Init` for a borrowed normal line, the socket selects and publishes UDP if offered. Otherwise it sends `Finish` toward `next` before accepting payload. Packet lines use their per-packet destination context. Calls into the adapter from a previous/upstream node are disabled.
 
 #### Worker behavior
 
@@ -294,7 +294,7 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |
 | `layer_group_prev_node` | `kNodeLayerNone` |
-| `layer_group_next_node` | `kNodeLayerAnything` |
+| `layer_group_next_node` | `kNodeLayer3 \| kNodeLayer4Datagram` |
 | `required_padding_left` | `0` bytes |
 
 ### UDP splice sending

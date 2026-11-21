@@ -8,7 +8,7 @@ needed. There is one IPv4 header and no preserved inner address tuple.
 ```text
 TesterClient -> Socks5Client -> TcpUdpConnector ~> TcpUdpListener -> Socks5Server
   -> ConnectionToPackets -> FakeTcpHeaderClient -> client IpOverrider
-  -> server IpOverrider -> FakeTcpHeaderServer -> PacketsToConnection
+  -> server IpOverrider -> FakeTcpHeaderServer -> PacketsToConnection -> Router (UDP)
   -> UdpConnector ~> UdpListener -> TesterServer
 ```
 

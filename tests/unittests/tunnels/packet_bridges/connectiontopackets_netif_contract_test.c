@@ -120,14 +120,14 @@ static void testConfiguredDestinationPreparation(void)
          IP_PROTO_UDP,
          IP_PROTO_UDP,
          true},
-        {"static destination without incoming context",
+        {"static destination with only an incoming transport",
          "{\"target-address\":\"10.90.0.3\",\"port\":443}",
          NULL,
          "10.90.0.3",
          0,
          443,
+         IP_PROTO_UDP,
          IP_PROTO_TCP,
-         0,
          IP_PROTO_TCP,
          true},
         {"static address preserves incoming port and protocol",
@@ -160,9 +160,18 @@ static void testConfiguredDestinationPreparation(void)
          IP_PROTO_UDP,
          IP_PROTO_UDP,
          true},
-        {"missing incoming port", "{\"target-address\":\"10.90.0.3\"}", NULL, NULL, 0, 0, IP_PROTO_TCP, 0, 0, false},
-        {"missing incoming address", "{\"port\":443}", NULL, NULL, 0, 0, IP_PROTO_TCP, 0, 0, false},
-        {"missing protocol", "{\"target-address\":\"10.90.0.3\",\"port\":443}", NULL, NULL, 0, 0, 0, 0, 0, false},
+        {"missing incoming port", "{\"target-address\":\"10.90.0.3\"}", NULL, NULL, 0, 0, 0, IP_PROTO_TCP, 0, false},
+        {"missing incoming address", "{\"port\":443}", NULL, NULL, 0, 0, 0, IP_PROTO_TCP, 0, false},
+        {"missing destination transport despite TCP source",
+         "{\"target-address\":\"10.90.0.3\",\"port\":443}",
+         NULL,
+         NULL,
+         0,
+         0,
+         IP_PROTO_TCP,
+         0,
+         0,
+         false},
         {"unsupported destination protocol remains authoritative",
          "{\"target-address\":\"10.90.0.3\",\"port\":443}",
          "10.90.0.2",
@@ -225,7 +234,7 @@ static void testConfiguredDestinationPreparation(void)
                 line_t                       other_line           = {0};
                 ctp_domain_resolver_lstate_t other_resolver_state = {0};
                 address_context_t           *other_dest           = lineGetDestinationAddressContext(&other_line);
-                addresscontextSetOnlyProtocol(lineGetSourceAddressContext(&other_line), IP_PROTO_TCP);
+                addresscontextSetOnlyProtocol(other_dest, IP_PROTO_TCP);
                 require(ctpDomainResolverPrepare(NULL, t, &other_line, &other_resolver_state),
                         "configured domain could not prepare a second line");
                 addresscontextReset(dest);

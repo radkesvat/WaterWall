@@ -36,14 +36,16 @@ static uint32_t g_udp_connector_inits = 0;
 static void fakeTcpConnectorInit(tunnel_t *t, line_t *l)
 {
     discard t;
-    discard l;
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp,
+               "TCP child did not see an exact TCP destination during Init");
     ++g_tcp_connector_inits;
 }
 
 static void fakeUdpConnectorInit(tunnel_t *t, line_t *l)
 {
     discard t;
-    discard l;
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportUdp,
+               "UDP child did not see an exact UDP destination during Init");
     ++g_udp_connector_inits;
 }
 
@@ -111,7 +113,7 @@ static void applyFlags(address_context_t *ctx, protocol_flags_t flags)
     ctx->proto_packet = flags.packet;
 }
 
-static void requireRejected(const char *case_name, protocol_flags_t destination, protocol_flags_t source)
+static void requireRejected(const char *case_name, protocol_flags_t destination, protocol_flags_t source, bool pinned)
 {
     twfSetCase(case_name);
 
@@ -123,6 +125,7 @@ static void requireRejected(const char *case_name, protocol_flags_t destination,
 
     applyFlags(&l->routing_context.dest_ctx, destination);
     applyFlags(&l->routing_context.src_ctx, source);
+    addresscontextSetDestinationPinned(&l->routing_context.dest_ctx, pinned);
 
     tcpudpconnectorTunnelUpStreamInit(fixture.connector, l);
 
@@ -176,16 +179,17 @@ int main(void)
     const protocol_flags_t icmp   = {false, false, true, false};
     const protocol_flags_t packet = {false, false, false, true};
 
-    requireRejected("no protocol flag anywhere", none, none);
-    requireRejected("destination advertises both TCP and UDP", both, tcp);
-    requireRejected("destination is ICMP only", icmp, tcp);
-    requireRejected("destination is packet only", packet, tcp);
-    requireRejected("source advertises both TCP and UDP", none, both);
+    requireRejected("no destination offer", none, none, false);
+    requireRejected("a pinned destination must be exact", both, tcp, true);
+    requireRejected("destination is ICMP only", icmp, tcp, false);
+    requireRejected("destination is packet only", packet, tcp, false);
+    requireRejected("source TCP cannot substitute for the destination", none, tcp, false);
+    requireRejected("source UDP cannot substitute for the destination", none, udp, false);
+    requireRejected("destination mixes TCP and ICMP", (protocol_flags_t) {true, false, true, false}, tcp, false);
 
     requireSelected("destination TCP selects the TCP connector", tcp, none, true);
     requireSelected("destination UDP selects the UDP connector", udp, none, false);
-    requireSelected("source TCP is the fallback when the destination has no flags", none, tcp, true);
-    requireSelected("source UDP is the fallback when the destination has no flags", none, udp, false);
+    requireSelected("flexible destination prefers TCP", both, udp, true);
 
     printf("tcpudpconnector_selection_failure_test: all cases passed\n");
     return 0;

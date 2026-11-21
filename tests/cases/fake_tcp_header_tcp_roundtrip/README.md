@@ -10,7 +10,7 @@ native TCP endpoints provide the handshake and stream.
 ```text
 TesterClient -> TcpConnector ~> TcpListener -> ConnectionToPackets
   -> FakeTcpHeaderClient -> client IpOverrider -> server IpOverrider
-  -> FakeTcpHeaderServer -> PacketsToConnection
+  -> FakeTcpHeaderServer -> PacketsToConnection -> Router (TCP)
   -> TcpConnector ~> TcpListener -> TesterServer
 ```
 

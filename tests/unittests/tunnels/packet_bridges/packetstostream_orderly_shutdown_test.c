@@ -143,6 +143,7 @@ static void fixtureSetup(packetstostream_fixture_t *fixture)
     tunnelBind(fixture->p2s, fixture->next);
 
     packetstostream_tstate_t *ts = tunnelGetState(fixture->p2s);
+    ts->transport_offer          = kAddressContextTransportBoth;
     ts->sensitive_mode           = true;
     ts->interval_ms              = kTestIntervalMs;
     ts->tolerance_ms             = kTestToleranceMs;
@@ -273,6 +274,9 @@ static void closeFlowOutput(void)
 static void flowNextInit(tunnel_t *t, line_t *l)
 {
     twfNextInit(t, l);
+    const packetstostream_tstate_t *ts = tunnelGetState(g_flow_fixture->p2s);
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == ts->transport_offer,
+               "new output line changed the configured transport offer");
     g_flow_fixture->stream_line = l;
     if (g_finish_during_init)
     {
@@ -466,6 +470,8 @@ static void caseLazyReplacementPreservesOutputOrder(void)
         tosResetProcessApi(true);
         packetstostream_fixture_t fixture;
         flowFixtureSetup(&fixture);
+        packetstostream_tstate_t *ts = tunnelGetState(fixture.p2s);
+        ts->transport_offer          = heartbeat ? kAddressContextTransportUdp : kAddressContextTransportTcp;
         uint8_t captured[128];
         fixture.trace.capture          = captured;
         fixture.trace.capture_capacity = sizeof(captured);

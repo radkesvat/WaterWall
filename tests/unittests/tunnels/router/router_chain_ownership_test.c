@@ -41,6 +41,16 @@ static tunnel_t *testTunnelCreate(node_t *node)
     return t;
 }
 
+/* These fixtures build the rule paths directly. Supply the default branch
+ * that the production Router and SniffRouter constructors require. */
+static tunnel_t *bindDefaultBranch(tunnel_t *router, tunnel_chain_t *chain, node_t *node)
+{
+    tunnel_t *fallback = testTunnelCreate(node);
+    tunnelBind(router, fallback);
+    tunnelchainInsert(chain, fallback);
+    return fallback;
+}
+
 static void replaceCurrentChainOnChain(tunnel_t *t, tunnel_chain_t *chain)
 {
     require(replacement_chain != NULL, "replacement chain was not installed");
@@ -55,6 +65,7 @@ static void testSniffRouterRefreshesChainBetweenRoutes(void)
     node_t replacement_node = testNode("sniff-replacement", "TestTunnel");
     node_t replacing_node   = testNode("sniff-replacing-route", "TestTunnel");
     node_t following_node   = testNode("sniff-following-route", "TestTunnel");
+    node_t default_node     = testNode("sniff-default", "TestTunnel");
 
     tunnel_t *router      = tunnelCreate(&router_node, sizeof(sniffrouter_tstate_t), 0);
     tunnel_t *replacement = testTunnelCreate(&replacement_node);
@@ -79,6 +90,7 @@ static void testSniffRouterRefreshesChainBetweenRoutes(void)
     tunnelchainInsert(following_chain, following);
 
     tunnel_chain_t      *initial_chain = tunnelchainCreate(0);
+    tunnel_t            *fallback      = bindDefaultBranch(router, initial_chain, &default_node);
     ww_startup_context_t startup       = {0};
     wwStartupContextBegin(&startup);
     sniffrouterTunnelOnChain(router, initial_chain);
@@ -86,12 +98,14 @@ static void testSniffRouterRefreshesChainBetweenRoutes(void)
 
     require(wwStartupSucceeded(result), "SniffRouter chain construction unexpectedly failed startup");
     require(tunnelGetChain(router) == replacement_chain, "SniffRouter did not retain the replacement chain");
-    require(replacement_chain->tunnels.len == 4, "SniffRouter did not combine both route branches");
+    require(replacement_chain->tunnels.len == 5 && fallback->chain == replacement_chain,
+            "SniffRouter did not combine the default and both route branches");
     require(routes[0].tunnel == replacing, "SniffRouter lost the replacing route entry");
     require(routes[1].tunnel == following, "SniffRouter lost the following route entry");
 
     tunnelchainDestroy(replacement_chain);
     replacement_chain = NULL;
+    tunnelDestroy(fallback);
     tunnelDestroy(following);
     tunnelDestroy(replacing);
     tunnelDestroy(replacement);
@@ -104,6 +118,7 @@ static void testRouterRefreshesChainBetweenRules(void)
     node_t replacement_node = testNode("router-replacement", "TestTunnel");
     node_t replacing_node   = testNode("router-replacing-rule", "TestTunnel");
     node_t following_node   = testNode("router-following-rule", "TestTunnel");
+    node_t default_node     = testNode("router-default", "TestTunnel");
 
     tunnel_t *router      = tunnelCreate(&router_node, sizeof(router_tstate_t), 0);
     tunnel_t *replacement = testTunnelCreate(&replacement_node);
@@ -128,6 +143,7 @@ static void testRouterRefreshesChainBetweenRules(void)
     tunnelchainInsert(following_chain, following);
 
     tunnel_chain_t      *initial_chain = tunnelchainCreate(0);
+    tunnel_t            *fallback      = bindDefaultBranch(router, initial_chain, &default_node);
     ww_startup_context_t startup       = {0};
     wwStartupContextBegin(&startup);
     routerTunnelOnChain(router, initial_chain);
@@ -135,12 +151,14 @@ static void testRouterRefreshesChainBetweenRules(void)
 
     require(wwStartupSucceeded(result), "Router chain construction unexpectedly failed startup");
     require(tunnelGetChain(router) == replacement_chain, "Router did not retain the replacement chain");
-    require(replacement_chain->tunnels.len == 4, "Router did not combine both rule branches");
+    require(replacement_chain->tunnels.len == 5 && fallback->chain == replacement_chain,
+            "Router did not combine the default and both rule branches");
     require(rules[0].target_tunnel == replacing, "Router lost the replacing rule entry");
     require(rules[1].target_tunnel == following, "Router lost the following rule entry");
 
     tunnelchainDestroy(replacement_chain);
     replacement_chain = NULL;
+    tunnelDestroy(fallback);
     tunnelDestroy(following);
     tunnelDestroy(replacing);
     tunnelDestroy(replacement);
@@ -183,6 +201,7 @@ static void testRepeatedTarget(bool sniffrouter, bool with_helpers, bool default
     testCaseSet(sniffrouter ? "SniffRouter target reuse" : "Router target reuse");
     node_t router_node     = testNode("router", sniffrouter ? "SniffRouter" : "Router");
     node_t target_node     = testNode("target", "TestTunnel");
+    node_t default_node    = testNode("default", "TestTunnel");
     node_t helper_nodes[2] = {
         testNode("target.prepare", "TestTunnel"),
         testNode("target.resolve", "TestTunnel"),
@@ -233,6 +252,7 @@ static void testRepeatedTarget(bool sniffrouter, bool with_helpers, bool default
     }
 
     tunnel_chain_t      *chain   = tunnelchainCreate(0);
+    tunnel_t            *fallback = default_target ? NULL : bindDefaultBranch(router, chain, &default_node);
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
     router->onChain(router, chain);
@@ -244,17 +264,20 @@ static void testRepeatedTarget(bool sniffrouter, bool with_helpers, bool default
                         : rules[0].target_tunnel == entry && rules[1].target_tunnel == entry,
             "router did not retain the same callable entry for repeated targets");
     require(entry->prev == router, "target entry lost its Router predecessor");
-    require(chain->tunnels.len == (with_helpers ? 4 : 2), "Router inserted a repeated target twice");
+    const size_t expected_count = 2U + (with_helpers ? 2U : 0U) + (default_target ? 0U : 1U);
+    require(chain->tunnels.len == expected_count, "Router inserted a repeated target twice");
     if (default_target)
     {
         require(router->next == entry, "default target did not retain its inserted helpers");
     }
     else
     {
-        require(router->next == NULL, "alternate target changed the default link");
+        require(router->next == fallback, "alternate target changed the default link");
     }
 
     tunnelchainDestroy(chain);
+    if (fallback != NULL)
+        tunnelDestroy(fallback);
     if (with_helpers)
     {
         for (size_t i = 0; i < sizeof(target_helpers) / sizeof(target_helpers[0]); ++i)
@@ -277,6 +300,8 @@ static void testRejectsNestedTarget(bool sniffrouter)
     node_t    nested_node = testNode("nested", "Router");
     node_t    target_node = testNode("target", "TestTunnel");
     node_t    later_node  = testNode("later", "TestTunnel");
+    node_t    outer_default_node = testNode("outer-default", "TestTunnel");
+    node_t    inner_default_node = testNode("inner-default", "TestTunnel");
     tunnel_t *router =
         tunnelCreate(&router_node, sniffrouter ? sizeof(sniffrouter_tstate_t) : sizeof(router_tstate_t), 0);
     tunnel_t *nested = tunnelCreate(&nested_node, sizeof(router_tstate_t), 0);
@@ -316,6 +341,8 @@ static void testRejectsNestedTarget(bool sniffrouter)
     nested_state->rules_count     = 1;
 
     tunnel_chain_t      *chain   = tunnelchainCreate(0);
+    tunnel_t            *outer_default = bindDefaultBranch(router, chain, &outer_default_node);
+    tunnel_t            *inner_default = bindDefaultBranch(nested, chain, &inner_default_node);
     ww_startup_context_t startup = {0};
     wwStartupContextBegin(&startup);
     router->onChain(router, chain);
@@ -332,6 +359,8 @@ static void testRejectsNestedTarget(bool sniffrouter)
             "router continued binding targets after a rejected route");
 
     tunnelchainDestroy(chain);
+    tunnelDestroy(outer_default);
+    tunnelDestroy(inner_default);
     tunnelDestroy(later);
     tunnelDestroy(target);
     tunnelDestroy(nested);

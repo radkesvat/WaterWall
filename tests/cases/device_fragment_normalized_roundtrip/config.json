@@ -4,7 +4,10 @@
     {"name":"tun", "type":"TunDevice", "next":"stack", "settings":{
       "device-name":"wwfrag0", "device-ip":"10.253.80.1/24",
       "device-mtu":1500, "route-table":"off"}},
-    {"name":"stack", "type":"PacketsToConnection", "next":"out"},
+    {"name":"stack", "type":"PacketsToConnection", "next":"select-transport"},
+    {"name":"select-transport", "type":"Router", "next":"discard-other-transport", "settings":{
+      "rules":[{"network":"udp", "target":"out"}]}},
+    {"name":"discard-other-transport", "type":"BlackHole", "settings":{"mode":"passive"}},
     {"name":"out", "type":"UdpConnector", "settings":{"address":"127.0.0.1", "port":24371}}
   ]
 }

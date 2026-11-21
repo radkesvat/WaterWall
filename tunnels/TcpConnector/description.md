@@ -11,6 +11,11 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used at the end of a chain.
 
+TcpConnector selects TCP from the line's destination transport offer before
+resolver preparation. A line offering TCP alone or both protocols can use
+this adapter. A missing or incompatible offer closes the line before
+a socket is opened.
+
 ## Typical placement
 
 ```text
@@ -426,6 +431,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |

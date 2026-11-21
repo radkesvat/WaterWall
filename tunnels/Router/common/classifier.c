@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "modules/network/network.h"
+
 static void routerClassifyPrepareGeositeHost(router_tstate_t *ts, router_match_ctx_t *mctx)
 {
     if (ts->geosite_lists_count == 0)
@@ -14,8 +16,8 @@ static void routerClassifyPrepareGeositeHost(router_tstate_t *ts, router_match_c
 static router_match_t routerClassifyRules(router_tstate_t *ts, router_match_ctx_t *mctx, bool during_init)
 {
     router_match_t match = {
-        .result = kRouterClassifyDefault,
-        .target = NULL,
+        .result            = kRouterClassifyDefault,
+        .eligible_networks = mctx->line_state->network_offer,
     };
 
     routerClassifyPrepareGeositeHost(ts, mctx);
@@ -29,14 +31,17 @@ static router_match_t routerClassifyRules(router_tstate_t *ts, router_match_ctx_
          * sniff observations as a mismatch and incorrectly skipping that rule. */
         if (during_init && (rule->protocol.present || rule->attributes.present))
         {
+            if (! routerNetworkMatch(rule, mctx))
+                continue;
             match.result = kRouterClassifyNeedMore;
             return match;
         }
 
         if (routerRuleMatches(rule, mctx))
         {
-            match.result = kRouterClassifyTarget;
-            match.target = rule->target_tunnel;
+            match.result            = kRouterClassifyTarget;
+            match.target            = rule->target_tunnel;
+            match.eligible_networks = mctx->eligible_networks;
             return match;
         }
 

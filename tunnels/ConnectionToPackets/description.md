@@ -402,11 +402,9 @@ a warning, and destruction logs accumulated return/output refusal counters.
 
 ### Destination And Protocol Selection
 
-Protocol selection is deliberately identical to `TcpUdpConnector`, so both nodes accept exactly the same lines:
-
-- an exact destination-context protocol wins
-- otherwise an exact source-context protocol is used
-- a missing or ambiguous protocol rejects that one line
+ConnectionToPackets selects from the destination offer before preparing
+its endpoint for DNS or lwIP. An exact protocol stays TCP or UDP, and a
+flexible offer selects TCP. An unusable offer closes the individual line.
 
 `target-address` and `port` select the destination independently. Omit either field, or use its exact
 `dest_context->...` value, to keep that part of the incoming destination context. `source-ipv4` remains the virtual

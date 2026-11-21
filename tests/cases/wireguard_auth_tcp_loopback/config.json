@@ -147,6 +147,7 @@
       "settings": {
         "rules": [
           {
+            "network": "tcp",
             "username": "wireguard-user",
             "password": "wireguard-user-secret",
             "target": "target-connector"

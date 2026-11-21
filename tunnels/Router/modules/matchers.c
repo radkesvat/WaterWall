@@ -35,9 +35,9 @@ typedef struct router_matcher_s
 } router_matcher_t;
 
 static const router_matcher_t kRouterMatchers[] = {
+    {"network", routerNetworkParse, routerNetworkMatch, routerNetworkDestroy},
     {"source-ips", routerSourceIpsParse, routerSourceIpsMatch, routerSourceIpsDestroy},
     {"source-port", routerSourcePortParse, routerSourcePortMatch, routerSourcePortDestroy},
-    {"network", routerNetworkParse, routerNetworkMatch, routerNetworkDestroy},
     {"protocol", routerProtocolParse, routerProtocolMatch, routerProtocolDestroy},
     {"resolver-dns", routerResolverDnsParse, routerResolverDnsMatch, routerResolverDnsDestroy},
     {"attributes", routerAttributesParse, routerAttributesMatch, routerAttributesDestroy},

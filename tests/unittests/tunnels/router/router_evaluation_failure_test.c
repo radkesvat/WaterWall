@@ -338,7 +338,7 @@ static void caseClassificationStopsAtEvaluationError(router_injection_t injectio
         l = makeIpv4Line(&fixture);
     }
 
-    routerLinestateInitialize(lineGetState(l, fixture.router));
+    routerLinestateInitialize(lineGetState(l, fixture.router), lineGetDestinationAddressContext(l));
 
     g_injection          = injection;
     router_match_t match = classify(&fixture, l);
@@ -433,7 +433,7 @@ static void caseHealthyGeoipStillRoutes(void)
     useGeoipRule(&fixture);
 
     line_t *l = makeIpv4Line(&fixture);
-    routerLinestateInitialize(lineGetState(l, fixture.router));
+    routerLinestateInitialize(lineGetState(l, fixture.router), lineGetDestinationAddressContext(l));
 
     router_match_t match = classify(&fixture, l);
 
@@ -491,7 +491,7 @@ static void caseGeoipLookupOutcome(router_injection_t injection, bool negated, b
     router_tstate_t *ts = tunnelGetState(fixture.router);
     ts->rules_count     = 1;
     line_t *line        = makeIpv4Line(&fixture);
-    routerLinestateInitialize(lineGetState(line, fixture.router));
+    routerLinestateInitialize(lineGetState(line, fixture.router), lineGetDestinationAddressContext(line));
     if (injection == kInjectIpv6InIpv4Database)
     {
         address_context_t *ctx = source ? &line->routing_context.src_ctx : &line->routing_context.dest_ctx;
@@ -562,7 +562,7 @@ static void caseNumericShortCircuit(void)
     fixture.rules[0].target_tunnel = fixture.rule_target;
     cJSON_Delete(json);
     line_t *line = makeIpv4Line(&fixture);
-    routerLinestateInitialize(lineGetState(line, fixture.router));
+    routerLinestateInitialize(lineGetState(line, fixture.router), lineGetDestinationAddressContext(line));
     g_injection          = kInjectLookupError;
     router_match_t match = classify(&fixture, line);
     twfRequire(match.result == kRouterClassifyTarget && match.target == fixture.rule_target,
@@ -594,7 +594,7 @@ static void caseTokenOrAndRuleOrdering(void)
     fixture.rules[0].destination_ip.geoip_codes       = codes;
     fixture.rules[0].destination_ip.geoip_codes_count = 2;
     line_t *line                                      = makeIpv4Line(&fixture);
-    routerLinestateInitialize(lineGetState(line, fixture.router));
+    routerLinestateInitialize(lineGetState(line, fixture.router), lineGetDestinationAddressContext(line));
     router_match_t match = classify(&fixture, line);
     twfRequire(match.result == kRouterClassifyTarget && match.target == fixture.rule_target,
                "positive/negative OR did not select the first rule");
@@ -689,7 +689,7 @@ static void caseGeoipRecordStructure(void)
                 fixture.rules[1].target_tunnel = fixture.next;
                 router_tstate_t *ts            = tunnelGetState(fixture.router);
                 line_t          *line          = makeIpv4Line(&fixture);
-                routerLinestateInitialize(lineGetState(line, fixture.router));
+                routerLinestateInitialize(lineGetState(line, fixture.router), lineGetDestinationAddressContext(line));
                 g_record      = cases[i].record;
                 g_record_size = cases[i].size;
 

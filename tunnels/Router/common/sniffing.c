@@ -122,7 +122,7 @@ typedef struct router_domain_sniffer_s
 {
     const char            *name;
     uint8_t                mode_flag;
-    bool (*applies)(line_t *line);
+    uint8_t                networks;
     router_domain_sniff_fn sniff;
 } router_domain_sniffer_t;
 
@@ -131,22 +131,6 @@ static bool routerLineHasKnownDomain(line_t *line)
     address_context_t *dest = lineGetDestinationAddressContext(line);
     return dest->domain != NULL && dest->domain_len > 0;
 }
-
-#ifdef ROUTER_ENABLE_HTTP2_SNIFFING
-static bool routerLineIsTcpOnly(line_t *line)
-{
-    const address_context_t *dest = lineGetDestinationAddressContext(line);
-    return dest->proto_tcp && ! dest->proto_udp && ! dest->proto_icmp && ! dest->proto_packet;
-}
-#endif
-
-#ifdef ROUTER_ENABLE_QUIC_SNIFFING
-static bool routerLineIsUdpOnly(line_t *line)
-{
-    const address_context_t *dest = lineGetDestinationAddressContext(line);
-    return dest->proto_udp && ! dest->proto_tcp && ! dest->proto_icmp && ! dest->proto_packet;
-}
-#endif
 
 static generic_sniffer_result_t routerSniffAdapterHttp1Host(const uint8_t *payload, uint32_t payload_len,
                                                             uint8_t         scratch[kGenericSnifferMaxWindowBytes],
@@ -194,13 +178,13 @@ static generic_sniffer_result_t routerSniffAdapterQuicSni(const uint8_t *payload
 #endif
 
 static const router_domain_sniffer_t kRouterDomainSniffers[] = {
-    {"http1", kRouterSniffHttp1, NULL, routerSniffAdapterHttp1Host},
+    {"http1", kRouterSniffHttp1, 0, routerSniffAdapterHttp1Host},
 #ifdef ROUTER_ENABLE_HTTP2_SNIFFING
-    {"http2", kRouterSniffHttp2, routerLineIsTcpOnly, routerSniffAdapterHttp2Domain},
+    {"http2", kRouterSniffHttp2, kRouterNetworkTcp, routerSniffAdapterHttp2Domain},
 #endif
-    {"tls", kRouterSniffTls, NULL, routerSniffAdapterTlsSni},
+    {"tls", kRouterSniffTls, 0, routerSniffAdapterTlsSni},
 #ifdef ROUTER_ENABLE_QUIC_SNIFFING
-    {"quic", kRouterSniffQuic, routerLineIsUdpOnly, routerSniffAdapterQuicSni},
+    {"quic", kRouterSniffQuic, kRouterNetworkUdp, routerSniffAdapterQuicSni},
 #endif
 };
 
@@ -303,7 +287,7 @@ static bool routerSniffDetectDomain(router_tstate_t *ts, router_match_ctx_t *mct
         const router_domain_sniffer_t *sniffer = &kRouterDomainSniffers[i];
 
         if ((ts->sniffing_modes & sniffer->mode_flag) == 0 ||
-            (sniffer->applies != NULL && ! sniffer->applies(mctx->line)))
+            (sniffer->networks != 0 && (sniffer->networks & mctx->line_state->network_offer) == 0))
         {
             continue;
         }

@@ -401,7 +401,7 @@ static router_match_t classifyOneRule(router_tstate_t *ts, router_rule_t *rule, 
                                       uint32_t payload_len)
 {
     router_lstate_t line_state;
-    routerLinestateInitialize(&line_state);
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
     return classifyOneRuleWithState(ts, rule, line, &line_state, payload, payload_len);
 }
 
@@ -410,9 +410,12 @@ static router_match_t classifyNoRules(router_tstate_t *ts, line_t *line, const u
     ts->rules       = NULL;
     ts->rules_count = 0;
 
+    router_lstate_t line_state;
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
     router_match_ctx_t mctx = {
         .router_state = ts,
         .line         = line,
+        .line_state   = &line_state,
         .payload      = payload,
         .payload_len  = payload_len,
     };
@@ -1271,6 +1274,7 @@ static void testRouterInitEvaluatesOrderedMetadataPrefix(void)
 static void testRouterInitClearsDetectedProtocolsAndPreservesRouteControl(void)
 {
     line_t *line = testLineCreate();
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     line->routing_context.dest_ctx.optional_flags.detected_protocols =
         kAddressContextProtocolHttp1 | kAddressContextProtocolBittorrent | kAddressContextRouteFlagPinnedDestination;
     addresscontextSetResolverDns(&line->routing_context.dest_ctx, true);
@@ -1994,7 +1998,7 @@ static void testHttpUpgradeAttributeMatches(void)
           .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
-    routerLinestateInitialize(&line_state);
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
 
     const uint8_t request[] = "GET /chat HTTP/1.1\r\n"
                               "Host: upgrade.example.test\r\n"
@@ -2026,7 +2030,7 @@ static void testHttpUpgradeAttributeMissingDoesNotMatch(void)
           .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
-    routerLinestateInitialize(&line_state);
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
 
     const uint8_t request[] = "GET /plain HTTP/1.1\r\n"
                               "Host: plain.example.test\r\n"
@@ -2057,7 +2061,7 @@ static void testHttpUpgradeAttributeSniffsWhenDestinationDomainExists(void)
           .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
-    routerLinestateInitialize(&line_state);
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
 
     const uint8_t request[] = "GET /socket HTTP/1.1\r\n"
                               "Host: new.example.test\r\n"
@@ -2089,7 +2093,7 @@ static void testHttpUpgradeAttributeNeedMore(void)
           .needs_http_upgrade_attribute = true,
     };
     router_lstate_t line_state;
-    routerLinestateInitialize(&line_state);
+    routerLinestateInitialize(&line_state, lineGetDestinationAddressContext(line));
 
     const uint8_t partial[] = "GET /socket HTTP/1.1\r\nUpgrade";
     expectMatch("partial http upgrade attribute route",

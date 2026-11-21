@@ -9,7 +9,9 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `proxy-connector`: `TcpConnector` (terminal or independently bound endpoint)
 - `proxy-listener`: `TcpListener` → `connection-to-packets`
 - `connection-to-packets`: `ConnectionToPackets` → `packets-to-connection`
-- `packets-to-connection`: `PacketsToConnection` → `target-connector`
+- `packets-to-connection`: `PacketsToConnection` → `select-transport`
+- `select-transport`: `Router` sends TCP to `target-connector` and other traffic to `discard-other-transport`
+- `discard-other-transport`: `BlackHole` (passive default)
 - `target-connector`: `TcpConnector` (terminal or independently bound endpoint)
 - `target-listener`: `TcpListener` → `tester-server`
 - `tester-server`: `TesterServer` (terminal or independently bound endpoint)

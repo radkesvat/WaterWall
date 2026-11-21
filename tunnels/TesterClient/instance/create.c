@@ -444,5 +444,15 @@ tunnel_t *testerclientTunnelCreate(node_t *node)
         }
     }
 
+    if (! ts->packet_mode)
+    {
+        const address_context_transport_t transport = addresscontextClassifyTransport(&ts->initial_dest_context);
+        if (transport == kAddressContextTransportTcp)
+            node->layer_group_next_node = kNodeLayer4Stream;
+        else if (transport == kAddressContextTransportUdp)
+            node->layer_group_next_node = kNodeLayer4Datagram;
+        else
+            addresscontextSetTransportOffer(&ts->initial_dest_context, kAddressContextTransportBoth);
+    }
     return t;
 }

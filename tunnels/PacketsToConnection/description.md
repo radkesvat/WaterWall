@@ -66,16 +66,18 @@ Unsupported packets are dropped conservatively.
 Example packet-to-service chain:
 
 ```text
-TunDevice <--> PacketsToConnection <--> TcpConnector
+TunDevice <--> PacketsToConnection <--> TcpUdpConnector
 ```
 
 or:
 
 ```text
-WireGuardServer <--> PacketsToConnection <--> HttpClient
+UdpListener <--> WireGuardServer (packet mode) <--> PacketsToConnection <--> TcpUdpConnector
 ```
 
-The key idea is that the previous side is packet-oriented, while the next side is normal Waterwall connection-oriented chaining.
+The previous side carries IP packets. The next side can originate both TCP
+byte streams and UDP datagrams. Use a dual backend or route each kind to a
+compatible branch before reaching a single-kind service.
 
 ## Minimal practical example
 

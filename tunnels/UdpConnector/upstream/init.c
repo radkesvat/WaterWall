@@ -131,6 +131,12 @@ bool udpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         return true;
     }
 
+    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportUdp) == 0)
+    {
+        LOGW("UdpConnector: destination does not offer UDP");
+        return false;
+    }
+
     if (ts->balance_mode == kUdpConnectorBalanceModePacket)
     {
         addresscontextCopy(&ls->packet_base_dest_ctx, dest_ctx);

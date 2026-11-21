@@ -361,6 +361,12 @@ bool tcpconnectorDomainResolverPrepare(tunnel_t *resolver, tunnel_t *connector, 
         return true;
     }
 
+    if (addresscontextSelectTransport(dest_ctx, kAddressContextTransportTcp) == 0)
+    {
+        LOGW("TcpConnector: destination does not offer TCP");
+        return false;
+    }
+
     address_context_t original_dest_ctx = {0};
     addresscontextCopy(&original_dest_ctx, dest_ctx);
 

@@ -4,7 +4,7 @@
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseHeadOnlyMetadata, caseEndpointOwnerFinishKillsLine, caseBorrowedLineFinishDoesNotDestroy,
- * caseSpliceOwnerDispatch, casePendingDnsBounds, caseProtectedDnsProvider.
+ * caseDownstreamInitTransport, caseSpliceOwnerDispatch, casePendingDnsBounds, caseProtectedDnsProvider.
  * Pending DNS checks cover count/byte/allocation admission, synchronous completion,
  * submission refusal, timeout, shutdown and completion after borrowed-line death.
  * Limit diagnostics cover WARN context, independent reasons, exact-boundary silence
@@ -223,6 +223,50 @@ static void caseBorrowedLineFinishDoesNotDestroy(void)
     lineDestroy(fixture.line);
 
     fixtureTeardown(&fixture);
+}
+
+static void caseDownstreamInitTransport(void)
+{
+    twfSetCase("stateless socket selects UDP only on borrowed normal lines");
+    tos_worker_env_t env;
+    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, 1024);
+    twf_trace_t trace   = {0};
+    tunnel_t   *adapter = tunnelCreate(NULL, 0, sizeof(udpstatelesssocket_lstate_t));
+    tunnel_t   *owner   = twfCreateNextTunnel(&trace);
+    tunnelBind(adapter, owner);
+    tunnel_chain_t *chain       = tunnelchainCreate(1);
+    chain->contains_packet_node = true;
+    chain->sum_line_state_size  = adapter->lstate_size;
+    tunnelchainFinalize(chain);
+    adapter->chain = chain;
+
+    line_t *packet = tunnelchainGetWorkerPacketLine(chain, 0);
+    udpstatelesssocketTunnelDownStreamInit(adapter, packet);
+    twfRequire(lineIsAlive(packet) && trace.next_finish == 0 &&
+                   addresscontextClassifyTransport(lineGetDestinationAddressContext(packet)) ==
+                       kAddressContextTransportNone,
+               "packet-line Init changed its scratch destination or sent Finish");
+
+    const uint8_t offers[] = {kAddressContextTransportBoth, kAddressContextTransportUdp, kAddressContextTransportTcp};
+    for (size_t i = 0; i < ARRAY_SIZE(offers); ++i)
+    {
+        line_t            *line        = lineCreate(tunnelchainGetLinePools(chain), 0);
+        address_context_t *destination = lineGetDestinationAddressContext(line);
+        addresscontextSetTransportOffer(destination, offers[i]);
+        udpstatelesssocketTunnelDownStreamInit(adapter, line);
+        if (offers[i] == kAddressContextTransportTcp)
+            twfRequire(trace.next_finish == 1, "TCP-only borrowed line did not receive Finish");
+        else
+            twfRequire(trace.next_finish == 0 &&
+                           addresscontextClassifyTransport(destination) == kAddressContextTransportUdp,
+                       "UDP-capable borrowed line did not select UDP");
+        lineDestroy(line);
+    }
+
+    tunnelchainDestroy(chain);
+    tunnelDestroy(owner);
+    tunnelDestroy(adapter);
+    tosWorkerEnvTeardown(&env);
 }
 
 #if WW_HAVE_SPLICE
@@ -750,6 +794,7 @@ int main(void)
     caseHeadOnlyMetadata();
     caseEndpointOwnerFinishKillsLine();
     caseBorrowedLineFinishDoesNotDestroy();
+    caseDownstreamInitTransport();
     caseDisabledDnsDropsBorrowedDatagram();
 #if defined(OS_LINUX)
     casePendingDnsBounds();

@@ -543,7 +543,7 @@ def main():
             router = next(entry for entry in nodes if entry["type"] == "Router")
             dns_out = next(entry for entry in nodes if entry["name"] == "dns-out")
             # The shared Router defers its DNS route until the first query arrives.
-            router["settings"]["rules"].insert(0, {"protocol": "http1", "target": "app-out"})
+            router["settings"]["rules"].insert(0, {"network": "tcp", "protocol": "http1", "target": "app-out"})
             dns_out["settings"]["source-ip"] = DIRECT_SOURCE
         elif embedded:
             nodes = embedded_config(consumer, mode, endpoint)
