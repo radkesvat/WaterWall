@@ -3,6 +3,7 @@
 #include "DomainResolver/interface.h"
 
 #include "loggers/network_logger.h"
+#include "node_builder/config_policy.h"
 
 static bool vmessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
@@ -16,8 +17,12 @@ static bool vmessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     if (ts->dns_policy.mode == kDnsPolicyModeChain && ts->dns_policy.dns_next == NULL &&
         ts->framing_transports != kAddressContextTransportBoth)
     {
-        LOGF("VmessClient: shared DNS chain entry requires framing that supports both TCP and UDP; "
-             "choose a suitable dns-next branch");
+        const bool stream_only = ts->framing_transports == kAddressContextTransportTcp;
+        LOGF("VmessClient: shared DNS entry %s framing %s. "
+             "Choose a dns-next branch that supports both.",
+             configPolicyDiagnostic(node->name != NULL ? node->name : "<unnamed>"),
+             stream_only ? "accepts TCP streams only; cannot send UDP queries"
+                         : "accepts UDP datagrams only; cannot retry a truncated reply over TCP");
         return false;
     }
 

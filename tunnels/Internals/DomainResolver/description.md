@@ -450,7 +450,9 @@ A distinct branch must not already belong to another predecessor. Startup
 rejects self-targets, structural cycles, conflicting predecessors and non-L4 DNS
 entries. The selected node's configured input must accept both datagrams for
 UDP queries and streams for TCP fallback. Startup checks this after the node
-parses its settings. If the node inserts a private resolver before its input,
+parses its settings. On failure, the diagnostic identifies which DNS traffic
+the entry cannot carry. For a UserController entry, set `payload-mode` to
+`"dest_context->protocol"` so it can accept both. If the node inserts a private resolver before its input,
 DNS callbacks enter through that helper. This is not arbitrary many-to-one sharing of an existing VPN chain, and
 structural checks cannot detect every runtime bootstrap dependency.
 
