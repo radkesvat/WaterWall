@@ -1,6 +1,7 @@
-/* Cross-worker pipe publication, private-pipe byte/identity transfer, refusal/late-dispatch cancellation and exact
- * borrowed/owned line settlement. Source lines are fixture-owned; companions are pipe-owned normal lines. CTest:
- * waterwall.worker_context_helpers_unit; see the driver for ordering and CLI. */
+/* Cross-worker pipe publication, private-pipe byte/identity transfer, refusal/late-dispatch cancellation, exact
+ * borrowed/owned line settlement and the bound on payload queued toward the other worker. Source lines are
+ * fixture-owned; companions are pipe-owned normal lines. CTest: waterwall.worker_context_helpers_unit; see the driver
+ * for ordering and CLI. */
 #include "fixtures/protocols/splice_source.h"
 #include "worker_fixture.h"
 
@@ -930,6 +931,254 @@ static void pipeRunQueuedSourceClose(bool upstream)
     tunnelchainDestroy(fixture.chain);
     pipetunnelDestroy(fixture.wrapper, testShutdownContext());
     tunnelDestroy(fixture.previous);
+}
+
+typedef enum pipe_bound_peer_e
+{
+    kPipeBoundPeerSilent,
+    /* The other side pauses before the queue fills and resumes after it drained. */
+    kPipeBoundPeerAround,
+    /* The other side pauses and resumes while the bound holds the producer. */
+    kPipeBoundPeerDuring,
+} pipe_bound_peer_t;
+
+typedef struct pipe_bound_case_s
+{
+    pipe_message_case_fixture_t fixture;
+    bool                        upstream;
+    bool                        peer_paused;
+    unsigned                    sent;
+    atomic_bool                 gate_entered;
+    atomic_bool                 gate_signal;
+    atomic_bool                 gate_signalled;
+    atomic_bool                 gate_release;
+    atomic_bool                 gate_done;
+} pipe_bound_case_t;
+
+static atomic_uint g_pipe_bound_pause_count;
+static atomic_uint g_pipe_bound_resume_count;
+static atomic_uint g_pipe_bound_payload_count;
+
+static void pipeBoundPause(tunnel_t *t, line_t *line)
+{
+    discard t;
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe Pause reached its producer on the wrong worker");
+    atomicAddExplicit(&g_pipe_bound_pause_count, 1, memory_order_relaxed);
+}
+
+static void pipeBoundResume(tunnel_t *t, line_t *line)
+{
+    discard t;
+    require(currentThreadOwnsWorker(lineGetWID(line)), "pipe Resume reached its producer on the wrong worker");
+    atomicAddExplicit(&g_pipe_bound_resume_count, 1, memory_order_relaxed);
+}
+
+static void pipeBoundPayload(tunnel_t *t, line_t *line, sbuf_t *buf)
+{
+    discard t;
+    require(currentThreadOwnsWorker(lineGetWID(line)), "bounded pipe Payload ran on the wrong worker");
+    atomicAddExplicit(&g_pipe_bound_payload_count, 1, memory_order_relaxed);
+    sbufDestroy(buf);
+}
+
+/* Runs on the sending worker while the other one dispatches nothing: queues twice the high watermark. The producer
+ * must be paused by the payload that crosses the watermark, and only if the other side has not paused it already. */
+static void pipeBoundFlood(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard            worker;
+    discard            arg2;
+    discard            arg3;
+    pipe_bound_case_t *c       = arg1;
+    tunnel_t          *wrapper = c->fixture.wrapper;
+    const unsigned     before  = atomicLoadRelaxed(&g_pipe_bound_pause_count);
+    size_t             queued  = 0;
+
+    while (queued <= 2 * (size_t) kPipeTunnelQueueHighWater)
+    {
+        sbuf_t *buf = sbufCreate(1U << 17);
+        sbufSetLength(buf, 1U << 17);
+        queued += sbufGetQueueCharge(buf);
+        if (c->upstream)
+            wrapper->fnPayloadU(wrapper, c->fixture.borrowed, buf);
+        else
+            wrapper->fnPayloadD(wrapper, c->fixture.owned, buf);
+        c->sent += 1;
+        require(atomicLoadRelaxed(&g_pipe_bound_pause_count) ==
+                    before + (queued > kPipeTunnelQueueHighWater && ! c->peer_paused ? 1U : 0U),
+                "the pipe did not pause its producer exactly once, with the payload that crossed the high watermark");
+    }
+}
+
+/* Runs on the receiving worker: its transport reports pressure, or the end of it when arg2 is set. */
+static void pipeBoundPeerSignal(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard            worker;
+    discard            arg3;
+    pipe_bound_case_t *c       = arg1;
+    tunnel_t          *wrapper = c->fixture.wrapper;
+    if (c->upstream)
+        (arg2 != NULL ? wrapper->fnResumeD : wrapper->fnPauseD)(wrapper, c->fixture.owned);
+    else
+        (arg2 != NULL ? wrapper->fnResumeU : wrapper->fnPauseU)(wrapper, c->fixture.borrowed);
+}
+
+/* Keeps worker 1 from dispatching what waits in its queue. On request it reports and ends transport pressure from
+ * inside, which a queued message could only do after that payload. */
+static void pipeBoundGate(worker_t *worker, void *arg1, void *arg2, void *arg3)
+{
+    discard            arg2;
+    discard            arg3;
+    pipe_bound_case_t *c = arg1;
+    atomicStoreExplicit(&c->gate_entered, true, memory_order_release);
+    while (! atomicLoadExplicit(&c->gate_release, memory_order_acquire))
+    {
+        if (atomicExchangeExplicit(&c->gate_signal, false, memory_order_acq_rel))
+        {
+            pipeBoundPeerSignal(worker, c, NULL, NULL);
+            pipeBoundPeerSignal(worker, c, c, NULL);
+            atomicStoreExplicit(&c->gate_signalled, true, memory_order_release);
+        }
+        YIELD_THREAD();
+    }
+    atomicStoreExplicit(&c->gate_done, true, memory_order_release);
+}
+
+static void pipeBoundRunOn(wid_t wid, WorkerMessageCallback callback, pipe_bound_case_t *c, void *arg2)
+{
+    if (wid == 0)
+    {
+        callback(getWorker(0), c, arg2, NULL);
+        return;
+    }
+    require(sendWorkerMessageForceQueueWithCleanup(wid, callback, NULL, c, arg2, NULL),
+            "pipe queue-bound driver refused");
+    pipeWaitForQueue(wid);
+}
+
+/* Every message either worker still owes the other is dispatched, in both orders. */
+static void pipeBoundSettle(void)
+{
+    for (unsigned pass = 0; pass < 2; ++pass)
+    {
+        pipeWaitForQueue(0);
+        pipeWaitForQueue(1);
+    }
+}
+
+static void pipeRunQueueBound(bool upstream, pipe_bound_peer_t peer)
+{
+    pipe_bound_case_t c;
+    memoryZero(&c, sizeof(c));
+    c.upstream = upstream;
+    atomic_init(&c.gate_entered, false);
+    atomic_init(&c.gate_signal, false);
+    atomic_init(&c.gate_signalled, false);
+    atomic_init(&c.gate_release, false);
+    atomic_init(&c.gate_done, false);
+    pipeMessageCaseSetup(&c.fixture);
+    atomicStoreRelaxed(&g_pipe_bound_pause_count, 0);
+    atomicStoreRelaxed(&g_pipe_bound_resume_count, 0);
+    atomicStoreRelaxed(&g_pipe_bound_payload_count, 0);
+
+    const wid_t sender   = upstream ? 0 : 1;
+    const wid_t receiver = upstream ? 1 : 0;
+    if (upstream)
+    {
+        c.fixture.child->fnPayloadU   = pipeBoundPayload;
+        c.fixture.previous->fnPauseD  = pipeBoundPause;
+        c.fixture.previous->fnResumeD = pipeBoundResume;
+    }
+    else
+    {
+        c.fixture.previous->fnPayloadD = pipeBoundPayload;
+        c.fixture.child->fnPauseU      = pipeBoundPause;
+        c.fixture.child->fnResumeU     = pipeBoundResume;
+    }
+
+    /* The second round proves that a released bound arms again. */
+    for (unsigned round = 0; round < 2; ++round)
+    {
+        const unsigned pauses  = atomicLoadRelaxed(&g_pipe_bound_pause_count);
+        const unsigned resumes = atomicLoadRelaxed(&g_pipe_bound_resume_count);
+        const unsigned handled = atomicLoadRelaxed(&g_pipe_bound_payload_count);
+
+        c.peer_paused = peer == kPipeBoundPeerAround && round == 0;
+        if (c.peer_paused)
+        {
+            pipeBoundRunOn(receiver, (WorkerMessageCallback) pipeBoundPeerSignal, &c, NULL);
+            pipeBoundSettle();
+            require(atomicLoadRelaxed(&g_pipe_bound_pause_count) == pauses + 1,
+                    "the other side's Pause did not reach the producer once");
+        }
+
+        if (upstream)
+        {
+            atomicStoreExplicit(&c.gate_entered, false, memory_order_release);
+            atomicStoreExplicit(&c.gate_release, false, memory_order_release);
+            atomicStoreExplicit(&c.gate_done, false, memory_order_release);
+            require(
+                sendWorkerMessageForceQueueWithCleanup(1, (WorkerMessageCallback) pipeBoundGate, NULL, &c, NULL, NULL),
+                "pipe queue-bound gate refused");
+            waitForAtomicBool(&c.gate_entered, "pipe queue-bound gate not entered");
+        }
+        pipeBoundRunOn(sender, (WorkerMessageCallback) pipeBoundFlood, &c, NULL);
+        if (peer == kPipeBoundPeerDuring)
+        {
+            /* Both signals reach the sending worker while the queue is still full. Neither may pass: the producer
+             * has its Pause already, and the pipe still holds it when the other side lets go. */
+            if (upstream)
+            {
+                atomicStoreExplicit(&c.gate_signalled, false, memory_order_release);
+                atomicStoreExplicit(&c.gate_signal, true, memory_order_release);
+                waitForAtomicBool(&c.gate_signalled, "pipe queue-bound gate did not signal");
+                pipeWaitForQueue(0);
+            }
+            else
+            {
+                pipeBoundPeerSignal(getWorker(0), &c, NULL, NULL);
+                pipeBoundPeerSignal(getWorker(0), &c, &c, NULL);
+                pipeWaitForQueue(1);
+            }
+        }
+        require(atomicLoadRelaxed(&g_pipe_bound_pause_count) == pauses + 1 &&
+                    atomicLoadRelaxed(&g_pipe_bound_resume_count) == resumes &&
+                    atomicLoadRelaxed(&g_pipe_bound_payload_count) == handled,
+                "the producer was not left paused, once, while its payload waited on the other worker");
+
+        if (upstream)
+        {
+            atomicStoreExplicit(&c.gate_release, true, memory_order_release);
+            waitForAtomicBool(&c.gate_done, "pipe queue-bound gate not released");
+        }
+        pipeBoundSettle();
+        require(atomicLoadRelaxed(&g_pipe_bound_payload_count) == c.sent,
+                "payload queued past the high watermark was lost or duplicated");
+        require(atomicLoadRelaxed(&g_pipe_bound_pause_count) == pauses + 1,
+                "one queue pressure episode paused the producer twice");
+        require(atomicLoadRelaxed(&g_pipe_bound_resume_count) == resumes + (c.peer_paused ? 0U : 1U),
+                c.peer_paused ? "the drained queue resumed a producer that the other side still holds paused"
+                              : "the drained queue did not resume its producer once");
+
+        if (c.peer_paused)
+        {
+            pipeBoundRunOn(receiver, (WorkerMessageCallback) pipeBoundPeerSignal, &c, &c);
+            pipeBoundSettle();
+            require(atomicLoadRelaxed(&g_pipe_bound_resume_count) == resumes + 1,
+                    "the other side's Resume did not release the producer once the queue had drained");
+        }
+    }
+
+    pipeMessageCaseDrainAndDestroy(&c.fixture);
+}
+
+void testPipeBoundsQueuedPayload(void)
+{
+    for (unsigned upstream = 0; upstream < 2; ++upstream)
+    {
+        pipeRunQueueBound(upstream != 0, kPipeBoundPeerSilent);
+        pipeRunQueueBound(upstream != 0, kPipeBoundPeerAround);
+        pipeRunQueueBound(upstream != 0, kPipeBoundPeerDuring);
+    }
 }
 
 void testPipePayloadFinishLateAndRefused(void)

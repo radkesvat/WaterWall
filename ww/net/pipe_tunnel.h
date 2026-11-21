@@ -7,6 +7,17 @@
 #include "shiftbuffer.h"
 #include "tunnel.h"
 
+enum
+{
+    /* Queue charge (sbufGetQueueCharge) one direction of a piped line may have
+     * waiting on the other worker. Past the high watermark the pipe pauses that
+     * direction's producer on the sending worker, where it takes effect at
+     * once; it resumes the producer when the other worker is down to the low
+     * watermark. */
+    kPipeTunnelQueueHighWater = 1U << 20,
+    kPipeTunnelQueueLowWater  = 1U << 19
+};
+
 /**
  * @brief Create a new pipeline tunnel.
  *
