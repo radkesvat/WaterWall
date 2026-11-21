@@ -25,6 +25,23 @@ if(INCLUDE_TESTER_CLIENT AND INCLUDE_TESTER_SERVER AND INCLUDE_TCP_LISTENER AND 
   add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_udp_roundtrip tcpudp_udp_over_tcp_udp_roundtrip)
   add_waterwall_integration_test(waterwall.tcpudp_udp_over_tcp_large_udp_roundtrip tcpudp_udp_over_tcp_large_udp_roundtrip)
 endif()
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TESTER_CLIENT AND INCLUDE_PACKETS_TO_STREAM AND INCLUDE_LOGGER_TUNNEL
+   AND INCLUDE_TCP_LISTENER AND INCLUDE_UDP_LISTENER AND INCLUDE_TCPCONNECTOR AND INCLUDE_UDP_CONNECTOR
+   AND INCLUDE_TCP_UDP_CONNECTOR)
+  add_waterwall_isolated_test(waterwall.l4_payload_dispatch_topology
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" dispatch)
+  set_tests_properties(waterwall.l4_payload_dispatch_topology PROPERTIES TIMEOUT 30)
+  add_waterwall_test_labels(waterwall.l4_payload_dispatch_topology "integration" "tunnels" "configuration" "routing")
+endif()
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TCP_UDP_LISTENER AND INCLUDE_TCP_UDP_CONNECTOR AND INCLUDE_ROUTER
+   AND INCLUDE_TCPCONNECTOR AND INCLUDE_UDP_CONNECTOR AND INCLUDE_TESTER_CLIENT AND INCLUDE_PACKETS_TO_STREAM)
+  add_waterwall_isolated_test(waterwall.l4_payload_routing_topology
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" routing)
+  set_tests_properties(waterwall.l4_payload_routing_topology PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.l4_payload_routing_topology "integration" "tunnels" "configuration" "routing")
+endif()
 if(LINUX AND NOT CMAKE_CROSSCOMPILING AND TARGET UdpOverTcpClient AND TARGET UdpOverTcpServer
    AND TARGET UdpListener AND TARGET UdpConnector AND TARGET TcpListener AND TARGET TcpConnector)
   foreach(splice_mode IN ITEMS true false)
@@ -165,4 +182,13 @@ if(LINUX AND WATERWALL_ENABLE_PRIVILEGED_INTEGRATION_TESTS)
     TIMEOUT 60
     LABELS "integration;linux;privileged;raw;conntrack;network-isolated"
   )
+endif()
+
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TCP_LISTENER AND INCLUDE_TCPCONNECTOR AND INCLUDE_UDP_CONNECTOR
+   AND INCLUDE_ROUTER AND INCLUDE_HTTP_PROXY_SERVER)
+  add_waterwall_isolated_test(waterwall.l4_payload_routing_context
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" routing-context)
+  set_tests_properties(waterwall.l4_payload_routing_context PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.l4_payload_routing_context "integration" "tunnels" "configuration" "routing")
 endif()

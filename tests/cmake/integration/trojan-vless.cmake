@@ -1,4 +1,29 @@
 # Explicit integration registrations; preserve namespace and family variants.
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TROJAN_SERVER AND INCLUDE_ENCRYPTION_CLIENT AND INCLUDE_ENCRYPTION_SERVER
+   AND INCLUDE_TCP_UDP_CONNECTOR AND INCLUDE_TESTER_CLIENT AND INCLUDE_PACKETS_TO_STREAM AND INCLUDE_UDP_CONNECTOR
+   AND INCLUDE_TCP_LISTENER)
+  add_waterwall_isolated_test(waterwall.l4_payload_mixed_encryption_topology
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" mixed-encryption)
+  set_tests_properties(waterwall.l4_payload_mixed_encryption_topology PROPERTIES TIMEOUT 45)
+  add_waterwall_test_labels(waterwall.l4_payload_mixed_encryption_topology "integration" "tunnels" "encryption" "proxy")
+endif()
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_SOCKS5_CLIENT AND INCLUDE_TROJAN_CLIENT AND INCLUDE_TROJAN_SERVER
+   AND INCLUDE_UDP_LISTENER AND INCLUDE_TCP_LISTENER AND INCLUDE_TCPCONNECTOR AND INCLUDE_TCP_UDP_CONNECTOR)
+  add_waterwall_isolated_test(waterwall.l4_payload_pinned_relay_topology
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" pinned-relay)
+  set_tests_properties(waterwall.l4_payload_pinned_relay_topology PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.l4_payload_pinned_relay_topology "integration" "tunnels" "configuration" "proxy")
+endif()
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_TROJAN_SERVER AND INCLUDE_TCP_LISTENER AND INCLUDE_TCPCONNECTOR
+   AND INCLUDE_UDP_CONNECTOR AND INCLUDE_TCP_UDP_CONNECTOR)
+  add_waterwall_isolated_test(waterwall.l4_payload_proxy_topology
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" proxy)
+  set_tests_properties(waterwall.l4_payload_proxy_topology PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.l4_payload_proxy_topology "integration" "tunnels" "configuration" "proxy")
+endif()
 add_waterwall_integration_test(waterwall.trojan_password_tcp_loopback trojan_password_tcp_loopback)
 add_waterwall_integration_test(waterwall.trojan_local_password_router_tcp_loopback trojan_local_password_router_tcp_loopback)
 add_waterwall_expected_failure_integration_test(

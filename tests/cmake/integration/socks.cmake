@@ -1,4 +1,12 @@
 # Explicit integration registrations; preserve namespace and family variants.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_SOCKS_5_SERVER
+   AND INCLUDE_TCP_UDP_LISTENER AND INCLUDE_UDP_CONNECTOR AND INCLUDE_ROUTER AND INCLUDE_BLACKHOLE)
+  add_waterwall_isolated_test(waterwall.l4_payload_socks_udp_ingress
+    "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+    "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" socks-udp-ingress)
+  set_tests_properties(waterwall.l4_payload_socks_udp_ingress PROPERTIES TIMEOUT 90)
+  add_waterwall_test_labels(waterwall.l4_payload_socks_udp_ingress "integration" "tunnels" "configuration" "socks")
+endif()
 add_waterwall_integration_test(waterwall.socks5_noauth_tcp_loopback socks5_noauth_tcp_loopback)
 if(TARGET Socks5Client AND TARGET Socks5Server AND
    TARGET TcpListener AND TARGET TcpConnector AND TARGET TesterClient AND TARGET TesterServer)

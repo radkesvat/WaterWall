@@ -32,6 +32,14 @@ if(TARGET QuicClient AND TARGET QuicServer AND
     set_tests_properties(${quic_config_case} PROPERTIES TIMEOUT 360)
     add_waterwall_test_labels(${quic_config_case} "integration" "tunnels" "quic" "configuration" "negative")
   endforeach()
+  if(INCLUDE_TCP_LISTENER AND INCLUDE_TCPCONNECTOR AND INCLUDE_UDP_LISTENER AND INCLUDE_UDP_CONNECTOR
+     AND INCLUDE_UDP_OVER_TCP_CLIENT AND INCLUDE_UDP_OVER_TCP_SERVER AND INCLUDE_LOGGER_TUNNEL)
+    add_waterwall_isolated_test(waterwall.l4_payload_quic_topology
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" quic)
+    set_tests_properties(waterwall.l4_payload_quic_topology PROPERTIES TIMEOUT 90)
+    add_waterwall_test_labels(waterwall.l4_payload_quic_topology "integration" "tunnels" "configuration" "quic")
+  endif()
   if(TARGET VlessClient AND TARGET VlessServer AND TARGET SpeedTestClient AND TARGET SpeedTestServer)
     add_waterwall_isolated_test(waterwall.quic_speedtest_vless_udp
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_integration.py"
