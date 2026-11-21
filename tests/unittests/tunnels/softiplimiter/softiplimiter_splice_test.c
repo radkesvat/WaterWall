@@ -131,6 +131,7 @@ static void setup(const char *identifier, bool reject)
     line = twfLinePoolCreateLine(&lines);
     lineRef(line);
     addresscontextSetIpAddress(lineGetSourceAddressContext(line), "192.0.2.1");
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     node->fnInitU(node, line);
 }
 

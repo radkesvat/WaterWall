@@ -282,6 +282,7 @@ static void openLine(const char *settings)
     tunnelchainFinalize(chain);
     require(chain->supports_splice == (WW_HAVE_SPLICE != 0), "splice capability registration");
     line = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     lineRef(line);
     tunnelUpStreamInit(fragmenter, line);
     require(establishments == (defer_est ? 0U : 1U), "Est was held by fragmenter");
@@ -381,6 +382,7 @@ static void boundaries(void)
     /* A second line in the same instance starts with its own full scope. */
     line_t *first = line;
     line          = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportTcp);
     lineRef(line);
     tunnelUpStreamInit(fragmenter, line);
     sendText("lmno");

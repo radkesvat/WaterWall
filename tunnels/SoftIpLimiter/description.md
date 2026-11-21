@@ -37,7 +37,8 @@ payload. `VlessServer` or `TrojanServer` must still run after it and perform the
 
 ### Supported Traffic Shape
 
-`SoftIpLimiter` must receive a plain TCP stream whose first application bytes are the VLESS or Trojan identity bytes:
+`SoftIpLimiter` selects TCP from the destination offer during Init. The plain
+stream must begin with the VLESS or Trojan identity bytes.
 
 - VLESS TCP is supported when the first clear byte is the VLESS version byte.
 - Trojan TCP is supported when the first clear bytes are the Trojan SHA224 password hash.
@@ -499,6 +500,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

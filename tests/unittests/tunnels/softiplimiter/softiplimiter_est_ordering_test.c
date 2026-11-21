@@ -72,6 +72,7 @@ static void testInitialOrder(bool passthrough, bool close)
     f.on_init = initEst;
     f.on_est  = close ? closeFromEst : nestedInput;
     f.on_up   = nestedAfterFirst;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.line), kAddressContextTransportBoth);
     softiplimiterTunnelUpStreamInit(f.node, f.line);
     uint8_t input[18] = {0};
     memorySet(input + 1, 0x42, 16);
@@ -127,6 +128,7 @@ static void testReentryLimit(est_inject_fn inject)
     ts->identification_failure_action = kSoftIpLimiterIdentificationFailurePassthrough;
     f.on_init                         = initEst;
     f.on_est                          = inject;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.line), kAddressContextTransportBoth);
     softiplimiterTunnelUpStreamInit(f.node, f.line);
     const uint8_t input[] = {1, 'A'};
     softiplimiterTunnelUpStreamPayload(f.node, f.line, estBytes(f.line, input, sizeof(input)));
@@ -243,6 +245,7 @@ static void testStartupPressure(bool passthrough, startup_pressure_action_t acti
     pressure_action       = action;
     pressure_trace_length = 0;
     pressure_trace[0]     = '\0';
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.line), kAddressContextTransportBoth);
     softiplimiterTunnelUpStreamInit(f.node, f.line);
 
     char input[] = "0123456789abcdef0123456789abcdef0123456789abcdef01234567\r\nA";

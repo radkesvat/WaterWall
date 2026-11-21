@@ -6,6 +6,9 @@
 TLS ClientHello into valid handshake records. It is a configurable internal Layer 4
 middle node, built by default with `INCLUDE_STREAM_FRAGMENTER`.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 ```text
@@ -245,6 +248,6 @@ Source-backed metadata from `instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
