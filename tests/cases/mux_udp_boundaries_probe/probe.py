@@ -24,6 +24,8 @@ def wait_for_listener() -> None:
 
 
 def response(payload: bytes) -> bytes:
+    if not payload:
+        return b""
     return b"\xff" + payload[::-1] + b"\x00"
 
 
@@ -51,7 +53,7 @@ def main() -> None:
         # Each UDP association has its own UdpOverTcp-framed Mux child stream.
         peers = {}
         for index, client in enumerate(clients):
-            first = b"ready-zero" if index == 0 else b"ready-one"
+            first = b"" if index == 0 else b"ready-one"
             client.sendto(first, INGRESS)
             actual, peer = service.recvfrom(65535)
             assert actual == first, "initial datagram changed"

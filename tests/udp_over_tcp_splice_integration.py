@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """UDP-over-TCP datagram boundaries and carrier splice in a private loopback namespace.
-Uses real UDP peers and both UdpOverTcp nodes; checks payload sizes through 65,505 bytes,
+Uses real UDP peers and both UdpOverTcp nodes; checks payload sizes from zero through 65,505 bytes,
 carrier socket-to-pipe reads in both directions, disabled splice and shutdown 143.
 The UDP sender's temporary materialization guard remains enabled.
 CTest: waterwall.udpovertcp_udp_splice_false; waterwall.udpovertcp_udp_splice_true.
@@ -42,7 +42,7 @@ def run(binary, enabled):
         {"name": "server", "type": "UdpOverTcpServer", "next": "backend"},
         {"name": "backend", "type": "UdpConnector", "settings": {"address": HOST, "port": BACKEND_PORT}},
     ]
-    sizes = [1, 63, 1024, 8000, 32768, 65505] * 2
+    sizes = [0, 0] + [1, 63, 1024, 8000, 32768, 65505] * 2
     payloads = [bytes((i * 17 + index * 13) & 255 for i in range(size)) for index, size in enumerate(sizes)]
     probe = b"ready"
     with RunDirectory("waterwall-uot-udp-splice-") as directory:
@@ -60,23 +60,29 @@ def run(binary, enabled):
                          cwd=root, log_path=root / "stdout.log") as process:
                 def peer():
                     received = 0
+                    application_peer = None
                     while received < len(payloads):
                         data, address = backend.recvfrom(65536)
                         if data != probe:
+                            if application_peer is None:
+                                application_peer = address
+                            assert address == application_peer, "UDP backend peer changed during the exchange"
                             assert data == payloads[received], f"UDP upload boundary/content changed at {received}"
                             received += 1
                         backend.sendto(data[::-1], address)
 
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client, close_on_error(client), \
+                # Keep the probe's source port in use so the first empty request opens its own association.
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as readiness, \
+                        socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client, close_on_error(client), \
                         concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(peer)
-                    client.settimeout(0.1)
+                    readiness.settimeout(0.1)
                     deadline = time.monotonic() + 10
                     while True:
                         process.check_running("WaterWall exited before UDP readiness")
-                        client.sendto(probe, (HOST, APP_PORT))
+                        readiness.sendto(probe, (HOST, APP_PORT))
                         try:
-                            reply, _ = client.recvfrom(65536)
+                            reply, _ = readiness.recvfrom(65536)
                             assert reply == probe[::-1], "UDP readiness payload changed"
                             break
                         except TimeoutError:
@@ -84,10 +90,7 @@ def run(binary, enabled):
                     client.settimeout(15)
                     for index, data in enumerate(payloads):
                         client.sendto(data, (HOST, APP_PORT))
-                        while True:
-                            reply, address = client.recvfrom(65536)
-                            if reply != probe[::-1]:
-                                break
+                        reply, address = client.recvfrom(65536)
                         assert address == (HOST, APP_PORT) and reply == data[::-1], \
                             f"UDP download boundary/content changed at {index}"
                     future.result(timeout=20)

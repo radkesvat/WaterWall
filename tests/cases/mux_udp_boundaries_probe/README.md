@@ -16,7 +16,9 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 
 Scenario choices: `mux-client.mode="fixed-connections-count"`, `mux-client.per-worker-connections-count=1`. These values define the workload/edge case and are not tuning advice.
 
-The probe uses nonempty datagrams, matching UdpOverTcp's supported input contract.
+One child sends an empty first datagram and receives an empty reply before
+exchanging nonempty datagrams. Each empty datagram travels through the MUX
+stream as the two UdpOverTcp length bytes `00 00`.
 
 The [probe](probe.py) describes the exchange and its byte/order/exit assertions. It runs against the private copy made by the probe runner.
 

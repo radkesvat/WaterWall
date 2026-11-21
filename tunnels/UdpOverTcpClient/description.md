@@ -87,7 +87,7 @@ There are no tunnel-specific optional settings in the current implementation.
 - `UdpOverTcpClient` is intended to be paired with `UdpOverTcpServer`.
 - There are no tunnel-specific JSON settings today.
 - Each datagram-facing payload callback must contain exactly one UDP datagram.
-- Invalid zero-length frames and exhausted parser storage close the carrier through its owner.
+- Exhausted parser storage closes the carrier through its owner.
 - `UpStreamEst` and `DownStreamInit` are disabled in the current implementation.
 
 ## Implementation details
@@ -125,8 +125,14 @@ normal settings.
 #### Packet size limits
 
 The maximum outbound UDP datagram size is `65535 - 20 - 8 - 2 = 65505` bytes.
-Larger datagrams are dropped intact. Empty outbound payloads violate the existing Debug invariant;
-Release drops them. Incoming zero-length frames are invalid and close the carrier.
+In either direction, an empty UDP datagram travels as just the two length bytes
+`00 00`. The receiver consumes those bytes, delivers exactly one empty datagram,
+and keeps the line open for the next frame. The encoder drops an oversized
+outbound datagram whole.
+
+Use peers that both support empty datagrams before sending one. The nodes do
+not negotiate this feature. The previous decoder closes the carrier on the
+first zero-length frame it receives.
 
 #### Data flow direction
 
@@ -139,12 +145,11 @@ This means the previous node should treat this tunnel as packet-preserving, whil
 
 Incoming stream bytes wait in a read stream until complete datagrams can be extracted.
 After complete frames drain, the 16-bit wire length leaves at most 65,536 bytes
-of incomplete input, including the two-byte header. The decoder accepts nonzero wire lengths
-through 65,535 bytes; the outbound datagram limit remains 65,505 bytes.
+of incomplete input, including the two-byte header. The decoder accepts wire lengths
+from 0 through 65,535 bytes. The outbound datagram limit is 65,505 bytes.
 
 Retained buffer charge is capped at 4 MiB, with beneficial compaction attempted after complete frames drain.
-Malformed frames, unrepresentable storage or exhausted budgets close
-the carrier through its owner. Decoder reentry shares a 2 MiB byte limit and 4 MiB charge limit with its
+Unrepresentable storage or exhausted budgets close the carrier through its owner. Decoder reentry shares a 2 MiB byte limit and 4 MiB charge limit with its
 retained stream. The parser never discards arbitrary stream bytes to continue.
 
 #### Lifecycle behavior

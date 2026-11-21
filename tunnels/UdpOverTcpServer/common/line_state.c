@@ -30,8 +30,7 @@ void udpovertcpserverLogSizeDrop(udpovertcpserver_lstate_t *ls, size_t length)
     const log_rate_limiter_report_t report = logRateLimiterRecordImmediate(&ls->size_drop_log, 5000);
     if (report.should_log)
         LOGW("UdpOverTcpServer: dropping datagrams: unsupported payload size "
-             "(drops=%" PRIu64 ", total_drops=%" PRIu64 ", last_payload_bytes=%zu, min_payload_bytes=1, "
-             "max_payload_bytes=%u)",
+             "(drops=%" PRIu64 ", total_drops=%" PRIu64 ", last_payload_bytes=%zu, max_payload_bytes=%u)",
              report.events,
              report.total,
              length,

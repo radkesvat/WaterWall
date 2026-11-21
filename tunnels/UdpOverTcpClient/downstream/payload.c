@@ -47,13 +47,6 @@ void udpovertcpclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf
         sbufByteCopy(&network_length, header, kHeaderSize);
         const uint32_t length = ntohs(network_length);
 
-        if (length == 0)
-        {
-            LOGW("UdpOverTcpClient: invalid zero-length data frame");
-            udpovertcpclientCloseLine(t, l);
-            lineUnref(l);
-            return;
-        }
         if (! spliceframereaderBodyReady(&ls->reader, length))
             break;
         sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, length);

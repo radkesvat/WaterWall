@@ -46,13 +46,6 @@ void udpovertcpserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         uint16_t network_length;
         sbufByteCopy(&network_length, header, kHeaderSize);
         const uint32_t length = ntohs(network_length);
-        if (length == 0)
-        {
-            LOGW("UdpOverTcpServer: invalid zero-length data frame");
-            udpovertcpserverCloseLine(t, l);
-            lineUnref(l);
-            return;
-        }
         if (! spliceframereaderBodyReady(&ls->reader, length))
             break;
         sbuf_t *body = spliceframereaderTakeFrame(&ls->reader, length);

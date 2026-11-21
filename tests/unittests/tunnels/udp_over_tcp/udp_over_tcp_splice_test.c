@@ -334,7 +334,7 @@ static void expectEncoded(const uint8_t *expected, uint32_t length)
         twfRequire(wire_length - position >= 2, "incomplete encoded header");
         const uint32_t bytes = ((uint32_t) wire[position] << 8) | wire[position + 1];
         position += 2;
-        twfRequire(bytes > 0 && bytes <= 65505 && bytes <= wire_length - position && bytes <= length - consumed,
+        twfRequire(bytes <= 65505 && bytes <= wire_length - position && bytes <= length - consumed,
                    "invalid encoded length");
         twfRequire(memcmp(wire + position, expected + consumed, bytes) == 0, "encoder changed byte order");
         consumed += bytes;
@@ -388,10 +388,11 @@ static void testReentrantDecode(void)
     twfSetCase("coalesced input completes after Pause and precedes nested input");
     setup(IP_PROTO_UDP);
     checkInitialized();
-    const uint8_t data[] = {0, 1, 'A', 0, 1, 'B'};
+    const uint8_t data[] = {0, 0, 0, 1, 'A', 0, 1, 'B'};
     inject_decode = pause_output = true;
     decode(node, line, ordinary(data, sizeof(data)));
-    twfRequire(plain_calls == 3 && plain_length == 3 && memcmp(plain, "ABN", 3) == 0 && pauses == 3,
+    twfRequire(plain_calls == 4 && datagrams[0] == 0 && plain_length == 3 && memcmp(plain, "ABN", 3) == 0 &&
+                   pauses == 4,
                "Pause stopped admitted frames or nested input overtook their suffix");
     teardown();
 }
@@ -416,22 +417,28 @@ static void testLargeDecode(void)
     teardown();
 }
 
-static void testMalformed(void)
+static void testEmptyDatagrams(bool splice)
 {
-    twfSetCase("zero data length closes both initialized sides");
+    twfSetCase("empty datagrams use two length bytes each, including before and after a nonempty datagram");
     setup(IP_PROTO_UDP);
     checkInitialized();
-    const uint8_t data[] = {0, 0};
-    decode(node, line, ordinary(data, sizeof(data)));
-    twfRequire(! lineIsAlive(line) && finishes == 2 && plain_calls == 0, "malformed stream was silently discarded");
-    teardown();
-    twfSetCase("a zero-length prefix is rejected without protocol negotiation");
-    setup(IP_PROTO_TCP);
-    checkInitialized();
-    const uint8_t invalid[] = {0, 0, IP_PROTO_TCP};
-    decode(node, line, input(invalid, sizeof(invalid), WW_HAVE_SPLICE, 0));
-    twfRequire(! lineIsAlive(line) && finishes == 2 && inits == 1 && plain_calls == 0,
-               "zero-length prefix changed protocol or retained carrier");
+    const uint8_t byte = 0;
+    encode(node, line, input("", 0, splice, 0));
+    encode(node, line, input("", 0, splice, 0));
+    encode(node, line, input(&byte, 1, splice, 0));
+    encode(node, line, input("", 0, splice, 0));
+    const uint8_t expected[] = {0, 0, 0, 0, 0, 1, byte, 0, 0};
+    twfRequire(wire_calls == 4 && wire_length == sizeof(expected) && memcmp(wire, expected, sizeof(expected)) == 0,
+               "encoder lost an empty datagram or changed its length prefix");
+
+    decode(node, line, input(wire, 1, splice, 0));
+    decode(node, line, input("", 0, splice, 0));
+    twfRequire(plain_calls == 0, "partial prefix or empty TCP input emitted a datagram");
+    decode(node, line, input(wire + 1, sizeof(expected) - 1, splice, 0));
+    twfRequire(lineIsAlive(line) && inits == 1 && finishes == 0, "empty datagram changed the line lifecycle");
+    twfRequire(plain_calls == 4 && datagrams[0] == 0 && datagrams[1] == 0 && datagrams[2] == 1 && datagrams[3] == 0 &&
+                   plain_length == 1 && plain[0] == byte,
+               "decoder lost an empty datagram or confused it with a one-byte zero payload");
     teardown();
 }
 
@@ -502,8 +509,9 @@ static void testFailures(void)
             encode(node, line, input("payload", 7, WW_HAVE_SPLICE, 0));
         else
         {
-            const uint8_t framed[] = {0, 1, 'A', 0, 1, 'B'};
+            const uint8_t framed[] = {0, 0, 0, 1, 'B'};
             decode(node, line, input(framed, sizeof(framed), WW_HAVE_SPLICE, 0));
+            twfRequire(plain_calls == 1 && datagrams[0] == 0, "Finish from an empty datagram missed its boundary");
         }
         twfRequire(! lineIsAlive(line) && wire_calls + plain_calls == 1, "closed output continued dispatch");
         teardown();
@@ -588,7 +596,10 @@ int main(void)
     }
     testReentrantDecode();
     testLargeDecode();
-    testMalformed();
+    testEmptyDatagrams(false);
+#if WW_HAVE_SPLICE
+    testEmptyDatagrams(true);
+#endif
     testAdmission();
     testFailures();
     testStartup();

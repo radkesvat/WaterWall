@@ -140,6 +140,7 @@ int main(void)
     const uint8_t source_protocols[] = {IP_PROTO_UDP, IP_PROTO_TCP, 0};
     for (unsigned i = 0; i < sizeof(source_protocols); ++i)
     {
+        testPayload(source_protocols[i], 0);
         testPayload(source_protocols[i], 1);
         testPayload(source_protocols[i], kMaxAllowedUDPPacketLength);
         testPayload(source_protocols[i], kMaxAllowedUDPPacketLength + 1);

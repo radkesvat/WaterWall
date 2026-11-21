@@ -329,9 +329,9 @@ client: UdpListener -> UdpOverTcpClient -> MuxClient -> TcpConnector
 server: TcpListener -> MuxServer -> UdpOverTcpServer -> UdpConnector
 ```
 
-Direct UDP adapters next to MUX cannot rely on datagram boundaries. The
-UdpOverTcp pair currently requires nonempty datagrams; MUX stream delivery does
-not provide a representation for an empty datagram.
+MUX carries the framed bytes in order. For an empty UDP datagram,
+`UdpOverTcpClient` sends the two-byte length `00 00` through MUX and
+`UdpOverTcpServer` delivers one empty datagram. Replies use the same framing.
 
 #### Splice retention and large batches
 

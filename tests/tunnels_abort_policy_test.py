@@ -29,7 +29,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 # Total number of audited Category-D conversions. The manifest must account for
 # every one of them.
-EXPECTED_TOTAL_ABORTS = 200
+EXPECTED_TOTAL_ABORTS = 198
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +244,6 @@ MANIFEST = [
      ("UdpListener: downstream Finish reached a line absent from the idle inventory",
       "UdpListener: Failed to remove idle item for UDP listener on FD:%x"),
      "runtime flow-callback invariant: UdpListener downstream fin idle-inventory membership and removal"),
-    ("tunnels/UdpOverTcpClient/upstream/payload.c", "udpovertcpclientTunnelUpStreamPayload", 1,
-     ("UdpOverTcpClient: Received empty payload, this is a bug, our eventloop logic dose not allow read of size",),
-     "runtime flow-callback invariant: UdpOverTcpClient upstream payload empty event loop payload"),
-    ("tunnels/UdpOverTcpServer/downstream/payload.c", "udpovertcpserverTunnelDownStreamPayload", 1,
-     ("UdpOverTcpServer: Received empty payload, this is a bug, our eventloop logic dose not allow read of size",),
-     "runtime flow-callback invariant: UdpOverTcpServer downstream payload empty event loop payload"),
     ("tunnels/template/instance/chain.c", "templateTunnelOnChain", 1,
      ("This Function is disabled, using the default Tunnel instead",),
      "disabled lifecycle callback stub: template onChain"),
