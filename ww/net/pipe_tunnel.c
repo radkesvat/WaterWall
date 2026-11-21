@@ -38,6 +38,21 @@ typedef struct pipetunnel_state_s
     bool         pairs_lock_initialized;
 } pipetunnel_state_t;
 
+/* One payload direction of a pair. Payload queued on the receiving worker is
+ * out of reach of the Pause that worker relays back, so each direction bounds
+ * it and holds its own producer meanwhile. */
+typedef struct pipe_flow_s
+{
+    /* Queue charge sent and not yet dispatched on the receiving worker. */
+    atomic_ullong queued;
+    /* Set by the sender when it holds its producer; taken by the receiver when
+     * it sees the queue at the low watermark. */
+    atomic_bool drain_wanted;
+    /* Sending worker only: the two independent reasons its producer is paused. */
+    bool held;
+    bool peer_paused;
+} pipe_flow_t;
+
 struct pipe_pair_s
 {
     pipe_pair_t *prev;
@@ -53,6 +68,10 @@ struct pipe_pair_s
     atomic_bool  prev_finished;
     atomic_bool  next_finished;
     atomic_bool  owned_init_delivered;
+    /* up: borrowed to owned, produced by the previous tunnel.
+     * down: owned to borrowed, produced by the next tunnel. */
+    pipe_flow_t up;
+    pipe_flow_t down;
 };
 
 typedef enum pipe_message_type_e
@@ -63,6 +82,7 @@ typedef enum pipe_message_type_e
     kPipeMessagePayload,
     kPipeMessagePause,
     kPipeMessageResume,
+    kPipeMessageDrained,
 } pipe_message_type_t;
 
 typedef enum pipe_send_result_e
@@ -72,7 +92,9 @@ typedef enum pipe_send_result_e
     kPipeSendRefused,
 } pipe_send_result_t;
 
-static void pipeReconcileLine(pipe_pair_t *pair, line_t *line);
+static void               pipeReconcileLine(pipe_pair_t *pair, line_t *line);
+static pipe_send_result_t pipeSend(pipe_pair_t *pair, line_t *line_to, pipe_message_type_t type, sbuf_t *payload,
+                                   bool upstream);
 
 static pipetunnel_state_t *pipeTunnelState(tunnel_t *t)
 {
@@ -346,6 +368,68 @@ static bool pipeMessageLineIsUsable(pipe_pair_t *pair, line_t *line_to, sbuf_t *
     return false;
 }
 
+/* Sending worker, before the payload is queued. True when this payload takes
+ * the queue over the bound and the producer is not paused yet. */
+static bool pipeFlowCharge(pipe_flow_t *flow, uint64_t charge)
+{
+    const uint64_t queued = atomicAddU64Explicit(&flow->queued, charge, memory_order_relaxed) + charge;
+    if (queued <= kPipeTunnelQueueHighWater || flow->held)
+    {
+        return false;
+    }
+    /* The payload is queued after this request, so its own dispatch observes
+     * the request even when every earlier one has already been settled. */
+    flow->held = true;
+    atomicStoreExplicit(&flow->drain_wanted, true, memory_order_release);
+    return ! flow->peer_paused;
+}
+
+/* Sending worker: Pause or Resume relayed from the receiving worker. False while
+ * the bound holds the producer, which then keeps the one Pause it already has. */
+static bool pipeFlowSetPeerPaused(pipe_flow_t *flow, bool paused)
+{
+    flow->peer_paused = paused;
+    return ! flow->held;
+}
+
+/* Sending worker: the receiving worker reported the queue at the low watermark. */
+static bool pipeFlowRelease(pipe_flow_t *flow)
+{
+    if (! flow->held)
+    {
+        return false;
+    }
+    flow->held = false;
+    return ! flow->peer_paused;
+}
+
+/* Receiving worker, after the payload was dispatched on line. */
+static void pipeFlowSettle(pipe_pair_t *pair, line_t *line, uint64_t charge, bool upstream)
+{
+    pipe_flow_t   *flow   = upstream ? &pair->up : &pair->down;
+    const uint64_t queued = atomicSubU64Explicit(&flow->queued, charge, memory_order_relaxed) - charge;
+    if (queued > kPipeTunnelQueueLowWater || ! atomicExchangeExplicit(&flow->drain_wanted, false, memory_order_acq_rel))
+    {
+        return;
+    }
+    /* A side that closed inside the dispatch has sent its Finish, and nothing
+     * may follow that. The Finish ends the sender's wait instead. */
+    if (! lineIsAlive(line) || ((pipetunnel_line_state_t *) lineGetState(line, pair->wrapper))->pair != pair)
+    {
+        return;
+    }
+    const pipe_send_result_t result =
+        pipeSend(pair, upstream ? pair->borrowed_line : pair->owned_line, kPipeMessageDrained, NULL, ! upstream);
+    if (result != kPipeSendAdmitted)
+    {
+        pipeReconcileLine(pair, line);
+        if (result == kPipeSendRefused)
+        {
+            pipeEscalateRefusal();
+        }
+    }
+}
+
 static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pipe_message_type_t type)
 {
     if (! pipeMessageLineIsUsable(pair, line_to, payload))
@@ -373,14 +457,29 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
     case kPipeMessageEst:
         tunnelUpStreamEst(next, line_to);
         break;
-    case kPipeMessagePayload:
+    case kPipeMessagePayload: {
+        const uint64_t charge = sbufGetQueueCharge(payload);
         tunnelUpStreamPayload(next, line_to, payload);
+        pipeFlowSettle(pair, line_to, charge, true);
         break;
+    }
     case kPipeMessagePause:
-        tunnelUpStreamPause(next, line_to);
+        if (pipeFlowSetPeerPaused(&pair->down, true))
+        {
+            tunnelUpStreamPause(next, line_to);
+        }
         break;
     case kPipeMessageResume:
-        tunnelUpStreamResume(next, line_to);
+        if (pipeFlowSetPeerPaused(&pair->down, false))
+        {
+            tunnelUpStreamResume(next, line_to);
+        }
+        break;
+    case kPipeMessageDrained:
+        if (pipeFlowRelease(&pair->down))
+        {
+            tunnelUpStreamResume(next, line_to);
+        }
         break;
     case kPipeMessageFin:
         assert(false);
@@ -421,14 +520,29 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
     case kPipeMessageEst:
         tunnelDownStreamEst(prev, line_to);
         break;
-    case kPipeMessagePayload:
+    case kPipeMessagePayload: {
+        const uint64_t charge = sbufGetQueueCharge(payload);
         tunnelDownStreamPayload(prev, line_to, payload);
+        pipeFlowSettle(pair, line_to, charge, false);
         break;
+    }
     case kPipeMessagePause:
-        tunnelDownStreamPause(prev, line_to);
+        if (pipeFlowSetPeerPaused(&pair->up, true))
+        {
+            tunnelDownStreamPause(prev, line_to);
+        }
         break;
     case kPipeMessageResume:
-        tunnelDownStreamResume(prev, line_to);
+        if (pipeFlowSetPeerPaused(&pair->up, false))
+        {
+            tunnelDownStreamResume(prev, line_to);
+        }
+        break;
+    case kPipeMessageDrained:
+        if (pipeFlowRelease(&pair->up))
+        {
+            tunnelDownStreamResume(prev, line_to);
+        }
         break;
     case kPipeMessageInit:
     case kPipeMessageFin:
@@ -460,11 +574,13 @@ PIPE_UP_RECEIVER(onMsgReceivedUpFin, kPipeMessageFin)
 PIPE_UP_RECEIVER(onMsgReceivedUpPayload, kPipeMessagePayload)
 PIPE_UP_RECEIVER(onMsgReceivedUpPause, kPipeMessagePause)
 PIPE_UP_RECEIVER(onMsgReceivedUpResume, kPipeMessageResume)
+PIPE_UP_RECEIVER(onMsgReceivedUpDrained, kPipeMessageDrained)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownEst, kPipeMessageEst)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownFin, kPipeMessageFin)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownPayload, kPipeMessagePayload)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownPause, kPipeMessagePause)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownResume, kPipeMessageResume)
+PIPE_DOWN_RECEIVER(onMsgReceivedDownDrained, kPipeMessageDrained)
 
 #undef PIPE_UP_RECEIVER
 #undef PIPE_DOWN_RECEIVER
@@ -485,6 +601,8 @@ static WorkerMessageCallback pipeUpCallback(pipe_message_type_t type)
         return (WorkerMessageCallback) onMsgReceivedUpPause;
     case kPipeMessageResume:
         return (WorkerMessageCallback) onMsgReceivedUpResume;
+    case kPipeMessageDrained:
+        return (WorkerMessageCallback) onMsgReceivedUpDrained;
     }
     return NULL;
 }
@@ -503,6 +621,8 @@ static WorkerMessageCallback pipeDownCallback(pipe_message_type_t type)
         return (WorkerMessageCallback) onMsgReceivedDownPause;
     case kPipeMessageResume:
         return (WorkerMessageCallback) onMsgReceivedDownResume;
+    case kPipeMessageDrained:
+        return (WorkerMessageCallback) onMsgReceivedDownDrained;
     case kPipeMessageInit:
         return NULL;
     }
@@ -613,6 +733,9 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *
         tunnelNextUpStreamPayload(t, line, payload);
         return;
     }
+    /* The up flow's sender state belongs to the borrowed line's worker. */
+    assert(line == pair->borrowed_line);
+    const bool               hold   = pipeFlowCharge(&pair->up, sbufGetQueueCharge(payload));
     const pipe_send_result_t result = pipeSend(pair, pair->owned_line, kPipeMessagePayload, payload, true);
     if (result != kPipeSendAdmitted)
     {
@@ -621,6 +744,11 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *
         {
             pipeEscalateRefusal();
         }
+        return;
+    }
+    if (hold)
+    {
+        tunnelPrevDownStreamPause(t, line);
     }
 }
 
@@ -729,6 +857,9 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *line, sbuf_t
         tunnelPrevDownStreamPayload(t, line, payload);
         return;
     }
+    /* The down flow's sender state belongs to the owned line's worker. */
+    assert(line == pair->owned_line);
+    const bool               hold   = pipeFlowCharge(&pair->down, sbufGetQueueCharge(payload));
     const pipe_send_result_t result = pipeSend(pair, pair->borrowed_line, kPipeMessagePayload, payload, false);
     if (result != kPipeSendAdmitted)
     {
@@ -737,6 +868,11 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *line, sbuf_t
         {
             pipeEscalateRefusal();
         }
+        return;
+    }
+    if (hold)
+    {
+        tunnelNextUpStreamPause(t, line);
     }
 }
 
@@ -1028,6 +1164,10 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     atomic_init(&pair->prev_finished, false);
     atomic_init(&pair->next_finished, false);
     atomic_init(&pair->owned_init_delivered, false);
+    atomic_init(&pair->up.queued, 0);
+    atomic_init(&pair->up.drain_wanted, false);
+    atomic_init(&pair->down.queued, 0);
+    atomic_init(&pair->down.drain_wanted, false);
 
     mutexLock(&state->pairs_lock);
     if (UNLIKELY(atomicLoadExplicit(&state->stopping, memory_order_acquire)))
