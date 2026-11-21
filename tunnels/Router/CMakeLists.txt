@@ -13,6 +13,7 @@ add_library(Router STATIC
     modules/source_ips/source_ips.c
     modules/source_port/source_port.c
     modules/network/network.c
+    modules/line_mark/line_mark.c
     modules/password/password.c
     modules/protocol/protocol.c
     modules/resolver_dns/resolver_dns.c

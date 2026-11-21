@@ -1,5 +1,6 @@
 #include "structure.h"
 
+#include "modules/line_mark/line_mark.h"
 #include "modules/network/network.h"
 
 static void routerClassifyPrepareGeositeHost(router_tstate_t *ts, router_match_ctx_t *mctx)
@@ -31,7 +32,7 @@ static router_match_t routerClassifyRules(router_tstate_t *ts, router_match_ctx_
          * sniff observations as a mismatch and incorrectly skipping that rule. */
         if (during_init && (rule->protocol.present || rule->attributes.present))
         {
-            if (! routerNetworkMatch(rule, mctx))
+            if (! routerNetworkMatch(rule, mctx) || ! routerLineMarkMatch(rule, mctx))
                 continue;
             match.result = kRouterClassifyNeedMore;
             return match;

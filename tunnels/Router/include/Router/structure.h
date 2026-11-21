@@ -23,7 +23,7 @@
  * Rule targets are folded into the same chain during onChain so they get per-line
  * state slots and so their downstream traffic returns through us. Without root
  * domain sniffing, Init evaluates the ordered metadata-only rule prefix and can
- * commit before later payload-dependent rules. An earlier protocol/attribute
+ * commit before later payload-dependent rules. An eligible protocol/attribute
  * rule or configured domain sniffing defers classification to payload, whose
  * buffered bytes are replayed to the chosen branch with no loss.
  *
@@ -77,7 +77,7 @@ typedef struct router_lstate_s
     uint8_t        route;     // enum router_route_e
     uint8_t        network_offer;
     uint32_t       sniffed_attributes;
-    bool           replaying;      // selected Init and its initial FIFO are still running
+    bool           replaying;           // selected Init and its initial FIFO are still running
     bool           preserve_deliveries; // selects the replay storage, even after a branch rewrites the destination
     bool           pending_pause;  // receiver Pause waiting for the selected branch's Init
 } router_lstate_t;

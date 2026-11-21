@@ -1,5 +1,5 @@
 /*
- * Covers: Verifies Router sniffing config, resolver-DNS metadata matching and lifetime,
+ * Covers: Verifies Router sniffing config, line-mark and resolver-DNS metadata matching,
  * Host/:authority/SNI classification behavior, protocol bits,
  * HTTP upgrade attributes, cleartext HTTP/2 authority sniffing, and protected QUIC/HTTP3 Initial SNI
  * vectors when Router QUIC sniffing is compiled in. The QUIC vector generator is kept at
@@ -1163,6 +1163,51 @@ static void testResolverDnsKeepsProtocolSniffing(void)
     testLineDestroy(line);
 }
 
+static void testLineMarkCondition(void)
+{
+    require(routerIsKnownConditionKey("line-mark"), "line-mark missing from known Router condition keys");
+    static const char *const invalid[] = {
+        "{\"line-mark\":null}",
+        "{\"line-mark\":17}",
+        "{\"line-mark\":[\"0123456789abcdef0123456789abcdef\"]}",
+        "{\"line-mark\":\"0123456789abcdef0123456789abcde\"}",
+        "{\"line-mark\":\"0123456789abcdef0123456789abcdef0\"}",
+        "{\"line-mark\":\"0123456789abcdef0123456789abcdeg\"}",
+        "{\"line-mark\":\"0123456789abcdef0123456789abcdef\\u0000suffix\"}",
+        "{\"line-mark\\u0000suffix\":\"0123456789abcdef0123456789abcdef\"}",
+    };
+    router_rule_t rule  = {0};
+    uint32_t      count = 0;
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        cJSON *json = parseJsonObject(invalid[i]);
+        require(! routerRuleParseConditions(&rule, json, 0, &count), "invalid line-mark condition accepted");
+        routerRuleDestroyConditions(&rule);
+        cJSON_Delete(json);
+    }
+    cJSON *json = parseJsonObject("{\"line-mark\":\"00000000000000000000000000000000\"}");
+    require(routerRuleParseConditions(&rule, json, 0, &count) && count == 1, "all-zero line mark failed to parse");
+    cJSON_Delete(json);
+
+    router_tstate_t ts   = {0};
+    line_t         *line = testLineCreate();
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
+    rule.target_tunnel = (tunnel_t *) (uintptr_t) 0x95;
+    expectMatch(
+        "unset mark differs from all-zero", classifyOneRule(&ts, &rule, line, NULL, 0), kRouterClassifyDefault, NULL);
+    line_mark_t mark = {0};
+    lineSetMark(line, &mark);
+    expectMatch("present all-zero mark matches",
+                classifyOneRule(&ts, &rule, line, NULL, 0),
+                kRouterClassifyTarget,
+                rule.target_tunnel);
+    mark.bytes[kLineMarkSize - 1] = 1;
+    lineSetMark(line, &mark);
+    expectMatch("all 16 mark bytes matter", classifyOneRule(&ts, &rule, line, NULL, 0), kRouterClassifyDefault, NULL);
+    routerRuleDestroyConditions(&rule);
+    testLineDestroy(line);
+}
+
 static void testRouterInitEvaluatesOrderedMetadataPrefix(void)
 {
     const struct
@@ -1173,6 +1218,22 @@ static void testRouterInitEvaluatesOrderedMetadataPrefix(void)
         bool        dns;
         bool        sniff_domain;
     } cases[] = {
+        {"mark and carrier network select during Init",
+         "[{\"network\":\"udp\",\"line-mark\":\"0123456789abcdef0123456789abcdef\"},"
+         "{\"network\":\"tcp\",\"line-mark\":\"0123456789ABCDEF0123456789ABCDEF\"}]",
+         1,
+         false,
+         false},
+        {"different mark rules out a payload-dependent rule during Init",
+         "[{\"line-mark\":\"0123456789abcdef0123456789abcdee\",\"protocol\":\"tls\"},{\"network\":\"tcp\"}]",
+         1,
+         false,
+         false},
+        {"matching mark keeps payload-dependent rule eligible",
+         "[{\"line-mark\":\"0123456789abcdef0123456789abcdef\",\"protocol\":\"tls\"},{\"network\":\"tcp\"}]",
+         -1,
+         false,
+         false},
         {"DNS metadata precedes TLS", "[{\"resolver-dns\":true},{\"protocol\":\"tls\"}]", 0, true, false},
         {"unmatched metadata precedes DNS",
          "[{\"network\":\"udp\"},{\"resolver-dns\":true},{\"protocol\":\"tls\"}]",
@@ -1211,6 +1272,9 @@ static void testRouterInitEvaluatesOrderedMetadataPrefix(void)
             addresscontextSetIpAddressPortProtocol(&line->routing_context.dest_ctx, "203.0.113.53", 53, IP_PROTO_TCP),
             "failed to set ordered Router destination");
         addresscontextSetResolverDns(&line->routing_context.dest_ctx, cases[ci].dns);
+        line_mark_t mark;
+        require(lineMarkParseHex("0123456789abcdef0123456789abcdef", &mark), "invalid fixture line mark");
+        lineSetMark(line, &mark);
         tunnel_t *router = tunnelCreate(NULL, sizeof(router_tstate_t), sizeof(router_lstate_t));
         require(router != NULL, "failed to create ordered Router fixture");
         router_tstate_t *ts    = tunnelGetState(router);
@@ -1235,6 +1299,8 @@ static void testRouterInitEvaluatesOrderedMetadataPrefix(void)
 
         gRouterTargetInitCalls = 0;
         routerTunnelUpStreamInit(router, line);
+        require(lineGetMark(line) != NULL && memoryEqual(lineGetMark(line)->bytes, mark.bytes, kLineMarkSize),
+                "Router consumed or altered the mark during Init");
         router_lstate_t *ls = lineGetState(line, router);
         require(gRouterTargetInitCalls == (cases[ci].selected >= 0),
                 "ordered Router initialized a branch at the wrong phase");
@@ -2156,6 +2222,7 @@ int main(void)
     testResolverDnsMetadataLifetime();
     testRouterInitMatchesResolverDns();
     testResolverDnsKeepsProtocolSniffing();
+    testLineMarkCondition();
     testRouterInitEvaluatesOrderedMetadataPrefix();
     testRouterInitClearsDetectedProtocolsAndPreservesRouteControl();
     testRouterInitCommitsStaticRoute();

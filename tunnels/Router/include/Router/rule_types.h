@@ -80,6 +80,12 @@ typedef struct router_match_network_s
     uint8_t              wanted;
 } router_match_network_t;
 
+typedef struct router_match_line_mark_s
+{
+    bool        present;
+    line_mark_t value;
+} router_match_line_mark_t;
+
 typedef struct router_match_protocol_s
 {
     bool                 present;
@@ -144,6 +150,7 @@ typedef struct router_rule_s
     router_match_source_ips_t         source_ips;
     router_match_source_port_t        source_port;
     router_match_network_t            network;
+    router_match_line_mark_t          line_mark;
     router_match_protocol_t           protocol;
     router_match_resolver_dns_t       resolver_dns;
     router_match_attributes_t         attributes;
