@@ -158,6 +158,7 @@ static void connectionStart(ech_fixture_t *f)
     f->verified_public_name = false;
     f->inner_psk            = false;
     f->server_accepted      = false;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f->line), kAddressContextTransportTcp);
     tlsclientTunnelUpStreamInit(f->tls, f->line);
     require(lineIsAlive(f->line) && f->hello != NULL, "ordinary Init failed to emit a ClientHello");
 }

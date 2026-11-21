@@ -223,6 +223,7 @@ static void connectionStart(session_fixture_t *f)
     f->line->wid       = 0;
     f->plaintext_bytes = 0;
     f->ready_count     = 0;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f->line), kAddressContextTransportTcp);
     tlsclientTunnelUpStreamInit(f->tls, f->line);
     require(lineIsAlive(f->line) && f->hello != NULL, "ordinary Init failed to emit a ClientHello");
 }

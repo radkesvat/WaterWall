@@ -204,6 +204,7 @@ static void caseRealLineInitFails(tlsclient_injection_t injection, const char *c
 
     line_t        *l             = twfLineCreate(fixture.tls->lstate_size);
     const uint32_t refc_at_start = twfLineRefCount(l);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(l), kAddressContextTransportTcp);
 
     injectionArm(injection);
     tlsclientTunnelUpStreamInit(fixture.tls, l);
@@ -223,6 +224,7 @@ static void caseRealLineInitFails(tlsclient_injection_t injection, const char *c
     // A second line must still initialize and hand its ClientHello to the next tunnel.
     memoryZero(&fixture.trace, sizeof(fixture.trace));
     line_t *sibling = twfLineCreate(fixture.tls->lstate_size);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(sibling), kAddressContextTransportTcp);
     tlsclientTunnelUpStreamInit(fixture.tls, sibling);
 
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "the sibling line was closed even though nothing failed");
@@ -276,6 +278,7 @@ static void caseInnerClientHelloFailureReleasesRuntimeBios(tlsclient_injection_t
     ts->threadlocal_ech_grease_inner_ssl_contexts = fixture.ssl_ctx_slot;
     line_t        *l                              = twfLineCreate(fixture.tls->lstate_size);
     const uint32_t refs                           = twfLineRefCount(l);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(l), kAddressContextTransportTcp);
 
     injectionArm(injection);
     g_track_runtime_bios = true;

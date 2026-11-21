@@ -368,6 +368,7 @@ static line_t *wgServerFixtureIngress(wg_server_fixture_t *f, wid_t wid)
     twfRequire(line != NULL, "ingress creation failed");
     f->ingress[wid] = line;
     addresscontextSetIpAddressPortProtocol(lineGetSourceAddressContext(line), "192.0.2.1", 51820, 17);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportUdp);
     line->routing_context.peer_source_port = 42000;
     tunnelNextUpStreamInit(f->adapter, line);
     twfRequire(lineIsAlive(line), "ingress Init unexpectedly refused");

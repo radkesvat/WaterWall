@@ -1122,6 +1122,7 @@ static void testSetupAndCallbackBudget(void)
     lineDestroy(f.application);
     lineUnref(f.application);
     f.application = f.carrier = twfLinePoolCreateLine(&f.lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.application), kAddressContextTransportTcp);
     lineRef(f.application);
     vlessclient_tstate_t *ts = tunnelGetState(f.t);
     ts->target_port_source   = kDvsFirstOption;
