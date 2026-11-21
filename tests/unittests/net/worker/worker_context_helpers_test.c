@@ -24,6 +24,7 @@ static void testMessageAdmissionRacesWorkerTeardown(void)
      * cannot race global allocation-padding construction. */
     testPipePublicationIsLinearizedWithPreStop();
     testPipePayloadFinishLateAndRefused();
+    testPipeBoundsQueuedPayload();
     testWorkerMessagePoolCrossWorkerReturn();
 #ifdef WW_TEST_HALFDUPLEX_WORKERS
     testHalfDuplexWorkers();
