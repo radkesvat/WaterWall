@@ -59,6 +59,14 @@ if(BUILD_TESTING AND WW_BUILD_UNIT_TESTS AND WIN32)
   set_target_properties(winsock_startup_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
   waterwall_register_native_test(waterwall.winsock_startup_unit winsock_startup_test
     "unit;net;startup;windows" AGGREGATE waterwall_platform_unit_tests)
+  waterwall_add_native_executable(lwip_windows_protection_test SUPPORT EXCLUDE_FROM_ALL
+    SOURCES tests/unittests/lwip/lwip_windows_protection_test.c LIBRARIES ww)
+  if(MINGW)
+    target_link_options(lwip_windows_protection_test PRIVATE -static)
+  endif()
+  set_target_properties(lwip_windows_protection_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON)
+  waterwall_register_native_test(waterwall.lwip_windows_protection_unit lwip_windows_protection_test
+    "unit;net;lwip;thread;windows" AGGREGATE waterwall_platform_unit_tests)
   include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_packed_startup.cmake")
   include("${PROJECT_SOURCE_DIR}/tests/unittests/windows_driver_artifacts.cmake")
   include("${PROJECT_SOURCE_DIR}/tests/unittests/tundevice_policy_cleanup.cmake")

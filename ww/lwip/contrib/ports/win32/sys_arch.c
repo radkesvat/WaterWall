@@ -51,14 +51,6 @@
 #include <lwip/sys.h>
 #include <lwip/tcpip.h>
 
-/** Set this to 1 to enable assertion checks that SYS_ARCH_PROTECT() is only
- * called once in a call stack (calling it nested might cause trouble in some
- * implementations, so let's avoid this in core code as long as we can).
- */
-#ifndef LWIP_SYS_ARCH_CHECK_NESTED_PROTECT
-#define LWIP_SYS_ARCH_CHECK_NESTED_PROTECT 1
-#endif
-
 /** Set this to 1 to enable assertion checks that SYS_ARCH_PROTECT() is *not*
  * called before functions potentiolly involving the OS scheduler.
  *
@@ -68,8 +60,6 @@
 #ifndef LWIP_SYS_ARCH_CHECK_SCHEDULING_UNPROTECTED
 #define LWIP_SYS_ARCH_CHECK_SCHEDULING_UNPROTECTED LWIP_TCPIP_CORE_LOCKING
 #endif
-
-#define LWIP_WIN32_SYS_ARCH_ENABLE_PROTECT_COUNTER (LWIP_SYS_ARCH_CHECK_NESTED_PROTECT || LWIP_SYS_ARCH_CHECK_SCHEDULING_UNPROTECTED)
 
 /* These functions are used from NO_SYS also, for precise timer triggering */
 static LARGE_INTEGER freq, sys_start_time;
@@ -120,9 +110,7 @@ sys_now(void)
 }
 
 CRITICAL_SECTION critSec;
-#if LWIP_WIN32_SYS_ARCH_ENABLE_PROTECT_COUNTER
-static int protection_depth;
-#endif
+static unsigned int protection_depth;
 
 static void
 InitSysArchProtect(void)
@@ -140,29 +128,18 @@ sys_prot_t sys_arch_protect(void)
     }
 #endif
     LWIP_ASSERT("protection initialized before worker publication", SYS_INITIALIZED());
+    /* A pool cache refill can enter the shared allocator while it already holds this critical section. */
     EnterCriticalSection(&critSec);
-#if LWIP_SYS_ARCH_CHECK_NESTED_PROTECT
-    LWIP_ASSERT("nested SYS_ARCH_PROTECT", protection_depth == 0);
-#endif
-#if LWIP_WIN32_SYS_ARCH_ENABLE_PROTECT_COUNTER
-    protection_depth++;
-#endif
+    ++protection_depth;
     return 0;
 }
 
-void
-sys_arch_unprotect(sys_prot_t pval)
+void sys_arch_unprotect(sys_prot_t pval)
 {
-  LWIP_UNUSED_ARG(pval);
-#if LWIP_SYS_ARCH_CHECK_NESTED_PROTECT
-  LWIP_ASSERT("missing SYS_ARCH_PROTECT", protection_depth == 1);
-#else
-  LWIP_ASSERT("missing SYS_ARCH_PROTECT", protection_depth > 0);
-#endif
-#if LWIP_WIN32_SYS_ARCH_ENABLE_PROTECT_COUNTER
-  protection_depth--;
-#endif
-  LeaveCriticalSection(&critSec);
+    LWIP_UNUSED_ARG(pval);
+    LWIP_ASSERT("missing SYS_ARCH_PROTECT", protection_depth > 0);
+    --protection_depth;
+    LeaveCriticalSection(&critSec);
 }
 
 #if LWIP_SYS_ARCH_CHECK_SCHEDULING_UNPROTECTED
