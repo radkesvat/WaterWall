@@ -260,7 +260,9 @@ Use `drop` mode for UDP datagrams.
 
 On worker packet lines, `pause` waits for enough tokens to send the whole packet.
 The bucket holds one second of credit. A packet larger than that capacity is dropped
-immediately, so later packets can progress. If the queue is full, only the arriving
+immediately, so later packets can progress. For this drop the sampled warning gives
+the packet size (`sample_payload_bytes`) and maximum bucket credit (`max_credit_bytes`).
+Waiting longer cannot make the packet fit. If the queue is full, only the arriving
 packet is dropped. If its drain timer fails, the affected direction discards its
 queue and releases its local pause. The worker packet line and the opposite queue
 remain available.

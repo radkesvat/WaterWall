@@ -28,6 +28,7 @@
 #include "SpeedLimit/structure.h"
 
 #include "fixtures/failure/tunnel_line_failure_harness.h"
+#include "loggers/network_logger.h"
 
 // ---------------------------------------------------------------------------
 // wtimerAdd injection
@@ -36,6 +37,17 @@
 static uint32_t  g_timer_calls        = 0;
 static uint32_t  g_timer_fail_at_call = 0; // 1-based; 0 disables injection
 static wtimer_t *g_last_timer         = NULL;
+static unsigned  drop_warnings;
+static char      drop_message[1024];
+
+static void captureDropWarning(int level, const char *message, int length)
+{
+    if (level == LOG_LEVEL_WARN && strstr(message, "SpeedLimit") != NULL)
+    {
+        ++drop_warnings;
+        snprintf(drop_message, sizeof(drop_message), "%.*s", length, message);
+    }
+}
 
 wtimer_t *__real_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
 wtimer_t *__wrap_wtimerAdd(wloop_t *loop, wtimer_cb cb, uint32_t timeout_ms, uint32_t repeat);
@@ -107,6 +119,8 @@ static tunnel_t *createSpeedLimitTunnel(void)
     ts->limit_mode            = kSpeedLimitLimitModePerLine;
     ts->work_mode             = kSpeedLimitWorkModePause;
 
+    atomicLogRateLimiterInitialize(&ts->drop_log_limiter);
+    atomicStoreU64Relaxed(&ts->dropped_payloads, 0);
     atomicStoreU64Relaxed(&ts->global_bucket.tokens_units, ts->bucket_capacity_units);
     atomicStoreU64Relaxed(&ts->global_bucket.last_refill_ms, 0);
     ts->worker_buckets[0].tokens_units   = ts->bucket_capacity_units;
@@ -441,7 +455,18 @@ static void casePacketPacingAndFailure(bool upstream)
     LineTaskFnWithBuf    send     = upstream ? speedlimitTunnelUpStreamPayload : speedlimitTunnelDownStreamPayload;
     LineTaskFnWithBuf    reply    = upstream ? speedlimitTunnelDownStreamPayload : speedlimitTunnelUpStreamPayload;
 
+    drop_warnings = 0;
     send(t, line, makePayload(&fixture, kTestBytesPerSecond + 1));
+    twfRequire(drop_warnings == 1 && strstr(drop_message, "size exceeds one-second bucket capacity") != NULL &&
+                   strstr(drop_message, upstream ? "sample_direction=upstream" : "sample_direction=downstream") !=
+                       NULL &&
+                   strstr(drop_message, "sample_payload_bytes=17, max_credit_bytes=16,") != NULL &&
+                   strstr(drop_message, "node_dropped_payloads_total=1)") != NULL,
+               "oversized packet warning omitted the capacity limit, actual bytes, direction or drop count");
+    send(t, line, makePayload(&fixture, kTestBytesPerSecond + 1));
+    speedlimit_tstate_t *settings = tunnelGetState(t);
+    twfRequire(drop_warnings == 1 && atomicLoadU64Relaxed(&settings->dropped_payloads) == 2,
+               "repeated oversized packet was not counted and rate-limited");
     twfRequire(*sent == 0 && trafficshaperPending(shaper) == 0, "unpayable packet blocked or escaped the FIFO");
 
     drainLineTokens(&fixture, line);
@@ -479,6 +504,10 @@ static void casePacketPacingAndFailure(bool upstream)
 
 int main(void)
 {
+    logger_t *logger = createNetworkLogger(NULL, false);
+    twfRequire(logger != NULL, "could not create SpeedLimit diagnostic logger");
+    loggerSetLevel(logger, LOG_LEVEL_WARN);
+    loggerSetHandler(logger, captureDropWarning);
     caseFirstUpstreamScheduleFails();
     caseFirstDownstreamScheduleFails();
     caseRescheduleAfterPartialSliceFails();
@@ -488,6 +517,7 @@ int main(void)
     casePacketPacingAndFailure(true);
     casePacketPacingAndFailure(false);
 
+    networkloggerDestroy();
     printf("speedlimit_line_failure_test: all cases passed\n");
     return 0;
 }

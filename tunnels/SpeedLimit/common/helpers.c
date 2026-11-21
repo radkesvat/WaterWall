@@ -230,11 +230,14 @@ void speedlimitLogDrop(tunnel_t *t, line_t *line, size_t bytes, bool upstream)
     /* Drop mode can refuse every packet in a high-rate stream; sample the event
      * and retain a node-wide cumulative count without logging under its bucket lock. */
     if (atomicLogRateLimiterShouldLog(&ts->drop_log_limiter, 1000))
-        LOGW("SpeedLimit: dropping payload: insufficient rate credit "
-             "(sample_direction=%s, sample_payload_bytes=%zu, rate_bytes_per_second=%" PRIu64
-             ", scope=%s, worker=%u, node_dropped_payloads_total=%" PRIu64 ")",
+        LOGW("SpeedLimit: dropping %s: %s "
+             "(sample_direction=%s, sample_payload_bytes=%zu, max_credit_bytes=%" PRIu64
+             ", rate_bytes_per_second=%" PRIu64 ", scope=%s, worker=%u, node_dropped_payloads_total=%" PRIu64 ")",
+             ts->work_mode == kSpeedLimitWorkModePause ? "packet" : "payload",
+             bytes > ts->bytes_per_sec ? "size exceeds one-second bucket capacity" : "insufficient rate credit",
              upstream ? "upstream" : "downstream",
              bytes,
+             ts->bytes_per_sec,
              ts->bytes_per_sec,
              ts->limit_mode == kSpeedLimitLimitModeAllLines    ? "node"
              : ts->limit_mode == kSpeedLimitLimitModePerWorker ? "worker"
