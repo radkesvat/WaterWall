@@ -133,6 +133,10 @@ line_t *authTestControllerOpen(tunnel_t *controller, tunnel_chain_t *chain)
 {
     usercontroller_tstate_t *ts   = tunnelGetState(controller);
     line_t                  *line = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line),
+                                    ts->fixed_payload_mode == kUserControllerPayloadDatagram
+                                        ? kAddressContextTransportUdp
+                                        : kAddressContextTransportTcp);
     lineRef(line); /* Caller observes logical death after callbacks. */
     user_handle_t handle = {.generation = authenticationclientUsersGeneration(ts->auth_client_tunnel), .user_id = 42};
     lineAddUser(line, &handle, NULL, NULL);
@@ -349,6 +353,7 @@ static void controllerFinalDrain(tunnel_t *auth, tunnel_chain_t *chain, void (*a
     t->prev->fnFinD = reverseBorrowerFinished;
     t->next->fnFinU = finished;
     line_t *source  = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(source), kAddressContextTransportTcp);
     tunnelDownStreamInit(t, source);
     const user_handle_t handle = {.generation = authenticationclientUsersGeneration(auth), .user_id = 42};
     lineAddUser(source, &handle, NULL, NULL);
@@ -595,6 +600,7 @@ void authTestControllerBandwidthCases(tunnel_t *auth, tunnel_chain_t *chain, voi
     a->prev->fnFinD = reverseBorrowerFinished;
     a->next->fnFinU = finished;
     first           = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(first), kAddressContextTransportTcp);
     lineRef(first);
     user_handle_t reverse_handle = {.generation = authenticationclientUsersGeneration(auth), .user_id = 42};
     lineAddUser(first, &reverse_handle, NULL, NULL);

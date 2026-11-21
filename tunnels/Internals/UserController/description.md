@@ -212,12 +212,12 @@ Manual instances require an explicit `payload-mode`, even when current users are
 | --- | --- |
 | `stream` | Bytes may be split across deliveries. |
 | `datagram` | Each payload remains one whole datagram. |
-| `dest_context->protocol` | Read the destination protocol once during Init: exactly TCP selects stream; exactly UDP selects datagram. |
+| `dest_context->protocol` | Choose from the destination offer during Init. TCP selects stream, UDP selects datagram, and TCP wins a tie. |
 
-Destination-context mode rejects the line if the protocol is missing, ambiguous or unsupported. Use it only when the
-destination protocol is available before Init and describes the payload at this node's position. A transport conversion
-can leave UDP routing metadata on a line carrying decoded stream bytes, so destination detection is never an automatic
-fallback for an omitted setting.
+For normal lines, fixed modes permit only their own transport. The
+controller publishes the selection before admission and forwarding. An
+unusable offer closes the line. Declare how the controller chooses its mode
+on all manual instances.
 
 Internal creators instead bind `usercontrollerSetPayloadModeResolver(controller, owner, resolver)` immediately after
 construction, before preparation. A configured mode and a resolver cannot both be supplied. The pure owner-worker

@@ -130,5 +130,12 @@ tunnel_t *usercontrollerTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->fixed_payload_mode != 0)
+    {
+        const enum node_layer_group side =
+            ts->fixed_payload_mode == kUserControllerPayloadDatagram ? kNodeLayer4Datagram : kNodeLayer4Stream;
+        node->layer_group_prev_node = side;
+        node->layer_group_next_node = side;
+    }
     return t;
 }

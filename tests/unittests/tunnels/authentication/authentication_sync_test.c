@@ -838,6 +838,12 @@ static void rawBatch(line_t *l, const uint8_t token[64], const char *text)
     rawRequest(l, token, kAuthenticationClientRequestTypePushUserStats, text, (uint32_t) stringLength(text));
 }
 
+static void initRawServerLine(line_t *line)
+{
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportTcp);
+    tunnelUpStreamInit(server, line);
+}
+
 static void testStaleFullObjectRejected(void)
 {
     setup(1);
@@ -855,7 +861,7 @@ static void testStaleFullObjectRejected(void)
     char    epoch[65];
     authTestPeerCredentials(server, 0, token, epoch);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
     char *before  = authTestPeerSnapshot(server);
     char *request = cJSON_PrintUnformatted(stale);
     rawRequest(line, token, kAuthenticationClientRequestTypeUpdateUser, request, (uint32_t) stringLength(request));
@@ -983,7 +989,7 @@ static void testApiProtocolPatchOrdering(void)
     char    epoch[65], stale[49];
     authTestPeerCredentials(server, 0, token, epoch);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
     serverEditToken(stale);
     expectPatch(line, token, "{\"id\":42,\"name\":\"producer-name\"}", true);
     cJSON_Delete(apiPatchWithToken(stale, "{\"email\":\"stale@example.test\"}", "conflict"));
@@ -1077,7 +1083,7 @@ static void testApiProtocolCreationOrdering(void)
     authTestPeerCredentials(server, 0, token, epoch);
     serverEditToken(old_token);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
 
     const char first[] = "{\"id\":\"99\",\"password\":\"api-created-secret\",\"config\":{\"name\":\"created\"}}";
     cJSON     *ack     = apiCreate(first, NULL);
@@ -1189,7 +1195,7 @@ static void testConfigRevisionExhaustion(void)
         char    epoch[65];
         authTestPeerCredentials(server, 0, token, epoch);
         line_t *line = lineCreate(chain->line_pools, 0);
-        tunnelUpStreamInit(server, line);
+        initRawServerLine(line);
         authTestPeerSetConfigRevision(server, UINT64_MAX - 1);
         if (api_last)
         {
@@ -1479,7 +1485,7 @@ static void testConfigPatches(void)
     char    epoch[65];
     authTestPeerCredentials(server, 0, token, epoch);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
 
     expectPatch(line, token, " \r\n{\"id\":42,\"name\":\"Alice\"}\t ", true);
     expectPatch(line, token, "{\"id\":42,\"email\":\"new@example.test\"}", true);
@@ -1629,7 +1635,7 @@ static void testEditDuringAccounting(void)
     char    epoch[65];
     authTestPeerCredentials(server, 0, token, epoch);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
     user_ip_key_t ip = {.type = 4, .bytes = {192, 0, 2, 1}};
     require(usersTryAdmitConnectionByIdentifier(state(0)->users, 42, &ip, getTimeOfDayMS()) == kUserAdmissionOk,
             "client reservation setup failed");
@@ -1681,7 +1687,7 @@ static void testStrictTrafficBatches(void)
     char    epoch[65], text[1024];
     authTestPeerCredentials(server, 0, token, epoch);
     line_t *line = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
     const char *formats[] = {
         "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"up\":1,\"down\":0,\"first-usage-at-ms\":1}]}",
         "{\"epoch\":\"%s\",\"sequence\":1,\"users\":[{\"id\":42,\"down\":0,\"first-usage-at-ms\":1}]}",
@@ -1910,7 +1916,7 @@ static void testConcurrentAndSubsets(void)
         contexts[i] = (concurrent_t) {.wid = i, .first = 1};
         authTestPeerCredentials(server, i, contexts[i].token, contexts[i].epoch);
         contexts[i].line = lineCreate(chain->line_pools, (wid_t) i);
-        tunnelUpStreamInit(server, contexts[i].line);
+        initRawServerLine(contexts[i].line);
         bufferpoolResetThreadOwnership(pools[i]);
 #if POOL_THREAD_CHECK
         chain->line_pools[i]->tid = 0; /* exclusive ownership transfer to/from joined worker */
@@ -1962,7 +1968,7 @@ static void testConcurrentAndSubsets(void)
     /* Another producer changes the aggregate while this pass owes relative
      * amounts. No full second-client pull is needed for the raw producer. */
     line_t *other = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, other);
+    initRawServerLine(other);
     uint8_t    token[64] = {0};
     const char enroll[]  = "{\"name\":\"edge-b\",\"secret\":\"secret\"}";
     rawRequest(other, token, kAuthenticationClientRequestTypeAuthenticate, enroll, sizeof(enroll) - 1);
@@ -2331,7 +2337,7 @@ static void testFreshEpochFailurePreservesSession(void)
     authTestPeerCredentials(server, 0, token, epoch);
     char   *before = authTestPeerSnapshot(server);
     line_t *line   = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, line);
+    initRawServerLine(line);
     static const char enroll[]        = "{\"name\":\"edge-a\",\"secret\":\"secret\"}";
     const uint8_t     empty_token[64] = {0};
     raw_response[0]                   = -1;
@@ -2433,7 +2439,7 @@ static void testCatchupSurvivesSaturatedRebase(void)
     pump(10);
     require(state(0)->catchup_entries_count == 1, "saturation capture fixture");
     line_t *other = lineCreate(chain->line_pools, 0);
-    tunnelUpStreamInit(server, other);
+    initRawServerLine(other);
     uint8_t    token[64] = {0};
     const char enroll[]  = "{\"name\":\"edge-b\",\"secret\":\"secret\"}";
     rawRequest(other, token, kAuthenticationClientRequestTypeAuthenticate, enroll, sizeof(enroll) - 1);

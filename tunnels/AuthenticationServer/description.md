@@ -31,6 +31,9 @@ Available modules are `Authenticate`, `ping`, `GetUserBySHA256Hex`, `GetUserBySH
 `GetUserBySHA224Hex`, `GetUserBySHA224Base64`, `GetUserBySHA224`, `GetUserByPassword`, `AddNewUser`, `UpdateUser`,
 `GetUsersPage`, and `PushUserStats`.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 `AuthenticationServer` is the last node in a logical authentication chain.
@@ -1622,6 +1625,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |

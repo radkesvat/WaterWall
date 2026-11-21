@@ -180,10 +180,10 @@ static void testSavedMode(bool reverse, mode_source_t source, usercontroller_pay
     controller->chain          = chain;
     tunnelchainFinalize(chain);
     line_t *line = packet ? tunnelchainGetWorkerPacketLine(chain, 0) : lineCreate(tunnelchainGetLinePools(chain), 0);
-    bool    tcp =
-        source == kDestinationMode ? mode == kUserControllerPayloadStream : mode == kUserControllerPayloadDatagram;
-    lineGetDestinationAddressContext(line)->proto_tcp = tcp;
-    lineGetDestinationAddressContext(line)->proto_udp = ! tcp;
+    const uint8_t offer = source != kDestinationMode || mode == kUserControllerPayloadStream
+                              ? kAddressContextTransportBoth
+                              : kAddressContextTransportUdp;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), offer);
     observed_controller                               = controller;
     owner_endpoint                                    = NULL;
     expected_mode = resolved_mode = mode;
@@ -333,7 +333,7 @@ int main(void)
                               false);
         testSavedMode(reverse, kFixedMode, kUserControllerPayloadDatagram, true);
         for (unsigned protocols = 0; protocols < 16; ++protocols)
-            if (protocols != 1 && protocols != 2)
+            if (protocols != 1 && protocols != 2 && protocols != 3)
                 testRejectedDestination(reverse, protocols);
     }
     tunnelDestroy(auth_node.instance);

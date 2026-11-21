@@ -811,7 +811,7 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayerNone` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
 
 Complete response messages drain before incomplete-input limits are checked, so a delivery may contain several

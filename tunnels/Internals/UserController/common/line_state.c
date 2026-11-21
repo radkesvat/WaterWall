@@ -14,30 +14,29 @@ void usercontrollerSetPayloadModeResolver(tunnel_t *controller, tunnel_t *owner,
 bool usercontrollerResolvePayloadMode(tunnel_t *t, line_t *l, usercontroller_payload_mode_t *mode)
 {
     usercontroller_tstate_t *ts = tunnelGetState(t);
-    if (ts->payload_mode_from_destination)
+    address_context_t       *dest    = lineGetDestinationAddressContext(l);
+    uint8_t                  allowed = kAddressContextTransportBoth;
+    if (! ts->payload_mode_from_destination)
     {
-        switch (addresscontextClassifyTransport(lineGetDestinationAddressContext(l)))
+        *mode = ts->payload_mode_resolver != NULL ? ts->payload_mode_resolver(ts->payload_mode_owner, l)
+                                                  : ts->fixed_payload_mode;
+        if (*mode != kUserControllerPayloadStream && *mode != kUserControllerPayloadDatagram)
         {
-        case kAddressContextTransportTcp:
-            *mode = kUserControllerPayloadStream;
-            return true;
-        case kAddressContextTransportUdp:
-            *mode = kUserControllerPayloadDatagram;
-            return true;
-        case kAddressContextTransportNone:
-        case kAddressContextTransportUnsupported:
-            LOGW("UserController: rejected line: payload-mode dest_context->protocol requires exactly TCP or UDP "
-                 "at Init");
-            return false;
+            LOGF("UserController: creator returned an invalid payload mode");
+            abortProgramNow(1);
         }
+        if (tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l))
+            return true;
+        allowed = *mode == kUserControllerPayloadStream ? kAddressContextTransportTcp : kAddressContextTransportUdp;
     }
-    *mode = ts->payload_mode_resolver != NULL ? ts->payload_mode_resolver(ts->payload_mode_owner, l)
-                                              : ts->fixed_payload_mode;
-    if (*mode != kUserControllerPayloadStream && *mode != kUserControllerPayloadDatagram)
+    const uint8_t transport = addresscontextSelectTransport(dest, allowed);
+    if (transport == 0)
     {
-        LOGF("UserController: creator returned an invalid payload mode");
-        abortProgramNow(1);
+        LOGW("UserController: destination offers no transport compatible with the payload mode");
+        return false;
     }
+    *mode = transport == kAddressContextTransportTcp ? kUserControllerPayloadStream : kUserControllerPayloadDatagram;
+    addresscontextSetTransportOffer(dest, transport);
     return true;
 }
 
