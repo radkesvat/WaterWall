@@ -13,6 +13,10 @@ It reads its target settings from JSON, sends the SOCKS5 greeting and optional u
 submits a SOCKS5 command for the configured target destination. It supports TCP `CONNECT` and UDP `ASSOCIATE`.
 Upstream application payload is held until the proxy accepts the request.
 
+CONNECT uses a stream on both sides. UDP ASSOCIATE takes application
+datagrams and opens two carrier lines, a stream for control and a datagram
+line for relay traffic. The configured carrier path must support both lines.
+
 ## Typical placement
 
 TCP proxy chain:
@@ -79,16 +83,18 @@ the selected strategy.
   Supported values:
 
   - `"tcp"` or `"connect"`
-    Force the destination context protocol to TCP and send a SOCKS5 `CONNECT` request.
+    Require an offer that allows TCP and send a SOCKS5 `CONNECT` request.
   - `"udp"` or `"udp-associate"`
-    Force the destination context protocol to UDP, negotiate SOCKS5 `UDP ASSOCIATE`, and send payloads as SOCKS UDP
+    Require an offer that allows UDP, negotiate SOCKS5 `UDP ASSOCIATE`, and send payloads as SOCKS UDP
     datagrams.
   - `"dest_context->protocol"` or `"line->dest_ctx->protocol"`
-    Preserve the protocol already present in the incoming destination context. An exact TCP flag behaves like `"tcp"`;
-    an exact UDP flag behaves like `"udp"`.
+    Choose from the incoming destination offer. A TCP choice sends CONNECT, and a UDP choice negotiates UDP ASSOCIATE.
 
-  If `dest_context->protocol` is selected but the incoming destination context protocol is missing, ambiguous, or not
-  TCP/UDP, `Socks5Client` logs a warning and falls back to TCP.
+  A fixed protocol must be in the unpinned destination offer.
+  With `dest_context->protocol`, the client follows an exact offer and prefers TCP
+  when the line offers both. Missing or invalid offers close the line. A pinned
+  DNS or SOCKS relay endpoint supplies its own exact address, port and protocol
+  even when the client is configured for a different protocol.
 
   Default: `"tcp"`
 

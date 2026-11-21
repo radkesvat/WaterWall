@@ -351,6 +351,7 @@ static void run(bool close_now, bool udp)
 #ifdef SOCKS_EST_SERVER
     ts->no_auth       = true;
     ts->allow_connect = true;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
     tunnelUpStreamInit(node, application);
     const uint8_t method[] = {5, 1, 0};
     tunnelUpStreamPayload(node, application, bytes(application, method, sizeof(method)));
@@ -370,6 +371,7 @@ static void run(bool close_now, bool udp)
 #else
     ts->target_addr_source = ts->target_port_source = kDvsConstant;
     ts->protocol                                    = udp ? kSocks5ClientProtocolUdp : kSocks5ClientProtocolTcp;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), udp ? IP_PROTO_UDP : IP_PROTO_TCP);
     ip_addr_t ip;
     twfRequire(ipaddr_aton("127.0.0.1", &ip), "fixture address");
     addresscontextSetIpPort(&ts->target_addr, &ip, 80);
@@ -613,6 +615,7 @@ static void borrowedFinish(borrowed_finish_point_t point)
         socksTstate *ts        = tunnelGetState(node);
         ts->target_addr_source = ts->target_port_source = kDvsConstant;
         ts->protocol                                    = kSocks5ClientProtocolTcp;
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), IP_PROTO_TCP);
         addresscontextSetIpPort(&ts->target_addr, &ip, 80);
     }
     else

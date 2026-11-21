@@ -56,7 +56,8 @@ def wait_log(process, path, marker, timeout=10):
 
 def inputs(root, args):
     credential = SHORT_UUID if args.short_id else UUID
-    settings = {"uuid": SHORT_ID if args.short_id else UUID, "connect": True, "udp": True,
+    settings = {"uuid": SHORT_ID if args.short_id else UUID, "connect": args.protocol == "tcp",
+                "udp": args.protocol == "udp",
                 "handshake-timeout-ms": 3000, "encrypted-counter-policy": args.counter_policy,
                 "send-termination": args.send_termination == "true"}
     if args.scenario == "packetaddr_capacity":

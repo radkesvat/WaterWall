@@ -88,6 +88,7 @@ static void fixtureSetupUnselected(trojanserver_fallback_fixture_t *fixture)
 
     twfLinePoolSetup(&fixture->lines, fixture->node->lstate_size, kTestLinePoolItems);
     fixture->line = twfLinePoolCreateLine(&fixture->lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fixture->line), IP_PROTO_TCP);
 
     trojanserver_lstate_t *ls = lineGetState(fixture->line, fixture->node);
     trojanserverLinestateInitialize(ls, fixture->node, fixture->line, kTrojanServerLineKindClient);

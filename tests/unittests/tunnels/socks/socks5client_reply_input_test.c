@@ -265,6 +265,7 @@ static void setupBeforeInit(bool auth, bool udp)
     client->chain = chain;
     twfLinePoolSetup(&lines, client->lstate_size, 1);
     application = twfLinePoolCreateLine(&lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(application), udp ? IP_PROTO_UDP : IP_PROTO_TCP);
     lineRef(application);
     socks5client_tstate_t *ts = tunnelGetState(client);
     ts->target_addr_source = ts->target_port_source = kDvsConstant;

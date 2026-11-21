@@ -486,6 +486,7 @@ static void begin(bool fallback, bool database, uint32_t pool)
     f.chain->supports_splice = WW_HAVE_SPLICE;
     f.t->chain               = f.chain;
     f.line                   = twfLinePoolCreateLine(&f.lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_TCP);
     lineRef(f.line);
     tunnelUpStreamInit(f.t, f.line);
 }

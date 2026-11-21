@@ -164,6 +164,7 @@ static void setup(void)
     lineRef(client);
     addresscontextSetIpAddressPort(lineGetSourceAddressContext(client), "127.0.0.1", 1234);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(client), IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(client), IP_PROTO_UDP);
     lineGetRoutingContext(client)->local_listener_port = 1080;
     socks5server_tstate_t *ts                          = tunnelGetState(server);
     ts->workers_count                                  = 1;

@@ -24,6 +24,9 @@ HTTP, TLS, or another TCP protocol and should retain its own framing.
 `HttpProxyServer` provides the incoming forward-proxy interface; `HttpClient`
 provides a separate HTTP transport with additional framing modes.
 
+The incoming destination offer must allow TCP. The client publishes TCP before
+initializing its proxy transport.
+
 ## Typical placement
 
 ```text
@@ -458,6 +461,6 @@ total process-memory guarantee.
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `10` bytes for a chunk prefix |

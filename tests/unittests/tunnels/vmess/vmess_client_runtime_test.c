@@ -54,6 +54,7 @@ static unsigned         initial_action;
 static const char      *initial_address;
 static uint16_t         initial_port;
 static unsigned         initial_protocol;
+static bool             initial_pinned;
 
 static sbuf_t *bytes(line_t *l, const void *data, size_t length)
 {
@@ -372,6 +373,7 @@ static void begin(cJSON *settings, bool udp)
         context->proto_tcp = context->proto_udp = true;
     if (initial_protocol == 2)
         addresscontextSetOnlyProtocol(context, 0);
+    addresscontextSetDestinationPinned(context, initial_pinned);
     f.prev->fnFinD     = ownerFinish;
     f.next->fnFinU     = nextFinish;
     f.next->fnInitU    = nextInit;
@@ -767,9 +769,16 @@ static void destinations(void)
         cJSON_ReplaceItemInObjectCaseSensitive(settings, "protocol", cJSON_CreateString("dest_context->protocol"));
         initial_protocol = protocol;
         begin(settings, false);
-        sendApplication("A", 1);
-        readRequest();
-        twfRequire(f.request.command == 1, "invalid context did not fall back to TCP");
+        if (protocol == 1)
+        {
+            sendApplication("A", 1);
+            readRequest();
+            twfRequire(f.request.command == 1, "a flexible offer did not select TCP");
+        }
+        else
+        {
+            twfRequire(! lineIsAlive(f.application) && f.init_count == 0, "missing offer initialized a carrier");
+        }
         end();
     }
     initial_protocol = 0;
@@ -784,6 +793,39 @@ static void destinations(void)
     begin(settings, false);
     twfRequire(! lineIsAlive(f.application) && f.init_count == 0, "dynamic mode skipped final command validation");
     end();
+    for (unsigned flexible = 0; flexible < 2; ++flexible)
+    {
+        settings = configuration("none", true);
+        cJSON_AddBoolToObject(settings, "global-padding", true);
+        cJSON_ReplaceItemInObjectCaseSensitive(settings, "protocol", cJSON_CreateString("dest_context->protocol"));
+        initial_protocol = flexible;
+        begin(settings, true);
+        twfRequire(f.node.layer_group_prev_node == kNodeLayer4Datagram && f.init_count == 1 &&
+                       addresscontextClassifyTransport(lineGetDestinationAddressContext(f.application)) ==
+                           kAddressContextTransportUdp,
+                   "UDP-only framing did not accept and commit the offered UDP transport");
+        sendApplication("U", 1);
+        readRequest();
+        twfRequire(f.request.command == 2, "UDP-only framing emitted a TCP request");
+        end();
+    }
+    initial_protocol = 0;
+
+    initial_pinned  = true;
+    initial_address = "127.0.0.2";
+    initial_port    = 5353;
+    begin(configuration("aes-128-gcm", false), true);
+    sendApplication("P", 1);
+    readRequest();
+    twfRequire(f.request.command == 2 && f.request.port == initial_port,
+               "the fixed TCP setting overrode a supported pinned UDP target");
+    end();
+    begin(configuration("zero", false), true);
+    twfRequire(! lineIsAlive(f.application) && f.init_count == 0, "a pinned UDP target bypassed TCP-only framing");
+    end();
+    initial_pinned  = false;
+    initial_address = NULL;
+    initial_port    = 0;
 }
 
 static void reservedPacketAddressTarget(void)

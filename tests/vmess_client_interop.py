@@ -142,7 +142,8 @@ def inputs(root, args):
             node("application-new", "TcpListener", {"address": HOST, "port": NEW_PORT}, "vmess-new"),
         ])
     if args.peer == "waterwall":
-        server_settings = {"uuid": credential, "connect": True, "udp": True, "handshake-timeout-ms": 3000}
+        server_settings = {"uuid": credential, "connect": args.protocol == "tcp", "udp": args.protocol == "udp",
+                           "handshake-timeout-ms": 3000}
         if args.auth == "database":
             server_settings.pop("uuid")
             server_settings["auth-client-node-name"] = "auth-client"

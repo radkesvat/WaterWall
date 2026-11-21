@@ -99,6 +99,7 @@ static void        dnsOpen(unsigned strategy, bool dynamic_address, bool dynamic
     if (! addresscontextSetIpAddress(dest, incoming))
         addresscontextDomainSetByString(dest, incoming);
     addresscontextSetPort(dest, dynamic_port ? 8443 : 9443);
+    addresscontextSetTransportOffer(dest, kAddressContextTransportBoth);
 }
 static void dnsStart(void)
 {
@@ -236,16 +237,20 @@ static void dnsTests(void)
     require(! lookups, "default local lookup");
     numericWire("origin.test:443");
     closeLine();
-    for (unsigned invalid = 0; invalid < 6; ++invalid)
+    for (unsigned invalid = 0; invalid < 8; ++invalid)
     {
         dnsOpen(2, true, true, "origin.test");
         address_context_t *dest = lineGetDestinationAddressContext(line);
         if (invalid == 0)
             dest->port = 0;
         if (invalid == 1)
+        {
             addresscontextReset(dest);
+            addresscontextSetPort(dest, 443);
+            addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
+        }
         if (invalid == 2)
-            dest->proto_udp = true;
+            addresscontextSetOnlyProtocol(dest, IP_PROTO_UDP);
         if (invalid == 3)
             dest->proto_icmp = true;
         if (invalid == 4)
@@ -253,8 +258,13 @@ static void dnsTests(void)
         if (invalid == 5)
         {
             addresscontextDomainSetByString(dest, "bad@host");
-            dest->port = 443;
+            addresscontextSetPort(dest, 443);
+            addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
         }
+        if (invalid == 6)
+            addresscontextClearProtocols(dest);
+        if (invalid == 7)
+            addresscontextSetDestinationPinned(dest, true);
         dnsStart();
         require(! lineIsAlive(line) && ! lookups && ! next_inits && ! finishes, "invalid target reached DNS/transport");
         closeLine();

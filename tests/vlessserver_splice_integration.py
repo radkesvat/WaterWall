@@ -136,7 +136,8 @@ def run(binary, mode, enabled, fallback_delay=7):
     fallback = mode == "fallback" or local_fallback
     with RunDirectory("waterwall-vlessserver-splice-") as directory:
         root = Path(directory)
-        settings = {"users": [{"username": "alice", "uuid": "42424242-4242-4242-4242-424242424242"}], "connect": True, "udp": True}
+        settings = {"users": [{"username": "alice", "uuid": "42424242-4242-4242-4242-424242424242"}],
+                    "connect": not udp, "udp": udp}
         if fallback:
             settings.update({"fallback-node-name": "fallback", "fallback-intentional-delay-ms": fallback_delay,
                              "fallback-intentional-delay-jitter-ms": 1})

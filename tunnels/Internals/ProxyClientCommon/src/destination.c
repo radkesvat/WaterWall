@@ -2,28 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static uint8_t selectProtocol(proxy_client_protocol_t protocol, const address_context_t *current,
-                              const char *client_name)
-{
-    if (protocol != kProxyClientProtocolDestContext)
-        return protocol == kProxyClientProtocolTcp ? IP_PROTO_TCP : IP_PROTO_UDP;
-
-    const address_context_transport_t transport = addresscontextClassifyTransport(current);
-    if (transport == kAddressContextTransportTcp)
-        return IP_PROTO_TCP;
-    if (transport == kAddressContextTransportUdp)
-        return IP_PROTO_UDP;
-
-    LOGW("%s: configured protocol is dest_context->protocol, but the destination context protocol was "
-         "missing or invalid (tcp=%u, udp=%u, icmp=%u, packet=%u); falling back to TCP",
-         client_name,
-         (unsigned int) current->proto_tcp,
-         (unsigned int) current->proto_udp,
-         (unsigned int) current->proto_icmp,
-         (unsigned int) current->proto_packet);
-    return IP_PROTO_TCP;
-}
-
 bool proxyClientApplyDestination(address_context_t *destination, const proxy_client_destination_t *selection,
                                  const char *client_name)
 {
@@ -47,12 +25,20 @@ bool proxyClientApplyDestination(address_context_t *destination, const proxy_cli
         return true;
     }
 
+    const uint8_t allowed   = selection->protocol == kProxyClientProtocolTcp   ? kAddressContextTransportTcp
+                              : selection->protocol == kProxyClientProtocolUdp ? kAddressContextTransportUdp
+                                                                               : kAddressContextTransportBoth;
+    const uint8_t transport = addresscontextSelectTransport(destination, allowed);
+    if (transport == 0)
+    {
+        LOGW("%s: destination offers no transport permitted by the configured protocol", client_name);
+        return false;
+    }
+
     address_context_t current = {0};
-    if (selection->address_from_context || selection->port_from_context ||
-        selection->protocol == kProxyClientProtocolDestContext)
+    if (selection->address_from_context || selection->port_from_context)
         addresscontextCopy(&current, destination);
 
-    const uint8_t protocol = selectProtocol(selection->protocol, &current, client_name);
     if (selection->address_from_context)
     {
         if (UNLIKELY(! addresscontextIsValid(&current)))
@@ -79,7 +65,7 @@ bool proxyClientApplyDestination(address_context_t *destination, const proxy_cli
     else
         addresscontextSetPort(destination, selection->target->port);
 
-    addresscontextSetOnlyProtocol(destination, protocol);
+    addresscontextSetTransportOffer(destination, transport);
     addresscontextReset(&current);
     return true;
 }

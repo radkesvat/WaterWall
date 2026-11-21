@@ -593,5 +593,15 @@ tunnel_t *vmessserverTunnelCreate(node_t *node)
         vmessserverTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }
+    const bool                  stream   = ts->allow_connect;
+    const bool                  datagram = ts->allow_udp && (ts->allowed_security & 7U) != 0;
+    const enum node_layer_group logical_side =
+        stream ? (datagram ? kNodeLayer4 : kNodeLayer4Stream) : kNodeLayer4Datagram;
+    node->layer_group_next_node = logical_side;
+    if (ts->user_controller_tunnel != NULL)
+    {
+        ts->user_controller_node.layer_group_prev_node = logical_side;
+        ts->user_controller_node.layer_group_next_node = logical_side;
+    }
     return t;
 }

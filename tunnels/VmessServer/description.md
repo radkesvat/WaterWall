@@ -12,6 +12,10 @@ decodes TCP, fixed-destination UDP or packetaddr UDP traffic, and forwards it to
 It implements the server protocol independently of its transport. Put `TlsServer`
 or `HttpServer` before it when TLS or WebSocket transport is wanted.
 
+The wire side requires a byte stream. Enabled CONNECT commands originate
+stream lines. UDP commands originate datagram lines when the permitted body
+modes support UDP framing. The fallback branch carries a byte stream.
+
 ## Typical placement
 
 ### Placement and examples
@@ -261,6 +265,10 @@ for its chain because parsing and cryptography require ordinary memory buffers.
 
 ### Fallback and replay protection
 
+Raw fallback replays on the borrowed input line. It preserves the source
+identity and the established destination choice. A handoff with an unset,
+unpinned destination transport uses TCP before the fallback branch's `Init`.
+
 Add `fallback-node-name` to select an existing stream branch for unknown
 credentials or unavailable authentication. The original inspected prefix and
 remaining bytes are replayed exactly and in order. No rejected identity is
@@ -299,6 +307,6 @@ Source-backed metadata from `tunnels/VmessServer/instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `0` bytes |

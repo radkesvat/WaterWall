@@ -53,6 +53,15 @@ static void timeout(wtimer_t *timer)
 
 void httpproxyserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        LOGW("HttpProxyServer: refusing a line without a TCP destination offer");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+
     hps_tstate_t *ts = tunnelGetState(t);
     hps_lstate_t *ls = lineGetState(l, t);
     *ls              = (hps_lstate_t) {.line = l};

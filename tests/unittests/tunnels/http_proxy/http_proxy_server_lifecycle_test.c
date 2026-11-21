@@ -267,6 +267,11 @@ static void childInit(tunnel_t *t, line_t *l)
     require(lineGetRoutingContext(l)->local_listener_port == 8080, "listener metadata");
     require(lineGetRoutingContext(l)->peer_source_port == 54321, "peer metadata");
     require(lineGetSourceAddressContext(l)->proto_tcp, "source protocol");
+    const address_context_t *destination = lineGetDestinationAddressContext(l);
+    require(addresscontextGetTransportOffer(destination) == kAddressContextTransportTcp, "child TCP transport");
+    if (s->phase == kHpsFallback)
+        require(! addresscontextIsValid(destination) && ! addresscontextHasPort(destination),
+                "fallback child endpoint");
     require(ip_addr_cmp(&lineGetSourceAddressContext(l)->ip_address, &lineGetSourceAddressContext(client)->ip_address),
             "source IP");
     if (close_on == 1)
@@ -396,6 +401,7 @@ static void resetClient(tunnel_chain_t *chain)
     lineGetRoutingContext(client)->peer_source_port    = 54321;
     require(addresscontextSetIpAddress(lineGetSourceAddressContext(client), "127.0.0.2"), "source address");
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(client), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(client), IP_PROTO_TCP);
     httpproxyserverTunnelUpStreamInit(proxy, client);
     require(! linePrefersOrdinaryReadUpstream(client) && ! linePrefersOrdinaryReadDownstream(client),
             "server chose read preferences before request selection");

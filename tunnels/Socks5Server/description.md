@@ -16,6 +16,15 @@ explicit no-auth mode, then either:
 - opens a normal Waterwall upstream connection for `CONNECT`, or
 - creates a UDP relay association tied to the accepted TCP control connection for `UDP ASSOCIATE`
 
+Control traffic uses a stream even when only UDP ASSOCIATE is enabled.
+The dynamic endpoint carries relay traffic as datagrams. On the service side,
+CONNECT opens a stream and UDP ASSOCIATE opens datagram lines.
+
+On a normal line, the exact source protocol identifies TCP control or UDP relay.
+The destination must offer that same protocol. During `Init` the server narrows
+a flexible destination to the source protocol, or closes the line if the offer is
+incompatible. A UDP relay also needs an active dynamic endpoint association.
+
 ## Typical placement
 
 TCP-only SOCKS5 server:
@@ -30,6 +39,9 @@ There is one previous callback path, not separate TCP and UDP chains into one
 `Socks5Server`. `TcpUdpListener` supplies both TCP control ingress and the
 private dynamic UDP provider on that one path. `udp: true` fails startup if the
 finalized preceding path has no `UdpListener`/`TcpUdpListener` provider.
+When routing precedes the server, direct its TCP control connections and UDP
+relay datagrams to the same instance. UDP ASSOCIATE uses TCP to negotiate
+the relay even with `connect: false`.
 
 > **Required topology for SOCKS5 UDP:** Use `TcpUdpListener` for the normal built-in deployment. `TcpListener` alone can
 > carry the SOCKS5 TCP control connection and `CONNECT`, but it cannot provide the dynamic UDP endpoint required by

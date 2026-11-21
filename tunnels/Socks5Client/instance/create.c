@@ -1,7 +1,6 @@
 #include "internal.h"
 
 #include "DomainResolver/interface.h"
-
 #include "loggers/network_logger.h"
 
 static bool socks5clientCreateInternalDomainResolver(tunnel_t *t, node_t *node)

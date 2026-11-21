@@ -21,9 +21,7 @@ static bool selectAuthority(const hpc_tstate_t *ts, line_t *l, bool prepared, hp
 {
     address_context_t *dest   = lineGetDestinationAddressContext(l);
     const bool         pinned = addresscontextDestinationIsPinned(dest);
-    if (dest->proto_udp || dest->proto_icmp || dest->proto_packet)
-        return false;
-    if (pinned && addresscontextClassifyTransport(dest) != kAddressContextTransportTcp)
+    if (addresscontextSelectTransport(dest, kAddressContextTransportTcp) == 0)
         return false;
     uint16_t port = prepared || pinned || ts->dynamic_port ? dest->port : ts->port;
     if (! port)

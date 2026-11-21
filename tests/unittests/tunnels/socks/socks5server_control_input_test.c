@@ -287,6 +287,7 @@ static void setupMode(bool auth, bool udp_only)
     control = twfLinePoolCreateLine(&lines);
     lineRef(control);
     addresscontextSetOnlyProtocol(lineGetSourceAddressContext(control), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(control), IP_PROTO_TCP);
     socks5server_tstate_t *ts = tunnelGetState(server);
     ts->no_auth               = ! auth;
     ts->allow_connect         = ! udp_only;
@@ -323,6 +324,29 @@ static void teardown(void)
     tunnelDestroy(next);
     twfWorkerEnvTeardown(&env);
 }
+static void mismatchedIngressOffers(void)
+{
+    twfSetCase("SOCKS5 normal ingress requires a destination compatible with its source role");
+    setup(false);
+    const struct
+    {
+        uint8_t source;
+        uint8_t destination;
+    } cases[] = {{IP_PROTO_TCP, IP_PROTO_UDP}, {IP_PROTO_UDP, IP_PROTO_TCP}};
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        line_t *l = twfLinePoolCreateLine(&lines);
+        lineRef(l);
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), cases[i].source);
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), cases[i].destination);
+        tunnelUpStreamInit(server, l);
+        twfRequire(! lineIsAlive(l), "incompatible destination survived SOCKS ingress Init");
+        lineUnref(l);
+    }
+    twfRequire(finishes == 2 && methods == 0 && inits == 0, "refused ingress entered the SOCKS protocol");
+    teardown();
+}
+
 static void method(bool auth)
 {
     const uint8_t greeting[] = {5, 1, auth ? 2 : 0};
@@ -802,6 +826,7 @@ int main(int argc, char **argv)
         body(0);
         return 0;
     }
+    mismatchedIngressOffers();
     udpControlPreferences();
     spliceNegotiation();
     admittedOrdering();

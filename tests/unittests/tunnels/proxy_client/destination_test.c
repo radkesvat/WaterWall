@@ -14,6 +14,9 @@
 
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
+static const proxy_client_protocol_t policies[] = {
+    kProxyClientProtocolTcp, kProxyClientProtocolUdp, kProxyClientProtocolDestContext};
+
 static void setAddress(address_context_t *context, unsigned form, bool configured)
 {
     static const char *const domains[] = {"incoming.example", "configured.example"};
@@ -34,9 +37,9 @@ static void setAddress(address_context_t *context, unsigned form, bool configure
                 "resolved IP setup failed");
         context->domain_resolved = true;
     }
-    context->port                              = configured ? 443 : 5353;
-    context->domain_strategy                   = configured ? kDsPreferIpV6 : kDsOnlyIpV4;
-    context->optional_flags.detected_protocols = configured ? kAddressContextProtocolTls : kAddressContextProtocolHttp1;
+    context->port            = configured ? 443 : 5353;
+    context->domain_strategy = configured ? kDsPreferIpV6 : kDsOnlyIpV4;
+    context->optional_flags.detected_protocols  = configured ? kAddressContextProtocolTls : kAddressContextProtocolHttp1;
     addresscontextSetOnlyProtocol(context, configured ? IP_PROTO_TCP : IP_PROTO_UDP);
 }
 
@@ -44,8 +47,7 @@ static void requireAddress(const address_context_t *actual, const address_contex
 {
     require(actual->type_ip == expected->type_ip, "selected address type changed");
     require(actual->domain_strategy == expected->domain_strategy, "selected address strategy changed");
-    require(actual->optional_flags.detected_protocols == expected->optional_flags.detected_protocols,
-            "selected address metadata changed");
+    require(actual->optional_flags.detected_protocols == expected->optional_flags.detected_protocols, "selected address metadata changed");
     require(actual->domain_constant == expected->domain_constant, "selected domain ownership changed");
     require(actual->domain_resolved == expected->domain_resolved, "selected domain resolution state changed");
     if (expected->type_ip || expected->domain_resolved)
@@ -74,17 +76,16 @@ static void testSourceCombinations(void)
     for (unsigned form = 0; form < 5; ++form)
         for (unsigned address_from_context = 0; address_from_context < 2; ++address_from_context)
             for (unsigned port_from_context = 0; port_from_context < 2; ++port_from_context)
-                for (unsigned protocol = 0; protocol < 3; ++protocol)
+                for (size_t policy = 0; policy < ARRAY_SIZE(policies); ++policy)
                 {
                     address_context_t target = {0}, destination = {0}, expected = {0};
                     setAddress(&target, form, true);
                     setAddress(&destination, form, false);
+                    addresscontextSetTransportOffer(&destination, kAddressContextTransportBoth);
                     addresscontextCopy(&expected, address_from_context ? &destination : &target);
                     proxy_client_destination_t selection = {
                         .target               = &target,
-                        .protocol             = protocol == 0   ? kProxyClientProtocolTcp
-                                                : protocol == 1 ? kProxyClientProtocolUdp
-                                                                : kProxyClientProtocolDestContext,
+                        .protocol             = policies[policy],
                         .address_from_context = address_from_context != 0,
                         .port_from_context    = port_from_context != 0,
                     };
@@ -92,7 +93,7 @@ static void testSourceCombinations(void)
                             "valid source combination was refused");
                     requireAddress(&destination, &expected);
                     require(destination.port == (port_from_context ? 5353 : 443), "wrong port source selected");
-                    requireProtocol(&destination, protocol != 0);
+                    requireProtocol(&destination, selection.protocol == kProxyClientProtocolUdp);
                     require(target.port == 443 && target.proto_tcp && ! target.proto_udp,
                             "selection changed the configured target");
                     addresscontextReset(&target);
@@ -104,8 +105,15 @@ static void testSourceCombinations(void)
 
 static void testProtocolFlags(void)
 {
-    for (unsigned flags = 0; flags < 16; ++flags)
-        for (unsigned fixed = 0; fixed < 3; ++fixed)
+    // Columns follow policies: fixed TCP, fixed UDP, then destination context.
+    // Zero means refusal, including an unset offer and every offer containing ICMP or packet.
+    static const uint8_t expected_protocol[16][ARRAY_SIZE(policies)] = {
+        [1] = {IP_PROTO_TCP, 0, IP_PROTO_TCP},
+        [2] = {0, IP_PROTO_UDP, IP_PROTO_UDP},
+        [3] = {IP_PROTO_TCP, IP_PROTO_UDP, IP_PROTO_TCP},
+    };
+    for (unsigned flags = 0; flags < ARRAY_SIZE(expected_protocol); ++flags)
+        for (size_t policy = 0; policy < ARRAY_SIZE(policies); ++policy)
         {
             address_context_t target = {0}, destination = {0};
             setAddress(&target, 2, true);
@@ -114,16 +122,15 @@ static void testProtocolFlags(void)
             destination.proto_udp                = (flags & 2U) != 0;
             destination.proto_icmp               = (flags & 4U) != 0;
             destination.proto_packet             = (flags & 8U) != 0;
-            proxy_client_destination_t selection = {
-                .target   = &target,
-                .protocol = fixed == 0   ? kProxyClientProtocolDestContext
-                            : fixed == 1 ? kProxyClientProtocolTcp
-                                         : kProxyClientProtocolUdp,
-            };
-            require(proxyClientApplyDestination(&destination, &selection, "TestClient"),
-                    "protocol selection refused a valid target");
-            requireProtocol(&destination, fixed == 2 || (fixed == 0 && flags == 2));
-            requireAddress(&destination, &target);
+            proxy_client_destination_t selection = {.target = &target, .protocol = policies[policy]};
+            const uint8_t              expected  = expected_protocol[flags][policy];
+            const bool                 accepted  = proxyClientApplyDestination(&destination, &selection, "TestClient");
+            require(accepted == (expected != 0), "wrong acceptance for transport offer and proxy policy");
+            if (accepted)
+            {
+                requireProtocol(&destination, expected == IP_PROTO_UDP);
+                requireAddress(&destination, &target);
+            }
             addresscontextReset(&destination);
             addresscontextReset(&target);
         }
@@ -206,10 +213,14 @@ static void testPinnedEndpoint(void)
                     "configured proxy endpoint replaced the DNS peer");
             requireProtocol(&destination, udp != 0);
             require(! addresscontextDestinationIsPinned(&destination), "logical proxy did not consume the pin");
-            // The next independent selector must retain its fixed endpoint.
+            require(! proxyClientApplyDestination(&destination, &selection, "OuterClient"),
+                    "consumed pin allowed an incompatible outer transport");
+            // The independent outer carrier supplies its own transport offer.
+            addresscontextSetOnlyProtocol(&destination, udp ? IP_PROTO_TCP : IP_PROTO_UDP);
             require(proxyClientApplyDestination(&destination, &selection, "OuterClient"),
                     "outer carrier target selection failed");
             requireAddress(&destination, &target);
+            requireProtocol(&destination, selection.protocol == kProxyClientProtocolUdp);
             require(destination.port == 443 && ! addresscontextIsResolverDns(&destination),
                     "logical DNS pin leaked to the independent outer endpoint");
             addresscontextReset(&expected);

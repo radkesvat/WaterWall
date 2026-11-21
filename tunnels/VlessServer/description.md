@@ -21,6 +21,11 @@ Authentication can run in either local allowlist mode or user-database mode:
 This node implements plain VLESS protocol handling only. It does not create TLS, REALITY, XTLS Vision, mux, reverse, or
 transport-specific wrapping.
 
+The wire side requires a byte stream. Enabled CONNECT commands originate
+stream lines and enabled UDP commands originate datagram lines on the service
+side. A dual-command service needs a compatible dual backend or a protocol
+route. The fallback branch carries a byte stream.
+
 ## Typical placement
 
 Normal VLESS server:
@@ -390,6 +395,10 @@ Empty datagrams are valid at the [UDP layer (RFC 8085 §5)](https://datatracker.
 
 ### Fallback Behavior
 
+Raw fallback replays on the borrowed input line. It preserves the source
+identity and the established destination choice. A handoff with an unset,
+unpinned destination transport uses TCP before the fallback branch's `Init`.
+
 Fallback is intended for active-probing resistance.
 
 When fallback is configured, unauthenticated traffic that does not look like a valid VLESS request is forwarded to the
@@ -499,6 +508,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
 | `layer_group_next_node` | `kNodeLayer4` |
 | `required_padding_left` | `4` bytes: response header plus UDP length prefix |

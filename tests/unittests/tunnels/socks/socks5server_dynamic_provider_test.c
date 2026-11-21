@@ -186,10 +186,14 @@ static void setupTestEnv(test_env_t *test)
 
     addresscontextSetIpPortProtocol(
         lineGetSourceAddressContext(test->control_line), &ts->udp_reply_ip, 12345, IP_PROTO_TCP);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(test->control_line), kAddressContextTransportBoth);
     user_handle_t empty_handle = userHandleEmpty();
     lineAddUser(test->control_line, &empty_handle, NULL, NULL);
 
     socks5serverTunnelUpStreamInit(test->server, test->control_line);
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(test->control_line)) ==
+                   kAddressContextTransportTcp,
+               "a flexible offer on a TCP control line must become TCP");
 }
 
 static void teardownTestEnv(test_env_t *test)
@@ -278,6 +282,15 @@ static void testUdpAssociateSuccessFlow(void)
     teardownTestEnv(&test);
 }
 
+static line_t *createUdpIngressLine(test_env_t *test, uint16_t peer_port)
+{
+    line_t                      *l  = twfLinePoolCreateLine(&test->lines);
+    const socks5server_tstate_t *ts = tunnelGetState(test->server);
+    addresscontextSetIpPortProtocol(lineGetSourceAddressContext(l), &ts->udp_reply_ip, peer_port, IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_UDP);
+    return l;
+}
+
 static void testUdpClientDynamicLineValidation(void)
 {
     twfSetCase("socks5server validates dynamic UDP line info against worker-local associations");
@@ -300,9 +313,8 @@ static void testUdpClientDynamicLineValidation(void)
     socks5server_assoc_map_t_insert(&ts->worker_associations[0], gen, assoc);
 
     // 1. Line with matching dynamic info
-    line_t *valid_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(valid_udp_line), &ts->udp_reply_ip, 30000, IP_PROTO_UDP);
+    line_t *valid_udp_line = createUdpIngressLine(&test, 30000);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(valid_udp_line), kAddressContextTransportBoth);
     lineGetRoutingContext(valid_udp_line)->local_listener_port = 25000;
     test.mock_provider.mock_line_is_dynamic                    = true;
     test.mock_provider.mock_line_info                          = (udplistener_dynamic_line_info_t) {
@@ -317,6 +329,9 @@ static void testUdpClientDynamicLineValidation(void)
     socks5server_lstate_t *valid_ls = lineGetState(valid_udp_line, test.server);
     twfRequireEqualU32(
         valid_ls->kind, kSocks5ServerLineKindUdpClient, "valid dynamic UDP line must be accepted as UdpClient");
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(valid_udp_line)) ==
+                   kAddressContextTransportUdp,
+               "a flexible offer on a UDP relay line must become UDP");
     twfRequireEqualU32(valid_ls->dynamic_handle.generation, gen, "dynamic handle generation must match");
 
     /* Delimited malformed addresses are discarded, never joined across datagrams. */
@@ -335,17 +350,13 @@ static void testUdpClientDynamicLineValidation(void)
 
     socks5serverTunnelUpStreamFinish(test.server, valid_udp_line);
     lineDestroy(valid_udp_line);
-    valid_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(valid_udp_line), &ts->udp_reply_ip, 30000, IP_PROTO_UDP);
+    valid_udp_line                                             = createUdpIngressLine(&test, 30000);
     lineGetRoutingContext(valid_udp_line)->local_listener_port = 25000;
     socks5serverTunnelUpStreamInit(test.server, valid_udp_line);
     valid_ls = lineGetState(valid_udp_line, test.server);
 
     // 2. Line with unknown / rogue generation
-    line_t *rogue_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(rogue_udp_line), &ts->udp_reply_ip, 30001, IP_PROTO_UDP);
+    line_t *rogue_udp_line            = createUdpIngressLine(&test, 30001);
     test.mock_provider.mock_line_info = (udplistener_dynamic_line_info_t) {
         .is_dynamic       = true,
         .expected_wid     = 0,
@@ -360,6 +371,16 @@ static void testUdpClientDynamicLineValidation(void)
                        kSocks5ServerLineKindRejected,
                        "rogue dynamic UDP line must be marked kSocks5ServerLineKindRejected");
 
+    line_t *mixed_source = twfLinePoolCreateLine(&test.lines);
+    addresscontextSetProtocol(lineGetSourceAddressContext(mixed_source), IP_PROTO_TCP);
+    addresscontextSetProtocol(lineGetSourceAddressContext(mixed_source), IP_PROTO_UDP);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(mixed_source), kAddressContextTransportBoth);
+    socks5serverTunnelUpStreamInit(test.server, mixed_source);
+    const socks5server_lstate_t *mixed_ls = lineGetState(mixed_source, test.server);
+    twfRequireEqualU32(mixed_ls->kind, kSocks5ServerLineKindRejected, "mixed source admitted an exact ingress role");
+    socks5serverTunnelUpStreamFinish(test.server, mixed_source);
+    lineDestroy(mixed_source);
+
     // Sending payload on rejected line drops safely
     sbuf_t *dummy_buf = bufferpoolGetSmallBuffer(lineGetBufferPool(rogue_udp_line));
     sbufSetLength(dummy_buf, 10);
@@ -368,9 +389,7 @@ static void testUdpClientDynamicLineValidation(void)
     /* An endpoint can be syntactically dynamic yet belong to another (or an
      * unregistered) worker. This is an ordinary fail-closed association
      * mismatch, not a cross-worker control-line operation. */
-    line_t *wrong_wid_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(wrong_wid_udp_line), &ts->udp_reply_ip, 30002, IP_PROTO_UDP);
+    line_t *wrong_wid_udp_line                                     = createUdpIngressLine(&test, 30002);
     lineGetRoutingContext(wrong_wid_udp_line)->local_listener_port = 25000;
     test.mock_provider.mock_line_is_dynamic                        = true;
     test.mock_provider.mock_line_info                              = (udplistener_dynamic_line_info_t) {
@@ -386,9 +405,7 @@ static void testUdpClientDynamicLineValidation(void)
                        kSocks5ServerLineKindRejected,
                        "foreign expected WID must reject UDP without touching the control association");
 
-    line_t *unregistered_wid_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(unregistered_wid_udp_line), &ts->udp_reply_ip, 30003, IP_PROTO_UDP);
+    line_t *unregistered_wid_udp_line                                     = createUdpIngressLine(&test, 30003);
     lineGetRoutingContext(unregistered_wid_udp_line)->local_listener_port = 25000;
     test.mock_provider.mock_line_info                                     = (udplistener_dynamic_line_info_t) {
                                             .is_dynamic       = true,
@@ -410,9 +427,7 @@ static void testUdpClientDynamicLineValidation(void)
 
     /* A static listener line cannot impersonate one of the dynamically bound
      * association endpoints, even when its source tuple looks plausible. */
-    line_t *static_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(static_udp_line), &ts->udp_reply_ip, 30004, IP_PROTO_UDP);
+    line_t *static_udp_line                                     = createUdpIngressLine(&test, 30004);
     lineGetRoutingContext(static_udp_line)->local_listener_port = 25000;
     test.mock_provider.mock_line_is_dynamic                     = false;
     socks5serverTunnelUpStreamInit(test.server, static_udp_line);
@@ -426,9 +441,7 @@ static void testUdpClientDynamicLineValidation(void)
     /* A line that passed Init must validate the local association again before
      * its first payload. Removing the old generation models endpoint close
      * followed by a later handle allocation on the same worker. */
-    line_t *stale_udp_line = twfLinePoolCreateLine(&test.lines);
-    addresscontextSetIpPortProtocol(
-        lineGetSourceAddressContext(stale_udp_line), &ts->udp_reply_ip, 30005, IP_PROTO_UDP);
+    line_t *stale_udp_line                                     = createUdpIngressLine(&test, 30005);
     lineGetRoutingContext(stale_udp_line)->local_listener_port = 25000;
     test.mock_provider.mock_line_is_dynamic                    = true;
     test.mock_provider.mock_line_info                          = (udplistener_dynamic_line_info_t) {
@@ -544,6 +557,7 @@ static void testValidUdpClientAssociationOnNonzeroWorker(void)
     twfRequire(ip4AddrAddressToNetwork("127.0.0.1", &peer_ip.u_addr.ip4) != 0,
                "failed to parse nonzero-worker UDP peer");
     addresscontextSetIpPortProtocol(lineGetSourceAddressContext(udp_line), &peer_ip, 34000, IP_PROTO_UDP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(udp_line), IP_PROTO_UDP);
     lineGetRoutingContext(udp_line)->local_listener_port = 25000;
 
     testWorkerBindWID(1);

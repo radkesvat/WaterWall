@@ -388,7 +388,7 @@ static void beginWithOptions(bool udp, const char *target, uint32_t pool_size, u
     }
     f.node = nodeTrojanClientGet();
     twfRequire(f.node.flags == kNodeFlagSupportsSplice && f.node.required_padding_left == 331 &&
-                   f.node.layer_group == kNodeLayer4 && f.node.layer_group_next_node == kNodeLayer4 &&
+                   f.node.layer_group == kNodeLayer4 && f.node.layer_group_next_node == kNodeLayer4Stream &&
                    f.node.layer_group_prev_node == kNodeLayer4,
                "client capability or layer metadata changed");
     f.node.node_settings_json = cJSON_CreateObject();
@@ -1348,6 +1348,7 @@ static void testNestedClients(void)
     twfLinePoolSetup(&f.lines, f.t->lstate_size + inner->lstate_size, 8);
     f.chain->line_pools[0] = f.lines.pools[0];
     f.application = f.carrier = twfLinePoolCreateLine(&f.lines);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.application), IP_PROTO_TCP);
     lineRef(f.application);
     tunnelUpStreamInit(f.t, f.application);
     uint32_t length = 1024 * 1024;

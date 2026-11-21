@@ -14,7 +14,7 @@ static bool vmessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
     }
 
     if (ts->dns_policy.mode == kDnsPolicyModeChain && ts->dns_policy.dns_next == NULL &&
-        (! vmessModeValid(ts->security, ts->options, 1) || ! vmessModeValid(ts->security, ts->options, 2)))
+        ts->framing_transports != kAddressContextTransportBoth)
     {
         LOGF("VmessClient: shared DNS chain entry requires framing that supports both TCP and UDP; "
              "choose a suitable dns-next branch");
@@ -278,11 +278,11 @@ static bool parseSecurity(vmessclient_tstate_t *ts, const cJSON *settings)
         return false;
     ts->options = (zero ? 0 : VMESS_OPTION_CHUNK) | (mask ? VMESS_OPTION_MASK : 0) |
                   (padding ? VMESS_OPTION_PADDING : 0) | (auth_length ? VMESS_OPTION_AUTH_LENGTH : 0);
-    if ((zero && ts->options != 0) ||
-        (ts->protocol == kVmessClientProtocolTcp && ! vmessModeValid(ts->security, ts->options, 1)) ||
-        (ts->protocol == kVmessClientProtocolUdp && ! vmessModeValid(ts->security, ts->options, 2)) ||
-        (ts->protocol == kVmessClientProtocolDestContext && ! vmessModeValid(ts->security, ts->options, 1) &&
-         ! vmessModeValid(ts->security, ts->options, 2)))
+    ts->framing_transports = (vmessModeValid(ts->security, ts->options, 1) ? kAddressContextTransportTcp : 0) |
+                             (vmessModeValid(ts->security, ts->options, 2) ? kAddressContextTransportUdp : 0);
+    if ((zero && ts->options != 0) || ts->framing_transports == 0 ||
+        (ts->protocol == kVmessClientProtocolTcp && ! (ts->framing_transports & kAddressContextTransportTcp)) ||
+        (ts->protocol == kVmessClientProtocolUdp && ! (ts->framing_transports & kAddressContextTransportUdp)))
         return false;
     if (! vmessCipherAvailable(ts->security))
     {
@@ -377,7 +377,7 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    if (! vmessModeValid(ts->security, ts->options, 1) || ! vmessModeValid(ts->security, ts->options, 2))
+    if (ts->framing_transports != kAddressContextTransportBoth)
         node->flags |= kNodeFlagDnsTransportUnsupported;
 
     if (! vmessclientCreateInternalDomainResolver(t, node) || ! vmessclientRegisterApi(t))
@@ -386,5 +386,9 @@ tunnel_t *vmessclientTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->framing_transports == kAddressContextTransportUdp)
+        node->layer_group_prev_node = kNodeLayer4Datagram;
+    else if (ts->framing_transports == kAddressContextTransportTcp)
+        node->layer_group_prev_node = kNodeLayer4Stream;
     return t;
 }

@@ -122,6 +122,7 @@ static void setup(est_fixture_t *f, uint32_t timeout_ms)
     ts->replay                      = vmessReplayCreate(ts->replay_max_entries);
     ts->auth                        = vmessserverAuthCreate(f->node);
     twfRequire(ts->auth != NULL, "VMess authentication runtime creation failed");
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->line), IP_PROTO_TCP);
     tunnelUpStreamInit(f->node, f->line);
 }
 

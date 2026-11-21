@@ -81,6 +81,7 @@ static void setupVless(est_fixture_t *f, vlessserver_user_t *user)
     ts->user_count    = 1;
     ts->allow_connect = true;
     ts->allow_udp     = true;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->line), IP_PROTO_TCP);
     tunnelUpStreamInit(f->node, f->line);
 }
 

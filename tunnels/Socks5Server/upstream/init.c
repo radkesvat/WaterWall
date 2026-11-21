@@ -6,7 +6,29 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
     socks5serverRequireCurrentLineWorker(l, "upstream Init");
 
-    if (lineGetSourceAddressContext(l)->proto_tcp)
+    const address_context_transport_t transport   = addresscontextClassifyTransport(lineGetSourceAddressContext(l));
+    const bool                        packet_line = tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l);
+    if (! packet_line)
+    {
+        if (transport != kAddressContextTransportTcp && transport != kAddressContextTransportUdp)
+        {
+            socks5serverLinestateInitialize(lineGetState(l, t), t, l, kSocks5ServerLineKindRejected);
+            LOGW("Socks5Server: rejecting normal ingress without an exact TCP or UDP source protocol");
+            return;
+        }
+
+        address_context_t *destination = lineGetDestinationAddressContext(l);
+        if (addresscontextSelectTransport(destination, transport) == 0)
+        {
+            LOGW("Socks5Server: destination does not offer %s for this ingress",
+                 transport == kAddressContextTransportTcp ? "TCP control" : "UDP relay");
+            tunnelPrevDownStreamFinish(t, l);
+            return;
+        }
+        addresscontextSetTransportOffer(destination, transport);
+    }
+
+    if (transport == kAddressContextTransportTcp)
     {
         socks5serverLinestateInitialize(lineGetState(l, t), t, l, kSocks5ServerLineKindControlTcp);
         socks5server_tstate_t *ts = tunnelGetState(t);
@@ -17,10 +39,9 @@ void socks5serverTunnelUpStreamInit(tunnel_t *t, line_t *l)
         return;
     }
 
-    if (lineGetSourceAddressContext(l)->proto_udp)
+    if (transport == kAddressContextTransportUdp)
     {
-        tunnel_chain_t *chain = tunnelGetChain(t);
-        if (tunnelchainIsWorkerPacketLine(chain, l))
+        if (packet_line)
         {
             socks5serverLinestateInitialize(lineGetState(l, t), t, l, kSocks5ServerLineKindNone);
             return;

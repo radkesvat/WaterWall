@@ -436,5 +436,15 @@ tunnel_t *trojanserverTunnelCreate(node_t *node)
         t->onChain = &trojanserverTunnelOnChain;
     }
 
+    const bool                  stream   = ts->allow_connect;
+    const bool                  datagram = ts->allow_udp;
+    const enum node_layer_group logical_side =
+        stream ? (datagram ? kNodeLayer4 : kNodeLayer4Stream) : kNodeLayer4Datagram;
+    node->layer_group_next_node = logical_side;
+    if (ts->user_controller_tunnel != NULL)
+    {
+        ts->user_controller_node.layer_group_prev_node = logical_side;
+        ts->user_controller_node.layer_group_next_node = logical_side;
+    }
     return t;
 }

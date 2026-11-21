@@ -94,10 +94,16 @@ incorrect JSON types and invalid framing combinations fail construction. Setting
 and string values must be valid UTF-8 without embedded NULs. Server-only
 user lists, fallback settings, AlterID and legacy authentication settings are not accepted.
 
-Dynamic protocol selection uses exact TCP or UDP. A missing, ambiguous or unsupported
-protocol logs a warning and falls back to TCP. A missing dynamic address, invalid or
-zero port, or a dynamically selected UDP/`zero` combination closes that association
-before transport Init. A fixed UDP/`zero` configuration fails construction.
+A fixed protocol must be in the unpinned destination offer.
+With `dest_context->protocol`, the client chooses an offered transport that its
+configured framing supports. TCP wins when both are usable. For example,
+`security: "none"` with chunk masking and global padding selects UDP on a
+flexible line. A line with no usable offer closes. A pinned
+DNS or SOCKS relay endpoint supplies its own exact address, port and protocol
+even when the client is configured for a different protocol.
+A missing dynamic address, invalid or zero port, or a dynamically selected
+UDP/`zero` combination closes the association before transport Init. A fixed
+UDP/`zero` configuration fails construction.
 
 Short IDs use exact UTF-8 bytes, without trimming, case folding or Unicode normalization.
 For example, `waterwall` maps to `106b9dde-356b-5769-b2f6-7ea4193ec5f7`.
@@ -370,5 +376,5 @@ Source-backed metadata from `instance/node.c`:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

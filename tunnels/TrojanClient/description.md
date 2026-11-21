@@ -111,8 +111,11 @@ TrojanClient -> TlsClient -> TcpConnector
   - `"dest_context->protocol"` or `"line->dest_ctx->protocol"`
     Use the incoming destination context protocol. Exact TCP selects `CONNECT`; exact UDP selects `UDP ASSOCIATE`.
 
-  If `dest_context->protocol` is selected but the incoming protocol is missing, ambiguous, or not TCP/UDP,
-  `TrojanClient` logs a warning and falls back to TCP.
+  A fixed protocol must be in the unpinned destination offer.
+  With `dest_context->protocol`, the client follows an exact offer and prefers TCP
+  when the line offers both. Missing or invalid offers close the line. A pinned
+  DNS or SOCKS relay endpoint supplies its own exact address, port and protocol
+  even when the client is configured for a different protocol.
 
   Default: `"tcp"`
 
@@ -349,5 +352,5 @@ Source-backed metadata:
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
 | `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `331` bytes |

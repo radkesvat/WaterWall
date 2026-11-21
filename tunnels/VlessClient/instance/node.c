@@ -22,7 +22,7 @@ node_t nodeVlessClientGet(void)
              .flags                 = kNodeFlagSupportsSplice,
              .required_padding_left = kVlessClientInitialPadding,
              .layer_group           = kNodeLayer4,
-             .layer_group_next_node = kNodeLayer4,
+             .layer_group_next_node = kNodeLayer4Stream,
              .layer_group_prev_node = kNodeLayer4,
              .can_have_next         = true,
              .can_have_prev         = true,

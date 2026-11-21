@@ -366,6 +366,7 @@ static void openLine(const char *settings)
     lineRef(line);
     require(addresscontextSetIpAddress(lineGetDestinationAddressContext(line), "::1"), "dynamic origin");
     lineGetDestinationAddressContext(line)->port = 443;
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     sent_length = received_length = 0;
     sent[0] = received[0] = 0;
     writes = finishes = previous_finishes = established = next_inits = 0;

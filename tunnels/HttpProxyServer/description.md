@@ -120,7 +120,7 @@ Malformed HTTP, duplicate authorization fields, invalid authority/framing, unsup
 
 Handoff creates one owned child through the configured fallback branch, bypassing this proxy's private UserController. It sends the original header, body and pipelined tail byte-for-byte, including the original request target, whitespace, hop-by-hop fields and **rejected Proxy-Authorization credential bytes**. Configure a service trusted to receive those bytes; they are never logged by the proxy. The connection then remains an opaque bidirectional stream, even if later bytes contain valid credentials. No local authentication error, CONNECT success, Continue or OPTIONS response is generated. The fallback service decides its own response.
 
-The fallback branch chooses its destination; the failed request's authority is not installed as its endpoint. A protected `next` is still required. Targets that reuse another owner's previous edge, the protected branch, this proxy or its private controller are rejected. This is a configured service handoff, not protocol translation or a retry of the requested origin. For example, these nodes can follow a TcpListener:
+The proxy marks the fresh fallback child as TCP before branch `Init`. The fallback branch chooses its own address and port. A protected `next` is still required. Targets that reuse another owner's previous edge, the protected branch, this proxy or its private controller are rejected. This is a configured service handoff, not protocol translation or a retry of the requested origin. For example, these nodes can follow a TcpListener:
 
 ```json
 [
@@ -223,6 +223,6 @@ Source-backed metadata from `tunnels/HttpProxyServer/instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

@@ -73,7 +73,7 @@ typedef struct vmessclient_tstate_s
     uint32_t               target_addr_source, target_port_source;
     vmessclient_protocol_t protocol;
     uint32_t               first_payload_timeout_ms;
-    uint8_t                security, options;
+    uint8_t                security, options, framing_transports;
     bool                   verbose, resolve_domains, send_termination, packetaddr, security_auto;
     vmess_counter_policy_t counter_policy;
     vmessclient_stats_t    stats;

@@ -51,6 +51,8 @@ tunnel_t *httpproxyserverTunnelCreate(node_t *node)
             goto fail;
         usercontrollerSetPayloadModeResolver(ts->controller, t, httpproxyserverResolvePayloadMode);
         ts->controller_node.instance = ts->controller;
+        ts->controller_node.layer_group_prev_node = kNodeLayer4Stream;
+        ts->controller_node.layer_group_next_node = kNodeLayer4Stream;
     }
     return t;
 fail:
