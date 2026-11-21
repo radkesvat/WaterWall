@@ -7,6 +7,8 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     realityserver_tstate_t *ts = tunnelGetState(t);
 
     tunnelDefaultOnChain(t, chain);
+    if (startupFailurePending())
+        return;
     chain = tunnelGetChain(t);
 
     tunnel_t *destination = ts->destination_node->instance;
@@ -63,4 +65,6 @@ void realityserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
     }
 
     ts->destination_tunnel = entry;
+    discard tunnelchainRegisterLayerRelation(
+        tunnelGetChain(t), t, kTunnelLayerSidePrev, entry, kTunnelLayerSidePrev, kTunnelLayerRelationSame);
 }

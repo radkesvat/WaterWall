@@ -8,7 +8,7 @@ static hash_t vmessserverUserControllerTypeHash(void)
     return calcHashBytes(type_name, stringLength(type_name));
 }
 
-static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
+static void vmessserverBindFallback(tunnel_t *t, tunnel_chain_t *chain)
 {
     vmessserver_tstate_t *ts = tunnelGetState(t);
 
@@ -32,11 +32,13 @@ static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    ts->fallback_tunnel = target;
-
-    if (target == t->next)
+    if (target->chain == chain &&
+        (target == t->next || target->prev == t ||
+         (ts->user_controller_tunnel == NULL && target->node->hash_name == t->node->hash_next)))
     {
-        return;
+        ts->fallback_tunnel = tunnelGetBranchEntry(t, target);
+        if (ts->fallback_tunnel != NULL)
+            return;
     }
 
     if (target->prev != NULL && target->prev != t)
@@ -50,11 +52,6 @@ static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
 
     if (target->chain == chain)
     {
-        if (target->prev == t)
-        {
-            return;
-        }
-
         LOGF("VmessServer: fallback target node \"%s\" is already in the VmessServer chain", target->node->name);
         startupFailureRecord(1);
         return;
@@ -74,6 +71,9 @@ static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         target->onChain(target, chain);
     }
 
+    if (startupFailurePending())
+        return;
+
     // The fallback target may insert internal tunnels in front of itself while
     // chaining (e.g. a connector's domain setup + DomainResolver); call the branch
     // entry bound directly below us, not the raw instance.
@@ -84,6 +84,21 @@ static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
         startupFailureRecord(1);
         return;
     }
+}
+
+static void vmessserverBindFallbackTarget(tunnel_t *t, tunnel_chain_t *chain)
+{
+    if (startupFailurePending())
+        return;
+    vmessserverBindFallback(t, chain);
+    vmessserver_tstate_t *ts = tunnelGetState(t);
+    if (! startupFailurePending() && ts->fallback_tunnel != NULL && ts->fallback_tunnel != t->next)
+        discard tunnelchainRegisterLayerRelation(tunnelGetChain(t),
+                                                 t,
+                                                 kTunnelLayerSidePrev,
+                                                 ts->fallback_tunnel,
+                                                 kTunnelLayerSidePrev,
+                                                 kTunnelLayerRelationSame);
 }
 
 void vmessserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)

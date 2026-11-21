@@ -27,7 +27,11 @@ static void bindFallback(tunnel_t *t)
         return;
     ts->fallback = tunnelGetBranchEntry(t, target);
     if (ts->fallback)
+    {
+        discard tunnelchainRegisterLayerRelation(
+            tunnelGetChain(t), t, kTunnelLayerSidePrev, ts->fallback, kTunnelLayerSidePrev, kTunnelLayerRelationSame);
         return;
+    }
 invalid:
     LOGF("HttpProxyServer: fallback requires a distinct, unbound L4 branch without a cycle");
     startupFailureRecord(1);

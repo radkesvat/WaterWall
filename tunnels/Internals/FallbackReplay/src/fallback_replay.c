@@ -186,6 +186,12 @@ fallback_replay_result_e fallbackReplayBegin(fallback_replay_t *replay, line_t *
         fallbackReplayDestroy(replay, pool);
         return kFallbackReplayRefused;
     }
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    if (addresscontextClassifyTransport(destination) == kAddressContextTransportNone &&
+        ! addresscontextDestinationIsPinned(destination))
+    {
+        addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+    }
     return kFallbackReplayOk;
 }
 

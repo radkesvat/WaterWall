@@ -39,6 +39,8 @@ static void ownerFinish(tunnel_t *t, line_t *l)
 static void coverInit(tunnel_t *t, line_t *l)
 {
     twfNextInit(t, l);
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp,
+               "raw TLS fallback did not supply its TCP destination default");
     if (init_action >= 3)
     {
         sbuf_t *buf = bufferpoolGetLargeBuffer(lineGetBufferPool(l));

@@ -2,11 +2,13 @@
 
 #include "loggers/network_logger.h"
 
-void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+static void tlsserverBindFallback(tunnel_t *t, tunnel_chain_t *chain)
 {
     tlsserver_tstate_t *ts = tunnelGetState(t);
 
     tunnelDefaultOnChain(t, chain);
+    if (startupFailurePending())
+        return;
     chain = tunnelGetChain(t);
 
     if (ts->fallback_node == NULL)
@@ -29,11 +31,12 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         return;
     }
 
-    ts->fallback_tunnel = target;
-
-    if (target == t->next)
+    if (target->chain == chain &&
+        (target == t->next || target->prev == t || target->node->hash_name == t->node->hash_next))
     {
-        return;
+        ts->fallback_tunnel = tunnelGetBranchEntry(t, target);
+        if (ts->fallback_tunnel != NULL)
+            return;
     }
 
     if (target->prev != NULL && target->prev != t)
@@ -47,11 +50,6 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
 
     if (target->chain == chain)
     {
-        if (target->prev == t)
-        {
-            return;
-        }
-
         LOGF("TlsServer: fallback target node \"%s\" is already in the TlsServer chain", target->node->name);
         startupFailureRecord(1);
         return;
@@ -71,6 +69,9 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         target->onChain(target, chain);
     }
 
+    if (startupFailurePending())
+        return;
+
     // The fallback target may insert internal tunnels in front of itself while
     // chaining (e.g. a connector's domain setup + DomainResolver); call the branch
     // entry bound directly below us, not the raw instance.
@@ -81,4 +82,17 @@ void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
         startupFailureRecord(1);
         return;
     }
+}
+
+void tlsserverTunnelOnChain(tunnel_t *t, tunnel_chain_t *chain)
+{
+    tlsserverBindFallback(t, chain);
+    tlsserver_tstate_t *ts = tunnelGetState(t);
+    if (! startupFailurePending() && ts->fallback_tunnel != NULL && ts->fallback_tunnel != t->next)
+        discard tunnelchainRegisterLayerRelation(tunnelGetChain(t),
+                                                 t,
+                                                 kTunnelLayerSidePrev,
+                                                 ts->fallback_tunnel,
+                                                 kTunnelLayerSidePrev,
+                                                 kTunnelLayerRelationSame);
 }
