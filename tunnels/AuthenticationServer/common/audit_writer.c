@@ -4,7 +4,6 @@
 
 #ifdef OS_WIN
 #include <aclapi.h>
-#include <io.h>
 #include <sddl.h>
 #else
 #include <sys/file.h>

@@ -2,10 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#ifndef OS_WIN
-#include <arpa/inet.h>
-#endif
-
 enum
 {
     kTunDeviceMaxSystemRoutes = 4096

@@ -29,12 +29,14 @@
 
 #include "loggers/log_rate_limiter.h"
 
+#include "lwip/capacity_api.h"
 #include "lwip/engine_runtime.h"
 #include "lwip/pool_cache.h"
 
 #include "net/adapter.h"
 #include "net/async_dns.h"
 #include "net/bound_udp_socket.h"
+#include "net/close_drain.h"
 #include "net/dns_policy.h"
 #include "net/dns_strategy.h"
 #include "net/egress_pin.h"

@@ -2,7 +2,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include <math.h>
 
 static void authenticationclientInitializeCallbacks(tunnel_t *t)
 {

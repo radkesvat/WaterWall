@@ -1,4 +1,3 @@
-#include "api/node_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"

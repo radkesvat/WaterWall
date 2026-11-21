@@ -2,7 +2,6 @@
 
 #include "ReverseClient/reverseclient_activation.h"
 #include "ReverseClient/reverseclient_handshake.h"
-#include "close_drain.h"
 #include "wwapi.h"
 
 typedef enum reverseserver_phase_e

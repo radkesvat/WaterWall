@@ -2,7 +2,6 @@
 #include "DomainResolver/structure.h"
 
 #include "loggers/dns_logger.h"
-#include "splice_buffer.h"
 
 enum
 {

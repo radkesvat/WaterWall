@@ -1,7 +1,6 @@
 #pragma once
 
 #include "interface.h"
-#include "packet_affinity.h"
 #include "wwapi.h"
 
 #include "lwip/priv/tcp_priv.h"

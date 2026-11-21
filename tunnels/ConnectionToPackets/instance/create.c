@@ -1,4 +1,3 @@
-#include "capacity_api.h"
 #include "structure.h"
 
 #include "DomainResolver/interface.h"

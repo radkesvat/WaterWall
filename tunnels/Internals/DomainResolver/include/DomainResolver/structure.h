@@ -2,7 +2,6 @@
 
 #include "DomainResolver/interface.h"
 #include "DomainResolver/transport.h"
-#include "loggers/log_rate_limiter.h"
 #include "wwapi.h"
 
 typedef enum domainresolver_phase_e

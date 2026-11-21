@@ -1,7 +1,6 @@
 #include "structure.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_policy.h"
 
 typedef struct domainresolver_dns_head_s
 {

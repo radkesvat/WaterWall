@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <limits.h>
-
 static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
 {
     tundeviceTunnelDestroy(t, wwLifecycleStartupRollback());

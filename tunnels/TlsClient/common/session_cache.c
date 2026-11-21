@@ -3,7 +3,6 @@
 #include <openssl/crypto.h>
 #include <openssl/digest.h>
 #include <openssl/nid.h>
-#include <time.h>
 
 typedef struct tlsclient_session_cache_s
 {

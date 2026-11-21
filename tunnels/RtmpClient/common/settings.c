@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-#include <ctype.h>
-
 static bool rtmpValidUrl(const char *url)
 {
     const char *authority = NULL;

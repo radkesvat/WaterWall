@@ -17,6 +17,10 @@
 
 _Static_assert(_Generic(&wwLwipRuntimeGet, ww_lwip_engine_t *(*) (uint8_t): 1, default: 0),
                "wwapi.h must expose the lwIP runtime API");
+_Static_assert(_Generic(&wwLwipCapacityRegisterApi, bool (*)(tunnel_t *): 1, default: 0),
+               "wwapi.h must expose lwIP stack statistics registration");
+_Static_assert(_Generic(&closeDrainIsActive, bool (*)(const close_drain_t *): 1, default: 0),
+               "wwapi.h must expose close drains");
 _Static_assert(_Generic(&bufferreaderTakeBody, sbuf_t *(*) (buffer_reader_t *, uint32_t): 1, default: 0),
                "wwapi.h must expose staged buffer reading");
 _Static_assert(_Generic(&ratebucketInit, void (*)(rate_bucket_t *, uint64_t): 1, default: 0),

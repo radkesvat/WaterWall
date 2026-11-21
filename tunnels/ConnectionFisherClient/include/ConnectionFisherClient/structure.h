@@ -1,6 +1,5 @@
 #pragma once
 
-#include "close_drain.h"
 #include "wwapi.h"
 
 typedef enum connectionfisherclient_role_e

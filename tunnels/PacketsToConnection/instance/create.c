@@ -1,4 +1,3 @@
-#include "capacity_api.h"
 #include "structure.h"
 
 #include "loggers/network_logger.h"

@@ -3,7 +3,6 @@
 #include "DomainResolver/interface.h"
 
 #include "loggers/network_logger.h"
-#include "node_builder/config_policy.h"
 
 static bool vmessclientCreateInternalDomainResolver(tunnel_t *t, node_t *node)
 {
