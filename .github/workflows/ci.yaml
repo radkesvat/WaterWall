@@ -380,6 +380,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             "clang-${LLVM_VERSION}" "llvm-${LLVM_VERSION}" "lld-${LLVM_VERSION}"
 
+      - name: Install WireGuard kernel peer test dependency
+        if: matrix.preset == 'linux-gcc-x64'
+        run: sudo apt-get install -y --no-install-recommends wireguard-tools
+
       - name: Install TUN TCP benchmark dependency
         if: matrix.preset == 'linux-gcc-x64' && inputs.extended_tests
         run: sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y iperf3
