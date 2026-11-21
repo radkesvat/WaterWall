@@ -445,7 +445,13 @@ cancellation cancel the timer; process shutdown also aborts the wait instead of 
 The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
 response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
 The deadline covers HTTP response work up to handoff or expiry. In either case HttpServer sends Finish
-to the live carrier. A TCP adapter normally flushes accepted writes and closes the socket fully.
+to the live carrier. After expiry a TCP adapter flushes accepted writes and closes the socket fully.
+
+A completed HTTP/2 response marks the carrier for bounded socket linger first. The client grants flow-control
+credit as it reads, so its WINDOW_UPDATE frames can reach the server after that Finish. An ordinary TCP close
+answers them with a reset and drops the response bytes the socket has not sent yet. On supported Linux systems
+`TcpListener` detaches the socket instead, flushes its accepted writes, shuts down its write side and reads and
+discards client input until the client closes or the linger limits pass.
 
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 

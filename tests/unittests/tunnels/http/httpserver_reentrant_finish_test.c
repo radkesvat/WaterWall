@@ -465,8 +465,10 @@ static void caseHttp2DiscardsRequestAfterServiceFinish(bool queued_before_finish
     fixtureIncreaseResponseWindow(&fixture, 65535);
 
     fixtureRequireCompleteResponse(&fixture);
-    twfRequire(lineShouldLingerOnClose(fixture.line) == fallback_peer_half_closed,
-               "HttpServer changed the carrier's TCP linger decision");
+    twfRequire(lineHasCloseLingerReason(fixture.line, kLineCloseLingerProtocolDrain),
+               "completed HTTP/2 response did not request TCP close linger");
+    twfRequire(lineHasCloseLingerReason(fixture.line, kLineCloseLingerPeerWriteShutdown) == fallback_peer_half_closed,
+               "HttpServer changed the carrier's fallback linger decision");
     twfRequireEqualU32(fixture.trace.prev_finish, 1, "completed response did not close the carrier exactly once");
     twfRequireEqualU32(fixture.trace.next_finish, 0, "completed response reflected Finish toward the service");
     twfRequireLineStateZeroed(fixture.line, fixture.http, "completed deferred response retained HTTP/2 state");

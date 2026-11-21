@@ -198,22 +198,26 @@ def run_drain_timeout(listener, executor, active):
     print(f"response drain timeout {mode}: passed ({elapsed:.3f}s)", flush=True)
 
 
-def run_round(listener, executor, round_number):
-    service = executor.submit(serve_service, listener, BODY, wait_for_receipt=True)
+def run_round(listener, executor, round_number, receipt):
+    service = executor.submit(serve_service, listener, BODY, wait_for_receipt=receipt)
     with connect_listener() as client:
         client.sendall(REQUEST)
         time.sleep(0.2)  # Start reading slowly enough to exercise backpressure on the bulk transfer.
-        # Later control frames can race an ordinary TCP close. Acknowledge the
-        # bulk through the same chain before the service writes its final byte and closes.
-        if exact(client, len(BODY) - 1, max_chunk=1 << 20) != memoryview(BODY)[:-1]:
+        if receipt:
+            # Acknowledge the bulk through the same chain before the service writes its final byte and closes.
+            if exact(client, len(BODY) - 1, max_chunk=1 << 20) != memoryview(BODY)[:-1]:
+                raise AssertionError(f"round {round_number}: response changed")
+            client.sendall(BULK_RECEIPT)
+            if exact(client, 1) != BODY[-1:]:
+                raise AssertionError(f"round {round_number}: final response byte changed")
+        # Without a receipt the service has closed long before this client finishes reading, as a backend
+        # without keep-alive does, so flow-control updates for the bytes in transit follow that close.
+        elif exact(client, len(BODY), max_chunk=1 << 20) != BODY:
             raise AssertionError(f"round {round_number}: response changed")
-        client.sendall(BULK_RECEIPT)
-        if exact(client, 1) != BODY[-1:]:
-            raise AssertionError(f"round {round_number}: final response byte changed")
         if client.recv(1) != b"":
             raise AssertionError(f"round {round_number}: missing EOF after response")
     service.result(timeout=10)
-    print(f"round {round_number}: passed", flush=True)
+    print(f"round {round_number} ({'receipt before the final byte' if receipt else 'service closes at once'}): passed", flush=True)
 
 
 def main():
@@ -228,7 +232,9 @@ def main():
             run_late_upload(listener, executor)
             run_abort_during_drain(listener, executor)
             for round_number in range(1, ROUNDS + 1):
-                run_round(listener, executor, round_number)
+                run_round(listener, executor, round_number, receipt=True)
+            for round_number in range(1, ROUNDS + 1):
+                run_round(listener, executor, round_number, receipt=False)
 
 
 if __name__ == "__main__":

@@ -438,35 +438,39 @@ static inline bool lineIsFallback(const line_t *line)
 
 typedef enum line_close_linger_reason_e
 {
+    kLineCloseLingerProtocolDrain     = 1U << 0,
     kLineCloseLingerPeerWriteShutdown = 1U << 1
 } line_close_linger_reason_t;
 
-/* Only a fallback connector that detects peer write shutdown originates this
- * request. A tunnel mapping that fallback path may propagate it to a related
- * line, or clear it when retiring the fallback branch. */
+/* A fallback connector that detects peer write shutdown originates
+ * kLineCloseLingerPeerWriteShutdown. A tunnel mapping that fallback path may
+ * propagate it to a related line, or clear it when retiring the fallback branch.
+ * HttpServer originates kLineCloseLingerProtocolDrain on the carrier of a
+ * completed HTTP/2 response: the peer grants flow-control credit as it reads,
+ * so its frames can follow the close. Each reason is independent of the other. */
 static inline void lineRequestCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
     assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
-    assert(reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
     line->close_linger_reasons |= (uint8_t) reason;
 }
 
 static inline void lineClearCloseLinger(line_t *line, line_close_linger_reason_t reason)
 {
     assert(lineIsAlive(line) && lineIsOnCurrentWorker(line));
-    assert(reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
     line->close_linger_reasons &= (uint8_t) ~reason;
 }
 
 static inline bool lineHasCloseLingerReason(const line_t *line, line_close_linger_reason_t reason)
 {
-    assert(reason == kLineCloseLingerPeerWriteShutdown);
+    assert(reason == kLineCloseLingerProtocolDrain || reason == kLineCloseLingerPeerWriteShutdown);
     return (line->close_linger_reasons & (uint8_t) reason) != 0;
 }
 
 static inline bool lineShouldLingerOnClose(const line_t *line)
 {
-    return lineHasCloseLingerReason(line, kLineCloseLingerPeerWriteShutdown);
+    return line->close_linger_reasons != 0;
 }
 
 /**
