@@ -547,13 +547,16 @@ static void initUp(tunnel_t *t, line_t *line)
     server_line_t *ls               = lineGetState(line, t);
     *ls                             = (server_line_t) {0};
     const address_context_t *source = lineGetSourceAddressContext(line);
+    address_context_t       *destination = lineGetDestinationAddressContext(line);
     /* UDP ingress keeps the remote port separately from its local listener port. */
     const uint16_t peer_port = lineGetRoutingContext(line)->peer_source_port;
-    if (UNLIKELY(! atomicLoad(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0))
+    if (UNLIKELY(! atomicLoad(&state->dispatch.open) || ! addresscontextIsIpType(source) || peer_port == 0 ||
+                 addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0))
     {
         tunnelPrevDownStreamFinish(t, line);
         return;
     }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_UDP);
     if (atomicAdd(&state->ingress_count, 1) >= 1024)
     {
         atomicSub(&state->ingress_count, 1);
@@ -942,7 +945,7 @@ node_t nodeWireGuardServerGet(void)
                      .createHandle          = create,
                      .required_padding_left = 16,
                      .layer_group           = kNodeLayer3 | kNodeLayer4,
-                     .layer_group_prev_node = kNodeLayer4,
+                     .layer_group_prev_node = kNodeLayer4Datagram,
                      .layer_group_next_node = kNodeLayer3,
                      .can_have_next         = true,
                      .can_have_prev         = true};

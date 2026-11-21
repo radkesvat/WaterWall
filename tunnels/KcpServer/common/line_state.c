@@ -81,6 +81,11 @@ bool kcpserverLinestateInitialize(kcpserver_lstate_t *ls, line_t *l, tunnel_t *t
     {
         return false;
     }
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+        return false;
+    addresscontextSetTransportOffer(destination, kAddressContextTransportUdp);
+
     kcpserver_carrier_t *carrier = memoryAllocateZero(sizeof(*carrier));
     carrier->tunnel              = t;
     carrier->line                = l;

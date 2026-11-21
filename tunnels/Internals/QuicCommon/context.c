@@ -157,6 +157,12 @@ quic_context_t *quicBeginLineInit(tunnel_t *t, line_t *l)
     quic_tstate_t *state = tunnelGetState(t);
     if (atomicLoadRelaxed(&state->stopping) || ! wloopNormalDispatchAllowed(getWorkerLoop(lineGetWID(l))))
         return NULL;
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    const uint8_t      transport   = state->client ? kAddressContextTransportTcp : kAddressContextTransportUdp;
+    if (addresscontextSelectTransport(destination, transport) == 0)
+        return NULL;
+    addresscontextSetTransportOffer(destination, transport);
+
     quic_context_t *context = memoryCalloc(1, sizeof(*context));
     context->tunnel         = t;
     context->wid            = lineGetWID(l);

@@ -307,7 +307,13 @@ bool enetEndpointPrepareInit(tunnel_t *t, line_t *line)
     const wid_t             wid = lineGetWID(line);
     assert(lineIsOnCurrentWorker(line) && wid < ts->workers_count);
     endpointLinestateDestroy(lineGetState(line, t));
-    return endpointAdmissionOpen(ts, wid);
+    address_context_t *destination = lineGetDestinationAddressContext(line);
+    const uint8_t      transport =
+        ts->role == kEnetClientEndpoint ? kAddressContextTransportTcp : kAddressContextTransportUdp;
+    if (! endpointAdmissionOpen(ts, wid) || addresscontextSelectTransport(destination, transport) == 0)
+        return false;
+    addresscontextSetTransportOffer(destination, transport);
+    return true;
 }
 
 bool enetEndpointStartClient(tunnel_t *t, line_t *application, line_t *carrier)

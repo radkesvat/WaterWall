@@ -224,6 +224,7 @@ static void setupQuicWithBudget(est_fixture_t *f, bool client, uint32_t max_byte
     f->node->chain_index    = 1;
     f->next->chain_index    = 2;
     f->chain->workers_count = 1;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->line), client ? IP_PROTO_TCP : IP_PROTO_UDP);
     f->next->fnInitU        = fixtureInit;
     f->prev->fnEstD         = fixtureEst;
     f->prev->fnPayloadD = f->next->fnPayloadU = fixturePayload;
@@ -478,7 +479,7 @@ static void testSplitLineContexts(void)
             address_context_t *destination = lineGetDestinationAddressContext(f.line);
             addresscontextDomainSetByString(destination, "fixture.example");
             addresscontextSetPort(destination, 443);
-            addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+            addresscontextSetOnlyProtocol(destination, client ? IP_PROTO_TCP : IP_PROTO_UDP);
             destination->optional_flags.detected_protocols = kAddressContextProtocolTls;
             addresscontextSetDestinationPinned(destination, true);
             addresscontextSetResolverDns(destination, true);
@@ -493,7 +494,8 @@ static void testSplitLineContexts(void)
             f.on_init = checkSplitLineContextAtInit;
             tunnelUpStreamInit(f.node, f.line);
             twfRequire(addresscontextDestinationIsPinned(destination) && addresscontextIsResolverDns(destination) &&
-                           destination->port == 443 && destination->proto_tcp && ! destination->proto_udp &&
+                           destination->port == 443 && destination->proto_tcp == (client != 0) &&
+                           destination->proto_udp == (client == 0) &&
                            strcmp(destination->domain, "fixture.example") == 0,
                        "QUIC carrier preparation changed the borrowed routing context");
             twfRequire(lineGetRoutingContext(owned_line)->local_listener_port == 8443 &&
@@ -1400,6 +1402,35 @@ static void testClosedAdmission(void)
     }
 }
 
+static void testTransportAdmission(void)
+{
+    for (unsigned client = 0; client < 2; ++client)
+    {
+        if (! roleEnabled(client != 0))
+            continue;
+        const uint8_t expected     = client ? kAddressContextTransportTcp : kAddressContextTransportUdp;
+        const uint8_t incompatible = kAddressContextTransportBoth ^ expected;
+
+        est_fixture_t f;
+        setupQuic(&f, client != 0);
+        address_context_t *destination = lineGetDestinationAddressContext(f.line);
+        addresscontextSetTransportOffer(destination, incompatible);
+        tunnelUpStreamInit(f.node, f.line);
+        twfRequire(owned_line == NULL && f.init_count == 0 && f.down_finish_count == 1,
+                   "QUIC accepted an incompatible borrowed transport");
+        destroyQuic(&f);
+
+        setupQuic(&f, client != 0);
+        destination = lineGetDestinationAddressContext(f.line);
+        addresscontextSetTransportOffer(destination, kAddressContextTransportBoth);
+        tunnelUpStreamInit(f.node, f.line);
+        twfRequire(f.init_count == 1 && addresscontextGetTransportOffer(destination) == expected,
+                   "QUIC did not select its borrowed transport from a flexible offer");
+        abortCarrier(&f);
+        destroyQuic(&f);
+    }
+}
+
 static void finishOnResume(tunnel_t *t, line_t *l)
 {
     requireCallbackSide(t, l);
@@ -1462,6 +1493,7 @@ int main(void)
     TEST_RUN_CASE(testFinishBeforeReadiness);
     TEST_RUN_CASE(testCloseDeadlineAndShutdown);
     TEST_RUN_CASE(testClosedAdmission);
+    TEST_RUN_CASE(testTransportAdmission);
     TEST_RUN_CASE(testIdleResumeFinishReentry);
     return 0;
 }

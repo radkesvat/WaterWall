@@ -21,6 +21,10 @@ if(TARGET QuicClient AND TARGET QuicServer AND
   # scheduling slots so packed startup cost does not accumulate in one test.
   # Allow cumulative packed launches while keeping per-case startup/shutdown deadlines unchanged.
   foreach(quic_role IN ITEMS client server)
+    if(NOT INCLUDE_BLACKHOLE OR (quic_role STREQUAL "client" AND NOT INCLUDE_TCP_LISTENER)
+       OR (quic_role STREQUAL "server" AND NOT INCLUDE_UDP_LISTENER))
+      continue()
+    endif()
     set(quic_config_case waterwall.quic_config_startup_${quic_role})
     add_waterwall_isolated_test(${quic_config_case}
       "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/quic_config_validation_test.py"

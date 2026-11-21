@@ -148,6 +148,7 @@ int main(void)
         lineRef(lines[i]);
         addresscontextSetIpAddressPortProtocol(lineGetSourceAddressContext(lines[i]), "192.0.2.1", 26951, 17);
         lineGetRoutingContext(lines[i])->peer_source_port = (uint16_t) (26960 + i);
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(lines[i]), IP_PROTO_UDP);
         initUp(server, lines[i]);
         server_line_t *ls = lineGetState(lines[i], server);
         twfRequire(ls->ingress != NULL && ls->ingress->port == 26960 + i,

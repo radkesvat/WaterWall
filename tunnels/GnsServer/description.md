@@ -20,6 +20,9 @@ order.
 GameNetworkingSockets sends at a configured rate and has no congestion control.
 Set `send-rate` for the path; the default is about 2 Mbit/s.
 
+The server selects UDP from the incoming carrier offer before initializing
+the association. Its separate application line offers TCP.
+
 ## Transport placement
 
 - Before `GnsServer`: a path that keeps datagram boundaries and gives every
@@ -249,8 +252,8 @@ Source-backed values from `instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Datagram` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
 
 Splice is disabled for chains that contain this node. Every datagram is built

@@ -11,6 +11,10 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used together with `KcpServer` on the remote side.
 
+The client selects TCP from the incoming application offer before opening
+its independent UDP carrier. An incompatible application line closes before
+carrier creation.
+
 ## Typical placement
 
 A common layout is:
@@ -317,6 +321,6 @@ This node explicitly disables splice for the entire chain through
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Datagram` |
 | `required_padding_left` | `1` byte |

@@ -351,7 +351,7 @@ node_t nodeWireGuardClientGet(void)
                      .required_padding_left = 16,
                      .layer_group           = kNodeLayer3 | kNodeLayer4,
                      .layer_group_prev_node = kNodeLayer3,
-                     .layer_group_next_node = kNodeLayer4,
+                     .layer_group_next_node = kNodeLayer4Datagram,
                      .can_have_next         = true,
                      .can_have_prev         = true};
 }

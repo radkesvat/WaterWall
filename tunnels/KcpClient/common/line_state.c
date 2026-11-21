@@ -165,6 +165,10 @@ bool kcpclientSessionCreate(tunnel_t *t, line_t *application)
     kcpclientLinestateDestroy(application_ls);
     if (atomicLoadRelaxed(&ts->stopping) || worker->quiescing || ! wloopNormalDispatchAllowed(getWorkerLoop(wid)))
         return false;
+    address_context_t *application_destination = lineGetDestinationAddressContext(application);
+    if (addresscontextSelectTransport(application_destination, kAddressContextTransportTcp) == 0)
+        return false;
+    addresscontextSetTransportOffer(application_destination, kAddressContextTransportTcp);
 
     line_t *transport = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     lineCopyContext(transport, application);

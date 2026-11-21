@@ -2,6 +2,7 @@
 
 WireGuardServer authenticates encrypted datagrams from `prev`. Required `mode`
 selects raw inner packets or individually managed connections toward `next`.
+At `Init`, the server selects UDP from the incoming destination offer.
 The UDP ingress is an ordinary UdpListener; endpoints are learned only from
 cryptographically authenticated handshake/data messages.
 

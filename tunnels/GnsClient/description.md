@@ -20,6 +20,10 @@ in the same order.
 GameNetworkingSockets sends at a configured rate and has no congestion control.
 Set `send-rate` for the path; the default is about 2 Mbit/s.
 
+The client selects TCP from the incoming application offer before opening
+its independent UDP carrier. An incompatible application line closes before
+carrier creation.
+
 ## Transport placement
 
 - Before `GnsClient`: any node that produces a byte stream, such as
@@ -240,8 +244,8 @@ Source-backed values from `instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Datagram` |
 | `required_padding_left` | `0` bytes |
 
 Splice is disabled for chains that contain this node. Every datagram is built

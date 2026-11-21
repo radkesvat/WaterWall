@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 In practice, this node is used together with `KcpClient` on the other side of the packet path.
 
+The server selects UDP from the incoming carrier offer before initializing
+the association. Its separate application line offers TCP.
+
 ## Typical placement
 
 A common layout is:
@@ -359,6 +362,6 @@ This node explicitly disables splice for the entire chain through
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Datagram` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `1` byte |

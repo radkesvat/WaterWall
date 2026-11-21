@@ -339,10 +339,13 @@ static bool clientAdmit(tunnel_t *t, line_t *application)
     assert(lineIsOnCurrentWorker(application) && wid < ts->workers_count);
     gns_endpoint_lstate_t *application_ls = lineGetState(application, t);
     endpointLinestateDestroy(application_ls);
-    if (! endpointAdmissionOpen(ts, wid))
+    address_context_t *application_destination = lineGetDestinationAddressContext(application);
+    if (! endpointAdmissionOpen(ts, wid) ||
+        addresscontextSelectTransport(application_destination, kAddressContextTransportTcp) == 0)
     {
         return false;
     }
+    addresscontextSetTransportOffer(application_destination, kAddressContextTransportTcp);
 
     line_t *carrier = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     copyCompanionContext(carrier, application, IP_PROTO_UDP);
@@ -393,7 +396,15 @@ void gnsEndpointServerInit(tunnel_t *t, line_t *carrier)
     assert(lineIsOnCurrentWorker(carrier) && wid < ts->workers_count);
     gns_endpoint_lstate_t *ls = lineGetState(carrier, t);
     endpointLinestateDestroy(ls);
-    gns_association_t *a = endpointAdmissionOpen(ts, wid) ? associationCreate(t, wid, NULL, carrier) : NULL;
+    address_context_t *destination = lineGetDestinationAddressContext(carrier);
+    if (! endpointAdmissionOpen(ts, wid) ||
+        addresscontextSelectTransport(destination, kAddressContextTransportUdp) == 0)
+    {
+        ts->output->carrier_finish(t, carrier);
+        return;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportUdp);
+    gns_association_t *a = associationCreate(t, wid, NULL, carrier);
     if (a == NULL)
     {
         ts->output->carrier_finish(t, carrier);

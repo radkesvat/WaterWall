@@ -11,6 +11,10 @@ ENet provides neither encryption nor authentication. Use security nodes on the
 stream side, before `EnetClient` and after `EnetServer`, when those properties
 are needed.
 
+The client selects TCP from the incoming application offer before opening
+its independent UDP carrier. An incompatible application line closes before
+carrier creation.
+
 ## Typical placement
 
 ```text
@@ -216,8 +220,8 @@ Source-backed values from `instance/node.c`:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Datagram` |
 | `required_padding_left` | `0` bytes |
 
 Splice is disabled for chains that contain this node. Every datagram is built

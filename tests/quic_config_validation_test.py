@@ -39,8 +39,9 @@ def run_case(binary, role, case, settings, error=None, *, variable_key=None,
              type_value_suffix="", variable_settings=False, duplicate_setting=None,
              duplicate_node_field=None):
     kind = "QuicClient" if role == "client" else "QuicServer"
+    listener = "TcpListener" if role == "client" else "UdpListener"
     nodes = [
-        {"name": "input", "type": "TcpListener", "next": "quic",
+        {"name": "input", "type": listener, "next": "quic",
          "settings": {"address": "127.0.0.1", "port": 29846}},
         {"name": "quic", "type": kind, "next": "output", "settings": copy.deepcopy(settings)},
         {"name": "output", "type": "BlackHole", "settings": {"mode": "passive"}},

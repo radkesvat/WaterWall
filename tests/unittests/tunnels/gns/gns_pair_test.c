@@ -200,7 +200,7 @@ static void wireInit(tunnel_t *t, line_t *line)
                    addresscontextClassifyTransport(destination) == kAddressContextTransportUdp,
                "the client's carrier is not marked as UDP in both contexts");
     gnsRequire(isIcmpOnly(lineGetSourceAddressContext(active->app)) &&
-                   addresscontextClassifyTransport(app_destination) == kAddressContextTransportNone,
+                   addresscontextClassifyTransport(app_destination) == kAddressContextTransportTcp,
                "the client changed the borrowed application's transport metadata");
     gnsRequire(addresscontextDestinationIsPinned(app_destination) && addresscontextIsResolverDns(app_destination) &&
                    app_destination->port == 12345 && destination->port == 12345 &&
@@ -226,12 +226,13 @@ static void wireInit(tunnel_t *t, line_t *line)
     lineRef(active->carrier);
     lineCopyContext(active->carrier, line);
     addresscontextClearProtocols(lineGetSourceAddressContext(active->carrier));
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(active->carrier), IP_PROTO_ICMP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(active->carrier), IP_PROTO_UDP);
     tunnelNextUpStreamInit(t, active->carrier);
     gnsRequire(active->service_inits == 0, "the server created a service line before the native handshake");
     gnsRequire(addresscontextClassifyTransport(lineGetSourceAddressContext(active->carrier)) ==
                        kAddressContextTransportNone &&
-                   isIcmpOnly(lineGetDestinationAddressContext(active->carrier)),
+                   addresscontextClassifyTransport(lineGetDestinationAddressContext(active->carrier)) ==
+                       kAddressContextTransportUdp,
                "the server changed the borrowed carrier's transport metadata");
     if (lineIsAlive(active->carrier) && active->carrier_est_stage == kEstBeforeService)
     {
@@ -467,6 +468,7 @@ static void openApp(void)
     address_context_t *destination = lineGetDestinationAddressContext(active->app);
     addresscontextDomainSetByString(destination, "pair.fixture");
     addresscontextSetPort(destination, 12345);
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
     addresscontextSetDestinationPinned(destination, true);
     addresscontextSetResolverDns(destination, true);
     lineAddAuthenticatedCredentials(active->app, "pair-user", "pair-password");

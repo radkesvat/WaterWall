@@ -7,6 +7,9 @@ stream and encrypts downstream application bytes into QUIC datagrams. Google
 QUICHE performs QUIC v1/TLS 1.3. Existing adapters accept peers and own their
 normal WaterWall lines; this node creates no listener or socket.
 
+The server selects UDP from the incoming carrier offer before initializing
+the association. Its separate application line offers TCP.
+
 ## Typical placement
 
 ```text
@@ -115,8 +118,9 @@ normal line and owns a separate service line. This separates application closure
 from the lifetime needed for delivery and acknowledgements. Adapters own their
 sockets; each normal line is destroyed only by its creator.
 
-Each carrier Payload is exactly one complete QUIC datagram. The QUIC nodes drop
-empty carrier datagrams and those larger than 1,472 bytes.
+Each carrier Payload is exactly one complete QUIC datagram. The carrier is on
+`QuicServer.prev` and `QuicClient.next`. The QUIC nodes drop empty carrier
+datagrams and those larger than 1,472 bytes.
 
 The client sends one encrypted opening byte `0x00` before application data. The
 server consumes it internally, allowing a server-first application to send even
@@ -195,6 +199,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Datagram` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
