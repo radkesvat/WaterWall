@@ -17,6 +17,7 @@ typedef struct encryptionserver_tstate_s
 typedef struct encryptionserver_lstate_s
 {
     buffer_stream_t read_stream;
+    bool            datagram;
 } encryptionserver_lstate_t;
 
 enum
@@ -36,7 +37,7 @@ void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void encryptionserverTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void encryptionserverTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void encryptionserverLinestateInitialize(encryptionserver_lstate_t *ls, buffer_pool_t *pool);
+void encryptionserverLinestateInitialize(encryptionserver_lstate_t *ls, buffer_pool_t *pool, bool datagram);
 void encryptionserverLinestateDestroy(encryptionserver_lstate_t *ls);
 
 void encryptionserverTunnelstateDestroy(encryptionserver_tstate_t *ts);

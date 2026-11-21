@@ -17,6 +17,7 @@ typedef struct encryptionclient_tstate_s
 typedef struct encryptionclient_lstate_s
 {
     buffer_stream_t read_stream;
+    bool            datagram;
 } encryptionclient_lstate_t;
 
 enum
@@ -36,7 +37,7 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 void encryptionclientTunnelDownStreamFinish(tunnel_t *t, line_t *l);
 void encryptionclientTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf);
 
-void encryptionclientLinestateInitialize(encryptionclient_lstate_t *ls, buffer_pool_t *pool);
+void encryptionclientLinestateInitialize(encryptionclient_lstate_t *ls, buffer_pool_t *pool, bool datagram);
 void encryptionclientLinestateDestroy(encryptionclient_lstate_t *ls);
 
 void encryptionclientTunnelstateDestroy(encryptionclient_tstate_t *ts);

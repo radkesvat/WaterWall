@@ -10,8 +10,13 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 `EncryptionServer` is the server-side counterpart of `EncryptionClient`.
 It decrypts upstream traffic carried in TLS-like application-data records and encrypts downstream responses the same way.
 
-The default behavior described here is stream mode. Set `packet-mode: true`
+Normal lines carry a byte stream or complete datagrams. Set `packet-mode: true`
 for the separate IPv4 packet profile described below.
+
+Each normal line selects and records its framing from the destination
+offer at `Init`. TCP selects the stream codec, UDP selects the datagram
+codec, and an offer of both selects TCP. The selected transport is published
+before the next node receives `Init`.
 
 ## Typical placement
 
@@ -45,8 +50,8 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 ### Settings
 
 - `packet-mode` (boolean, optional): `false` by default; `true` selects IPv4 payload encryption.
-- `algorithm` (string or number, optional): stream mode uses `chacha20-poly1305` (default) or `aes-gcm`; packet mode uses only `xchacha20-poly1305` (its default).
-- `password` (non-empty string, required): shared secret used for key derivation. Stream mode limits it to 32 bytes when `kdf-iterations` is greater than 1.
+- `algorithm` (string or number, optional): normal lines use `chacha20-poly1305` (default) or `aes-gcm`. Packet mode uses only `xchacha20-poly1305` (its default).
+- `password` (non-empty string, required): shared secret used for key derivation. On normal lines the limit is 32 bytes when `kdf-iterations` is greater than 1.
 - `salt` (string, optional): key-derivation salt of at most 32 bytes in either mode, default `waterwall-encryption`.
 - `kdf-iterations` (number, optional): key derivation rounds, default `12000`
 - `max-frame-size` (number, optional): maximum plaintext frame size in bytes, default `16356`
@@ -58,7 +63,7 @@ These are node fragments; define the referenced neighboring nodes in the surroun
 Set `"packet-mode": true` explicitly when the node receives complete IPv4
 packets. This selects Layer-3 metadata and a stateless packet transform instead
 of the stream record reader. It is not selected merely because a different part
-of the chain has a packet adapter. The default remains `false` for stream use.
+of the chain has a packet adapter. The default `false` selects normal-line use.
 
 ```json
 {
@@ -69,8 +74,8 @@ of the chain has a packet adapter. The default remains `false` for stream use.
 ```
 
 Packet mode accepts only XChaCha20-Poly1305, which is also its default when
-`algorithm` is omitted. Stream mode continues to use ChaCha20-Poly1305 or
-AES-GCM and rejects XChaCha20-Poly1305. `max-frame-size` belongs to stream mode
+`algorithm` is omitted. Normal lines use ChaCha20-Poly1305 or
+AES-GCM. `max-frame-size` belongs to normal-line mode
 and is rejected in packet mode; packet data is never split into records.
 `password`, `salt` and `kdf-iterations` still select the shared base key. Packet
 mode hashes the password with SHA-256 for its repeated BLAKE2s KDF key, allowing
@@ -141,10 +146,24 @@ Encrypted payloads are sent as TLS-like application-data records:
 
 The selected algorithm is configured locally on both peers and is not exposed in the record header.
 
-Complete received records are drained as they become available; only an incomplete
+On a stream, complete received records are drained as they become available; only an incomplete
 record remains buffered between callbacks. Once its header is complete, the record
 length is checked against `max-frame-size` before waiting for the rest of the body.
 Malformed records or AEAD authentication failure close both directions.
+
+### Datagram records
+
+On a datagram line, each admitted plaintext datagram produces one complete
+authenticated record in one carrier payload. An empty datagram produces one
+33-byte record. The plaintext limit is `max-frame-size`. The default limit
+of 16,356 bytes produces a record of at most 16,389 bytes. Budget 33 bytes
+of record overhead when setting the limit for a smaller carrier. The sender
+drops an oversized datagram whole and
+can still send the next valid datagram on the same line.
+
+The receiver validates the header, exact record length and authentication tag
+before handing off one plaintext datagram. A truncated record, extra bytes,
+multiple records in one delivery or failed authentication closes that line.
 
 ## Implementation details
 
@@ -160,7 +179,7 @@ This node explicitly disables splice for the entire chain through
 | node flags | `kNodeFlagBlocksSplice` |
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
-| `layer_group` | `kNodeLayer4` in stream mode; `kNodeLayer3` in packet mode |
-| `layer_group_prev_node` | `kNodeLayer4` in stream mode; `kNodeLayer3` in packet mode |
-| `layer_group_next_node` | `kNodeLayer4` in stream mode; `kNodeLayer3` in packet mode |
-| `required_padding_left` | `17` bytes in stream mode; `24` bytes in packet mode |
+| `layer_group` | `kNodeLayer4` on normal lines, `kNodeLayer3` in packet mode |
+| `layer_group_prev_node` | `kNodeLayer4` on normal lines, `kNodeLayer3` in packet mode |
+| `layer_group_next_node` | `kNodeLayer4` on normal lines, `kNodeLayer3` in packet mode |
+| `required_padding_left` | `17` bytes on normal lines, `24` bytes in packet mode |

@@ -141,7 +141,7 @@ static void testCredentialLimits(void)
         const bool server = role != 0;
         expectStartupError(server,
                            "{\"password\":\"012345678901234567890123456789012\",\"kdf-iterations\":2}",
-                           "'password' must be at most 32 bytes in stream mode");
+                           "Layer 4 'password' must be at most 32 bytes");
         expectStartupError(
             server,
             "{\"password\":\"secret\",\"salt\":\"012345678901234567890123456789012\",\"kdf-iterations\":1}",

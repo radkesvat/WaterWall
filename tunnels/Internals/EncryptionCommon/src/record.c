@@ -61,6 +61,20 @@ wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, const uint8_t key[32]
     return status;
 }
 
+static uint32_t encryptionFrameLength(const uint8_t header[kEncryptionTlsHeaderSize], uint32_t max_payload)
+{
+    if (header[0] != kEncryptionTlsApplicationData || header[1] != kEncryptionTlsVersionMajor ||
+        header[2] != kEncryptionTlsVersionMinor)
+        return 0;
+
+    uint32_t body_length = ((uint32_t) header[3] << 8) | header[4];
+    if (body_length < kEncryptionNonceSize + kEncryptionTagSize ||
+        body_length > max_payload + kEncryptionNonceSize + kEncryptionTagSize)
+        return 0;
+
+    return kEncryptionTlsHeaderSize + body_length;
+}
+
 encryption_frame_result_t encryptionReadFrame(buffer_stream_t *stream, uint32_t max_payload, sbuf_t **frame)
 {
     assert(max_payload > 0 && max_payload <= kEncryptionHardMaxFramePayload);
@@ -70,21 +84,22 @@ encryption_frame_result_t encryptionReadFrame(buffer_stream_t *stream, uint32_t 
 
     uint8_t header[kEncryptionTlsHeaderSize];
     bufferstreamCopyBytesAt(stream, 0, header, sizeof(header));
-    if (header[0] != kEncryptionTlsApplicationData || header[1] != kEncryptionTlsVersionMajor ||
-        header[2] != kEncryptionTlsVersionMinor)
+    const uint32_t frame_length = encryptionFrameLength(header, max_payload);
+    if (frame_length == 0)
         return kEncryptionFrameInvalid;
-
-    uint32_t body_length = ((uint32_t) header[3] << 8) | header[4];
-    if (body_length < kEncryptionNonceSize + kEncryptionTagSize ||
-        body_length > max_payload + kEncryptionNonceSize + kEncryptionTagSize)
-        return kEncryptionFrameInvalid;
-
-    uint32_t frame_length = kEncryptionTlsHeaderSize + body_length;
     if (bufferstreamGetLength(stream) < frame_length)
         return kEncryptionFrameNeedMore;
 
     *frame = bufferstreamReadExact(stream, frame_length);
     return kEncryptionFrameReady;
+}
+
+bool encryptionDatagramHasFrame(const sbuf_t *datagram, uint32_t max_payload)
+{
+    assert(datagram != NULL && ! sbufIsSplice(datagram));
+    assert(max_payload <= kEncryptionHardMaxFramePayload);
+    const size_t length = sbufGetLength(datagram);
+    return length >= kEncryptionTlsHeaderSize && length == encryptionFrameLength(sbufGetRawPtr(datagram), max_payload);
 }
 
 wcrypto_status_t encryptionDecodeFrame(uint32_t algorithm, const uint8_t key[32], sbuf_t *buffer)

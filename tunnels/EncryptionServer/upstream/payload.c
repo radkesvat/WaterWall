@@ -2,12 +2,38 @@
 
 #include "loggers/network_logger.h"
 
+static bool decodeAndForward(tunnel_t *t, line_t *l, const encryptionserver_tstate_t *ts, sbuf_t *frame)
+{
+    if (encryptionDecodeFrame(ts->algorithm, ts->key, frame) != kWCryptoOk)
+    {
+        LOGW("EncryptionServer: failed to decrypt frame, closing line");
+        lineReuseBuffer(l, frame);
+        encryptionserverCloseLineBidirectional(t, l);
+        return false;
+    }
+
+    return lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame);
+}
+
 void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
     encryptionserver_tstate_t *ts = tunnelGetState(t);
     encryptionserver_lstate_t *ls = lineGetState(l, t);
 
-    bufferstreamPush(&(ls->read_stream), buf);
+    if (ls->datagram)
+    {
+        if (! encryptionDatagramHasFrame(buf, ts->max_frame_payload))
+        {
+            LOGW("EncryptionServer: closing line: invalid encrypted datagram record");
+            lineReuseBuffer(l, buf);
+            encryptionserverCloseLineBidirectional(t, l);
+            return;
+        }
+        discard decodeAndForward(t, l, ts, buf);
+        return;
+    }
+
+    bufferstreamPush(&ls->read_stream, buf);
 
     while (true)
     {
@@ -39,15 +65,7 @@ void encryptionserverTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
 
-        if (encryptionDecodeFrame(ts->algorithm, ts->key, frame_buffer) != kWCryptoOk)
-        {
-            LOGW("EncryptionServer: failed to decrypt frame, closing line");
-            lineReuseBuffer(l, frame_buffer);
-            encryptionserverCloseLineBidirectional(t, l);
-            return;
-        }
-
-        if (! lineCallWithRefWithBuf(l, tunnelNextUpStreamPayload, t, frame_buffer))
+        if (! decodeAndForward(t, l, ts, frame_buffer))
         {
             return;
         }

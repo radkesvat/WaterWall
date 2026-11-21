@@ -154,7 +154,7 @@ int main(void)
     line->alive             = true;
     line->wid               = 0;
     encryption_lstate_t *ls = lineGetState(line, encryption);
-    encryptionLinestateInitialize(ls, pool);
+    encryptionLinestateInitialize(ls, pool, false);
 
     enum
     {

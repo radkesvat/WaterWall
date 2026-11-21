@@ -4,10 +4,11 @@
 
 void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
 {
-    encryptionclient_tstate_t *ts            = tunnelGetState(t);
-    uint32_t                   plaintext_len = sbufGetLength(buf);
+    const encryptionclient_lstate_t *ls            = lineGetState(l, t);
+    const encryptionclient_tstate_t *ts            = tunnelGetState(t);
+    const uint32_t                   plaintext_len = sbufGetLength(buf);
 
-    if (plaintext_len == 0)
+    if (ls->datagram ? plaintext_len > ts->max_frame_payload : plaintext_len == 0)
     {
         lineReuseBuffer(l, buf);
         return;
@@ -22,7 +23,7 @@ void encryptionclientTunnelUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         while (remaining > 0)
         {
             uint32_t chunk_len = min(remaining, ts->max_frame_payload);
-            uint32_t frame_len = kEncryptionFramePrefixSize + chunk_len + kEncryptionTagSize;
+            uint32_t frame_len = kEncryptionFrameOverhead + chunk_len;
             sbuf_t  *frame_buf = encryptionAllocFrameBuffer(pool, frame_len);
 
             sbufSetLength(frame_buf, chunk_len);

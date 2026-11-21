@@ -150,6 +150,7 @@ if(LINUX AND TARGET EncryptionCommon)
         SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/crypto/encryption_reentrant_output_test.c
           ${encryption_test_sources}
           ${encryption_dir}/common/helpers.c ${encryption_dir}/common/line_state.c
+          ${encryption_dir}/upstream/init.c
           ${encryption_dir}/upstream/payload.c ${encryption_dir}/downstream/payload.c
           ${encryption_dir}/upstream/fin.c ${encryption_dir}/downstream/fin.c
         LIBRARIES EncryptionCommon ww)

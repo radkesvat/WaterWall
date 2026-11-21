@@ -18,6 +18,7 @@ enum
     kEncryptionNonceSize              = 12,
     kEncryptionTagSize                = 16,
     kEncryptionFramePrefixSize        = kEncryptionTlsHeaderSize + kEncryptionNonceSize,
+    kEncryptionFrameOverhead          = kEncryptionFramePrefixSize + kEncryptionTagSize,
     kEncryptionMaxTlsRecordBody       = 16384,
     kEncryptionMaxFramePayload        = kEncryptionMaxTlsRecordBody - kEncryptionNonceSize - kEncryptionTagSize,
     kEncryptionDefaultKdfIterations   = 12000,
@@ -44,8 +45,7 @@ sbuf_t *encryptionAllocFrameBuffer(buffer_pool_t *pool, uint32_t frame_length);
  * Requires plaintext length <= kEncryptionHardMaxFramePayload and the advertised
  * left padding. Generates a fresh nonce and authenticates the five-byte header.
  * On every result *buffer is the sole caller-owned allocation; on failure its
- * contents may have changed and must be discarded. Zero plaintext is supported;
- * nodes retain their policy of dropping empty application input before encoding. */
+ * contents may have changed and must be discarded. Zero plaintext is supported. */
 WCRYPTO_MUST_USE wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, const uint8_t key[32], sbuf_t **buffer);
 
 /* Ready consumes exactly one complete, validated record and transfers it through
@@ -54,7 +54,11 @@ WCRYPTO_MUST_USE wcrypto_status_t encryptionEncodeFrame(uint32_t algorithm, cons
  * max_payload must be in [1, kEncryptionHardMaxFramePayload]. */
 encryption_frame_result_t encryptionReadFrame(buffer_stream_t *stream, uint32_t max_payload, sbuf_t **frame);
 
-/* Requires one complete validated record, as returned by ReadFrame. On success
+/* A datagram must contain exactly one complete record. A limit of zero permits
+ * only a record with empty plaintext. Consumes no buffer. */
+bool encryptionDatagramHasFrame(const sbuf_t *datagram, uint32_t max_payload);
+
+/* Requires one complete validated record, as checked by ReadFrame or DatagramHasFrame. On success
  * buffer exposes only plaintext (which can be empty). Ownership never changes;
  * on failure contents may have changed and the caller must discard the buffer. */
 WCRYPTO_MUST_USE wcrypto_status_t encryptionDecodeFrame(uint32_t algorithm, const uint8_t key[32], sbuf_t *buffer);

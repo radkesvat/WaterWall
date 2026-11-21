@@ -118,8 +118,8 @@ static bool encryptionclientTunnelstateInitialize(encryptionclient_tstate_t *ts,
         (! ts->packet_mode && algorithm != kEncryptionAlgorithmChaCha20Poly1305 &&
          algorithm != kEncryptionAlgorithmAes256Gcm))
     {
-        LOGF("EncryptionClient: packet mode requires xchacha20-poly1305; stream mode requires chacha20-poly1305 or "
-             "aes-gcm");
+        LOGF(
+            "EncryptionClient: packet mode requires xchacha20-poly1305. Layer 4 requires chacha20-poly1305 or aes-gcm");
         goto cleanup;
     }
 
@@ -153,15 +153,14 @@ static bool encryptionclientTunnelstateInitialize(encryptionclient_tstate_t *ts,
     }
     if (! ts->packet_mode && kdf_iterations > 1 && password_len > WCRYPTO_BLAKE2S_MAX_KEY_SIZE)
     {
-        LOGF("EncryptionClient: 'password' must be at most %d bytes in stream mode when 'kdf-iterations' is greater "
-             "than 1",
+        LOGF("EncryptionClient: Layer 4 'password' must be at most %d bytes when 'kdf-iterations' exceeds 1",
              WCRYPTO_BLAKE2S_MAX_KEY_SIZE);
         goto cleanup;
     }
 
     if (ts->packet_mode && cJSON_GetObjectItemCaseSensitive(settings, "max-frame-size") != NULL)
     {
-        LOGF("EncryptionClient: 'max-frame-size' applies only to stream mode");
+        LOGF("EncryptionClient: 'max-frame-size' applies only to normal-line mode");
         goto cleanup;
     }
     getIntFromJsonObject(&max_frame_size, settings, "max-frame-size");

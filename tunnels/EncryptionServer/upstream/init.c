@@ -4,8 +4,17 @@
 
 void encryptionserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
-    encryptionserver_lstate_t *ls = lineGetState(l, t);
-    encryptionserverLinestateInitialize(ls, lineGetBufferPool(l));
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    const uint8_t      transport   = addresscontextSelectTransport(destination, kAddressContextTransportBoth);
+    if (transport == 0)
+    {
+        LOGW("EncryptionServer: line does not offer TCP or UDP");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
 
+    addresscontextSetTransportOffer(destination, transport);
+    encryptionserver_lstate_t *ls = lineGetState(l, t);
+    encryptionserverLinestateInitialize(ls, lineGetBufferPool(l), transport == kAddressContextTransportUdp);
     tunnelNextUpStreamInit(t, l);
 }
