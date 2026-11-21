@@ -4,9 +4,7 @@
 
 void headerserverLinestateInitialize(headerserver_lstate_t *ls, line_t *l, headerserver_tstate_t *ts)
 {
-    bool waits_for_header = ts->override_mode == kHeaderServerOverrideModeHeaderPort ||
-                            ts->override_mode == kHeaderServerOverrideModeHeaderProtocol ||
-                            ts->override_mode == kHeaderServerOverrideModeProxyProtocolSourceFields;
+    bool waits_for_header = ts->override_mode != kHeaderServerOverrideModeConstant;
 
     *ls = (headerserver_lstate_t) {
         .phase           = waits_for_header ? kHeaderServerPhaseWaitHeader : kHeaderServerPhaseEstablished,

@@ -254,6 +254,75 @@ def routing_context_cases(binary):
         startup(binary, {"name": "http-fallback-exact-tcp", "nodes": nodes}, exercise=exchange)
 
 
+def header_stream_case(binary):
+    ingress = ("127.0.0.1", 29845)
+    backend = ("127.0.0.1", 29846)
+    nodes = [socket_node("in", "TcpListener", ingress[1], next_node="header"),
+             {"name": "header", "type": "HeaderServer",
+              "settings": {"override": "line-mark"}, "next": "decode"},
+             {"name": "decode", "type": "UdpOverTcpServer", "next": "out"},
+             socket_node("out", "UdpConnector", backend[1])]
+
+    def exchange(process, deadline):
+        with connect_when_ready(process, ingress, deadline=deadline, timeout=5,
+                                failure=lambda: AssertionError("TCP carrier did not start")) as carrier:
+            carrier.settimeout(5)
+            # Fragment the mark, then complete it with one frame and half the next length.
+            carrier.sendall(bytes(range(15)))
+            carrier.sendall(b"\x0f\x00\x03one\x00")
+            first, peer = udp.recvfrom(1024)
+            assert first == b"one", first
+            udp.sendto(b"ack", peer)
+            assert exact(carrier, 5) == b"\x00\x03ack"
+            # Finish the partial frame and supply a third frame in the same write.
+            carrier.sendall(b"\x03two\x00\x05three")
+            for expected in (b"two", b"three"):
+                payload, sender = udp.recvfrom(1024)
+                assert (payload, sender) == (expected, peer), (payload, sender)
+
+    with socket.socket(type=socket.SOCK_DGRAM) as udp:
+        udp.bind(backend)
+        udp.settimeout(5)
+        startup(binary, {"name": "marked-stream-datagram-boundaries", "nodes": nodes}, exercise=exchange)
+
+
+def header_direct_connector_cases(binary):
+    ingress = ("127.0.0.1", 29845)
+    backend_port = 29846
+    tcp, udp = make_backends(backend_port)
+    with tcp, udp:
+        for mode, cases in (
+            ("dest_context->protocol", ((b"\x06", tcp), (b"\x11", udp))),
+            ("line-mark", ((bytes(16), tcp), (bytes(range(16)), tcp))),
+        ):
+            nodes = [socket_node("in", "TcpListener", ingress[1], next_node="header"),
+                     {"name": "header", "type": "HeaderServer", "settings": {"override": mode}, "next": "out"},
+                     socket_node("out", "TcpUdpConnector", backend_port)]
+
+            def exchange(process, deadline):
+                for prefix, wanted in cases:
+                    with connect_when_ready(process, ingress, deadline=deadline, timeout=5,
+                                            failure=lambda: AssertionError("TCP ingress did not start")) as client:
+                        client.settimeout(5)
+                        client.sendall(prefix + b"Q")
+                        ready, _, _ = select.select([tcp, udp], [], [], 5)
+                        assert ready == [wanted], (mode, prefix.hex(), ready)
+                        if wanted == udp:
+                            data, peer = udp.recvfrom(16)
+                            assert data == b"Q", data
+                            udp.sendto(b"R", peer)
+                        else:
+                            peer, _ = tcp.accept()
+                            with peer:
+                                peer.settimeout(5)
+                                assert exact(peer, 1) == b"Q"
+                                peer.sendall(b"R")
+                        assert exact(client, 1) == b"R"
+
+            startup(binary, {"name": "header-direct-" + ("mark" if mode == "line-mark" else "protocol"),
+                             "nodes": nodes}, exercise=exchange)
+
+
 def proxy_cases(binary):
     listener = socket_node("ingress", "TcpListener", 29845, next_node="proxy")
     stream = socket_node("egress", "TcpConnector", 29846)
@@ -403,6 +472,8 @@ if __name__ == "__main__":
     parser.add_argument("binary", type=lambda value: str(Path(value).resolve()))
     cases = {
         "dispatch": dispatch_cases,
+        "header-stream": header_stream_case,
+        "header-direct": header_direct_connector_cases,
         "mixed-encryption": mixed_encryption_cases,
         "pinned-relay": pinned_relay_cases,
         "proxy": proxy_cases,

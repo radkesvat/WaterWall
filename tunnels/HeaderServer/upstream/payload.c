@@ -305,6 +305,16 @@ static headerserver_header_parse_result_t headerserverReadConfiguredHeader(tunne
 
     switch (ts->override_mode)
     {
+    case kHeaderServerOverrideModeLineMark: {
+        if (bufferstreamGetLength(&ls->read_stream) < kLineMarkSize)
+            return kHeaderServerHeaderParseNeedMore;
+        line_mark_t mark;
+        sbuf_t     *header = bufferstreamReadExact(&ls->read_stream, kLineMarkSize);
+        sbufRead(header, mark.bytes, kLineMarkSize);
+        lineReuseBuffer(l, header);
+        lineSetMark(l, &mark);
+        return kHeaderServerHeaderParseDone;
+    }
     case kHeaderServerOverrideModeHeaderPort: {
         uint16_t port = 0;
         if (! headerserverReadHeaderPort(ls, l, &port))

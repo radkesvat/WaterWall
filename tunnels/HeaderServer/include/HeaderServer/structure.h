@@ -9,7 +9,8 @@ typedef enum headerserver_override_mode_e
     kHeaderServerOverrideModeConstant,
     kHeaderServerOverrideModeHeaderPort,
     kHeaderServerOverrideModeProxyProtocolSourceFields,
-    kHeaderServerOverrideModeHeaderProtocol
+    kHeaderServerOverrideModeHeaderProtocol,
+    kHeaderServerOverrideModeLineMark
 } headerserver_override_mode_e;
 
 typedef enum headerserver_phase_e

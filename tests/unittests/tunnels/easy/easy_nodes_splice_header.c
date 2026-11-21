@@ -46,7 +46,7 @@ int __wrap___snprintf_chk(char *output, size_t size, int flag, size_t object_siz
 static easy_fixture_t *protocol_fixture;
 static bool            protocol_reenter, protocol_splice;
 static uint8_t         protocol_expected[8];
-static unsigned        protocol_init_count;
+static unsigned        header_init_count;
 
 static void headerRequireCleared(easy_fixture_t *f, line_t *l)
 {
@@ -55,13 +55,20 @@ static void headerRequireCleared(easy_fixture_t *f, line_t *l)
         easyRequire(state[i] == 0, "HeaderClient retained protocol state");
 }
 
+static void headerRequireTcpInit(tunnel_t *t, line_t *l)
+{
+    discard t;
+    ++header_init_count;
+    easyRequire(addresscontextClassifyTransport(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp,
+                "HeaderClient did not publish TCP before next Init");
+}
+
 /* A connector may rewrite either context and submit data synchronously in Init. */
 static void headerProtocolNextInit(tunnel_t *t, line_t *l)
 {
-    discard t;
-    ++protocol_init_count;
-    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), IP_PROTO_UDP);
-    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
+    headerRequireTcpInit(t, l);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(l), IP_PROTO_TCP);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_UDP);
     if (protocol_reenter)
     {
         sbuf_t *buf = easyPayload(protocol_splice);
@@ -73,7 +80,7 @@ static void headerProtocolNextInit(tunnel_t *t, line_t *l)
 static void headerProtocolCloseDuringInit(tunnel_t *t, line_t *l)
 {
     discard t;
-    ++protocol_init_count;
+    ++header_init_count;
     tunnelDownStreamFin(protocol_fixture->node, l);
 }
 
@@ -92,20 +99,26 @@ static void testHeaderProtocol(bool splice)
             easy_fixture_t f;
             easySetup(&f, node.createHandle(&node));
             easyRequire(f.node->lstate_size >= sizeof(headerclient_lstate_t), "protocol snapshot needs line storage");
-            f.prev->chain_index = 0;
-            f.node->chain_index = 1;
-            f.next->chain_index = 2;
-            addresscontextSetOnlyProtocol(lineGetSourceAddressContext(f.line), IP_PROTO_TCP);
-            addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_UDP);
+            f.prev->chain_index           = 0;
+            f.node->chain_index           = 1;
+            f.next->chain_index           = 2;
+            const uint8_t source_protocol = reenter ? IP_PROTO_UDP : IP_PROTO_TCP;
+            addresscontextSetOnlyProtocol(lineGetSourceAddressContext(f.line), source_protocol);
+            const uint8_t destination_offer = reenter     ? kAddressContextTransportBoth
+                                              : mode == 1 ? kAddressContextTransportUdp
+                                                          : kAddressContextTransportTcp;
+            addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.line), destination_offer);
             protocol_fixture     = &f;
             protocol_reenter     = reenter;
             protocol_splice      = splice;
-            protocol_init_count  = 0;
-            protocol_expected[0] = mode % 2 == 0 ? 6 : 17;
+            header_init_count    = 0;
+            protocol_expected[0] = mode % 2 == 0                                      ? source_protocol
+                                   : destination_offer == kAddressContextTransportUdp ? IP_PROTO_UDP
+                                                                                      : IP_PROTO_TCP;
             memoryCopy(protocol_expected + 1, "prebody", 7);
             f.next->fnInitU = headerProtocolNextInit;
             tunnelUpStreamInit(f.node, f.line);
-            easyRequire(protocol_init_count == 1, "protocol mode did not initialize next");
+            easyRequire(header_init_count == 1, "protocol mode did not initialize next");
             if (! reenter)
             {
                 sbuf_t *buf = easyPayload(splice);
@@ -134,12 +147,13 @@ static void testHeaderProtocol(bool splice)
     {
         for (unsigned i = 0; i < sizeof(invalid_flags); ++i)
         {
+            if (mode == 1 && invalid_flags[i] == 3)
+                continue;
             node_t node             = nodeHeaderClientGet();
             node.node_settings_json = cJSON_Parse(settings[mode]);
             easy_fixture_t f;
             easySetup(&f, node.createHandle(&node));
             addresscontextSetOnlyProtocol(lineGetSourceAddressContext(f.line), IP_PROTO_TCP);
-            addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_UDP);
             address_context_t *selected =
                 mode == 0 ? lineGetSourceAddressContext(f.line) : lineGetDestinationAddressContext(f.line);
             selected->proto_tcp    = (invalid_flags[i] & 1) != 0;
@@ -147,12 +161,12 @@ static void testHeaderProtocol(bool splice)
             selected->proto_icmp   = (invalid_flags[i] & 4) != 0;
             selected->proto_packet = (invalid_flags[i] & 8) != 0;
             protocol_fixture       = &f;
-            protocol_init_count    = 0;
+            header_init_count      = 0;
             f.next->fnInitU        = headerProtocolNextInit;
             line_t *observed       = f.line;
             lineRef(observed);
             tunnelUpStreamInit(f.node, f.line);
-            easyRequire(f.line == NULL && ! lineIsAlive(observed) && f.finishes == 1 && protocol_init_count == 0 &&
+            easyRequire(f.line == NULL && ! lineIsAlive(observed) && f.finishes == 1 && header_init_count == 0 &&
                             f.upstream == 0,
                         "invalid protocol did not close only its initialized owner");
             headerRequireCleared(&f, observed);
@@ -170,9 +184,8 @@ static void testHeaderProtocol(bool splice)
         node.node_settings_json = cJSON_Parse(settings[1]);
         easy_fixture_t f;
         easySetup(&f, node.createHandle(&node));
-        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_UDP);
-        protocol_fixture    = &f;
-        protocol_init_count = 0;
+        protocol_fixture  = &f;
+        header_init_count = 0;
         if (close == 2)
             f.next->fnInitU = headerProtocolCloseDuringInit;
         line_t *observed = f.line;
@@ -198,6 +211,109 @@ static void testHeaderProtocol(bool splice)
     protocol_fixture = NULL;
 }
 
+static const line_mark_t  inherited_mark = {.bytes = {1, 0, 2, 0xff, 0x42}};
+static const line_mark_t  zero_mark      = {0};
+static const line_mark_t *expected_mark;
+
+static void headerMarkNextInit(tunnel_t *t, line_t *l)
+{
+    headerRequireTcpInit(t, l);
+    const line_mark_t *mark = lineGetMark(l);
+    easyRequire(mark != NULL && memcmp(mark->bytes, expected_mark->bytes, kLineMarkSize) == 0,
+                "next Init did not see the selected line mark");
+    // A receiver may change the mark before the client's first payload arrives.
+    const line_mark_t changed = {.bytes = {0xac}};
+    lineSetMark(l, &changed);
+}
+
+static void testHeaderMark(bool splice)
+{
+    const char *configs[] = {"{\"data\":\"line-mark\"}",
+                             "{\"data\":\"line-mark\",\"mark\":\"00000000000000000000000000000000\"}"};
+    for (unsigned scenario = 0; scenario < 3; ++scenario)
+    {
+        node_t node             = nodeHeaderClientGet();
+        node.node_settings_json = cJSON_Parse(configs[scenario == 2 ? 1 : 0]);
+        easy_fixture_t f;
+        easySetup(&f, node.createHandle(&node));
+        f.prev->chain_index = 0;
+        f.node->chain_index = 1;
+        f.next->chain_index = 2;
+        if (scenario != 0)
+            lineSetMark(f.line, &inherited_mark);
+        expected_mark     = scenario == 2 ? &zero_mark : &inherited_mark;
+        header_init_count = 0;
+        f.next->fnInitU   = headerMarkNextInit;
+        tunnelUpStreamInit(f.node, f.line);
+        if (scenario == 0)
+        {
+            easyRequire(header_init_count == 0 && f.line == NULL && f.finishes == 1,
+                        "unset line mark reached next Init or leaked the owned line");
+        }
+        else
+        {
+            easyRequire(header_init_count == 1, "mark header missed next Init");
+            uint8_t expected[kLineMarkSize + 7];
+            memoryCopy(expected, expected_mark->bytes, kLineMarkSize);
+            memoryCopy(expected + kLineMarkSize, "prebody", 7);
+            sbuf_t *buf = easyPayload(splice);
+            easyExpect(&f, buf, expected, sizeof(expected), kLineMarkSize + 3);
+            tunnelUpStreamPayload(f.node, f.line, buf);
+            easyRequire(f.expected == NULL && ! tunnelIsActiveForLine(f.node, f.line),
+                        "mark header was not prepended exactly once");
+            headerRequireCleared(&f, f.line);
+        }
+        easyTeardown(&f);
+        cJSON_Delete(node.node_settings_json);
+        memoryFree(node.type);
+    }
+}
+
+static void testInvalidHeaderMarkSettings(void)
+{
+    const char *configs[] = {"{\"data\":\"line-mark\",\"mark\":42}",
+                             "{\"data\":\"line-mark\",\"mark\":\"001122\"}",
+                             "{\"data\":\"line-mark\",\"mark\":\"0000000000000000000000000000000g\"}",
+                             "{\"data\":\"line-mark\",\"mark\":\"00000000000000000000000000000000\\u0000ff\"}",
+                             "{\"data\":443,\"mark\":\"00000000000000000000000000000000\"}"};
+    for (size_t i = 0; i < ARRAY_SIZE(configs); ++i)
+    {
+        node_t node             = nodeHeaderClientGet();
+        node.node_settings_json = cJSON_Parse(configs[i]);
+        easyRequire(node.node_settings_json != NULL && node.createHandle(&node) == NULL,
+                    "invalid mark setting passed HeaderClient construction");
+        cJSON_Delete(node.node_settings_json);
+        memoryFree(node.type);
+    }
+}
+
+static void testHeaderRefusesUdp(void)
+{
+    const char *settings[] = {"{\"data\":443}",
+                              "{\"data\":\"src_context->port\"}",
+                              "{\"data\":\"proxy-protocol-v1\",\"frontend-ipv4\":\"192.0.2.2\"}",
+                              "{\"data\":\"proxy-protocol-v2\",\"frontend-ipv4\":\"192.0.2.2\"}",
+                              "{\"data\":\"src_context->protocol\"}",
+                              "{\"data\":\"line-mark\",\"mark\":\"00000000000000000000000000000000\"}"};
+    for (size_t mode = 0; mode < ARRAY_SIZE(settings); ++mode)
+    {
+        node_t node             = nodeHeaderClientGet();
+        node.node_settings_json = cJSON_Parse(settings[mode]);
+        easy_fixture_t f;
+        easySetup(&f, node.createHandle(&node));
+        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(f.line), IP_PROTO_TCP);
+        addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f.line), IP_PROTO_UDP);
+        header_init_count = 0;
+        f.next->fnInitU   = headerRequireTcpInit;
+        tunnelUpStreamInit(f.node, f.line);
+        easyRequire(f.line == NULL && f.finishes == 1 && header_init_count == 0,
+                    "HeaderClient accepted a UDP-only carrier");
+        easyTeardown(&f);
+        cJSON_Delete(node.node_settings_json);
+        memoryFree(node.type);
+    }
+}
+
 void testHeaderSplice(bool splice)
 {
     const char   *settings[] = {"{\"data\":4660}",
@@ -220,7 +336,12 @@ void testHeaderSplice(bool splice)
         f.prev->chain_index                                = 0;
         f.node->chain_index                                = 1;
         f.next->chain_index                                = 2;
+        easyRequire(f.node->lstate_size == 0, "port and PROXY headers should use no line storage");
+        addresscontextSetTransportOffer(lineGetDestinationAddressContext(f.line), kAddressContextTransportBoth);
+        header_init_count = 0;
+        f.next->fnInitU   = headerRequireTcpInit;
         tunnelUpStreamInit(f.node, f.line);
+        easyRequire(header_init_count == 1, "header mode did not initialize next");
         uint8_t  expected[160];
         uint32_t header = mode < 2 ? 2 : mode == 2 ? sizeof(v1) - 1 : sizeof(v2);
         if (mode < 2)
@@ -270,4 +391,10 @@ void testHeaderSplice(bool splice)
     cJSON_Delete(node.node_settings_json);
     memoryFree(node.type);
     testHeaderProtocol(splice);
+    testHeaderMark(splice);
+    if (! splice)
+    {
+        testHeaderRefusesUdp();
+        testInvalidHeaderMarkSettings();
+    }
 }

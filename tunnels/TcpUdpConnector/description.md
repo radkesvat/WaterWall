@@ -209,6 +209,12 @@ retains the selected child in line state for later callbacks. Set
 `PacketsToStream.settings.protocol` to `"udp"` to use the UDP child with that
 producer. A pinned DNS or SOCKS relay destination supplies one exact protocol.
 
+With `HeaderServer → TcpUdpConnector`, the HeaderServer setting determines
+what its first bytes mean. In protocol mode, byte `6` selects the TCP socket and
+`17` selects the UDP socket. In `line-mark` mode the 16-byte header sets only
+the mark, so this direct TCP stream uses the TCP socket. A UDP-over-TCP stream
+needs a decoder to recover the original datagram boundaries before the UDP child.
+
 ## Implementation details
 
 ### What It Does

@@ -149,8 +149,9 @@ Accepted values:
 | `"line->src_ctx->port"` | Compatibility alias for `"src_context->port"`. |
 | `"src_context->protocol"` | Snapshot `src_ctx.protocol` during `Init` and encode TCP or UDP in a 1-byte header. |
 | `"line->src_ctx->protocol"` | Alias for `"src_context->protocol"`. |
-| `"dest_context->protocol"` | Snapshot `dest_ctx.protocol` during `Init` and encode TCP or UDP in a 1-byte header. |
+| `"dest_context->protocol"` | Encode the incoming destination choice as one byte. Exact UDP gives `17`, exact TCP or a flexible TCP/UDP offer gives `6`. |
 | `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
+| `"line-mark"` | Send the 16 raw bytes of the line mark. An optional `settings.mark` sets the mark during Init. |
 | `"proxy-protocol"` | Emit a PROXY protocol v2 header. |
 | `"proxy-protocol-v1"` | Emit a PROXY protocol v1 header. |
 | `"proxy-protocol-v2"` | Emit a PROXY protocol v2 header. |
@@ -161,30 +162,45 @@ Startup fails if `data` is missing, is not one of the accepted string values, or
 
 ### More examples
 
+### Send a line mark
+
+`"settings": {"data": "line-mark"}` sends the mark already present on the input
+line. To assign and send a literal, use
+`"settings": {"data": "line-mark", "mark": "00112233445566778899aabbccddeeff"}`.
+The literal has exactly 32 hexadecimal digits, including leading zeros. The
+matching server uses `"settings": {"override": "line-mark"}`. It receives 16 raw
+bytes, so this example starts with bytes `00 11 22`. The client snapshots the
+value during Init and prefixes the first upstream delivery once. A missing
+inherited mark closes the input before next Init. An all-zero mark is valid.
+Both sides of the mark node use a TCP byte stream.
+
 ### Transfer only TCP/UDP identity
 
-When the receiver already knows the destination address and port, send only the
-intended destination protocol:
+Use `"data": "src_context->protocol"` to send the accepted source protocol,
+or `"data": "dest_context->protocol"` to send the incoming destination selection.
+For example, exact UDP in destination mode sends byte `17` and opens an exact
+TCP carrier. A flexible destination selects TCP and sends byte `6`. Source
+mode requires a TCP-capable carrier and can send `17` for an observed UDP source.
+Pair either with `HeaderServer.settings.override = "dest_context->protocol"`
+when you want the receiver's `TcpUdpConnector` to choose a TCP or UDP socket.
+The protocol byte carries no datagram lengths.
+
+If you only want `Router` to choose a branch, prefer `line-mark` on both Header
+nodes and match the mark in the Router rule. The next node still sees a TCP
+stream. If you label the stream UDP just to match a rule, a decoder such as
+`UdpOverTcpServer` will close the connection because it expects TCP.
+
+For example, this client sends the incoming destination protocol to a matching
+receiver on the other side of the TCP carrier.
 
 ```json
 {
   "name": "protocol-header",
   "type": "HeaderClient",
-  "settings": {
-    "data": "dest_context->protocol"
-  },
+  "settings": {"data": "dest_context->protocol"},
   "next": "relay-connector"
 }
 ```
-
-Pair this with `HeaderServer.settings.override = "dest_context->protocol"`.
-Use `"src_context->protocol"` instead when the receiver should identify the
-accepted source transport. The selected context must already specify exactly
-TCP or UDP during `HeaderClient`'s upstream `Init`; there is no fallback to the
-other context.
-
-This header carries no address or port. UDP over a TCP carrier still requires
-separate datagram framing, such as the `UdpOverTcp` pair.
 
 ### Force all relayed traffic to one backend port
 
@@ -303,8 +319,8 @@ with this server setting:
 }
 ```
 
-The server changes only `dest_ctx.protocol` before initializing the next node;
-source metadata, destination address, and destination port stay intact.
+The server applies the decoded TCP or UDP to the destination before the next
+Init. It preserves the source, destination address and port.
 
 For PROXY protocol source-field restoration:
 
@@ -373,12 +389,11 @@ For protocol modes, the first upstream payload becomes:
 1-byte protocol header | payload
 ```
 
-The byte is `6` for TCP or `17` for UDP, sent only once per normal layer-4 line.
-It contains no IP address, port, or PROXY protocol fields. The client snapshots
-only the selected context during upstream `Init`, before calling `next` Init;
-subsequent connector changes to the routing context cannot change the header.
-If the selected protocol is unset, ambiguous, or unsupported, the client closes
-the line without initializing `next`.
+Source mode encodes an exact TCP source as `6` and an exact UDP source as `17`.
+Destination mode encodes exact UDP as `17`, and TCP or a flexible offer as `6`. The client saves the
+byte before the next node receives `Init`, so subsequent routing changes preserve
+the header. An unusable carrier offer or an invalid source in source-protocol
+mode closes the line before the next node is initialized.
 
 For PROXY protocol modes, `HeaderClient` emits an IPv4 TCP PROXY header. The source IP comes from `lineGetSourceAddressContext(line)`. The destination IP comes from `settings.frontend-ipv4`; `dest_ctx` is not used for the PROXY destination because `TcpConnector` may rewrite `dest_ctx` to the backend it dials before the first payload is sent.
 
@@ -395,24 +410,24 @@ If the first upstream payload is empty, the tunnel still sends the configured he
 
 ### One-time header state
 
-`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload and permanently bypasses itself before handing that payload onward. Protocol modes keep a small per-line snapshot from `Init` until that handoff or `Finish`; port and PROXY modes keep no per-line state. The line's active-node mask enforces the one-time behavior. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
+`HeaderClient` does not open sockets and does not create lines. It only mutates the first upstream payload and permanently bypasses itself before handing that payload onward. Protocol and line-mark modes keep a small per-line snapshot from `Init` until that handoff or `Finish`; port and PROXY modes keep no per-line state. The line's active-node mask enforces the one-time behavior. Later callbacks go directly to the adjacent active nodes. Pause/Resume remain transparent and repeatable throughout startup.
 
 ### What It Does
 
 - Requires `settings.data` to choose the one-time header format.
-- In protocol modes, validates and snapshots the selected protocol before forwarding upstream `Init` to `next`. Other modes forward `Init` immediately.
+- Selects TCP for the carrier in every mode. Protocol and line-mark modes also save their header bytes before forwarding upstream `Init`.
 - Prepends the configured header only on the first upstream payload.
-- Supports the 2-byte WaterWall port header and a 1-byte TCP/UDP protocol header.
+- Supports the 2-byte port, 1-byte TCP/UDP protocol and 16-byte line-mark headers.
 - Supports IPv4-only HAProxy PROXY protocol v1 and v2 headers with a configured frontend IPv4 address.
 - Forwards every later upstream payload unchanged.
 - Forwards downstream payload, `Est`, `Pause`, and `Resume` unchanged.
-- Clears the protocol snapshot before bypass or directional `Finish`; other modes use the default `Init` and `Finish` callbacks.
+- Clears the saved header before bypass or directional `Finish`. Port and PROXY modes use the default `Finish` callbacks.
 
 ### Direction Behavior
 
 | Direction | Behavior |
 | --- | --- |
-| upstream `Init` | In protocol modes, validate and snapshot the selected protocol, then forward to `next`; otherwise forward immediately. |
+| upstream `Init` | Admit a TCP carrier, snapshot the protocol byte or line mark when configured, and publish exact TCP before forwarding to `next`. |
 | upstream first payload | Prepend the configured header, then forward to `next`. |
 | later upstream payload | Forward unchanged to `next`. |
 | upstream pause/resume | Forward to `next`. |
@@ -423,10 +438,10 @@ If the first upstream payload is empty, the tunnel still sends the configured he
 
 ### Finish Behavior
 
-Before the first upstream payload, protocol modes zero their per-line snapshot
+Before the first upstream payload, protocol and line-mark modes zero their per-line snapshot
 before forwarding Finish in its received direction. Other modes use the default
 Finish callbacks. After bypass, Finish travels directly to the next active node;
-the protocol snapshot has already been zeroed.
+the saved header has already been zeroed.
 
 On upstream `Finish`, `HeaderClient` forwards the finish to `next`.
 
@@ -450,6 +465,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` in destination-protocol mode and `kNodeLayer4Stream` in other modes |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `108` bytes |

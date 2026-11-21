@@ -128,6 +128,11 @@ static uint32_t headerclientBuildHeader(tunnel_t *t, line_t *l, uint8_t out[kHea
     case kHeaderClientDataModeProxyProtocolV2:
         return headerclientBuildProxyProtocolV2(ts, l, out);
 
+    case kHeaderClientDataModeLineMark: {
+        const headerclient_lstate_t *ls = lineGetState(l, t);
+        memoryCopy(out, ls->mark.bytes, kLineMarkSize);
+        return kLineMarkSize;
+    }
     case kHeaderClientDataModeSourceProtocol:
     case kHeaderClientDataModeDestinationProtocol: {
         const headerclient_lstate_t *ls = lineGetState(l, t);

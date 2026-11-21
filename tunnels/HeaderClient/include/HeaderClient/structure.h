@@ -10,19 +10,22 @@ typedef enum headerclient_data_mode_e
     kHeaderClientDataModeProxyProtocolV1,
     kHeaderClientDataModeProxyProtocolV2,
     kHeaderClientDataModeSourceProtocol,
-    kHeaderClientDataModeDestinationProtocol
+    kHeaderClientDataModeDestinationProtocol,
+    kHeaderClientDataModeLineMark
 } headerclient_data_mode_e;
 
 typedef struct headerclient_tstate_s
 {
     headerclient_data_mode_e data_mode;
     uint16_t                 constant_port;
+    bool                     has_configured_mark;
+    line_mark_t              configured_mark;
     address_context_t        proxy_frontend_ipv4;
 } headerclient_tstate_t;
 
-typedef struct headerclient_lstate_s
-{
+typedef union headerclient_lstate_u {
     uint8_t protocol;
+    line_mark_t mark;
 } headerclient_lstate_t;
 
 enum

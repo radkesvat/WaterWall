@@ -10,20 +10,24 @@ tunnel_t *headerclientTunnelCreate(node_t *node)
         return NULL;
     }
 
-    bool protocol_mode = settings.data_mode == kHeaderClientDataModeSourceProtocol ||
-                         settings.data_mode == kHeaderClientDataModeDestinationProtocol;
-    tunnel_t *t = tunnelCreate(node, sizeof(headerclient_tstate_t), protocol_mode ? sizeof(headerclient_lstate_t) : 0);
+    const bool snapshot_header = settings.data_mode == kHeaderClientDataModeSourceProtocol ||
+                                 settings.data_mode == kHeaderClientDataModeDestinationProtocol ||
+                                 settings.data_mode == kHeaderClientDataModeLineMark;
+    if (settings.data_mode == kHeaderClientDataModeDestinationProtocol)
+        node->layer_group_prev_node = kNodeLayer4;
+    tunnel_t *t =
+        tunnelCreate(node, sizeof(headerclient_tstate_t), snapshot_header ? sizeof(headerclient_lstate_t) : 0);
     if (! t)
     {
         return NULL;
     }
 
+    t->fnInitU    = &headerclientTunnelUpStreamInit;
     t->fnPayloadU = &headerclientTunnelUpStreamPayload;
-    if (protocol_mode)
+    if (snapshot_header)
     {
-        t->fnInitU = &headerclientTunnelUpStreamInit;
-        t->fnFinU  = &headerclientTunnelUpStreamFinish;
-        t->fnFinD  = &headerclientTunnelDownStreamFinish;
+        t->fnFinU = &headerclientTunnelUpStreamFinish;
+        t->fnFinD = &headerclientTunnelDownStreamFinish;
     }
 
     *(headerclient_tstate_t *) tunnelGetState(t) = settings;

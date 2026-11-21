@@ -48,7 +48,34 @@ static bool headerclientParseFrontendIpv4(headerclient_tstate_t *ts, const cJSON
 
 bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings)
 {
+    if (! jsonObjectFieldStringsAreExact(settings, "data") || ! jsonObjectFieldStringsAreExact(settings, "mark"))
+    {
+        LOGF("HeaderClient: settings.data and settings.mark require exact strings when supplied as strings");
+        return false;
+    }
     const cJSON *data_json = cJSON_GetObjectItemCaseSensitive(settings, "data");
+    const cJSON *mark      = cJSON_GetObjectItemCaseSensitive(settings, "mark");
+    const char  *mode      = cJSON_GetStringValue(data_json);
+    if (mode != NULL && stringCompare(mode, "line-mark") == 0)
+    {
+        ts->data_mode = kHeaderClientDataModeLineMark;
+        if (mark != NULL)
+        {
+            const char *hex = cJSON_GetStringValue(mark);
+            if (hex == NULL || ! lineMarkParseHex(hex, &ts->configured_mark))
+            {
+                LOGF("HeaderClient: settings.mark must contain exactly 32 hexadecimal digits");
+                return false;
+            }
+            ts->has_configured_mark = true;
+        }
+        return true;
+    }
+    if (mark != NULL)
+    {
+        LOGF("HeaderClient: settings.mark requires data \"line-mark\"");
+        return false;
+    }
     if (cJSON_IsString(data_json) && data_json->valuestring != NULL)
     {
         if (stringCompare(data_json->valuestring, "src_context->protocol") == 0 ||
@@ -102,7 +129,7 @@ bool headerclientLoadSettings(headerclient_tstate_t *ts, const cJSON *settings)
     default:
         LOGF("HeaderClient: settings.data is required and must be a port number, \"src_context->port\", "
              "\"src_context->protocol\", \"dest_context->protocol\", \"proxy-protocol\", \"proxy-protocol-v1\", "
-             "or \"proxy-protocol-v2\"");
+             "\"proxy-protocol-v2\", or \"line-mark\"");
         return false;
     }
 

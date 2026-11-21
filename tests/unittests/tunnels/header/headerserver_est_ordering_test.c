@@ -25,6 +25,7 @@ static void headerResume(tunnel_t *t, line_t *l)
 static void headerSetup(est_fixture_t *f)
 {
     estFixtureSetup(f, sizeof(headerserver_tstate_t), sizeof(headerserver_lstate_t));
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->line), IP_PROTO_TCP);
     f->prev->chain_index = 0;
     f->node->chain_index = 1;
     f->next->chain_index = 2;
@@ -460,7 +461,7 @@ static void headerProtocolContexts(line_t *l, uint8_t protocol)
     src->optional_flags.detected_protocols  = kAddressContextProtocolTls;
     dest->optional_flags.detected_protocols = kAddressContextProtocolHttp1 | kAddressContextRouteFlagPinnedDestination;
     addresscontextSetOnlyProtocol(src, IP_PROTO_UDP);
-    dest->proto_tcp = dest->proto_udp = dest->proto_icmp = dest->proto_packet = true;
+    addresscontextSetOnlyProtocol(dest, IP_PROTO_TCP);
 
     protocol_source      = *src;
     protocol_destination = *dest;
@@ -580,10 +581,55 @@ static void testHeaderProtocol(void)
     }
 }
 
+static const line_mark_t expected_mark = {.bytes = {0, 0xff, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}};
+
+static void headerMarkNextInit(est_fixture_t *f, line_t *l)
+{
+    const line_mark_t *mark = lineGetMark(l);
+    twfRequire(mark != NULL && memcmp(mark->bytes, expected_mark.bytes, kLineMarkSize) == 0,
+               "branch Init missed the exact 16-byte mark");
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp,
+               "line mark changed the carrier transport");
+    initEst(f, l);
+}
+
+static void testHeaderMark(void)
+{
+    for (unsigned splice = 0; splice <= WW_HAVE_SPLICE; ++splice)
+    {
+        est_fixture_t f;
+        headerSetup(&f);
+        cJSON *settings = cJSON_Parse("{\"override\":\"line-mark\"}");
+        twfRequire(headerserverLoadSettings(tunnelGetState(f.node), settings), "line-mark override settings");
+        cJSON_Delete(settings);
+        f.on_init = headerMarkNextInit;
+#if WW_HAVE_SPLICE
+        if (splice)
+            f.next->fnPayloadU = f.prev->fnPayloadD = headerCapture;
+#endif
+        const line_mark_t previous = {0};
+        lineSetMark(f.line, &previous);
+        tunnelUpStreamInit(f.node, f.line);
+        tunnelUpStreamPayload(
+            f.node, f.line, headerProtocolBytes(f.line, expected_mark.bytes, kLineMarkSize - 1, splice));
+        twfRequire(f.init_count == 0 && memcmp(lineGetMark(f.line)->bytes, previous.bytes, kLineMarkSize) == 0,
+                   "partial line mark published before the last byte");
+        const uint8_t tail[] = {expected_mark.bytes[kLineMarkSize - 1], 'O', 'K'};
+        tunnelUpStreamPayload(f.node, f.line, headerProtocolBytes(f.line, tail, sizeof(tail), splice));
+        twfRequire(f.init_count == 1 && f.up_len == 2 && memcmp(f.up, "OK", 2) == 0,
+                   "server replay lost the coalesced tail or exposed mark bytes");
+        headerRequireBypassed(&f);
+        tunnelUpStreamFin(f.node, f.line);
+        lineDestroy(f.line);
+        estFixtureDestroy(&f);
+    }
+}
+
 int main(void)
 {
     TEST_RUN_CASE(testStartupPause);
     TEST_RUN_CASE(testHeaderProtocol);
+    TEST_RUN_CASE(testHeaderMark);
     twfSetCase("reentry byte limit");
     testReentryLimit(overflowReentryBytes);
     twfSetCase("reentry charge limit");

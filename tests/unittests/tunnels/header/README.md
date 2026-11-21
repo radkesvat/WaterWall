@@ -1,19 +1,21 @@
 # HeaderServer framing and Est ordering
 
 The [native fixture](headerserver_est_ordering_test.c) checks real-pipe split
-port/PROXY headers, TCP/UDP protocol markers, coalesced tails, nested initialization
-input and opaque established forwarding. Protocol cases check that the destination
-protocol is replaced before next Init while source and other destination metadata
-survive, and reject invalid markers. It also checks repeated Est and Pause/Resume,
-retirement after the initial FIFO drains, zeroed state and callback dispatch after
-bypass. The previous mock owns the normal line; HeaderServer and
-the next mock borrow it, with a held observation reference for post-Finish checks.
-The source gives its exact CTest name and feature conditions.
+port/PROXY headers, TCP/UDP protocol headers, coalesced tails, nested initialization
+input and established forwarding. The one-byte protocol header publishes exact TCP
+or UDP to the next Init and preserves the source and destination endpoint. Invalid
+protocol bytes close the line. The line-mark case splits a 16-byte mark across two
+deliveries, checks that the next Init sees the complete mark with TCP, and verifies
+that only the trailing payload reaches the branch. The fixture also checks repeated
+Est and Pause/Resume, retirement after the initial FIFO drains, zeroed state and
+callback dispatch after bypass. The previous mock owns the normal line. HeaderServer
+and the next mock borrow it, with a held reference for post-Finish observations.
 
 The [HeaderClient component cases](../easy/easy_nodes_splice_header.c) exercise
-source and destination protocol selectors with ordinary and splice payloads,
-snapshotting before a next Init that rewrites the transport or reenters Payload,
-strict invalid-context rejection, one-time insertion, bypass and Finish cleanup.
+source and destination protocol selection, inherited and configured marks,
+missing or invalid marks, and one-time insertion with ordinary and splice
+buffers. They check that callbacks from next Init can change the line metadata
+without changing the header already selected for transmission.
 
 The [framed socket fixture](../../../framed_splice_integration.py) exercises
 constant, port, PROXY v1/v2 and paired HeaderClient/HeaderServer protocol modes

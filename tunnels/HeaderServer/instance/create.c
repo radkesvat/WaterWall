@@ -28,5 +28,16 @@ tunnel_t *headerserverTunnelCreate(node_t *node)
         return NULL;
     }
 
+    if (ts->override_mode == kHeaderServerOverrideModeConstant)
+    {
+        node->layer_group_prev_node = kNodeLayer4;
+        node->layer_group_next_node = kNodeLayer4;
+    }
+    else
+    {
+        node->layer_group_prev_node = kNodeLayer4Stream;
+        node->layer_group_next_node =
+            ts->override_mode == kHeaderServerOverrideModeHeaderProtocol ? kNodeLayer4 : kNodeLayer4Stream;
+    }
     return t;
 }

@@ -17,6 +17,17 @@ static bool headerserverParsePort(uint16_t *out, const cJSON *value, const char 
 
 bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
 {
+    if (! jsonObjectFieldStringsAreExact(settings, "override"))
+    {
+        LOGF("HeaderServer: settings.override requires an exact string when supplied as a string");
+        return false;
+    }
+    const char *mode = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(settings, "override"));
+    if (mode != NULL && stringCompare(mode, "line-mark") == 0)
+    {
+        ts->override_mode = kHeaderServerOverrideModeLineMark;
+        return true;
+    }
     dynamic_value_t override = parseDynamicNumericValueFromJsonObject(settings,
                                                                       "override",
                                                                       5,
@@ -50,7 +61,7 @@ bool headerserverLoadSettings(headerserver_tstate_t *ts, const cJSON *settings)
 
     default:
         LOGF("HeaderServer: settings.override is required and must be a port number, \"dest_context->port\", "
-             "\"dest_context->protocol\", or \"proxy-protocol->source-fields\"");
+             "\"dest_context->protocol\", \"line-mark\", or \"proxy-protocol->source-fields\"");
         return false;
     }
 }

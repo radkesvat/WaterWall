@@ -11,12 +11,13 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 It can do four different jobs:
 
 - consume the WaterWall 2-byte port header from `HeaderClient` and write it into `dest_context->port`
-- consume the WaterWall 1-byte TCP/UDP header and replace only `dest_context->protocol`
+- consume the WaterWall 1-byte TCP/UDP header and set the destination transport to the decoded TCP or UDP
 - consume HAProxy PROXY protocol v1 or v2 and write the advertised client IPv4 and port into `src_context`
 - set one constant destination port during upstream `Init`
 
-It is a normal layer-4 stream tunnel. It does not create sockets, packet lines,
-or `line_t` objects.
+Header-parsing modes read a byte stream. A protocol override publishes TCP or UDP
+on its output. Line-mark, port-header and PROXY modes continue on a stream. Constant-port mode preserves streams and
+complete datagrams in either direction.
 
 ## Typical placement
 
@@ -89,7 +90,7 @@ Top-level fields:
 | `name` | string | User-chosen node name. Must be unique inside the config file. |
 | `type` | string | Must be exactly `"HeaderServer"`. |
 | `settings` | object | Required. Must contain `override`. |
-| `next` | string | Required. The next layer-4 stream node receives the routed line. |
+| `next` | string | Required. The next Layer 4 node must accept the payload kind forwarded by this mode. |
 
 Required `settings` fields:
 
@@ -108,8 +109,9 @@ Accepted values:
 | --- | --- |
 | `"dest_context->port"` | Read the 2-byte WaterWall upstream header and set `dest_ctx.port`. |
 | `"line->dest_ctx->port"` | Compatibility alias for `"dest_context->port"`. |
-| `"dest_context->protocol"` | Read the 1-byte WaterWall TCP/UDP header and replace only `dest_ctx.protocol`. |
+| `"dest_context->protocol"` | Read the 1-byte WaterWall TCP/UDP header and set the destination transport to the decoded TCP or UDP. |
 | `"line->dest_ctx->protocol"` | Alias for `"dest_context->protocol"`. |
+| `"line-mark"` | Read exactly 16 raw bytes and assign them to the line before the next Init. |
 | `"proxy-protocol->source-fields"` | Read PROXY protocol v1 or v2, then set `src_ctx.ip` and `src_ctx.port`. |
 | `1` through `65535` | Set this constant destination port during upstream `Init`. |
 
@@ -141,8 +143,13 @@ intended destination transport, or `"src_context->protocol"` for its accepted
 source transport. The server applies the marker before initializing `next`,
 without changing any address, port, or source metadata.
 
-UDP over a TCP carrier still requires separate datagram framing, such as the
-`UdpOverTcp` pair.
+For example, byte `17` makes a directly connected `TcpUdpConnector` choose
+its UDP socket. The byte does not tell it where each datagram ends.
+
+If you only want `Router` to choose a branch, prefer `line-mark`. A rule can
+match the mark and send the TCP stream to `UdpOverTcpServer` to recover the
+datagrams. If you set the destination protocol to UDP just to select that
+branch, the decoder sees UDP and closes the connection because it expects TCP.
 
 ### Read source IP and port from PROXY protocol
 
@@ -206,6 +213,7 @@ intentionally want that header to remain in the application payload.
 | --- | --- |
 | WaterWall port header | `2 bytes` |
 | WaterWall protocol header | `1 byte` |
+| WaterWall line mark | `16 bytes` |
 | minimum accepted WaterWall header port | `10` |
 | PROXY protocol v1 header | up to `108 bytes` |
 | PROXY protocol v2 base header | `16 bytes` |
@@ -246,22 +254,21 @@ conservative close behavior.
 
 ### WaterWall Protocol Header Mode
 
-When `override` is `"dest_context->protocol"` or
-`"line->dest_ctx->protocol"`, `HeaderServer` waits for one upstream byte. It
-consumes `6` as TCP or `17` as UDP and replaces only:
+With `"override": "dest_context->protocol"` (alias `"line->dest_ctx->protocol"`),
+the server consumes byte `6` for TCP or `17` for UDP and sets that exact
+destination transport before the next Init. It preserves the source, address,
+port and independent routing fields. The first trailing payload and all later
+deliveries keep their bytes. The protocol header contains no datagram lengths.
+An unknown byte closes this line before the next Init.
 
-```text
-addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), protocol)
-```
+### Line Mark Header Mode
 
-The marker is read once per normal layer-4 line. All source metadata and the
-destination address and port are preserved. The server applies the protocol
-before calling `next` Init, then forwards any remaining payload in order. Empty
-payload callbacks do not complete the header. Any other byte closes the line
-without initializing `next`.
-
-This is internal routing metadata, with no IP address, port, or PROXY protocol
-fields. It does not encode UDP datagram boundaries.
+Pair `"settings": {"override": "line-mark"}` with a HeaderClient using
+`"data": "line-mark"`. The server waits across TCP deliveries until it has
+all 16 bytes, including any zero bytes, then assigns the mark to the line
+before calling its neighbor. It forwards any trailing bytes in order and keeps
+the destination transport TCP. A Router can match that mark to send a framed
+stream to its decoder.
 
 ### PROXY Protocol Source-Fields Mode
 
@@ -383,6 +390,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4` for constant port, otherwise `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4` for constant port and protocol override, otherwise `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |
