@@ -189,11 +189,10 @@ static void testClearDetectedProtocolsPreservesRouteControl(void)
 {
     address_context_t ctx = {0};
 
-    ctx.optional_flags.detected_protocols =
-        kAddressContextDetectedProtocolMask | kAddressContextRouteFlagPinnedDestination;
+    ctx.optional_flags.detected_protocols = kAddressContextDetectedProtocolMask | kAddressContextRouteControlMask;
     addresscontextClearDetectedProtocols(&ctx);
-    requireOptionalProtocols(
-        &ctx, kAddressContextRouteFlagPinnedDestination, "detected-protocol reset erased negotiated route control");
+    requireOptionalProtocols(&ctx, kAddressContextRouteControlMask, "sniff reset erased route control");
+    addresscontextSetTransportOffer(&ctx, kAddressContextTransportTcp);
     require(addresscontextDestinationIsPinned(&ctx), "pinned destination marker was not preserved");
 
     addresscontextClearOptionalFlags(&ctx);
@@ -252,6 +251,38 @@ static void testResolvedDomainConvertsToSockAddr(void)
     addresscontextReset(&ctx);
 }
 
+static void testTransportOffer(void)
+{
+    address_context_t ctx = {0};
+    addresscontextDomainSetByString(&ctx, "example.org");
+    addresscontextSetPort(&ctx, 443);
+    addresscontextSetResolverDns(&ctx, true);
+    require(addresscontextGetTransportOffer(&ctx) == 0, "an unset transport produced an offer");
+
+    addresscontextSetTransportOffer(&ctx, kAddressContextTransportBoth);
+    require(addresscontextGetTransportOffer(&ctx) == kAddressContextTransportBoth, "flexible offer was lost");
+    require(addresscontextClassifyTransport(&ctx) == kAddressContextTransportUnsupported,
+            "the exact classifier accepted a dual source observation");
+    require(addresscontextSelectTransport(&ctx, kAddressContextTransportBoth) == kAddressContextTransportTcp,
+            "a flexible selector did not prefer TCP");
+    require(addresscontextSelectTransport(&ctx, kAddressContextTransportUdp) == kAddressContextTransportUdp,
+            "a UDP-only selector did not select UDP");
+    require(addresscontextGetTransportOffer(&ctx) == kAddressContextTransportBoth, "selection narrowed the live offer");
+    addresscontextSetProtocol(&ctx, IP_PROTO_ICMP);
+    require(addresscontextGetTransportOffer(&ctx) == 0, "mixed ICMP and L4 flags formed a transport offer");
+    addresscontextSetTransportOffer(&ctx, kAddressContextTransportBoth);
+    addresscontextSetDestinationPinned(&ctx, true);
+    require(addresscontextGetTransportOffer(&ctx) == 0, "a dual pin formed a transport offer");
+    addresscontextSetTransportOffer(&ctx, kAddressContextTransportUdp);
+    require(addresscontextSelectTransport(&ctx, kAddressContextTransportTcp) == 0, "a TCP selector accepted UDP");
+    require(addresscontextSelectTransport(&ctx, kAddressContextTransportBoth) == kAddressContextTransportUdp,
+            "the valid UDP pin did not survive selection");
+    require(addresscontextDestinationIsPinned(&ctx) && addresscontextIsResolverDns(&ctx) && ctx.port == 443,
+            "publishing a transport lost independent endpoint metadata");
+    requireDomainEquals(&ctx, "example.org");
+    addresscontextReset(&ctx);
+}
+
 int main(void)
 {
     testCaseSet("address_context_test");
@@ -265,5 +296,6 @@ int main(void)
     testEndpointSettersClearOptionalFlags();
     testObservedDomainPreservesOptionalFlags();
     testResolvedDomainConvertsToSockAddr();
+    testTransportOffer();
     return 0;
 }

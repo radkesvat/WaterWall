@@ -54,7 +54,7 @@ enum connection_context_type
  * route-control data through those middle nodes. */
 #define kAddressContextDetectedProtocolMask                                                                            \
     (kAddressContextProtocolHttp1 | kAddressContextProtocolTls | kAddressContextProtocolBittorrent)
-#define kAddressContextRouteControlMask (kAddressContextRouteFlagPinnedDestination)
+#define kAddressContextRouteControlMask kAddressContextRouteFlagPinnedDestination
 
 /*
  * Optional routing metadata. These flags are not intrinsic endpoint identity.
@@ -547,11 +547,6 @@ static inline int addresscontextGetSockAddrFamily(const address_context_t *conte
 }
 
 /**
- * @brief Get a socket type hint from the current transport protocol flags.
- *
- * Returns 0 when the context has no single TCP or UDP protocol selection.
- */
-/**
  * @brief How one address context names a transport, considering every protocol flag.
  *
  * addresscontextGetSockType() deliberately looks only at TCP versus UDP, so it
@@ -561,21 +556,63 @@ static inline int addresscontextGetSockAddrFamily(const address_context_t *conte
  */
 typedef enum address_context_transport_e
 {
-    /* No protocol flag is set: the caller may fall back to another context. */
+    /* No protocol flag is set. */
     kAddressContextTransportNone = 0,
     /* Exactly TCP, and no other protocol flag. */
-    kAddressContextTransportTcp,
+    kAddressContextTransportTcp = 1,
     /* Exactly UDP, and no other protocol flag. */
-    kAddressContextTransportUdp,
+    kAddressContextTransportUdp = 2,
+    /* Destination offer for a producer that can honor either choice. */
+    kAddressContextTransportBoth = kAddressContextTransportTcp | kAddressContextTransportUdp,
     /* ICMP, packet, or a combination: not something a TCP/UDP node can serve. */
-    kAddressContextTransportUnsupported
+    kAddressContextTransportUnsupported = 4
 } address_context_transport_t;
+
+/**
+ * Read a normal line's destination offer without changing its endpoint.
+ * Pinned endpoints require an exact protocol.
+ */
+static inline uint8_t addresscontextGetTransportOffer(const address_context_t *context)
+{
+    if (context->proto_icmp || context->proto_packet)
+    {
+        return 0;
+    }
+
+    const uint8_t offer =
+        (context->proto_tcp ? kAddressContextTransportTcp : 0) | (context->proto_udp ? kAddressContextTransportUdp : 0);
+    return offer == kAddressContextTransportBoth && addresscontextDestinationIsPinned(context) ? 0 : offer;
+}
+
+/** Select an exact transport from a saved offer and allowed subset, preferring TCP. */
+static inline uint8_t addresscontextChooseTransport(uint8_t offer, uint8_t allowed)
+{
+    assert((offer & ~kAddressContextTransportBoth) == 0);
+    assert((allowed & ~kAddressContextTransportBoth) == 0);
+    const uint8_t eligible = offer & allowed;
+    return (eligible & kAddressContextTransportTcp) != 0 ? kAddressContextTransportTcp : eligible;
+}
+
+static inline uint8_t addresscontextSelectTransport(const address_context_t *context, uint8_t allowed)
+{
+    return addresscontextChooseTransport(addresscontextGetTransportOffer(context), allowed);
+}
+
+/** Publish an offer while preserving the address, port and routing metadata. */
+static inline void addresscontextSetTransportOffer(address_context_t *context, uint8_t offer)
+{
+    assert(offer != 0 && (offer & ~kAddressContextTransportBoth) == 0);
+    assert(offer != kAddressContextTransportBoth || ! addresscontextDestinationIsPinned(context));
+
+    addresscontextSetOnlyProtocol(context, offer == kAddressContextTransportUdp ? IP_PROTO_UDP : IP_PROTO_TCP);
+    if (offer == kAddressContextTransportBoth)
+        addresscontextSetProtocol(context, IP_PROTO_UDP);
+}
 
 /**
  * @brief Classify one context's transport exactly.
  *
- * Pure: it reads flags and nothing else, so the caller keeps its own
- * destination-before-source policy and its own diagnostics.
+ * Pure: use this to validate an exact observation, such as the ingress source.
  */
 static inline address_context_transport_t addresscontextClassifyTransport(const address_context_t *context)
 {
