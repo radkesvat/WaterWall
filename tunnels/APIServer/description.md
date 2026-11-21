@@ -14,6 +14,9 @@ own their request and result schemas: see
 [AuthenticationClient status](../AuthenticationClient/description.md) and the
 [AuthenticationServer management API](../AuthenticationServer/description.md#management-api).
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 ### Placement
@@ -255,6 +258,6 @@ A queued timeout closes the connection to preserve response order. One operation
 | `can_have_prev` | `true` |
 | `can_have_next` | `false` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
 | `layer_group_next_node` | `kNodeLayerNone` |
 | `required_padding_left` | `0` bytes |

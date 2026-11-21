@@ -80,6 +80,7 @@ static void fixtureSetup(httpserver_chunked_fixture_t *fixture)
     tunnelBind(fixture->http, fixture->next);
 
     fixture->line           = twfLineCreate(fixture->http->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(fixture->line), IP_PROTO_TCP);
     httpserver_lstate_t *ls = lineGetState(fixture->line, fixture->http);
     httpserverLinestateInitialize(ls, fixture->http, fixture->line);
     ls->runtime_proto     = kHttpServerRuntimeHttp1;

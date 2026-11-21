@@ -4,6 +4,9 @@
 [RtmpServer](../RtmpServer/description.md). Both peers carry application bytes in WaterWall's `ww.data` messages, so the
 remote endpoint must understand that profile. A video ingest URL alone is insufficient.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 ```text

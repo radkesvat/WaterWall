@@ -356,6 +356,14 @@ bool rtmpInitLine(tunnel_t *t, line_t *l)
     assert(! tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
     assert(lineIsOnCurrentWorker(l));
 
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    if (addresscontextSelectTransport(destination, kAddressContextTransportTcp) == 0)
+    {
+        tunnelPrevDownStreamFinish(t, l);
+        return false;
+    }
+    addresscontextSetTransportOffer(destination, kAddressContextTransportTcp);
+
     *ls = (rtmp_lstate_t) {.line = l, .tunnel = t, .loop = getWorkerLoop(lineGetWID(l)), .started_us = getHRTimeUs()};
     if (! wloopNormalDispatchAllowed(ls->loop))
     {

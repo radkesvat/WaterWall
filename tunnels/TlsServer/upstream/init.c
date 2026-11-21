@@ -7,6 +7,16 @@ void tlsserverTunnelUpStreamInit(tunnel_t *t, line_t *l)
     tlsserver_tstate_t *ts = tunnelGetState(t);
     tlsserver_lstate_t *ls = lineGetState(l, t);
 
+    address_context_t *destination = lineGetDestinationAddressContext(l);
+    const uint8_t      transport   = addresscontextSelectTransport(destination, kAddressContextTransportTcp);
+    if (transport == 0)
+    {
+        LOGW("TlsServer: refusing a line without a TCP destination offer");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+    addresscontextSetOnlyProtocol(destination, IP_PROTO_TCP);
+
     if (ts->verbose)
     {
         LOGD("TlsServer: worker %u initializing TLS server line", (unsigned int) lineGetWID(l));

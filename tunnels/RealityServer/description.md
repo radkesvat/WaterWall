@@ -9,6 +9,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `RealityServer` implements Reality v2. It starts each connection as a visitor TCP bridge, passively extracts the real ClientHello and final ServerHello binding, and only then tests client-to-server records with fresh per-connection session keys. TLS 1.3 requires an authenticated request/ack/confirm handoff before the visitor branch is closed and the same Waterwall line switches to the normal `next` chain. TLS 1.2 retains its immediate profile-aware authorization path.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 - `TcpListener -> RealityServer -> protected-chain`
@@ -123,6 +126,6 @@ This node explicitly disables splice for the entire chain through
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `21` bytes |

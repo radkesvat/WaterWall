@@ -144,7 +144,8 @@ static void noop(tunnel_t *t, line_t *l)
 static void init(tunnel_t *t, line_t *l)
 {
     discard t;
-    discard l;
+    twfRequire(addresscontextGetTransportOffer(lineGetDestinationAddressContext(l)) == kAddressContextTransportTcp,
+               "KeepAlive did not commit TCP before forwarding Init");
     ++inits;
 }
 
@@ -366,6 +367,7 @@ static void setupWithSettings(const char *settings)
 #endif
     twfLinePoolSetup(&lines, node->lstate_size, 4);
     line = twfLinePoolCreateLine(&lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     lineRef(line);
     tunnelUpStreamInit(node, line);
 }
@@ -399,6 +401,20 @@ static void teardown(void)
     cJSON_Delete(metadata.node_settings_json);
     memoryFree(metadata.type);
     twfWorkerEnvTeardown(&env);
+}
+
+static void testDatagramRefusal(void)
+{
+    setup();
+    line_t *datagram = twfLinePoolCreateLine(&lines);
+    lineRef(datagram);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(datagram), kAddressContextTransportUdp);
+    tunnelUpStreamInit(node, datagram);
+    twfRequire(inits == 1 && finishes == 1 && ! lineIsAlive(datagram),
+               "KeepAlive admitted a UDP-only line or failed to close toward its owner");
+    twfRequireLineStateZeroed(datagram, node, "KeepAlive retained incompatible line state");
+    lineUnref(datagram);
+    teardown();
 }
 
 #ifndef TEST_KEEPALIVE_SERVER
@@ -1017,6 +1033,7 @@ int main(void)
     twfRequire(logger != NULL, "create diagnostic capture logger");
     loggerSetLevel(logger, LOG_LEVEL_WARN);
     loggerSetHandler(logger, captureDiagnostic);
+    testDatagramRefusal();
     testIncrementalDelivery();
     testFragmentedControl();
     testAdvisoryControlReplies();

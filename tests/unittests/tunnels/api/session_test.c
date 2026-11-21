@@ -305,6 +305,7 @@ static void pump(void)
 static void secondLine(void)
 {
     line = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     lineRef(line);
     tunnelUpStreamInit(api, line);
 }

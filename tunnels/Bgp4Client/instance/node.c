@@ -22,8 +22,8 @@ node_t nodeBgp4ClientGet(void)
                   .flags                 = kNodeFlagSupportsSplice,
                   .required_padding_left = kBgp4ClientRequiredPaddingLeft,
                   .layer_group           = kNodeLayer4,
-                  .layer_group_next_node = kNodeLayer4,
-                  .layer_group_prev_node = kNodeLayer4,
+                  .layer_group_next_node = kNodeLayer4Stream,
+                  .layer_group_prev_node = kNodeLayer4Stream,
                   .can_have_next         = true,
                   .can_have_prev         = true,
     };

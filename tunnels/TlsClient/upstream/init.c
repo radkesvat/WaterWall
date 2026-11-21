@@ -4,6 +4,16 @@
 
 void tlsclientTunnelUpStreamInit(tunnel_t *t, line_t *l)
 {
+    address_context_t *dest      = lineGetDestinationAddressContext(l);
+    const uint8_t      transport = addresscontextSelectTransport(dest, kAddressContextTransportTcp);
+    if (transport == 0)
+    {
+        LOGW("TlsClient: destination does not offer TCP");
+        tunnelPrevDownStreamFinish(t, l);
+        return;
+    }
+    addresscontextSetTransportOffer(dest, transport);
+
     tlsclient_tstate_t *ts          = tunnelGetState(t);
     tlsclient_lstate_t *ls          = lineGetState(l, t);
     sbuf_t             *ech_payload = NULL;

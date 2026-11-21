@@ -27,6 +27,7 @@ static void setupFixture(est_fixture_t *f, node_t *metadata, bool server)
     twfRequire(node != NULL, "could not construct the RTMP node");
 
     estFixtureSetup(f, node->tstate_size, node->lstate_size);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f->line), kAddressContextTransportTcp);
     tunnelDestroy(f->node);
     f->node                 = node;
     f->node->chain          = f->chain;

@@ -811,8 +811,9 @@ static void requireOrdinaryClientHelloProfile(tunnel_t *tls, buffer_pool_t *pool
     require(line != NULL, "failed to allocate ordinary ClientHello profile line");
     atomic_init(&line->refc, 1);
     memorySet(line->active_tunnels_mask, 0xFF, sizeof(line->active_tunnels_mask));
-    line->alive          = true;
-    line->wid            = 0;
+    line->alive = true;
+    line->wid   = 0;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     ordinary_init_count  = 0;
     ordinary_init_flight = NULL;
     tlsclientTunnelUpStreamInit(tls, line);
@@ -1487,6 +1488,7 @@ static void testOrdinaryLargeClientHelloIsCompletelyDrained(void)
     line->alive = true;
     line->wid   = 0;
 
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     ordinary_init_flight = NULL;
     ordinary_init_count  = 0;
     tlsclientTunnelUpStreamInit(tls, line);

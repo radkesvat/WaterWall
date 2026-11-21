@@ -9,6 +9,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 `RealityClient` implements Reality v2. It performs a real client TLS handshake through an internal `TlsClient`, derives fresh directional session keys from that handshake, and then takes over the raw connection. TLS 1.3 uses an authenticated request/ack/confirm handoff before application records begin; TLS 1.2 retains the existing immediate profile-aware takeover.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 - `TcpListener -> RealityClient -> TcpConnector`
@@ -131,6 +134,6 @@ This node explicitly disables splice for the entire chain through
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `21` bytes |

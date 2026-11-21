@@ -18,6 +18,9 @@ This tunnel must reach KeepAliveServer for it to work.
 It is designed to compose like other Waterwall middle tunnels. It does not invent a new line lifecycle and it does not
 hold protocol state alive after a clean finish.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 Direct in-process test:
@@ -217,6 +220,6 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `5` bytes |

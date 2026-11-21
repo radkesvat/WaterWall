@@ -269,6 +269,7 @@ static void openLine(const char *settings)
     tunnelchainFinalize(chain);
     twfRequire(! chain->supports_splice && chain->sum_padding_left == 64, "TLS splice block/padding changed");
     line = lineCreate(chain->line_pools, 0);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportBoth);
     lineRef(line);
     tunnelUpStreamInit(tls, line);
     twfRequire(next_inits == 1, "transport Init count");

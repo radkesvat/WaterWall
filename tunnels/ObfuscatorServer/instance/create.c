@@ -69,5 +69,10 @@ tunnel_t *obfuscatorserverTunnelCreate(node_t *node)
     }
 
     dynamicvalueDestroy(skip);
+    if (stream_records)
+    {
+        node->layer_group_prev_node = kNodeLayer3 | kNodeLayer4Stream | kNodeLayerSameAsNext;
+        node->layer_group_next_node = kNodeLayer3 | kNodeLayer4Stream | kNodeLayerSameAsPrev;
+    }
     return t;
 }

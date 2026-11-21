@@ -140,6 +140,7 @@ static void fixtureTeardown(fixture_t *fixture)
 static line_t *fixtureCreateLine(fixture_t *fixture, bool establish)
 {
     line_t *l = twfLinePoolCreateLine(&fixture->lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(l), kAddressContextTransportTcp);
     keepaliveclientTunnelUpStreamInit(fixture->client, l);
     if (establish)
         keepaliveclientTunnelDownStreamEst(fixture->client, l);
@@ -289,6 +290,7 @@ static void caseWorkerAndInstanceIsolation(void)
             for (unsigned i = 0; i < kLinesPerWorker; ++i)
             {
                 line_t *l = lines[instance][wid][i] = lineCreate(pools, wid);
+                addresscontextSetTransportOffer(lineGetDestinationAddressContext(l), kAddressContextTransportTcp);
                 lineRef(l);
                 keepaliveclientTunnelUpStreamInit(clients[instance], l);
                 keepaliveclientTunnelDownStreamEst(clients[instance], l);

@@ -117,6 +117,8 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment, uint32_t h
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, max(client->lstate_size, server->lstate_size), 8);
     line_t *cl = twfLinePoolCreateLine(&lines), *sl = twfLinePoolCreateLine(&lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(cl), kAddressContextTransportBoth);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(sl), kAddressContextTransportBoth);
     lineRef(cl);
     lineRef(sl);
     cp->fnFinD                = ownerFinish;
@@ -318,6 +320,7 @@ static void testFixedRetention(bool server, uint32_t ordinary_size, uint32_t spl
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, t->lstate_size, 8);
     line_t *line = twfLinePoolCreateLine(&lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(line), kAddressContextTransportTcp);
     lineRef(line);
     if (owner_at_next)
         tunnelDownStreamInit(t, line);

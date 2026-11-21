@@ -359,6 +359,10 @@ So if your goal is wire-level similarity to default nginx, keep the defaults unl
 
 ### Fallback behavior
 
+Raw fallback replays on the borrowed input line. It preserves the source
+identity and the established destination choice. A handoff with an unset,
+unpinned destination transport uses TCP before the fallback branch's `Init`.
+
 When `fallback-node-name` is set, `TlsServer` retains the initial classification prefix. When `sni` is also set, it retains the original ClientHello wire bytes until routing or TLS commitment.
 
 With SNI routing enabled, original input is retained in compact, coalescing buffers up to 1 MiB of input per line until TLS commitment or fallback selection. Socket fragmentation and ClientHello fragmentation across TLS records are supported, and any coalesced trailing bytes are replayed in order. The existing `handshake-timeout-ms` deadline covers incomplete input; `0` disables that deadline. Exceeding the buffer limit closes the connection without selecting a branch. A ServerHello (including HelloRetryRequest) commits the TLS branch; later errors never switch it to fallback.
@@ -547,6 +551,6 @@ This node explicitly disables splice for the entire chain through
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `0` bytes |

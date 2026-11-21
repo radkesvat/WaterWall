@@ -534,8 +534,8 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `16` bytes |
 
 Split waiting uploads close strictly above `131070 * max(1, ceil(L / 32768))` bytes, using the line pool's independent waiting-budget basis `L` (64 KiB in S1/S2, 1 MiB in higher profiles). Header parsing and available pairing run first; coalesced body bytes do not count toward the header limit. `no-split-upload-buffering-limit` remains the explicit bypass. The threshold is 262,140 bytes in S1/S2 and 4,194,240 bytes in higher profiles.

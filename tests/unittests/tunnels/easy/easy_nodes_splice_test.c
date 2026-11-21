@@ -170,6 +170,7 @@ void easySetup(easy_fixture_t *f, tunnel_t *node)
     node->chain                   = f->chain;
     tunnelchainFinalize(f->chain);
     f->line = lineCreate(tunnelchainGetLinePools(f->chain), 0);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(f->line), IP_PROTO_TCP);
 }
 void easyTeardown(easy_fixture_t *f)
 {

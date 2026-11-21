@@ -148,6 +148,7 @@ static void caseHandshakeDeadlineTimerFails(void)
     const uint32_t refc_at_start = twfLineRefCount(l);
 
     g_timer_fails = true;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     tlsserverTunnelUpStreamInit(fixture.tls, l);
     g_timer_fails = false;
 
@@ -164,6 +165,7 @@ static void caseHandshakeDeadlineTimerFails(void)
     // A second line must still initialize normally once the allocator recovers.
     memoryZero(&fixture.trace, sizeof(fixture.trace));
     line_t *sibling = twfLineCreate(fixture.tls->lstate_size);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(sibling), IP_PROTO_TCP);
     tlsserverTunnelUpStreamInit(fixture.tls, sibling);
 
     twfRequireEqualU32(fixture.trace.prev_finish, 0, "the sibling line was closed even though its timer was armed");
@@ -190,6 +192,7 @@ static void caseTlsAllocationFails(unsigned bio_failure, bool ssl_failure)
     g_bio_failure   = bio_failure;
     g_ssl_fails     = ssl_failure;
     g_tls_injection = true;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(line), IP_PROTO_TCP);
     tlsserverTunnelUpStreamInit(fixture.tls, line);
     g_tls_injection = false;
     twfRequire(g_detached_bios[0] == NULL && g_detached_bios[1] == NULL,
@@ -215,6 +218,7 @@ static void caseZeroTimeoutNeedsNoTimer(void)
 
     // Even with every timer allocation failing, a line that needs no deadline must open normally.
     g_timer_fails = true;
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     tlsserverTunnelUpStreamInit(fixture.tls, l);
     g_timer_fails = false;
 
@@ -238,6 +242,7 @@ static void casePendingPlaintextLimit(unsigned dimension, bool overflow)
     ts->handshake_timeout_ms = 0;
     line_t        *l         = twfLineCreate(fixture.tls->lstate_size);
     const uint32_t refs      = twfLineRefCount(l);
+    addresscontextSetOnlyProtocol(lineGetDestinationAddressContext(l), IP_PROTO_TCP);
     tlsserverTunnelUpStreamInit(fixture.tls, l);
     tlsserver_lstate_t *ls     = lineGetState(l, fixture.tls);
     const unsigned      count  = dimension == 0 ? 1 : 2048;

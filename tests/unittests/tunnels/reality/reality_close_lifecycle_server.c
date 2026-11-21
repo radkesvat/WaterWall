@@ -969,6 +969,7 @@ static void testServerDestinationFallbackLifecycle(void)
         fixture.prev->fnFinD                = serverFallbackPrevFinish;
         fixture.context.kill_on_prev_finish = true;
 
+        addresscontextSetTransportOffer(lineGetDestinationAddressContext(fixture.line), kAddressContextTransportTcp);
         realityserverTunnelUpStreamInit(fixture.reality, fixture.line);
         requireServer(strcmp(fixture.context.events, "i") == 0, "server did not initialize the destination once");
         if (visitor != 0)

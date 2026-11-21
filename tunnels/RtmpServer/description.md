@@ -4,6 +4,9 @@
 Each RTMP connection carries one ordered, full-duplex application byte stream. Peers must implement
 WaterWall's `ww.data` messages. Ordinary video publishing and playback use a different payload format.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 ```text

@@ -102,6 +102,8 @@ static void runCase(bool reverse, uint32_t length, uint32_t fragment)
     twf_line_pool_t lines;
     twfLinePoolSetup(&lines, max(client->lstate_size, server->lstate_size), 8);
     line_t *cl = twfLinePoolCreateLine(&lines), *sl = twfLinePoolCreateLine(&lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(cl), kAddressContextTransportBoth);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(sl), kAddressContextTransportBoth);
     lineRef(cl);
     lineRef(sl);
     cp->fnFinD                = ownerFinish;
@@ -415,6 +417,7 @@ static void fixtureBegin(bgp_fixture_t *f, bool client, bool encode, uint32_t la
     f->t->chain               = f->chain;
     twfLinePoolSetup(&f->lines, f->t->lstate_size, 8);
     f->line = twfLinePoolCreateLine(&f->lines);
+    addresscontextSetTransportOffer(lineGetDestinationAddressContext(f->line), kAddressContextTransportTcp);
     lineRef(f->line);
     f->prev->fnFinD     = fixtureOwnerFinish;
     f->prev->fnPayloadD = f->next->fnPayloadU = fixtureReceive;

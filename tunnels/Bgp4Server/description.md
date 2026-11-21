@@ -11,6 +11,9 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 These nodes provide BGP-like stream framing, without BGP routing, route exchange, encryption, or authentication. `settings.password` is accepted but ignored.
 
+The node selects TCP from the destination transport offer during `Init`.
+It closes lines whose offers do not include TCP.
+
 ## Typical placement
 
 It is intended to be paired with `Bgp4Client`:
@@ -103,8 +106,8 @@ Source-backed metadata:
 | `can_have_prev` | `true` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayer4` |
-| `layer_group_prev_node` | `kNodeLayer4` |
-| `layer_group_next_node` | `kNodeLayer4` |
+| `layer_group_prev_node` | `kNodeLayer4Stream` |
+| `layer_group_next_node` | `kNodeLayer4Stream` |
 | `required_padding_left` | `19` bytes |
 
 Both directions accept ordinary buffers, private-pipe splice buffers, and mixed

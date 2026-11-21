@@ -18,6 +18,9 @@ transport at `next`; `ObfuscatorServer` faces its transport at the previous node
 A `Bridge` reverses callback direction, so two legs whose `next` sides face a
 paired Bridge both use `ObfuscatorClient`.
 
+With `tls_record_header: true`, normal lines select TCP from the destination
+offer during `Init`. Packet lines keep per-packet processing.
+
 ## Typical placement
 
 A common layout is:
