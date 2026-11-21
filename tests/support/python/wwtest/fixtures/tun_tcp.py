@@ -97,11 +97,12 @@ class Fixture:
         raise RuntimeError("namespace holder exited during startup")
 
     def configure(self, config):
-        config["nodes"][0]["settings"]["gso"] = self.gso
+        tun_settings = next(node["settings"] for node in config["nodes"] if node["name"] == "tun")
+        tun_settings["gso"] = self.gso
         if self.multi_queue is not None:
-            config["nodes"][0]["settings"]["multi-queue"] = self.multi_queue
+            tun_settings["multi-queue"] = self.multi_queue
         if self.opaque_mode is not None:
-            config["nodes"][0]["settings"]["opaque-flow-mode"] = self.opaque_mode
+            tun_settings["opaque-flow-mode"] = self.opaque_mode
 
     def __enter__(self):
         self.directory.mkdir()

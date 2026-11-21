@@ -31,15 +31,18 @@ class ChecksumFixture(Fixture):
 
     def configure(self, config):
         super().configure(config)
-        config['nodes'][2]['type'] = 'TcpUdpConnector'
-        config['nodes'][1]['settings']['fake-dns'] = {'cache-size': 64}
-        config['nodes'][1]['settings']['mtu'] = self.mtu
+        nodes = {node['name']: node for node in config['nodes']}
+        tun, stack, out = nodes['tun'], nodes['stack'], nodes['out']
+        tun['next'] = 'middle' if self.interposed else 'stack'
+        stack['next'] = 'out'
+        stack['settings']['fake-dns'] = {'cache-size': 64}
+        stack['settings']['mtu'] = self.mtu
+        out['type'] = 'TcpUdpConnector'
+        # Start the stack before TunDevice publishes its checksum capabilities.
+        config['nodes'] = [stack, tun, out]
         if self.interposed:
-            config['nodes'][0]['next'] = 'middle'
             config['nodes'].append({'name': 'middle', 'type': 'IpOverrider', 'next': 'stack',
                                     'settings': {'chance': 0, 'up': {'source-ip': {'ipv4': CLIENT}}}})
-        # Exercise PTC startup before TUN publication as well as the original order.
-        config['nodes'][0], config['nodes'][1] = config['nodes'][1], config['nodes'][0]
 
 
 def wait_ready(process, ready):
