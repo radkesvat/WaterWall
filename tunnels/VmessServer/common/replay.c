@@ -13,9 +13,9 @@ typedef struct replay_entry_s
     size_t       position;
 } replay_entry_t;
 
-static uint64_t replayHash(const replay_key_t *key)
+static size_t replayHash(const replay_key_t *key)
 {
-    return key->hash;
+    return (size_t) key->hash;
 }
 static bool replayEqual(const replay_key_t *a, const replay_key_t *b)
 {
