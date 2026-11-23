@@ -512,6 +512,12 @@ static void captureSplitBody(tunnel_t *t, line_t *l, sbuf_t *buf)
     lineReuseBuffer(l, buf);
 }
 
+static void finishDuringSplitPause(tunnel_t *t, line_t *main)
+{
+    callbackCapturePause(t, main);
+    httpserverSplitDownStreamFinish(t->prev, main);
+}
+
 static void submitSplitRequest(tunnel_t *t, line_t *l, const char *request)
 {
     sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
@@ -521,16 +527,18 @@ static void submitSplitRequest(tunnel_t *t, line_t *l, const char *request)
 }
 
 static void casePendingDownloadPressure(bool download_first, bool cancel_before_pairing,
-                                        TunnelFlowRoutinePause during_init, const char *expected)
+                                        TunnelFlowRoutinePause during_init, bool finish_on_pause, const char *expected)
 {
     twfSetCase("HttpServer split preserves the pending download Pause across pairing");
     httpserver_split_callback_fixture_t fixture;
     fixtureSetupSplitPairing(&fixture);
     fixture.next->fnInitU    = signalDuringSplitInit;
     fixture.next->fnPayloadU = captureSplitBody;
-    signal_during_main_init  = during_init;
-    line_t *upload           = twfLineCreate(fixture.http->lstate_size);
-    line_t *download         = twfLineCreate(fixture.http->lstate_size);
+    if (finish_on_pause)
+        fixture.next->fnPauseU = finishDuringSplitPause;
+    signal_during_main_init = during_init;
+    line_t *upload          = twfLineCreate(fixture.http->lstate_size);
+    line_t *download        = twfLineCreate(fixture.http->lstate_size);
     httpserverSplitUpStreamInit(fixture.http, upload);
     httpserverSplitUpStreamInit(fixture.http, download);
     const char *get  = "GET /download?id=hold HTTP/1.1\r\nHost: example.test\r\n\r\n";
@@ -549,8 +557,18 @@ static void casePendingDownloadPressure(bool download_first, bool cancel_before_
         submitSplitRequest(fixture.http, download, get);
     httpserver_lstate_t *ls = lineGetState(download, fixture.http);
     twfRequireEqualText(fixture.next_capture.events, expected, "pressure was lost, stale or replayed after body");
-    requireCallbacksOnLine(&fixture.next_capture, ls->split_main_line, "split pressure crossed on the wrong line");
-    httpserverSplitDownStreamFinish(fixture.http, ls->split_main_line);
+    if (finish_on_pause)
+    {
+        twfRequire(lineIsAlive(upload) && lineIsAlive(download), "fixture must keep both borrowed transports live");
+        twfRequireLineStateZeroed(upload, fixture.http, "Finish during Pause left upload HTTP state");
+        twfRequireLineStateZeroed(download, fixture.http, "Finish during Pause left download HTTP state");
+        twfRequireEqualU32(fixture.prev_trace.prev_finish, 2, "pairing repeated Finish on a retired transport");
+    }
+    else
+    {
+        requireCallbacksOnLine(&fixture.next_capture, ls->split_main_line, "split pressure crossed on the wrong line");
+        httpserverSplitDownStreamFinish(fixture.http, ls->split_main_line);
+    }
     twfLineDestroy(upload);
     twfLineDestroy(download);
     fixtureTeardownSplitPairing(&fixture);
@@ -792,10 +810,12 @@ int main(void)
 {
     for (unsigned mode = 0; mode < 5; ++mode)
         caseMigrationReplay(mode);
-    casePendingDownloadPressure(false, false, NULL, "IUB");
-    casePendingDownloadPressure(true, true, NULL, "IB");
-    casePendingDownloadPressure(true, false, httpserverTunnelUpStreamPause, "IUB");
-    casePendingDownloadPressure(false, false, httpserverTunnelUpStreamResume, "IRB");
+    casePendingDownloadPressure(false, false, NULL, false, "IUB");
+    casePendingDownloadPressure(true, true, NULL, false, "IB");
+    casePendingDownloadPressure(true, false, httpserverTunnelUpStreamPause, false, "IUB");
+    casePendingDownloadPressure(false, false, httpserverTunnelUpStreamResume, false, "IRB");
+    casePendingDownloadPressure(false, false, NULL, true, "IU");
+    casePendingDownloadPressure(true, false, NULL, true, "IU");
     casePairedLargeChunk(false, false);
     casePairedLargeChunk(true, false);
     casePairedLargeChunk(true, true);

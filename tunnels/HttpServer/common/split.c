@@ -815,7 +815,7 @@ static bool splitInsertOrPairUpload(tunnel_t *t, line_t *l, size_t header_end, c
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleUpload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, l, download_line);
-        if (! ok && lineIsAlive(download_line))
+        if (! ok && lineIsAlive(download_line) && dls->line == download_line)
         {
             splitCloseTransport(t, download_line, true);
         }
@@ -867,7 +867,7 @@ static bool splitInsertOrPairDownload(tunnel_t *t, line_t *l, size_t header_end,
         splitApplyParsedHeader(l, ls, header_end, info, kHttpServerSplitRoleDownload, hash);
         splitUnlockMaps(ts);
         bool ok = splitPair(t, upload_line, l);
-        if (! ok && lineIsAlive(upload_line))
+        if (! ok && lineIsAlive(upload_line) && uls->line == upload_line)
         {
             splitCloseTransport(t, upload_line, true);
         }
@@ -1016,7 +1016,7 @@ void httpserverSplitProcessUpStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
         }
     }
 
-    if (! ok && lineIsAlive(l))
+    if (! ok && lineIsAlive(l) && ls->line == l)
     {
         splitCloseFromTransport(t, l, true);
     }
