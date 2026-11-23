@@ -2,6 +2,8 @@
 
 /* Cross-worker pipe forwarding with one explicit owner for each pair. */
 
+#include "buffer_queue.h"
+#include "close_drain.h"
 #include "global_state.h"
 #include "line.h"
 #include "loggers/internal_logger.h"
@@ -26,6 +28,7 @@ typedef struct pipetunnel_line_state_s
 {
     pipe_pair_t *pair;
     uint8_t      role;
+    bool         transport_paused; /* physical prev-side writes before pipeTo() */
 } pipetunnel_line_state_t;
 
 typedef struct pipetunnel_state_s
@@ -38,23 +41,25 @@ typedef struct pipetunnel_state_s
     bool         pairs_lock_initialized;
 } pipetunnel_state_t;
 
-/* One payload direction of a pair. Payload queued on the receiving worker is
- * out of reach of the Pause that worker relays back, so each direction bounds
- * it and holds its own producer meanwhile. */
 typedef struct pipe_flow_s
 {
-    /* Queue charge sent and not yet dispatched on the receiving worker. */
-    atomic_ullong queued;
-    /* Set by the sender when it holds its producer; taken by the receiver when
-     * it sees the queue at the low watermark. */
-    atomic_bool drain_wanted;
-    /* Sending worker only: the two independent reasons its producer is paused. */
-    bool held;
-    bool peer_paused;
+    /* Receiver publishes pressure before queuing Pause and clears it after replay. */
+    atomic_bool held;
+    /* Producer worker only. An early Pause stands in for its queued notification. */
+    bool producer_paused;
+    bool early_pause;
+    /* Receiver worker only. */
+    bool           paused;
+    bool           replaying;
+    buffer_queue_t pending;
+    close_drain_t  finish;
+    pipe_pair_t   *pair;
 } pipe_flow_t;
 
 struct pipe_pair_s
 {
+    pipe_flow_t  up;   /* borrowed producer -> owned receiver */
+    pipe_flow_t  down; /* owned producer -> borrowed receiver */
     pipe_pair_t *prev;
     pipe_pair_t *next;
     tunnel_t    *wrapper;
@@ -68,10 +73,6 @@ struct pipe_pair_s
     atomic_bool  prev_finished;
     atomic_bool  next_finished;
     atomic_bool  owned_init_delivered;
-    /* up: borrowed to owned, produced by the previous tunnel.
-     * down: owned to borrowed, produced by the next tunnel. */
-    pipe_flow_t up;
-    pipe_flow_t down;
 };
 
 typedef enum pipe_message_type_e
@@ -82,7 +83,6 @@ typedef enum pipe_message_type_e
     kPipeMessagePayload,
     kPipeMessagePause,
     kPipeMessageResume,
-    kPipeMessageDrained,
 } pipe_message_type_t;
 
 typedef enum pipe_send_result_e
@@ -232,6 +232,9 @@ static void pipePairDetach(pipe_pair_t *pair, line_t *line)
         return;
     }
 
+    pipe_flow_t *incoming = line == pair->owned_line ? &pair->up : &pair->down;
+    closeDrainEnd(&incoming->finish);
+    bufferqueueDestroy(&incoming->pending);
     pipetunnel_line_state_t *ls = lineGetState(line, pair->wrapper);
     if (ls->pair == pair)
     {
@@ -368,66 +371,87 @@ static bool pipeMessageLineIsUsable(pipe_pair_t *pair, line_t *line_to, sbuf_t *
     return false;
 }
 
-/* Sending worker, before the payload is queued. True when this payload takes
- * the queue over the bound and the producer is not paused yet. */
-static bool pipeFlowCharge(pipe_flow_t *flow, uint64_t charge)
+/* On the producer worker keep queued pressure notifications ordered, but never
+ * let an older Resume clear newer pressure already visible from the receiver. */
+static bool pipeApplyPressure(pipe_flow_t *flow, bool paused)
 {
-    const uint64_t queued = atomicAddU64Explicit(&flow->queued, charge, memory_order_relaxed) + charge;
-    if (queued <= kPipeTunnelQueueHighWater || flow->held)
+    if (paused)
     {
+        const bool notify     = ! flow->early_pause;
+        flow->early_pause     = false;
+        flow->producer_paused = true;
+        return notify;
+    }
+    if (atomicLoadRelaxed(&flow->held))
+    {
+        flow->early_pause = flow->producer_paused;
         return false;
     }
-    /* The payload is queued after this request, so its own dispatch observes
-     * the request even when every earlier one has already been settled. */
-    flow->held = true;
-    atomicStoreExplicit(&flow->drain_wanted, true, memory_order_release);
-    return ! flow->peer_paused;
+    flow->early_pause     = false;
+    flow->producer_paused = false;
+    return true;
 }
 
-/* Sending worker: Pause or Resume relayed from the receiving worker. False while
- * the bound holds the producer, which then keeps the one Pause it already has. */
-static bool pipeFlowSetPeerPaused(pipe_flow_t *flow, bool paused)
+static bool pipeTakeEarlyPause(pipe_flow_t *flow)
 {
-    flow->peer_paused = paused;
-    return ! flow->held;
-}
-
-/* Sending worker: the receiving worker reported the queue at the low watermark. */
-static bool pipeFlowRelease(pipe_flow_t *flow)
-{
-    if (! flow->held)
-    {
+    if (flow->producer_paused || ! atomicLoadRelaxed(&flow->held))
         return false;
-    }
-    flow->held = false;
-    return ! flow->peer_paused;
+    flow->producer_paused = true;
+    flow->early_pause     = true;
+    return true;
 }
 
-/* Receiving worker, after the payload was dispatched on line. */
-static void pipeFlowSettle(pipe_pair_t *pair, line_t *line, uint64_t charge, bool upstream)
+static void pipeDeliverPayload(pipe_pair_t *pair, line_t *line, sbuf_t *payload)
 {
-    pipe_flow_t   *flow   = upstream ? &pair->up : &pair->down;
-    const uint64_t queued = atomicSubU64Explicit(&flow->queued, charge, memory_order_relaxed) - charge;
-    if (queued > kPipeTunnelQueueLowWater || ! atomicExchangeExplicit(&flow->drain_wanted, false, memory_order_acq_rel))
+    if (line == pair->owned_line)
+        tunnelNextUpStreamPayload(pair->wrapper, line, payload);
+    else
+        tunnelPrevDownStreamPayload(pair->wrapper, line, payload);
+}
+
+static void pipeReceivePayload(pipe_pair_t *pair, line_t *line, pipe_flow_t *flow, sbuf_t *payload)
+{
+    if (! flow->paused && ! flow->replaying)
     {
+        pipeDeliverPayload(pair, line, payload);
         return;
     }
-    /* A side that closed inside the dispatch has sent its Finish, and nothing
-     * may follow that. The Finish ends the sender's wait instead. */
-    if (! lineIsAlive(line) || ((pipetunnel_line_state_t *) lineGetState(line, pair->wrapper))->pair != pair)
-    {
+    if (bufferqueueTryPushBack(&flow->pending, &payload))
         return;
-    }
+
+    /* No policy budget. A buffer or aggregate outside BufferQueue's representable
+     * geometry still fails this pair, including on 32-bit builds. */
+    LOGW("PipeTunnel: parked payload queue is unrepresentable; closing connection");
+    lineReuseBuffer(line, payload);
+    const bool               upstream = line == pair->borrowed_line;
     const pipe_send_result_t result =
-        pipeSend(pair, upstream ? pair->borrowed_line : pair->owned_line, kPipeMessageDrained, NULL, ! upstream);
-    if (result != kPipeSendAdmitted)
+        pipeSend(pair, upstream ? pair->owned_line : pair->borrowed_line, kPipeMessageFin, NULL, upstream);
+    atomicStoreExplicit(&pair->terminal, true, memory_order_release);
+    pipeReconcileLine(pair, line);
+    if (result == kPipeSendRefused)
+        pipeEscalateRefusal();
+}
+
+static void pipeFinishExpired(close_drain_t *finish)
+{
+    pipe_flow_t *flow = container_of(finish, pipe_flow_t, finish);
+    pipe_pair_t *pair = flow->pair;
+    LOGW("PipeTunnel: closing with %zu parked bytes after the finish drain deadline",
+         bufferqueueGetLength(&flow->pending));
+    pipeReconcileLine(pair, flow == &pair->up ? pair->owned_line : pair->borrowed_line);
+}
+
+static void pipeReceiveFinish(pipe_pair_t *pair, line_t *line, pipe_flow_t *flow)
+{
+    if (bufferqueueGetEntryCount(&flow->pending) != 0 || flow->replaying)
     {
-        pipeReconcileLine(pair, line);
-        if (result == kPipeSendRefused)
-        {
-            pipeEscalateRefusal();
-        }
+        /* The source already detached. Only the still-live receiving side can
+         * resume these payloads; keep its ordered Finish behind them. */
+        closeDrainBegin(&flow->finish, NULL, pipeFinishExpired);
+        if (closeDrainArm(&flow->finish, getWorkerLoop(lineGetWID(line))))
+            return;
     }
+    pipeReconcileLine(pair, line);
 }
 
 static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pipe_message_type_t type)
@@ -442,7 +466,7 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
 
     if (type == kPipeMessageFin)
     {
-        pipeCloseOwned(pair);
+        pipeReceiveFinish(pair, line_to, &pair->up);
         lineUnref(line_to);
         pipePairUnref(pair);
         return;
@@ -457,29 +481,16 @@ static void pipeApplyUp(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, pip
     case kPipeMessageEst:
         tunnelUpStreamEst(next, line_to);
         break;
-    case kPipeMessagePayload: {
-        const uint64_t charge = sbufGetQueueCharge(payload);
-        tunnelUpStreamPayload(next, line_to, payload);
-        pipeFlowSettle(pair, line_to, charge, true);
+    case kPipeMessagePayload:
+        pipeReceivePayload(pair, line_to, &pair->up, payload);
         break;
-    }
     case kPipeMessagePause:
-        if (pipeFlowSetPeerPaused(&pair->down, true))
-        {
+        if (pipeApplyPressure(&pair->down, true))
             tunnelUpStreamPause(next, line_to);
-        }
         break;
     case kPipeMessageResume:
-        if (pipeFlowSetPeerPaused(&pair->down, false))
-        {
+        if (pipeApplyPressure(&pair->down, false))
             tunnelUpStreamResume(next, line_to);
-        }
-        break;
-    case kPipeMessageDrained:
-        if (pipeFlowRelease(&pair->down))
-        {
-            tunnelUpStreamResume(next, line_to);
-        }
         break;
     case kPipeMessageFin:
         assert(false);
@@ -502,7 +513,7 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
 
     if (type == kPipeMessageFin)
     {
-        pipeCloseBorrowed(pair);
+        pipeReceiveFinish(pair, line_to, &pair->down);
         lineUnref(line_to);
         pipePairUnref(pair);
         return;
@@ -520,29 +531,16 @@ static void pipeApplyDown(pipe_pair_t *pair, line_t *line_to, sbuf_t *payload, p
     case kPipeMessageEst:
         tunnelDownStreamEst(prev, line_to);
         break;
-    case kPipeMessagePayload: {
-        const uint64_t charge = sbufGetQueueCharge(payload);
-        tunnelDownStreamPayload(prev, line_to, payload);
-        pipeFlowSettle(pair, line_to, charge, false);
+    case kPipeMessagePayload:
+        pipeReceivePayload(pair, line_to, &pair->down, payload);
         break;
-    }
     case kPipeMessagePause:
-        if (pipeFlowSetPeerPaused(&pair->up, true))
-        {
+        if (pipeApplyPressure(&pair->up, true))
             tunnelDownStreamPause(prev, line_to);
-        }
         break;
     case kPipeMessageResume:
-        if (pipeFlowSetPeerPaused(&pair->up, false))
-        {
+        if (pipeApplyPressure(&pair->up, false))
             tunnelDownStreamResume(prev, line_to);
-        }
-        break;
-    case kPipeMessageDrained:
-        if (pipeFlowRelease(&pair->up))
-        {
-            tunnelDownStreamResume(prev, line_to);
-        }
         break;
     case kPipeMessageInit:
     case kPipeMessageFin:
@@ -574,13 +572,11 @@ PIPE_UP_RECEIVER(onMsgReceivedUpFin, kPipeMessageFin)
 PIPE_UP_RECEIVER(onMsgReceivedUpPayload, kPipeMessagePayload)
 PIPE_UP_RECEIVER(onMsgReceivedUpPause, kPipeMessagePause)
 PIPE_UP_RECEIVER(onMsgReceivedUpResume, kPipeMessageResume)
-PIPE_UP_RECEIVER(onMsgReceivedUpDrained, kPipeMessageDrained)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownEst, kPipeMessageEst)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownFin, kPipeMessageFin)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownPayload, kPipeMessagePayload)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownPause, kPipeMessagePause)
 PIPE_DOWN_RECEIVER(onMsgReceivedDownResume, kPipeMessageResume)
-PIPE_DOWN_RECEIVER(onMsgReceivedDownDrained, kPipeMessageDrained)
 
 #undef PIPE_UP_RECEIVER
 #undef PIPE_DOWN_RECEIVER
@@ -601,8 +597,6 @@ static WorkerMessageCallback pipeUpCallback(pipe_message_type_t type)
         return (WorkerMessageCallback) onMsgReceivedUpPause;
     case kPipeMessageResume:
         return (WorkerMessageCallback) onMsgReceivedUpResume;
-    case kPipeMessageDrained:
-        return (WorkerMessageCallback) onMsgReceivedUpDrained;
     }
     return NULL;
 }
@@ -621,8 +615,6 @@ static WorkerMessageCallback pipeDownCallback(pipe_message_type_t type)
         return (WorkerMessageCallback) onMsgReceivedDownPause;
     case kPipeMessageResume:
         return (WorkerMessageCallback) onMsgReceivedDownResume;
-    case kPipeMessageDrained:
-        return (WorkerMessageCallback) onMsgReceivedDownDrained;
     case kPipeMessageInit:
         return NULL;
     }
@@ -663,11 +655,75 @@ static pipe_pair_t *pipeLinePair(tunnel_t *t, line_t *line)
     return ls->pair;
 }
 
+/* The receiver is the sole writer of its FIFO and of the published hint.
+ * During replay a nested Pause/Resume updates readiness for the outer loop;
+ * the producer stays held until replay actually finishes. */
+static void pipeReceivePressure(pipe_pair_t *pair, line_t *line, pipe_flow_t *flow, bool paused)
+{
+    const bool upstream = line == pair->borrowed_line;
+    if (atomicLoadExplicit(&pair->terminal, memory_order_acquire))
+    {
+        pipeReconcileLine(pair, line);
+        return;
+    }
+    flow->paused = paused;
+    if (flow->replaying)
+        return;
+
+    if (! paused && bufferqueueGetEntryCount(&flow->pending) != 0)
+    {
+        pipePairRef(pair); /* also pins both line allocations across every dispatch */
+        flow->replaying = true;
+        while (! flow->paused && bufferqueueGetEntryCount(&flow->pending) != 0)
+        {
+            if (closeDrainIsActive(&flow->finish) && closeDrainTimeRemaining(&flow->finish) == 0)
+            {
+                pipeFinishExpired(&flow->finish);
+                pipePairUnref(pair);
+                return;
+            }
+            pipeDeliverPayload(pair, line, bufferqueuePopFront(&flow->pending));
+            if (! lineIsAlive(line) || pipeLinePair(pair->wrapper, line) != pair ||
+                atomicLoadExplicit(&pair->terminal, memory_order_acquire))
+            {
+                pipePairUnref(pair);
+                return;
+            }
+        }
+        flow->replaying = false;
+        if (closeDrainIsActive(&flow->finish) && bufferqueueGetEntryCount(&flow->pending) == 0)
+        {
+            pipeReconcileLine(pair, line);
+            pipePairUnref(pair);
+            return;
+        }
+        pipePairUnref(pair); /* this side is still attached */
+        if (flow->paused)
+            return;
+    }
+    atomicStoreRelaxed(&flow->held, paused);
+    if (atomicLoadExplicit(upstream ? &pair->next_finished : &pair->prev_finished, memory_order_acquire))
+        return;
+    const pipe_send_result_t result = pipeSend(pair,
+                                               upstream ? pair->owned_line : pair->borrowed_line,
+                                               paused ? kPipeMessagePause : kPipeMessageResume,
+                                               NULL,
+                                               upstream);
+    if (result != kPipeSendAdmitted)
+    {
+        pipeReconcileLine(pair, line);
+        if (result == kPipeSendRefused)
+            pipeEscalateRefusal();
+    }
+}
+
 static void pipetunnelDefaultUpStreamInit(tunnel_t *t, line_t *line)
 {
-    pipe_pair_t *pair = pipeLinePair(t, line);
+    pipetunnel_line_state_t *ls   = lineGetState(line, t);
+    pipe_pair_t             *pair = ls->pair;
     if (pair == NULL)
     {
+        ls->transport_paused = false;
         tunnelNextUpStreamInit(t, line);
         return;
     }
@@ -703,9 +759,11 @@ static void pipetunnelDefaultUpStreamEst(tunnel_t *t, line_t *line)
 
 static void pipetunnelDefaultUpStreamFin(tunnel_t *t, line_t *line)
 {
-    pipe_pair_t *pair = pipeLinePair(t, line);
+    pipetunnel_line_state_t *ls   = lineGetState(line, t);
+    pipe_pair_t             *pair = ls->pair;
     if (pair == NULL)
     {
+        ls->transport_paused = false;
         tunnelNextUpStreamFinish(t, line);
         return;
     }
@@ -733,9 +791,7 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *
         tunnelNextUpStreamPayload(t, line, payload);
         return;
     }
-    /* The up flow's sender state belongs to the borrowed line's worker. */
     assert(line == pair->borrowed_line);
-    const bool               hold   = pipeFlowCharge(&pair->up, sbufGetQueueCharge(payload));
     const pipe_send_result_t result = pipeSend(pair, pair->owned_line, kPipeMessagePayload, payload, true);
     if (result != kPipeSendAdmitted)
     {
@@ -744,50 +800,37 @@ static void pipetunnelDefaultUpStreamPayload(tunnel_t *t, line_t *line, sbuf_t *
         {
             pipeEscalateRefusal();
         }
-        return;
     }
-    if (hold)
-    {
+    else if (pipeTakeEarlyPause(&pair->up))
         tunnelPrevDownStreamPause(t, line);
-    }
 }
 
 static void pipetunnelDefaultUpStreamPause(tunnel_t *t, line_t *line)
 {
-    pipe_pair_t *pair = pipeLinePair(t, line);
+    pipetunnel_line_state_t *ls   = lineGetState(line, t);
+    pipe_pair_t             *pair = ls->pair;
     if (pair == NULL)
     {
+        ls->transport_paused = true;
         tunnelNextUpStreamPause(t, line);
         return;
     }
-    const pipe_send_result_t result = pipeSend(pair, pair->owned_line, kPipeMessagePause, NULL, true);
-    if (result != kPipeSendAdmitted)
-    {
-        pipeReconcileLine(pair, line);
-        if (result == kPipeSendRefused)
-        {
-            pipeEscalateRefusal();
-        }
-    }
+    assert(line == pair->borrowed_line);
+    pipeReceivePressure(pair, line, &pair->down, true);
 }
 
 static void pipetunnelDefaultUpStreamResume(tunnel_t *t, line_t *line)
 {
-    pipe_pair_t *pair = pipeLinePair(t, line);
+    pipetunnel_line_state_t *ls   = lineGetState(line, t);
+    pipe_pair_t             *pair = ls->pair;
     if (pair == NULL)
     {
+        ls->transport_paused = false;
         tunnelNextUpStreamResume(t, line);
         return;
     }
-    const pipe_send_result_t result = pipeSend(pair, pair->owned_line, kPipeMessageResume, NULL, true);
-    if (result != kPipeSendAdmitted)
-    {
-        pipeReconcileLine(pair, line);
-        if (result == kPipeSendRefused)
-        {
-            pipeEscalateRefusal();
-        }
-    }
+    assert(line == pair->borrowed_line);
+    pipeReceivePressure(pair, line, &pair->down, false);
 }
 
 static void pipetunnelDefaultDownStreamInit(tunnel_t *t, line_t *line)
@@ -823,9 +866,11 @@ static void pipetunnelDefaultDownStreamEst(tunnel_t *t, line_t *line)
 
 static void pipetunnelDefaultDownStreamFin(tunnel_t *t, line_t *line)
 {
-    pipe_pair_t *pair = pipeLinePair(t, line);
+    pipetunnel_line_state_t *ls   = lineGetState(line, t);
+    pipe_pair_t             *pair = ls->pair;
     if (pair == NULL)
     {
+        ls->transport_paused = false;
         tunnelPrevDownStreamFinish(t, line);
         return;
     }
@@ -857,9 +902,7 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *line, sbuf_t
         tunnelPrevDownStreamPayload(t, line, payload);
         return;
     }
-    /* The down flow's sender state belongs to the owned line's worker. */
     assert(line == pair->owned_line);
-    const bool               hold   = pipeFlowCharge(&pair->down, sbufGetQueueCharge(payload));
     const pipe_send_result_t result = pipeSend(pair, pair->borrowed_line, kPipeMessagePayload, payload, false);
     if (result != kPipeSendAdmitted)
     {
@@ -868,12 +911,9 @@ static void pipetunnelDefaultDownStreamPayload(tunnel_t *t, line_t *line, sbuf_t
         {
             pipeEscalateRefusal();
         }
-        return;
     }
-    if (hold)
-    {
+    else if (pipeTakeEarlyPause(&pair->down))
         tunnelNextUpStreamPause(t, line);
-    }
 }
 
 static void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
@@ -884,15 +924,8 @@ static void pipetunnelDefaultDownStreamPause(tunnel_t *t, line_t *line)
         tunnelPrevDownStreamPause(t, line);
         return;
     }
-    const pipe_send_result_t result = pipeSend(pair, pair->borrowed_line, kPipeMessagePause, NULL, false);
-    if (result != kPipeSendAdmitted)
-    {
-        pipeReconcileLine(pair, line);
-        if (result == kPipeSendRefused)
-        {
-            pipeEscalateRefusal();
-        }
-    }
+    assert(line == pair->owned_line);
+    pipeReceivePressure(pair, line, &pair->up, true);
 }
 
 static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
@@ -903,15 +936,8 @@ static void pipetunnelDefaultDownStreamResume(tunnel_t *t, line_t *line)
         tunnelPrevDownStreamResume(t, line);
         return;
     }
-    const pipe_send_result_t result = pipeSend(pair, pair->borrowed_line, kPipeMessageResume, NULL, false);
-    if (result != kPipeSendAdmitted)
-    {
-        pipeReconcileLine(pair, line);
-        if (result == kPipeSendRefused)
-        {
-            pipeEscalateRefusal();
-        }
-    }
+    assert(line == pair->owned_line);
+    pipeReceivePressure(pair, line, &pair->up, false);
 }
 
 static void pipetunnelDefaultOnChain(tunnel_t *t, tunnel_chain_t *tc)
@@ -954,6 +980,24 @@ static void pipetunnelDefaultOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_co
     for (pipe_pair_t *pair = state->pairs; pair != NULL; pair = pair->next)
     {
         atomicStoreExplicit(&pair->terminal, true, memory_order_release);
+    }
+    mutexUnlock(&state->pairs_lock);
+}
+
+static void pipetunnelDefaultOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
+{
+    discard             context;
+    pipetunnel_state_t *state = pipeTunnelState(t);
+    mutexLock(&state->pairs_lock);
+    for (pipe_pair_t *pair = state->pairs; pair != NULL; pair = pair->next)
+    {
+        /* A refused Init can still retire its never-dispatched target on the
+         * source worker. No timer exists there until Init reaches this worker. */
+        if (lineGetWID(pair->owned_line) == wid &&
+            atomicLoadExplicit(&pair->owned_init_delivered, memory_order_acquire))
+            closeDrainCancelTimer(&pair->up.finish);
+        if (lineGetWID(pair->borrowed_line) == wid)
+            closeDrainCancelTimer(&pair->down.finish);
     }
     mutexUnlock(&state->pairs_lock);
 }
@@ -1070,6 +1114,7 @@ tunnel_t *pipetunnelCreate(tunnel_t *child)
     pt->onStart          = &pipetunnelDefaultOnStart;
     pt->onQuiesceRequest = &pipetunnelDefaultOnQuiesceRequest;
     pt->onStop           = &pipetunnelDefaultOnStop;
+    pt->onWorkerQuiesce  = &pipetunnelDefaultOnWorkerQuiesce;
     pt->onWorkerStop     = &pipetunnelDefaultOnWorkerStop;
     pt->onDestroy        = &pipetunnelDestroy;
     return pt;
@@ -1164,10 +1209,13 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
     atomic_init(&pair->prev_finished, false);
     atomic_init(&pair->next_finished, false);
     atomic_init(&pair->owned_init_delivered, false);
-    atomic_init(&pair->up.queued, 0);
-    atomic_init(&pair->up.drain_wanted, false);
-    atomic_init(&pair->down.queued, 0);
-    atomic_init(&pair->down.drain_wanted, false);
+    pair->up.pair   = pair;
+    pair->down.pair = pair;
+    atomic_init(&pair->up.held, false);
+    pair->down.paused = source->transport_paused;
+    atomic_init(&pair->down.held, pair->down.paused);
+    bufferqueueInitEmpty(&pair->up.pending);
+    bufferqueueInitEmpty(&pair->down.pending);
 
     mutexLock(&state->pairs_lock);
     if (UNLIKELY(atomicLoadExplicit(&state->stopping, memory_order_acquire)))
@@ -1208,8 +1256,9 @@ bool pipeTo(tunnel_t *t, line_t *line, wid_t wid_to)
              workerWIDForLog(wid),
              workerWIDForLog(wid_to));
         atomicStoreExplicit(&pair->terminal, true, memory_order_release);
-        /* The caller still owns and closes the borrowed line on false. */
+        /* Restore the borrowed transport's unpaired state on publication failure. */
         pipePairDetach(pair, line);
+        source->transport_paused = pair->down.paused;
         /* No callback owns the never-delivered target line after a synchronous
          * queue refusal. Reconcile that side here as part of the transaction;
          * its Init was never visible, so this only detaches and destroys the

@@ -11,11 +11,8 @@ void httpserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
         return;
     }
 
-    /*
-     * Split transport lines never reach Init at next. A paired download maps
-     * backpressure to its initialized main line; an unpaired download has no
-     * upstream consumer.
-     */
+    /* Resume also cancels any pending pre-pair download Pause. */
+    ls->prev_paused = false;
     if (ls->split_role == kHttpServerSplitRoleDownload)
     {
         if (ls->split_main_line != NULL)
@@ -28,7 +25,6 @@ void httpserverTunnelUpStreamResume(tunnel_t *t, line_t *l)
     {
         return;
     }
-    ls->prev_paused = false;
     if (ls->h2_source_paused)
     {
         // The queued HTTP/2 DATA backlog still holds next until nghttp2 drains it.

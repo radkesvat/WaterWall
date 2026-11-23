@@ -11,13 +11,11 @@ void httpserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
         return;
     }
 
-    /*
-     * Split transport lines never reach Init at next. A paired download maps
-     * backpressure to its initialized main line; an unpaired download has no
-     * upstream consumer.
-     */
+    /* Before the role or main line is known, remember an outstanding download
+     * Pause. Once paired, an immediate relay supersedes any pending replay. */
     if (ls->split_role == kHttpServerSplitRoleDownload)
     {
+        ls->prev_paused = ls->split_main_line == NULL;
         if (ls->split_main_line != NULL)
         {
             tunnelNextUpStreamPause(t, ls->split_main_line);
@@ -26,6 +24,7 @@ void httpserverTunnelUpStreamPause(tunnel_t *t, line_t *l)
     }
     if (ls->split_role == kHttpServerSplitRoleUpload || ls->split_role == kHttpServerSplitRoleUnknown)
     {
+        ls->prev_paused = ls->split_role == kHttpServerSplitRoleUnknown;
         return;
     }
     ls->prev_paused = true;
