@@ -505,12 +505,21 @@ static bool splitPipeCurrentLineToWorker(tunnel_t *t, line_t *l, httpserver_lsta
     while ((queued = bufferqueuePopFront(&ls->receive.pending)) != NULL)
         bufferqueuePushBack(&pending, queued);
 
+    const bool paused = ls->prev_paused;
     splitRemoveFromMaps(t, ls);
     httpserverLinestateDestroy(ls);
 
     if (pipeTo(t, l, target_wid))
     {
         tunnel_t *prev_tunnel = t->prev;
+        if (paused && ! lineCallWithRef(l, tunnelUpStreamPause, prev_tunnel))
+        {
+            bufferpoolReuseBuffer(pool, raw);
+            if (active != NULL)
+                bufferpoolReuseBuffer(pool, active);
+            bufferqueueDestroy(&pending);
+            return true;
+        }
         tunnelUpStreamPayload(prev_tunnel, l, raw);
         if (active != NULL && lineIsAlive(l))
         {
@@ -717,7 +726,14 @@ static bool splitPair(tunnel_t *t, line_t *upload_line, line_t *download_line)
         return false;
     }
 
-    // Init can re-enter and close both transports. Callers hold a reference to the waiting peer, so
+    if (lineIsAlive(download_line) && dls->split_main_line == main_line && dls->prev_paused)
+    {
+        dls->prev_paused = false;
+        if (! lineCallWithRef(main_line, tunnelNextUpStreamPause, t))
+            return false;
+    }
+
+    // Init or Pause can re-enter and close both transports. Callers hold a reference to the waiting peer, so
     // both allocations remain present here, but their line states may already have been destroyed.
     if (! lineIsAlive(upload_line) || ! lineIsAlive(download_line) || uls->line != upload_line ||
         dls->line != download_line)
@@ -742,6 +758,7 @@ static void splitApplyParsedHeader(line_t *l, httpserver_lstate_t *ls, size_t he
 
     if (role == kHttpServerSplitRoleUpload)
     {
+        ls->prev_paused       = false;
         ls->split_upload_line = l;
         if (info->transfer_chunked)
         {

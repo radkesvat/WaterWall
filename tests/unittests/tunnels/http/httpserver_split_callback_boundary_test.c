@@ -5,7 +5,8 @@
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
  * Cases: caseUnpairedDownloadAbsorbsAllCallbacks, casePairedDownloadMapsBackpressureToMain,
  * caseTransportRoleAbsorbsAllCallbacks, caseInitializedRoleForwardsSameLine,
- * caseFinishedNextSuppressesBackpressure, caseWaitingBoundary, casePairedLargeChunk, caseMigrationReplay
+ * caseFinishedNextSuppressesBackpressure, caseWaitingBoundary, casePendingDownloadPressure, casePairedLargeChunk,
+ * caseMigrationReplay
  * Checks: Assertion labels include: next callback capture overflow; the main line did not initialize next
  * exactly once; the main line initialized next with the wrong line pointer; HttpServer line state was
  * not destroyed during test teardown
@@ -458,12 +459,10 @@ static void caseWaitingBoundary(uint32_t large, uint32_t length, bool append, bo
     g_pool_size = kTestLargeBufferSize;
 }
 
-static void casePairedLargeChunk(bool coalesced, bool nested_pair)
+static void fixtureSetupSplitPairing(httpserver_split_callback_fixture_t *fixture)
 {
-    twfSetCase("HttpServer paired split progressively drains a 1 GiB declared chunk");
-    httpserver_split_callback_fixture_t fixture;
-    fixtureSetup(&fixture);
-    httpserver_tstate_t *ts   = tunnelGetState(fixture.http);
+    fixtureSetup(fixture);
+    httpserver_tstate_t *ts   = tunnelGetState(fixture->http);
     ts->h1_transport_mode     = kHttpServerH1TransportSplit;
     ts->split_upload_method   = (char *) "POST";
     ts->split_download_method = (char *) "GET";
@@ -479,9 +478,89 @@ static void casePairedLargeChunk(bool coalesced, bool nested_pair)
     mutexInit(&ts->split_upload_map_mutex);
     mutexInit(&ts->split_download_map_mutex);
     tunnel_chain_t *chain      = tunnelchainCreate(1);
-    chain->sum_line_state_size = fixture.http->lstate_size;
+    chain->sum_line_state_size = fixture->http->lstate_size;
     tunnelchainFinalize(chain);
-    fixture.http->chain      = chain;
+    fixture->http->chain = chain;
+}
+
+static void fixtureTeardownSplitPairing(httpserver_split_callback_fixture_t *fixture)
+{
+    httpserver_tstate_t *ts = tunnelGetState(fixture->http);
+    hmap_httpserver_split_t_drop(&ts->split_upload_map);
+    hmap_httpserver_split_t_drop(&ts->split_download_map);
+    mutexDestroy(&ts->split_upload_map_mutex);
+    mutexDestroy(&ts->split_download_map_mutex);
+    tunnelchainDestroy(fixture->http->chain);
+    fixtureTeardown(fixture);
+}
+
+static TunnelFlowRoutinePause signal_during_main_init;
+
+static void signalDuringSplitInit(tunnel_t *t, line_t *main)
+{
+    callbackCaptureInit(t, main);
+    if (signal_during_main_init != NULL)
+    {
+        httpserver_lstate_t *ls = lineGetState(main, t->prev);
+        signal_during_main_init(t->prev, ls->split_download_line);
+    }
+}
+
+static void captureSplitBody(tunnel_t *t, line_t *l, sbuf_t *buf)
+{
+    callbackCaptureRecord(t, l, 'B');
+    lineReuseBuffer(l, buf);
+}
+
+static void submitSplitRequest(tunnel_t *t, line_t *l, const char *request)
+{
+    sbuf_t *buf = bufferpoolGetSmallBuffer(lineGetBufferPool(l));
+    sbufWrite(buf, request, strlen(request));
+    sbufSetLength(buf, strlen(request));
+    httpserverTunnelUpStreamPayload(t, l, buf);
+}
+
+static void casePendingDownloadPressure(bool download_first, bool cancel_before_pairing,
+                                        TunnelFlowRoutinePause during_init, const char *expected)
+{
+    twfSetCase("HttpServer split preserves the pending download Pause across pairing");
+    httpserver_split_callback_fixture_t fixture;
+    fixtureSetupSplitPairing(&fixture);
+    fixture.next->fnInitU    = signalDuringSplitInit;
+    fixture.next->fnPayloadU = captureSplitBody;
+    signal_during_main_init  = during_init;
+    line_t *upload           = twfLineCreate(fixture.http->lstate_size);
+    line_t *download         = twfLineCreate(fixture.http->lstate_size);
+    httpserverSplitUpStreamInit(fixture.http, upload);
+    httpserverSplitUpStreamInit(fixture.http, download);
+    const char *get  = "GET /download?id=hold HTTP/1.1\r\nHost: example.test\r\n\r\n";
+    const char *post = "POST /upload?id=hold HTTP/1.1\r\nHost: example.test\r\nContent-Length: 2\r\n\r\nq";
+    if (download_first)
+        submitSplitRequest(fixture.http, download, get);
+    else
+        submitSplitRequest(fixture.http, upload, post);
+    httpserverTunnelUpStreamPause(fixture.http, download);
+    if (cancel_before_pairing)
+        httpserverTunnelUpStreamResume(fixture.http, download);
+    requireNoNextCallbacks(&fixture.next_capture, "unpaired transport exposed producer pressure");
+    if (download_first)
+        submitSplitRequest(fixture.http, upload, post);
+    else
+        submitSplitRequest(fixture.http, download, get);
+    httpserver_lstate_t *ls = lineGetState(download, fixture.http);
+    twfRequireEqualText(fixture.next_capture.events, expected, "pressure was lost, stale or replayed after body");
+    requireCallbacksOnLine(&fixture.next_capture, ls->split_main_line, "split pressure crossed on the wrong line");
+    httpserverSplitDownStreamFinish(fixture.http, ls->split_main_line);
+    twfLineDestroy(upload);
+    twfLineDestroy(download);
+    fixtureTeardownSplitPairing(&fixture);
+}
+
+static void casePairedLargeChunk(bool coalesced, bool nested_pair)
+{
+    twfSetCase("HttpServer paired split progressively drains a 1 GiB declared chunk");
+    httpserver_split_callback_fixture_t fixture;
+    fixtureSetupSplitPairing(&fixture);
     fixture.next->fnPayloadU = waitingBody;
 
     line_t *upload   = twfLineCreate(fixture.http->lstate_size);
@@ -538,12 +617,7 @@ static void casePairedLargeChunk(bool coalesced, bool nested_pair)
     twfRequireLineStateZeroed(download, fixture.http, "paired download retained state after Finish");
     twfLineDestroy(upload);
     twfLineDestroy(download);
-    hmap_httpserver_split_t_drop(&ts->split_upload_map);
-    hmap_httpserver_split_t_drop(&ts->split_download_map);
-    mutexDestroy(&ts->split_upload_map_mutex);
-    mutexDestroy(&ts->split_download_map_mutex);
-    tunnelchainDestroy(chain);
-    fixtureTeardown(&fixture);
+    fixtureTeardownSplitPairing(&fixture);
     waiting_nested_after = waiting_nested_length = 0;
     waiting_http                                 = NULL;
     waiting_upload                               = NULL;
@@ -559,7 +633,9 @@ typedef struct migration_capture_s
     unsigned       calls;
     bool           allow_pipe;
     bool           close_first;
+    bool           close_on_pause;
     bool           piped;
+    bool           pause_replayed;
 } migration_capture_t;
 
 static migration_capture_t *migration_capture;
@@ -580,6 +656,7 @@ static void migrationPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     discard              t;
     migration_capture_t *capture = migration_capture;
     twfRequire(capture != NULL && l == capture->upload, "migration replay used the wrong line");
+    twfRequire(capture->pause_replayed, "split migration sent the headers before the transport's Pause");
     const size_t length = sbufGetLength(buf);
     twfRequire(length <= capture->expected_length - capture->received, "migration replay duplicated bytes");
     twfRequire(memcmp(sbufGetRawPtr(buf), capture->expected + capture->received, length) == 0,
@@ -588,6 +665,17 @@ static void migrationPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
     ++capture->calls;
     lineReuseBuffer(l, buf);
     if (capture->close_first)
+        lineDestroy(l);
+}
+
+static void migrationPause(tunnel_t *t, line_t *l)
+{
+    discard              t;
+    migration_capture_t *capture = migration_capture;
+    twfRequire(capture->piped && l == capture->upload && ! capture->pause_replayed,
+               "split migration replayed a duplicate or misrouted Pause");
+    capture->pause_replayed = true;
+    if (capture->close_on_pause)
         lineDestroy(l);
 }
 
@@ -645,9 +733,12 @@ static void caseMigrationReplay(unsigned mode)
                                    .expected        = expected,
                                    .expected_length = input_length + nested_length,
                                    .allow_pipe      = mode != 3,
+                                   .close_on_pause  = mode == 4,
                                    .close_first     = mode == 2};
     migration_capture           = &capture;
     fixture.prev->fnPayloadU    = migrationPayload;
+    fixture.prev->fnPauseU      = migrationPause;
+    httpserverTunnelUpStreamPause(fixture.http, upload);
     if (mode == 0)
         httpserverTunnelUpStreamPayload(fixture.http, upload, input);
     else
@@ -676,6 +767,8 @@ static void caseMigrationReplay(unsigned mode)
     else if (mode == 3)
         twfRequire(capture.calls == 0 && fixture.prev_trace.prev_finish == 1,
                    "refused migration forwarded bytes or failed to close its source");
+    else if (mode == 4)
+        twfRequire(capture.pause_replayed && capture.calls == 0, "migration sent bytes after Pause closed its source");
     else
         twfRequire(capture.received == capture.expected_length, "migration lost a coalesced or queued suffix");
     twfRequireLineStateZeroed(upload, fixture.http, "migration retained source receive state");
@@ -697,8 +790,12 @@ static void caseMigrationReplay(unsigned mode)
 
 int main(void)
 {
-    for (unsigned mode = 0; mode < 4; ++mode)
+    for (unsigned mode = 0; mode < 5; ++mode)
         caseMigrationReplay(mode);
+    casePendingDownloadPressure(false, false, NULL, "IUB");
+    casePendingDownloadPressure(true, true, NULL, "IB");
+    casePendingDownloadPressure(true, false, httpserverTunnelUpStreamPause, "IUB");
+    casePendingDownloadPressure(false, false, httpserverTunnelUpStreamResume, "IRB");
     casePairedLargeChunk(false, false);
     casePairedLargeChunk(true, false);
     casePairedLargeChunk(true, true);
