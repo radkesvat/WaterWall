@@ -6,6 +6,8 @@ void httpproxyserverTunnelDownStreamFinish(tunnel_t *t, line_t *l)
     hps_session_t *s  = ls->session;
     assert(s && ls->child);
     hpsRetain(s);
+    if (s->phase == kHpsFallback && lineHasCloseLingerReason(l, kLineCloseLingerPeerWriteShutdown))
+        lineRequestCloseLinger(s->client, kLineCloseLingerPeerWriteShutdown);
     hpsCloseChild(s, true); /* The owned child is logically dead before any client-side continuation. */
     s->child_eof = true;
     if (s->phase == kHpsFallback || s->phase == kHpsRelay)

@@ -19,7 +19,8 @@ from wwtest.sockets import exact
 
 HOST = "127.0.0.1"
 TARGET_PORT = 26634
-REQUEST = b"GET /close HTTP/1.1\r\nHost: fallback.integration.test\r\n\r\n"
+# A valid forward-proxy request with missing credentials selects HTTP proxy fallback.
+REQUEST = b"GET http://fallback.integration.test/close HTTP/1.1\r\nHost: fallback.integration.test\r\n\r\n"
 BODY = bytes(range(256)) * 4096
 RESPONSE = (b"HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: "
             + str(len(BODY)).encode("ascii") + b"\r\n\r\n" + BODY)

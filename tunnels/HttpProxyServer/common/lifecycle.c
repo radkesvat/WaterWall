@@ -101,13 +101,18 @@ void hpsCreateChild(hps_session_t *s, const char *username, const char *password
         ls->next->prev = ls;
     w->children    = ls;
     s->child       = l;
-    s->child_entry = s->phase == kHpsFallback ? hpsSettings(s)->fallback : s->t->next;
     s->child_eof   = false;
     s->connect_at  = hpsNowMs(s);
     lineCopyIngressContext(l, s->client);
     address_context_t *dest = lineGetDestinationAddressContext(l);
-    if (s->phase != kHpsFallback)
+    if (s->phase == kHpsFallback)
     {
+        s->child_entry = hpsSettings(s)->fallback;
+        lineMarkFallback(l);
+    }
+    else
+    {
+        s->child_entry = s->t->next;
         if (s->auth_mode == kHpsAuthLocal)
             lineAddAuthenticatedCredentials(l, username, password);
         else if (s->auth_mode == kHpsAuthTracked)

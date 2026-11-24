@@ -256,10 +256,11 @@ static void childFinish(tunnel_t *t, line_t *l)
 
 static void childInit(tunnel_t *t, line_t *l)
 {
-    discard t;
     child = l;
     ++opens;
     hps_session_t *s = ((hps_lstate_t *) lineGetState(l, proxy))->session;
+    require(lineIsFallback(client) == (t == fallback) && lineIsFallback(l) == (t == fallback),
+            "client and child must identify the selected branch before Init");
     require(! linePrefersOrdinaryReadUpstream(l) && linePrefersOrdinaryReadDownstream(l) == (s->phase == kHpsExchange),
             "child read preference was not selected before Init");
     require(s->phase != kHpsExchange || linePrefersOrdinaryReadUpstream(client),
@@ -684,6 +685,7 @@ static void fallbackInit(tunnel_t *t, line_t *l)
         if (init_action == 5)
         {
             sendBytes(l, true, "raw local reply\r\n");
+            lineRequestCloseLinger(l, kLineCloseLingerPeerWriteShutdown);
             childEof();
         }
     }
@@ -872,6 +874,8 @@ static void fallbackCases(tunnel_chain_t *chain)
         if (paused)
         {
             require(lineIsAlive(client) && ! received_len, "Init EOF lost paused output");
+            require(lineHasCloseLingerReason(client, kLineCloseLingerPeerWriteShutdown),
+                    "paused client lost the fallback child's confirmed write shutdown");
             httpproxyserverTunnelUpStreamResume(proxy, client);
         }
         require(! lineIsAlive(client) && ! stringCompare(received, "raw local reply\r\n"), "Init reply disappeared");

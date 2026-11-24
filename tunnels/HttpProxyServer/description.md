@@ -120,6 +120,8 @@ Malformed HTTP, duplicate authorization fields, invalid authority/framing, unsup
 
 Handoff creates one owned child through the configured fallback branch, bypassing this proxy's private UserController. It sends the original header, body and pipelined tail byte-for-byte, including the original request target, whitespace, hop-by-hop fields and **rejected Proxy-Authorization credential bytes**. Configure a service trusted to receive those bytes; they are never logged by the proxy. The connection then remains an opaque bidirectional stream, even if later bytes contain valid credentials. No local authentication error, CONNECT success, Continue or OPTIONS response is generated. The fallback service decides its own response.
 
+If the Linux connector confirms that the fallback service closed only its write side, the client-facing listener can send the response and FIN, then briefly discard late client writes to reduce the risk of a reset. The listener uses ordinary TCP close if the backend closes fully or the connector cannot confirm a half-close. Both outcomes apply with either value of `linger-on-normal-close`.
+
 The proxy marks the fresh fallback child as TCP before branch `Init`. The fallback branch chooses its own address and port. A protected `next` is still required. Targets that reuse another owner's previous edge, the protected branch, this proxy or its private controller are rejected. This is a configured service handoff, not protocol translation or a retry of the requested origin. For example, these nodes can follow a TcpListener:
 
 ```json

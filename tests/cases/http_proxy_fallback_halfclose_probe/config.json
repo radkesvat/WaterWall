@@ -1,0 +1,61 @@
+{
+  "name": "http-proxy-fallback-halfclose-probe",
+  "nodes": [
+    {
+      "name": "proxy-listener",
+      "type": "TcpListener",
+      "settings": { "address": "127.0.0.1", "port": 26637, "nodelay": true, "large-send-buffer": 4096 },
+      "next": "proxy-server"
+    },
+    {
+      "name": "proxy-server",
+      "type": "HttpProxyServer",
+      "settings": {
+        "users": [{ "username": "alice", "password": "one" }],
+        "fallback-node-name": "proxy-fallback"
+      },
+      "next": "proxy-protected"
+    },
+    {
+      "name": "proxy-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "proxy-fallback",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
+      "name": "proxy-no-linger-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26638,
+        "nodelay": true,
+        "large-send-buffer": 4096,
+        "linger-on-normal-close": false
+      },
+      "next": "proxy-no-linger-server"
+    },
+    {
+      "name": "proxy-no-linger-server",
+      "type": "HttpProxyServer",
+      "settings": {
+        "users": [{ "username": "alice", "password": "one" }],
+        "fallback-node-name": "proxy-no-linger-fallback"
+      },
+      "next": "proxy-no-linger-protected"
+    },
+    {
+      "name": "proxy-no-linger-protected",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 9, "fastopen": false }
+    },
+    {
+      "name": "proxy-no-linger-fallback",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false, "linger-on-normal-close": false }
+    }
+  ]
+}

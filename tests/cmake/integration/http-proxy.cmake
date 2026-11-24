@@ -8,6 +8,11 @@ if(TARGET HttpProxyServer AND TARGET AuthenticationServer AND TARGET Router AND 
   add_waterwall_test_labels(waterwall.http_proxy_fallback_config "integration" "http" "proxy" "configuration")
 endif()
 
+if(LINUX AND TARGET HttpProxyServer AND TARGET TcpListener AND TARGET TcpConnector)
+  add_waterwall_probe_integration_test(waterwall.http_proxy_fallback_halfclose_probe http_proxy_fallback_halfclose_probe 15)
+  add_waterwall_test_labels(waterwall.http_proxy_fallback_halfclose_probe "http" "proxy" "tcp")
+endif()
+
 if(TARGET HttpProxyServer AND TARGET TrojanServer AND TARGET TcpListener AND TARGET TcpConnector)
   add_waterwall_probe_integration_test(waterwall.http_proxy_connect_trojan http_proxy_connect_trojan 15)
   add_waterwall_test_labels(waterwall.http_proxy_connect_trojan "http" "proxy")

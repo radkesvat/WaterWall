@@ -62,7 +62,8 @@ bool hpsProcessRequest(hps_session_t *s)
     }
     if (auth_rejected && original)
     {
-        s->phase      = kHpsFallback;
+        s->phase = kHpsFallback;
+        lineMarkFallback(s->client);
         up->header_at = down->header_at = 0;
         if (! hpsQueueOutput(s, kHpsUpstream, original, (size_t) n))
             hpsClose(s, false);
