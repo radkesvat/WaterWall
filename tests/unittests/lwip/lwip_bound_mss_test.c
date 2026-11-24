@@ -2,8 +2,8 @@
  * Covers: the send MSS of a TCP connection whose PCB is bound to a netif.
  * Setup: a private raw engine and a recording netif that owns one /32 address and has no route to the
  * peer, as ConnectionToPackets' virtual netif has; its MTU is 1420 and the peer offers an MSS of 1460.
- * Checks: after an active and after a passive open the send MSS is the netif's (1380), and a write of
- * more than two segments leaves as whole datagrams that fit the MTU, none of them an IP fragment.
+ * Checks: active and passive opens, including a passive open that retransmits its SYN-ACK, use an MSS
+ * of 1380 and send a 3000-byte write as three whole datagrams within the MTU.
  * Limits: IPv4 only; this checks the segment sizes, not what a path does with fragments.
  * CTest: waterwall.lwip_bound_mss_unit (Debug and Release).
  */
@@ -76,9 +76,9 @@ static err_t output(struct netif *netif, struct pbuf *packet, const ip4_addr_t *
     CHECK(packet->tot_len >= 40);
     const unsigned header_length = 20U + (bytes[32] >> 4) * 4U;
     CHECK(header_length <= packet->tot_len && header_length <= sizeof(bytes));
-    f->last_sequence  = get32(bytes + 24);
-    f->last_flags     = bytes[33];
-    f->payload       += packet->tot_len - header_length;
+    f->last_sequence = get32(bytes + 24);
+    f->last_flags    = bytes[33];
+    f->payload += packet->tot_len - header_length;
     if ((f->last_flags & TCP_SYN) == 0)
     {
         return ERR_OK;
@@ -111,7 +111,8 @@ static err_t initNetif(struct netif *netif)
 }
 
 /* A segment from the peer without payload; an mss of 0 sends no option. */
-static void inject(fixture_t *f, uint16_t port, uint32_t sequence, uint32_t acknowledgement, uint8_t flags, uint16_t mss)
+static void inject(fixture_t *f, uint16_t port, uint32_t sequence, uint32_t acknowledgement, uint8_t flags,
+                   uint16_t mss)
 {
     const uint16_t options    = mss == 0 ? 0 : 4;
     const uint16_t length     = (uint16_t) (40 + options);
@@ -224,7 +225,7 @@ static err_t accepted(void *argument, struct tcp_pcb *pcb, err_t error)
     return ERR_OK;
 }
 
-static void passiveOpen(void)
+static void passiveOpen(bool lose_first_syn_ack)
 {
     fixture_t *f = start();
     f->pcb       = tcp_new();
@@ -238,6 +239,12 @@ static void passiveOpen(void)
     f->pcb = tcp_active_pcbs;
     CHECK(f->pcb != NULL && f->pcb->state == SYN_RCVD);
     CHECK(f->outputs == 1 && f->last_flags == (TCP_SYN | TCP_ACK) && f->syn_mss == netif_mss);
+    if (lose_first_syn_ack)
+    {
+        const uint32_t first_sequence = f->last_sequence;
+        inject(f, local_port, 7000, 0, TCP_SYN, peer_mss);
+        CHECK(f->outputs == 2 && f->last_flags == (TCP_SYN | TCP_ACK) && f->last_sequence == first_sequence);
+    }
     inject(f, local_port, 7001, f->last_sequence + 1U, TCP_ACK, 0);
     CHECK(tcp_close(listener) == ERR_OK);
     writeFitsTheNetif(f);
@@ -250,7 +257,9 @@ int main(void)
     testCaseSet("an active open sends within the bound netif's MTU");
     activeOpen();
     testCaseSet("a passive open sends within the bound netif's MTU");
-    passiveOpen();
+    passiveOpen(false);
+    testCaseSet("a passive open preserves the send MSS after the peer retries its SYN");
+    passiveOpen(true);
     wwLwipEngineSharedCleanup();
     puts("a connection bound to a netif sends segments that fit its MTU");
     return 0;
