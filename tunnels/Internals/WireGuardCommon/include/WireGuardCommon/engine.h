@@ -58,7 +58,7 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
 err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer, bool data);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);
-void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
+err_t wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer);
 
 /***************************************** WireGuard Device ****************************************** */

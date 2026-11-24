@@ -264,6 +264,7 @@ struct wireguard_device_s
 
     struct wireguard_peer_store_s *store;
     wireguard_peer_t              *first_peer, *retired_peers;
+    wireguard_peer_t              *next_timer_peer; /* First deferred peer to service on the next tick. */
     size_t                         peer_count, next_peer_id;
     unsigned                       processing_depth; /* Removed allocations survive reentrant owner callbacks. */
 };

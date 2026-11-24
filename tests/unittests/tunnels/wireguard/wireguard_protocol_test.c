@@ -996,6 +996,101 @@ static void testReentrantRemoval(void)
     destroyEndpoints(&client, &server);
 }
 
+enum
+{
+    kTimerPeers = 9
+};
+
+typedef struct timer_output_s
+{
+    size_t   paused_id;
+    unsigned remaining;
+    bool     attempted[kTimerPeers], retire_sender;
+} timer_output_t;
+
+static bool boundedTimerOutput(void *context, sbuf_t *packet, wireguard_peer_t *peer, const ip_addr_t *ip,
+                               uint16_t port)
+{
+    discard         ip;
+    discard         port;
+    timer_output_t *output = context;
+    const size_t    id     = peer->id;
+    twfRequire(wireguardGetMessageType(sbufGetRawPtr(packet), sbufGetLength(packet)) == MESSAGE_TRANSPORT_DATA &&
+                   id < kTimerPeers && ! output->attempted[id],
+               "timer revisited a peer or sent an unexpected packet");
+    output->attempted[id] = true;
+    reuseBuffer(packet);
+    if (id == output->paused_id || output->remaining == 0)
+        return false;
+    --output->remaining;
+    if (output->retire_sender)
+    {
+        output->retire_sender = false;
+        twfRequire(wireguardifRemovePeer(peer->device, id) == ERR_OK, "failed to retire the timer sender");
+    }
+    return true;
+}
+
+static void testTimerFairness(void)
+{
+    timer_output_t     output = {.paused_id = kTimerPeers - 2};
+    wireguard_device_t device;
+    setTime(1000);
+    twfRequire(wireguardCommonInit(&device,
+                                   "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+                                   &output,
+                                   (wireguard_callbacks_t) {.output = boundedTimerOutput}),
+               "timer device initialization failed");
+    for (unsigned i = 0; i < kTimerPeers; ++i)
+    {
+        const uint8_t     key[WIREGUARD_PUBLIC_KEY_LEN] = {9, (uint8_t) (i + 1)};
+        wireguard_peer_t *peer                          = wireguardPeerCreate(&device, key, NULL);
+        twfRequire(peer != NULL, "timer peer creation failed");
+        peer->curr_keypair.valid = peer->curr_keypair.sending_valid = true;
+        peer->curr_keypair.keypair_millis                           = now_millis;
+        peer->keepalive_interval                                    = 1;
+    }
+    wireguard_peer_t *tail = peerLookupByPeerIndex(&device, 0);
+    /* Each productive tick admits two packets, with a fully blocked tick between them.
+     * The second peer in scan order always refuses, even when capacity remains. */
+    for (unsigned tick = 0; tick < 8; ++tick)
+    {
+        setTime(1000 + tick * WIREGUARDIF_TIMER_MSECS);
+        output.remaining = tick % 2 == 0 ? 2 : 0;
+        memoryZero(output.attempted, sizeof(output.attempted));
+        if (tick == 1)
+        {
+            tail->prev_keypair.valid          = true;
+            tail->prev_keypair.keypair_millis = now_millis - REJECT_AFTER_TIME * 1000U;
+        }
+        wireguardCommonLoop(&device);
+        twfRequire(output.remaining == 0 && ! tail->prev_keypair.valid,
+                   "output pressure interfered with timer service");
+    }
+    for (wireguard_peer_t *peer = device.first_peer; peer != NULL; peer = peer->next)
+        twfRequire((peer->authenticated_sends != 0) == (peer->id != output.paused_id),
+                   "a writable peer starved behind the bounded timer output");
+
+    /* Remove the resume point from its own output callback. The wrapped scan
+     * must still visit every other due peer once, then survive another removal between ticks. */
+    for (unsigned pass = 0; pass < 3; ++pass)
+    {
+        setTime(10000 + pass * 2000U);
+        output.paused_id     = SIZE_MAX;
+        output.remaining     = 1;
+        output.retire_sender = pass == 1;
+        memoryZero(output.attempted, sizeof(output.attempted));
+        wireguardCommonLoop(&device);
+        for (wireguard_peer_t *peer = device.first_peer; peer != NULL; peer = peer->next)
+            twfRequire(output.attempted[peer->id], "cursor retirement skipped a peer's timer");
+        if (pass == 1)
+            twfRequire(! output.retire_sender && device.next_timer_peer != NULL &&
+                           wireguardifRemovePeer(&device, device.next_timer_peer->id) == ERR_OK,
+                       "failed to retire the next deferred peer");
+    }
+    wireguardDeviceDestroy(&device);
+}
+
 static void testLocalIdWrap(void)
 {
     endpoint_t client = {0}, server = {0};
@@ -1023,6 +1118,7 @@ int main(void)
     twfWorkerEnvSetup(&environment, 8192, 32);
     testLocalIdWrap();
     testReentrantRemoval();
+    testTimerFairness();
     testPeerPrefixes();
     endpoint_t client = {0}, server = {0};
     setTime(1000);

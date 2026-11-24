@@ -181,11 +181,11 @@ err_t wireguardifAddAllowedIp(wireguard_device_t *device, size_t peer_index, con
     return peerAddIp(peer, *ip, *mask) ? ERR_OK : ERR_MEM;
 }
 
-void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)
+err_t wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)
 {
     // Send a NULL packet as a keep-alive
     sbuf_t *empty_buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
-    wireguardifOutputToPeer(device, empty_buf, NULL, peer);
+    return wireguardifOutputToPeer(device, empty_buf, NULL, peer);
 }
 
 static err_t wireguardifLookupPeer(wireguard_device_t *device, size_t peer_index, wireguard_peer_t **out)

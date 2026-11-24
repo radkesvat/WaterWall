@@ -195,70 +195,94 @@ static bool shouldResetPeer(wireguard_peer_t *peer)
     return result;
 }
 
+static void expirePeerKeys(wireguard_peer_t *peer)
+{
+    if (shouldResetPeer(peer))
+    {
+        // Nothing back for too long - we should wipe out all crypto state
+        keypairDestroy(&peer->next_keypair);
+        keypairDestroy(&peer->curr_keypair);
+        keypairDestroy(&peer->prev_keypair);
+        wireguardClearHandshakeState(peer);
+        peer->session_erase_millis   = 0;
+        peer->session_erase_armed    = false;
+        peer->passive_keepalive      = false;
+        peer->unanswered_interval_ms = 0;
+        /* A fresh demand can start a retry window shortly before secret erasure.
+         * Its next attempt creates fresh ephemeral state. */
+
+        // Revert back to default IP/port if these were altered
+        peer->ip   = peer->connect_ip;
+        peer->port = peer->connect_port;
+    }
+    /* Each slot has its own lifetime. Preserve the separate deadline
+     * for unfinished/pending handshake cleanup when a slot expires. */
+    if (shouldDestroyKeypair(&peer->curr_keypair))
+    {
+        keypairDestroy(&peer->curr_keypair);
+        wireguardPeerSyncReceivers(peer);
+    }
+    if (shouldDestroyKeypair(&peer->prev_keypair))
+    {
+        keypairDestroy(&peer->prev_keypair);
+        wireguardPeerSyncReceivers(peer);
+    }
+    if (shouldDestroyKeypair(&peer->next_keypair))
+    {
+        keypairDestroy(&peer->next_keypair);
+        wireguardPeerSyncReceivers(peer);
+    }
+}
+
+typedef struct timer_sweep_s
+{
+    wireguard_peer_t *deferred;
+    bool              sent, link_up;
+} timer_sweep_t;
+
+/* During a sweep, removed peers keep their allocation and forward link until all callbacks return. */
+static wireguard_peer_t *nextLivePeer(wireguard_peer_t *peer)
+{
+    while (peer != NULL && ! peer->valid)
+        peer = peer->next;
+    return peer;
+}
+
+static void servicePeerRange(wireguard_device_t *device, wireguard_peer_t *peer, wireguard_peer_t *stop,
+                             timer_sweep_t *sweep)
+{
+    for (peer = nextLivePeer(peer); peer != NULL; peer = nextLivePeer(peer->next))
+    {
+        stop = nextLivePeer(stop);
+        if (peer == stop)
+            break;
+        expirePeerKeys(peer);
+        const err_t keepalive = shouldSendKeepalive(peer) ? wireguardifSendKeepalive(device, peer) : ERR_WOULDBLOCK;
+        const err_t handshake = peer->valid && needsHandshakeInitiation(peer)
+                                    ? wireguardifStartHandshake(device, peer, false)
+                                    : ERR_WOULDBLOCK;
+        if (keepalive == ERR_OK || handshake == ERR_OK)
+            sweep->sent = true;
+        else if (sweep->sent && sweep->deferred == NULL && (keepalive == ERR_CONN || handshake == ERR_CONN))
+            sweep->deferred = peer;
+        if (peer->curr_keypair.valid || peer->prev_keypair.valid)
+            sweep->link_up = true;
+    }
+}
+
 void wireguardCommonLoop(wireguard_device_t *device)
 {
     wireguardBeginProcessing(device);
-    bool link_up = false;
-    for (wireguard_peer_t *peer = device->first_peer; peer != NULL; peer = peer->next)
-    {
-        if (peer->valid)
-        {
-            // Do we need to rekey / send a handshake?
-            if (shouldResetPeer(peer))
-            {
-                // Nothing back for too long - we should wipe out all crypto state
-                keypairDestroy(&peer->next_keypair);
-                keypairDestroy(&peer->curr_keypair);
-                keypairDestroy(&peer->prev_keypair);
-                wireguardClearHandshakeState(peer);
-                peer->session_erase_millis = 0;
-                peer->session_erase_armed  = false;
-                peer->passive_keepalive      = false;
-                peer->unanswered_interval_ms = 0;
-                /* A fresh demand can start a retry window shortly before secret erasure.
-                 * Its next attempt creates fresh ephemeral state. */
-
-                // Revert back to default IP/port if these were altered
-                peer->ip   = peer->connect_ip;
-                peer->port = peer->connect_port;
-            }
-            /* Each slot has its own lifetime. Preserve the separate deadline
-             * for unfinished/pending handshake cleanup when a slot expires. */
-            if (shouldDestroyKeypair(&peer->curr_keypair))
-            {
-                keypairDestroy(&peer->curr_keypair);
-                wireguardPeerSyncReceivers(peer);
-            }
-            if (shouldDestroyKeypair(&peer->prev_keypair))
-            {
-                keypairDestroy(&peer->prev_keypair);
-                wireguardPeerSyncReceivers(peer);
-            }
-            if (shouldDestroyKeypair(&peer->next_keypair))
-            {
-                keypairDestroy(&peer->next_keypair);
-                wireguardPeerSyncReceivers(peer);
-            }
-            if (shouldSendKeepalive(peer))
-            {
-                wireguardifSendKeepalive(device, peer);
-            }
-            if (peer->valid && needsHandshakeInitiation(peer))
-            {
-                wireguardifStartHandshake(device, peer, false);
-            }
-
-            if ((peer->curr_keypair.valid) || (peer->prev_keypair.valid))
-            {
-                link_up = true;
-            }
-        }
-    }
-
-    if (! link_up)
-    {
-        // Clear the IF-UP flag on netif
+    wireguard_peer_t *head   = device->first_peer;
+    wireguard_peer_t *resume = device->next_timer_peer;
+    timer_sweep_t     sweep  = {0};
+    /* Finish at the original starting point, even if output callbacks retire it.
+     * Advance past an accepted send before giving a refused peer priority so
+     * a paused peer at the front cannot hold the restart point. */
+    servicePeerRange(device, resume, NULL, &sweep);
+    servicePeerRange(device, head, resume, &sweep);
+    device->next_timer_peer = nextLivePeer(sweep.sent ? sweep.deferred : resume);
+    if (! sweep.link_up)
         device->status_connected = false;
-    }
     wireguardEndProcessing(device);
 }

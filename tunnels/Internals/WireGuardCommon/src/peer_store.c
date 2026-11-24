@@ -191,6 +191,8 @@ err_t wireguardifRemovePeer(wireguard_device_t *device, size_t id)
                 &device->store->routes, &peer->allowed_source_ips[i].ip, &peer->allowed_source_ips[i].mask, id);
 
     wireguard_peer_t *next = peer->next;
+    if (device->next_timer_peer == peer)
+        device->next_timer_peer = next;
     if (peer->previous != NULL)
         peer->previous->next = next;
     else
