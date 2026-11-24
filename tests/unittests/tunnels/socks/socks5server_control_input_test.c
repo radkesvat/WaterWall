@@ -29,12 +29,15 @@ static bool             inject_init_reply, inject_reply_payload;
 static bool             inject_method, inject_auth, inject_init, inject_payload, close_reply, reject_auth, pause_init;
 static bool             splice_input, require_ordinary, independent_sources;
 static sbuf_t          *expected_upstream_buffer, *expected_downstream_buffer;
-static unsigned         provider_opens, provider_closes;
-static uint8_t          command_reply_status;
-static const uint8_t    request[]     = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80};
-static const uint8_t    credentials[] = {1, 1, 'u', 1, 'p'};
+static unsigned            provider_opens, provider_closes;
+static bool                session_admitted;
+static uint8_t             command_reply_status;
+static const user_handle_t login_identity = {.generation = 5, .user_id = 42};
+static const uint8_t       request[]      = {5, 1, 0, 1, 127, 0, 0, 1, 0, 80};
+static const uint8_t       credentials[]  = {1, 1, 'u', 1, 'p'};
 
-bool                                      __wrap_authenticationclientCanAuthenticate(tunnel_t *t);
+bool __wrap_authenticationclientCanAuthenticate(tunnel_t *t);
+bool __wrap_authenticationclientUserCanStartSession(tunnel_t *t, const user_handle_t *handle);
 authenticationclient_user_lookup_result_t __wrap_authenticationclientGetUserByPasswordWithResult(tunnel_t   *t,
                                                                                                  const char *password,
                                                                                                  user_handle_t *out);
@@ -56,8 +59,15 @@ authenticationclient_user_lookup_result_t __wrap_authenticationclientGetUserByPa
     }
     else
         twfRequire(stringCompare(password, "u:p") == 0, "credential bytes changed");
-    *out = userHandleEmpty();
+    *out = reject_auth ? userHandleEmpty() : login_identity;
     return reject_auth ? kAuthenticationClientUserLookupUserNotFound : kAuthenticationClientUserLookupOk;
+}
+bool __wrap_authenticationclientUserCanStartSession(tunnel_t *t, const user_handle_t *handle)
+{
+    twfRequire(t == next && handle->generation == login_identity.generation &&
+                   handle->user_id == login_identity.user_id,
+               "UDP allocation checked a different account from the authenticated control line");
+    return session_admitted;
 }
 static sbuf_t *bytes(const void *data, size_t len)
 {
@@ -780,44 +790,64 @@ static void providerClose(tunnel_t *t, udplistener_dynamic_endpoint_handle_t han
     twfRequire(handle.owner_wid == 0 && handle.generation == 1, "UDP close selected wrong endpoint");
     ++provider_closes;
 }
-static void udpControlPreferences(void)
+typedef enum udp_login_e
 {
-    for (unsigned udp_only = 0; udp_only < 2; ++udp_only)
+    kUdpNoAuth,
+    kUdpEligibleAccount,
+    kUdpIneligibleAccount,
+} udp_login_t;
+
+static void udpControlAdmission(udp_login_t login, bool udp_only)
+{
+    const bool auth = login != kUdpNoAuth;
+    setupMode(auth, udp_only);
+    socks5server_tstate_t *ts = tunnelGetState(server);
+    ts->allow_udp             = true;
+    ts->workers_count         = 1;
+    ts->worker_associations   = memoryAllocateZero(sizeof(*ts->worker_associations));
+    ts->dynamic_provider      = (udplistener_dynamic_provider_t) {
+             .instance = prev, .open = providerOpen, .activate = providerActivate, .close = providerClose};
+    twfRequire(ip4addr_aton("127.0.0.1", ip_2_ip4(&ts->udp_reply_ip)), "UDP reply address fixture");
+    ts->udp_reply_ip.type = IPADDR_TYPE_V4;
+    addresscontextSetIpAddressPort(lineGetSourceAddressContext(control), "127.0.0.1", 1234);
+    addresscontextSetOnlyProtocol(lineGetSourceAddressContext(control), IP_PROTO_TCP);
+    provider_opens = provider_closes = 0;
+    method(auth);
+    if (auth)
     {
-        twfSetCase(udp_only ? "UDP-only control TCP selects ordinary reads in Init"
-                            : "mixed TCP control selects ordinary reads only after UDP ASSOCIATE");
-        setupMode(false, udp_only != 0);
-        socks5server_tstate_t *ts = tunnelGetState(server);
-        ts->allow_udp             = true;
-        ts->workers_count         = 1;
-        ts->worker_associations   = memoryAllocateZero(sizeof(*ts->worker_associations));
-        ts->dynamic_provider      = (udplistener_dynamic_provider_t) {
-                 .instance = prev, .open = providerOpen, .activate = providerActivate, .close = providerClose};
-        twfRequire(ip4addr_aton("127.0.0.1", ip_2_ip4(&ts->udp_reply_ip)), "UDP reply address fixture");
-        ts->udp_reply_ip.type = IPADDR_TYPE_V4;
-        addresscontextSetIpAddressPort(lineGetSourceAddressContext(control), "127.0.0.1", 1234);
-        addresscontextSetOnlyProtocol(lineGetSourceAddressContext(control), IP_PROTO_TCP);
-        provider_opens = provider_closes = 0;
-        method(false);
-        twfRequire(linePrefersOrdinaryReadUpstream(control) == (udp_only != 0) &&
-                       linePrefersOrdinaryReadDownstream(control) == (udp_only != 0),
-                   "mixed-mode method negotiation disabled TCP splice");
-        const uint8_t udp_request[] = {5, 3, 0, 1, 0, 0, 0, 0, 0, 0};
-        tunnelUpStreamPayload(server, control, spliceBytes(udp_request, sizeof(udp_request), 2));
-        twfRequire(lineIsAlive(control) && commands == 1 && inits == 0 && provider_opens == 1 &&
-                       tunnelIsActiveForLine(server, control) && linePrefersOrdinaryReadUpstream(control) &&
-                       linePrefersOrdinaryReadDownstream(control) &&
+        sendBytes(credentials, sizeof(credentials));
+        twfRequire(auths == 1 && lineIsAlive(control) && lineGetCurrentUser(control)->user_id == login_identity.user_id,
+                   "account login did not reach the command phase");
+    }
+    session_admitted = login == kUdpEligibleAccount;
+    twfRequire(linePrefersOrdinaryReadUpstream(control) == udp_only &&
+                   linePrefersOrdinaryReadDownstream(control) == udp_only,
+               "mixed-mode method negotiation disabled TCP splice");
+    const uint8_t udp_request[] = {5, 3, 0, 1, 0, 0, 0, 0, 0, 0};
+    tunnelUpStreamPayload(server, control, spliceBytes(udp_request, sizeof(udp_request), 2));
+    if (login == kUdpIneligibleAccount)
+    {
+        twfRequire(! lineIsAlive(control) && finishes == 1 && commands == 1 &&
+                       command_reply_status == kSocks5ReplyGeneralFailure && provider_opens == 0 &&
+                       provider_closes == 0,
+                   "refused account must receive a failed command and leave the UDP provider untouched");
+    }
+    else
+    {
+        twfRequire(lineIsAlive(control) && commands == 1 && command_reply_status == kSocks5ReplySucceeded &&
+                       inits == 0 && provider_opens == 1 && tunnelIsActiveForLine(server, control) &&
+                       linePrefersOrdinaryReadUpstream(control) && linePrefersOrdinaryReadDownstream(control) &&
                        ((socks5server_lstate_t *) lineGetState(control, server))->phase == kSocks5ServerPhaseUdpControl,
                    "UDP ASSOCIATE failed to enter ordinary control mode");
         tunnelUpStreamFin(server, control);
         lineDestroy(control);
-        twfRequire(provider_closes == 1 && socks5server_assoc_map_t_size(ts->worker_associations) == 0,
-                   "UDP control close retained its association");
-        socks5server_assoc_map_t_drop(ts->worker_associations);
-        memoryFree(ts->worker_associations);
-        ts->worker_associations = NULL;
-        teardown();
+        twfRequire(provider_closes == 1, "UDP control close retained its endpoint");
     }
+    twfRequire(socks5server_assoc_map_t_size(ts->worker_associations) == 0, "UDP control retained its association");
+    socks5server_assoc_map_t_drop(ts->worker_associations);
+    memoryFree(ts->worker_associations);
+    ts->worker_associations = NULL;
+    teardown();
 }
 int main(int argc, char **argv)
 {
@@ -827,7 +857,14 @@ int main(int argc, char **argv)
         return 0;
     }
     mismatchedIngressOffers();
-    udpControlPreferences();
+    twfSetCase("mixed no-auth control selects ordinary reads at UDP ASSOCIATE");
+    udpControlAdmission(kUdpNoAuth, false);
+    twfSetCase("UDP-only no-auth control selects ordinary reads in Init");
+    udpControlAdmission(kUdpNoAuth, true);
+    twfSetCase("an eligible authenticated control may allocate a UDP association");
+    udpControlAdmission(kUdpEligibleAccount, false);
+    twfSetCase("an account that becomes ineligible after login cannot allocate a UDP association");
+    udpControlAdmission(kUdpIneligibleAccount, false);
     spliceNegotiation();
     admittedOrdering();
     addressBoundaries();

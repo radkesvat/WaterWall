@@ -218,6 +218,9 @@ static void testEligibilityAndAdmission(profile_fixture_t *fixture)
     require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &first, 0) ==
                 kUserAdmissionConnectionLimited,
             "live connection limit was bypassed");
+    require(authenticationclientUserCanStartSession(fixture->tunnel, &handle) && user->runtime.active_cons_out == 2 &&
+                user->runtime.ip_usage_count == 1,
+            "session eligibility consumed another flow reservation or treated live flow limits as account expiry");
     authenticationclientUserReleaseConnection(fixture->tunnel, &handle, &first);
     authenticationclientUserReleaseConnection(fixture->tunnel, &handle, &first);
     require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, &other, 0) == kUserAdmissionOk,
@@ -235,6 +238,8 @@ static void testEligibilityAndAdmission(profile_fixture_t *fixture)
                 "ineligible SHA256 was accepted");
         userHandleSet(&handle, 7, 42);
         require(! authenticationclientUserHandleIsLive(fixture->tunnel, &handle), "ineligible handle remained live");
+        require(! authenticationclientUserCanStartSession(fixture->tunnel, &handle),
+                "an ineligible authenticated account could start a new session");
         const authenticationclient_user_lookup_result_t expected[] = {kAuthenticationClientUserLookupUserDisabled,
                                                                       kAuthenticationClientUserLookupUserExpired,
                                                                       kAuthenticationClientUserLookupUserLimitReached};
@@ -270,6 +275,8 @@ static void testAdmissionAvailability(profile_fixture_t *fixture)
                     ! userHandleIsValid(&handle),
                 "SHA256 bypassed availability");
         handle = (user_handle_t) {.generation = 7, .user_id = 42};
+        require(! authenticationclientUserCanStartSession(fixture->tunnel, &handle),
+                "authenticated session bypassed closed admission");
         require(authenticationclientUserTryAdmitConnection(fixture->tunnel, &handle, NULL, 0) == kUserAdmissionInvalid,
                 "reservation bypassed availability");
     }
@@ -334,6 +341,28 @@ static void replaceCredentialTable(profile_fixture_t *fixture, uint64_t id, cons
 static void replaceUuidTable(profile_fixture_t *fixture, uint64_t id, const char *password, const char *name)
 {
     replaceCredentialTable(fixture, id, password, name, NULL, true);
+}
+
+static void testSessionIdentityAcrossRefresh(void)
+{
+    profile_fixture_t fixture;
+    fixtureCreate(&fixture, kLookupPassword);
+    user_handle_t login = {0};
+    require(lookup(&fixture, &login, NULL), "initial account login failed");
+    const user_handle_t future = {.generation = login.generation + 1, .user_id = login.user_id};
+    require(! authenticationclientUserCanStartSession(fixture.tunnel, &future),
+            "future account generation could start a session");
+    replaceCredentialTable(&fixture, login.user_id, "new-password", "renamed", NULL, true);
+    require(authenticationclientUserCanStartSession(fixture.tunnel, &login),
+            "continuous account lost session admission after a credential change");
+    replaceCredentialTable(&fixture, 0, NULL, NULL, NULL, false);
+    require(! authenticationclientUserCanStartSession(fixture.tunnel, &login), "removed account could start a session");
+    replaceCredentialTable(&fixture, login.user_id, fixture.password, "recreated", NULL, true);
+    require(! authenticationclientUserCanStartSession(fixture.tunnel, &login),
+            "recreated account accepted its previous login");
+    require(lookup(&fixture, &login, NULL) && authenticationclientUserCanStartSession(fixture.tunnel, &login),
+            "recreated account refused a fresh login");
+    fixtureDestroy(&fixture);
 }
 
 static void testUuidSourceAndRevalidation(void)
@@ -583,6 +612,7 @@ int main(void)
         testEligibilityAndAdmission(&fixture);
         fixtureDestroy(&fixture);
     }
+    testSessionIdentityAcrossRefresh();
     testUuidSourceAndRevalidation();
     testUuidConcurrentRefresh();
     testOwnedSecretCleanup();

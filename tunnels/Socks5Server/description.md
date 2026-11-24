@@ -278,6 +278,7 @@ For `UDP ASSOCIATE`:
 
 - no upstream transport line is created from the control line
 - the provider is discovered automatically from the finalized preceding callback path
+- in authenticated mode, the server rechecks the account before requesting a relay port, so expiry or an exhausted traffic quota prevents allocation even if the earlier login succeeded
 - a dynamic bound UDP endpoint is opened via the upstream `UdpListener` (or `TcpUdpListener`)
 - a UDP association is registered in the worker-local registry
 - the reply address uses `settings.ipv4`

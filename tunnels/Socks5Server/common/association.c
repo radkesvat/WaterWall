@@ -1,5 +1,6 @@
 #include "internal.h"
 
+#include "AuthenticationClient/interface.h"
 #include "loggers/network_logger.h"
 
 uint16_t socks5serverGetLocalPort(const line_t *l)
@@ -159,6 +160,11 @@ bool socks5serverRegisterUdpAssociation(tunnel_t *t, line_t *l, const user_handl
         .expected_source_port = expected_source_port,
     };
     udplistener_dynamic_endpoint_open_result_t res;
+
+    if (! ts->no_auth && ! authenticationclientUserCanStartSession(ts->auth_client_tunnel, user_handle))
+    {
+        return false;
+    }
 
     if (! ts->dynamic_provider.open(ts->dynamic_provider.instance, wid, &req, &res))
     {

@@ -150,6 +150,11 @@ WW_EXPORT bool authenticationclientUserAddTraffic(tunnel_t *t, const user_handle
 WW_EXPORT void authenticationclientRequestPull(tunnel_t *t);
 WW_EXPORT void authenticationclientRequestPush(tunnel_t *t);
 
+/* Fresh admission for a previously authenticated account. A control session
+ * can use this check before allocating its own resources. Outbound connections
+ * reserve their connection and IP capacity separately. */
+WW_EXPORT bool authenticationclientUserCanStartSession(tunnel_t *t, const user_handle_t *handle);
+
 /*
  * Live connection-admission and enforcement helpers for traffic-serving nodes
  * such as UserController. They resolve the handle against the current local

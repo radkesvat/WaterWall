@@ -497,12 +497,30 @@ bool authenticationclientUserGetStats(tunnel_t *t, const user_handle_t *handle, 
     return ok;
 }
 
-/*
- * These enforcement helpers identify the user by durable id only. They deliberately do NOT gate on
- * handle->generation: a GetAllUsers refresh bumps the generation but the same logical user keeps the
- * same durable id, so enforcement (admission, accounting, closing) must keep working against the
- * refreshed user object. A miss means the user was actually removed from the table (revoked).
- */
+/* A refreshed table preserves admission for continuously present accounts. */
+static bool authenticationclientCanAdmitHandleLocked(authenticationclient_tstate_t *ts, const user_handle_t *handle)
+{
+    return authenticationclientCanAuthenticateLocked(ts) && authenticationclientHandleCurrentLocked(ts, handle) &&
+           ! authenticationclientIdDetachedLocked(ts, handle->user_id);
+}
+
+bool authenticationclientUserCanStartSession(tunnel_t *t, const user_handle_t *handle)
+{
+    if (t == NULL || ! userHandleIsValid(handle))
+        return false;
+
+    authenticationclient_tstate_t *ts = tunnelGetState(t);
+    mutexLock(&ts->control_mutex);
+    rwlockReadLock(&ts->users_lock);
+    const bool eligible =
+        handle->generation <= atomicLoadU64(&ts->users_generation) &&
+        authenticationclientCanAdmitHandleLocked(ts, handle) &&
+        ! usersRuntimeShouldCloseByIdentifier(ts->users, handle->user_id, authenticationclientLocalTimeMS());
+    rwlockReadUnlock(&ts->users_lock);
+    mutexUnlock(&ts->control_mutex);
+    return eligible;
+}
+
 user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, const user_handle_t *handle,
                                                                    const user_ip_key_t *ip_key, uint64_t now_ms)
 {
@@ -516,8 +534,7 @@ user_admission_result_t authenticationclientUserTryAdmitConnection(tunnel_t *t, 
 
     mutexLock(&ts->control_mutex);
     rwlockReadLock(&ts->users_lock);
-    if (authenticationclientCanAuthenticateLocked(ts) && authenticationclientHandleCurrentLocked(ts, handle) &&
-        ! authenticationclientIdDetachedLocked(ts, handle->user_id))
+    if (authenticationclientCanAdmitHandleLocked(ts, handle))
     {
         result = usersTryAdmitConnectionByIdentifier(ts->users, handle->user_id, ip_key, now_ms);
     }
