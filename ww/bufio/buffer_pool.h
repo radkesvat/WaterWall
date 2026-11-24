@@ -128,7 +128,9 @@ sbuf_t *bufferpoolTryGetBestFit(buffer_pool_t *pool, uint64_t minimum_payload, u
  * when pooling is bypassed. With BUFFER_POOL_DEBUG == 1, kernel-emptiness validation
  * logs a fatal error and aborts on failure before reset, independently of NDEBUG.
  * Healthy complete entries return to the local cache or shared master; a drain failure retires the entry.
- * Callers must exclusively own the buffer.
+ * Callers must exclusively own the buffer and access the pool on its owning thread.
+ * After a handoff, a worker can return an ordinary buffer to its own pool. The pool
+ * caches ordinary buffers with matching capacity and initial headroom and frees the rest.
  * @param pool The buffer pool.
  * @param b The buffer to reuse.
  */

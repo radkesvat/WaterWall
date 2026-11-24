@@ -488,11 +488,10 @@ WW_EXPORT void destroyGlobalState(void);
 /**
  * Recycles a buffer into the **current event worker's** pool.
  *
- * This is only correct when the calling thread owns the buffer's pool, which is
- * why it rejects callers without an event-worker context instead of
- * indexing a shortcut array. Cross-worker cleanup paths must not be converted to
- * it: use lineReuseBuffer()/bufferpoolReuseBuffer() with the owning pool when the
- * owner is known, or sbufDestroy() when it is not.
+ * The caller must exclusively own the buffer and run on an event worker with a
+ * live pool. After a handoff, the receiving worker can recycle an ordinary buffer
+ * here regardless of which worker allocated it. Use sbufDestroy() for an owned
+ * buffer in cancellation or teardown paths that lack a guaranteed worker context.
  *
  * @param b The buffer to recycle.
  */

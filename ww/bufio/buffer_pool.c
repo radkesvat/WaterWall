@@ -37,10 +37,6 @@ struct buffer_pool_s
     uint32_t waiting_budget_basis;
     uint16_t splice_buffer_left_padding;
 
-#if BUFFER_POOL_DEBUG == 1
-    atomic_size_t in_use;
-#endif
-
 #if POOL_THREAD_CHECK
     tid_t tid;
 #endif
@@ -233,7 +229,7 @@ static void reChargeLargeBuffers(buffer_pool_t *pool)
 
     pool->large_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: allocated %d new large buffers, %zu are in use", increase, pool->in_use);
+    LOGD("BufferPool: added %u large buffers to local cache (%u cached)", increase, pool->large_buffers_container_len);
 #endif
 }
 
@@ -257,7 +253,8 @@ static void reChargeMediumBuffers(buffer_pool_t *pool)
 
     pool->medium_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: allocated %d new medium buffers, %zu are in use", increase, pool->in_use);
+    LOGD(
+        "BufferPool: added %u medium buffers to local cache (%u cached)", increase, pool->medium_buffers_container_len);
 #endif
 }
 
@@ -285,7 +282,7 @@ static void reChargeSmallBuffers(buffer_pool_t *pool)
 
     pool->small_buffers_container_len += increase;
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: allocated %d new small buffers, %zu are in use", increase, pool->in_use);
+    LOGD("BufferPool: added %u small buffers to local cache (%u cached)", increase, pool->small_buffers_container_len);
 #endif
 }
 
@@ -331,7 +328,9 @@ static void shrinkLargeBuffers(buffer_pool_t *pool)
     pool->large_buffers_container_len -= decrease;
 
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: freed %d large buffers, %zu are in use", decrease, pool->in_use);
+    LOGD("BufferPool: returned %u large buffers to master (%u cached locally)",
+         decrease,
+         pool->large_buffers_container_len);
 #endif
 }
 
@@ -346,7 +345,9 @@ static void shrinkMediumBuffers(buffer_pool_t *pool)
     pool->medium_buffers_container_len -= decrease;
 
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: freed %d medium buffers, %zu are in use", decrease, pool->in_use);
+    LOGD("BufferPool: returned %u medium buffers to master (%u cached locally)",
+         decrease,
+         pool->medium_buffers_container_len);
 #endif
 }
 
@@ -365,7 +366,9 @@ static void shrinkSmallBuffers(buffer_pool_t *pool)
     pool->small_buffers_container_len -= decrease;
 
 #if BUFFER_POOL_DEBUG == 1
-    LOGD("BufferPool: freed %d small buffers, %zu are in use", decrease, pool->in_use);
+    LOGD("BufferPool: returned %u small buffers to master (%u cached locally)",
+         decrease,
+         pool->small_buffers_container_len);
 #endif
 }
 
@@ -381,10 +384,6 @@ sbuf_t *bufferpoolGetLargeBuffer(buffer_pool_t *pool)
 #if BYPASS_BUFFERPOOL == 1
     return masterpoolRequireCreatedItem(
         pool->large_buffers_mp, sbufCreateWithPadding(pool->large_buffers_size, pool->large_buffer_left_padding), pool);
-#endif
-
-#if BUFFER_POOL_DEBUG == 1
-    pool->in_use += 1;
 #endif
 
     bufferpoolDebugCheckThreadAccess(pool);
@@ -419,10 +418,6 @@ sbuf_t *bufferpoolGetMediumBuffer(buffer_pool_t *pool)
         pool);
 #endif
 
-#if BUFFER_POOL_DEBUG == 1
-    pool->in_use += 1;
-#endif
-
     bufferpoolDebugCheckThreadAccess(pool);
 
     if (LIKELY(pool->medium_buffers_container_len > 0))
@@ -451,10 +446,6 @@ sbuf_t *bufferpoolGetSmallBuffer(buffer_pool_t *pool)
 #if BYPASS_BUFFERPOOL == 1
     return masterpoolRequireCreatedItem(
         pool->small_buffers_mp, sbufCreateWithPadding(pool->small_buffers_size, pool->small_buffer_left_padding), pool);
-#endif
-
-#if BUFFER_POOL_DEBUG == 1
-    pool->in_use += 1;
 #endif
 
     bufferpoolDebugCheckThreadAccess(pool);
@@ -493,9 +484,6 @@ sbuf_t *bufferpoolGetSpliceBuffer(buffer_pool_t *pool)
         return NULL;
     sbuf_t *buf = pool->splice_buffers[--pool->splice_buffers_container_len];
     sbufSpliceCheckBuffer(buf);
-#if BUFFER_POOL_DEBUG == 1
-    pool->in_use += 1;
-#endif
     return buf;
 #endif
 }
@@ -576,9 +564,6 @@ sbuf_t *bufferpoolGetBestFit(buffer_pool_t *pool, size_t minimum_payload, uint16
         break;
     }
     bufferpoolDebugCheckThreadAccess(pool);
-#if BUFFER_POOL_DEBUG == 1 && BYPASS_BUFFERPOOL != 1
-    pool->in_use += 1;
-#endif
     return sbufCreateWithPadding(minimum_payload, minimum_left_padding);
 }
 
@@ -608,9 +593,6 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
         }
 #endif
 #if BYPASS_BUFFERPOOL != 1
-#if BUFFER_POOL_DEBUG == 1
-        pool->in_use -= 1;
-#endif
         if (sbufIsPooledSplice(b))
         {
             /* A retired entry has no pipe and must leave the inventory. */
@@ -635,9 +617,6 @@ void bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *b)
     return;
 #endif
 
-#if BUFFER_POOL_DEBUG == 1
-    pool->in_use -= 1;
-#endif
     sbufReset(b);
     // we dont compare total capacity because another buffer can have 0 padding and more capacity but still
     // the sumation of capaicity and padding is the same, so we compare the capacity without padding and the padding
@@ -869,10 +848,6 @@ buffer_pool_t *bufferpoolCreate(master_pool_t *mp_large, master_pool_t *mp_mediu
         .medium_buffers_size  = rounded_medium_buffer_size,
         .small_buffers_size   = rounded_small_buffer_size,
         .free_threshold       = free_threshold,
-
-#if BUFFER_POOL_DEBUG == 1
-        .in_use = 0,
-#endif
 
 #if POOL_THREAD_CHECK
         .tid = 0,
