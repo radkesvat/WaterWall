@@ -145,13 +145,13 @@ static void caseQueuedShutdown(wid_t workers, bool foreign)
                    ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, junk) &&
                    ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, packet),
                "closed admission published, rearmed, or failed to settle queued work exactly once");
-    const unsigned settled = g_twf_buffers.total_recycled;
-    discard        tosSetCurrentWorker(0);
+    discard tosSetCurrentWorker(0);
     packet = bufferpoolGetSmallBuffer(f.env.pools[0]);
     sbufSetLength(packet, 4);
-    output(f.state, packet, &f.state->engine.peers[0], &binding->ingress->ip, binding->ingress->port);
-    twfRequire(atomic_load(&f.state->dispatch.count) == 0 && g_twf_buffers.total_recycled == settled + 1,
-               "post-close output reacquired dispatch admission");
+    twfRequire(! output(f.state, packet, &f.state->engine.peers[0], &binding->ingress->ip, binding->ingress->port) &&
+                   atomicLoad(&f.state->dispatch.count) == 0 &&
+                   ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, packet),
+               "post-close output retained its packet or reacquired dispatch admission");
     wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
     twfRequire(f.ingress_finished == 1, "ingress was not destroyed exactly once by its creator");
 }

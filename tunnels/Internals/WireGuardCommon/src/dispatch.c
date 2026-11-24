@@ -46,11 +46,11 @@ static void execute(void *worker, void *arg1, void *arg2, void *arg3)
     if (LIKELY(atomicLoad(&job->dispatch->open)))
         job->run(job->t, job->packet, job->argument);
     else
-        reuseBuffer(job->packet);
+        sbufDestroy(job->packet);
     settle(job);
 }
 
-void wireguardDispatch(wireguard_dispatch_t *dispatch, wid_t worker, tunnel_t *t, sbuf_t *packet, void *argument,
+bool wireguardDispatch(wireguard_dispatch_t *dispatch, wid_t worker, tunnel_t *t, sbuf_t *packet, void *argument,
                        wireguard_dispatch_fn run, void (*release)(void *))
 {
     const size_t charge = sbufGetAllocationCharge(packet) + sizeof(wireguard_job_t);
@@ -75,10 +75,11 @@ void wireguardDispatch(wireguard_dispatch_t *dispatch, wid_t worker, tunnel_t *t
     const worker_message_submit_result_e result =
         sendWorkerMessageForceQueueWithCleanup(worker, execute, cancel, job, NULL, NULL);
     assert(result != kWorkerMessageSubmitRejectedCallerRetains);
-    discard result;
-    return;
+    return result == kWorkerMessageSubmitAccepted;
 refuse:
-    reuseBuffer(packet);
+    /* In-place transforms can also submit a buffer received from another worker. */
+    sbufDestroy(packet);
     if (release != NULL)
         release(argument);
+    return false;
 }

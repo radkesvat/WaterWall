@@ -65,6 +65,14 @@ static void ingressRetain(ingress_t *ingress)
 {
     atomicAdd(&ingress->references, 1);
 }
+/* When both gates are needed, take bindings_lock before the ingress lock. */
+static bool ingressAvailable(ingress_t *ingress, bool require_writable)
+{
+    mutexLock(&ingress->lock);
+    const bool available = ingress->line != NULL && (! require_writable || ! ingress->paused);
+    mutexUnlock(&ingress->lock);
+    return available;
+}
 static void ingressRelease(void *argument)
 {
     ingress_t *ingress = argument;
@@ -354,20 +362,20 @@ static void sendOnIngress(tunnel_t *t, sbuf_t *packet, void *argument)
         mutexUnlock(&state->bindings_lock);
         if (UNLIKELY(! valid))
         {
-            reuseBuffer(packet);
+            sbufDestroy(packet);
             return;
         }
     }
     ingress_t *ingress = send->ingress;
     mutexLock(&ingress->lock);
     line_t    *line     = ingress->line;
-    const bool writable = line != NULL && ! ingress->paused;
-    if (writable)
+    /* Admission checked Pause before posting. A later Pause leaves this accepted datagram in flight. */
+    if (line != NULL)
         lineRef(line);
     mutexUnlock(&ingress->lock);
-    if (! writable)
+    if (line == NULL)
     {
-        reuseBuffer(packet);
+        sbufDestroy(packet);
         return;
     }
     tunnelPrevDownStreamPayload(t, line, packet);
@@ -395,17 +403,18 @@ static bool output(void *context, sbuf_t *packet, wireguard_peer_t *selected_pee
     if (ingress == NULL && state->receiving != NULL && ipAddrCmp(&state->receiving->ip, ip) &&
         state->receiving->port == port)
         ingress = state->receiving;
-    if (ingress == NULL)
+    if (ingress == NULL || ! ingressAvailable(ingress, true))
     {
-        reuseBuffer(packet);
+        /* In-place encryption can preserve an inner producer's original allocation. */
+        sbufDestroy(packet);
         return false;
     }
     send_t *send  = memoryAllocate(sizeof(*send));
     *send         = snapshot;
     send->ingress = ingress;
     ingressRetain(ingress);
-    wireguardDispatch(&state->dispatch, ingress->worker, state->tunnel, packet, send, sendOnIngress, releaseSend);
-    return true;
+    return wireguardDispatch(
+        &state->dispatch, ingress->worker, state->tunnel, packet, send, sendOnIngress, releaseSend);
 }
 static void inner(void *context, sbuf_t *packet, wireguard_peer_t *peer)
 {
@@ -437,10 +446,7 @@ static void receive(tunnel_t *t, sbuf_t *packet, void *argument)
     receive_t *received = argument;
     ingress_t *ingress  = received->ingress;
     reconcile(state);
-    mutexLock(&ingress->lock);
-    bool live = ingress->line != NULL;
-    mutexUnlock(&ingress->lock);
-    if (UNLIKELY(! live))
+    if (UNLIKELY(! ingressAvailable(ingress, false)))
     {
         reuseBuffer(packet);
         return;
