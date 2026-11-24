@@ -10,10 +10,20 @@ static sbuf_t *takePending(wireguardclient_tstate_t *state)
     return packet;
 }
 
+static void discardExpiredPending(wireguardclient_tstate_t *state, uint32_t now)
+{
+    if (state->pending_count > 0 && now - state->pending_demand_millis >= REKEY_ATTEMPT_TIME * 1000U)
+        wireguardclientDiscardPending(state);
+}
+
 void wireguardclientFlushPending(wireguardclient_tstate_t *state)
 {
-    while (state->pending_count > 0 && wireguardCommonPeerCanSend(state->engine.first_peer))
+    while (state->pending_count > 0)
     {
+        discardExpiredPending(state, getTickMS());
+        if (state->pending_count == 0 || ! wireguardCommonPeerCanSend(state->engine.first_peer))
+            return;
+
         wireguardCommonSendInner(&state->engine, takePending(state));
     }
 }
@@ -39,6 +49,9 @@ void wireguardclientSendInner(tunnel_t *t, sbuf_t *packet, void *argument)
         wireguardCommonSendInner(&state->engine, packet);
         return;
     }
+
+    const uint32_t now = getTickMS();
+    discardExpiredPending(state, now);
     const size_t charge = sbufGetAllocationCharge(packet);
     if (state->pending_count == ARRAY_SIZE(state->pending) || charge > 1024U * 1024U - state->pending_charge)
     {
@@ -48,4 +61,5 @@ void wireguardclientSendInner(tunnel_t *t, sbuf_t *packet, void *argument)
     state->pending[(state->pending_head + state->pending_count) % ARRAY_SIZE(state->pending)] = packet;
     ++state->pending_count;
     state->pending_charge += charge;
+    state->pending_demand_millis = now;
 }

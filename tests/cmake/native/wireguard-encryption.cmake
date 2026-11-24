@@ -172,6 +172,7 @@ if(LINUX AND TARGET WireGuardClient)
     LIBRARIES WireGuardClient)
   target_link_options(wireguard_client_carrier_test PRIVATE
     "-Wl,--wrap=getTickMS" "-Wl,--wrap=wireguardCommonReceiveOnCarrier"
+    "-Wl,--wrap=isSystemUnderLoad"
     "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
     "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"

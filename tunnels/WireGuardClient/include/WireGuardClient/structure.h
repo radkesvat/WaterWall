@@ -26,6 +26,7 @@ typedef struct wireguardclient_tstate_s
     sbuf_t              *pending[128];
     unsigned             pending_head, pending_count;
     size_t               pending_charge;
+    uint32_t             pending_demand_millis;
 } wireguardclient_tstate_t;
 
 extern const wireguard_callbacks_t wireguardclientEngineCallbacks;
