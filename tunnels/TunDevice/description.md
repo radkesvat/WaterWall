@@ -36,6 +36,10 @@ For Ping or Ping6 tunnels, see the
 
 Payload coming from either side and reaching `TunDevice` is written into the TUN interface.
 
+The [WireGuard packet tunnel example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/tunnels/wireguard)
+shows both hosts and places the server's TUN at the end of
+`UdpListener -> WireGuardServer(mode=packet) -> TunDevice`.
+
 ## Minimal practical example
 
 Node fragment; define the referenced neighbors and peers in the same deployment.

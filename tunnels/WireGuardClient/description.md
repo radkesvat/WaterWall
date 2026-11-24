@@ -1,9 +1,17 @@
 # WireGuardClient
 
-WireGuardClient accepts inner IP packets on `prev` and exchanges encrypted
-WireGuard datagrams on `next`. Return packets travel back toward `prev`.
-Configure exactly one server peer. Keys use canonical Base64 encoding of 32 bytes:
-44 characters with one trailing `=`.
+## Overview
+
+`WireGuardClient` accepts inner IP packets from `prev` and exchanges encrypted
+WireGuard datagrams with one configured server peer on `next`. Decrypted return
+packets go back toward `prev`.
+
+Start with the [paired WireGuard packet-mode example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/tunnels/wireguard)
+for a TUN-to-TUN setup, or the [connection-mode example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/tunnels/wireguard-connection)
+for an account-backed IPv4 TCP/UDP exit. See [WireGuardServer](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/WireGuardServer)
+for the server's mode and peer settings.
+
+## Typical placement
 
 ```text
 TunDevice -> WireGuardClient -> UdpConnector
@@ -12,8 +20,24 @@ TunDevice -> WireGuardClient -> UdpOverTcpClient -> TcpConnector
 ConnectionToPackets -> WireGuardClient -> UdpConnector
 ```
 
-ConnectionToPackets requires its own normal TCP/UDP input. Any compatible L3
-producer may supply the client; TunDevice adjacency is not required.
+Any compatible L3 source can supply `WireGuardClient`. A
+[TunDevice](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/TunDevice) accepts packets from the OS. A
+[ConnectionToPackets](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/ConnectionToPackets) needs a TCP/UDP connection
+source and produces the inner IP packets itself.
+
+The transport must deliver each WireGuard message in one complete payload
+callback in both directions. Direct UDP uses [UdpConnector](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/UdpConnector). To send extra
+outbound datagrams first, insert [JunkDatagramSender](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/JunkDatagramSender)
+before the UDP connector. A TCP carrier needs a matching
+[UdpOverTcpServer](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/UdpOverTcpServer) to recover the datagrams at the remote
+relay before forwarding them to the WireGuard UDP listener. The configured
+WireGuard public key authenticates the peer on every carrier.
+
+## Minimal practical example
+
+Node fragment for direct UDP. Define the node feeding inner packets and the
+`udp` connector in the same configuration. Replace the example keys with your
+own and set `endpoint` to the server's reachable UDP address.
 
 ```json
 {
@@ -21,62 +45,71 @@ producer may supply the client; TunDevice adjacency is not required.
   "type": "WireGuardClient",
   "settings": {
     "privatekey": "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
-    "peers": [{
-      "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
-      "allowedips": "0.0.0.0/0",
-      "endpoint": "vpn.example.com:51820",
-      "persistentkeepalive": 25
-    }]
+    "peers": [
+      {
+        "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
+        "allowedips": "0.0.0.0/0",
+        "endpoint": "vpn.example.com:51820",
+        "persistentkeepalive": 25
+      }
+    ]
   },
   "next": "udp"
 }
 ```
 
-For direct UDP transport, the UDP node uses `"type":"UdpConnector"` and settings
-`{"address":"dest_context->address","port":"dest_context->port"}`. For junk,
-point the client at a `JunkDatagramSender` node whose `next` is `udp`.
+Set the `udp` node's type to `UdpConnector`, with `address` set to
+`dest_context->address` and `port` set to `dest_context->port`. The client puts
+the `endpoint` address, port, and UDP protocol in that destination context
+before it initializes the transport. Later nodes can use the supplied address
+or apply their own routing settings. The selected transport handles DNS, socket
+selection, and receive filtering.
 
-| Setting | Contract |
-| --- | --- |
-| `privatekey` | Required local private key. |
-| `peers` | Exactly one peer object. |
-| `publickey` | Required remote public key. |
-| `allowedips` | Required comma-separated inner destination/remote source CIDRs, at most sixteen. |
-| `endpoint` | Required initial destination: `host:port` or `[IPv6]:port`, port 1–65535. Subsequent nodes can select another endpoint through their normal settings. |
-| `presharedkey` | Optional 32-byte Base64 PSK. |
-| `persistentkeepalive` | Optional seconds, 0–65535; 0 disables persistent keepalives. |
+## Configuration
 
-Replace example keys for deployment. The node opens no OS interface. Configure
-the TunDevice and OS routes separately.
+Set the top-level `type` to `WireGuardClient` and point `next` at the transport
+path. Encode private keys, public keys, and preshared keys as canonical Base64
+of 32 bytes, written as 44 characters ending in one `=`.
 
-One protocol engine and one owned normal carrier run on worker 0, sharing coherent
-handshake, nonce and replay state across all input workers. Cross-worker work is
-bounded to 512 messages and 8 MiB of retained allocation per node. The protocol
-timer can send handshake datagrams after the next `Init` returns with the carrier
-alive and writes permitted. The client processes replies from that exact carrier
-before or after transport `Est`.
+| Field in `settings` | Required | Description |
+| --- | --- | --- |
+| `privatekey` | Yes | Client's WireGuard private key. |
+| `peers` | Yes | Array containing exactly one peer object. |
 
-Until session keys are ready, a FIFO retains at most 128 inner packets and 1 MiB
-of allocation. It flushes in order once the keys are ready. Overflow drops new
-packets. An unavailable or paused carrier drops encrypted output. The protocol
-timer retries handshakes. Shutdown recycles every retained inner packet.
-Carrier creation attempts are separated by at least 400 ms.
+| Peer field | Required | Description |
+| --- | --- | --- |
+| `publickey` | Yes | Server's WireGuard public key. |
+| `allowedips` | Yes | String with 1–16 comma-separated IPv4 or IPv6 CIDRs. These ranges select which inner destinations go to the peer and which inner source addresses are accepted from the peer. |
+| `endpoint` | Yes | Initial transport destination in `host:port` or `[IPv6]:port` form, with a port from 1 to 65535. |
+| `presharedkey` | No | Optional preshared key. For a static packet-mode peer, use the same value at both ends. WaterWall server connection mode uses no preshared key. |
+| `persistentkeepalive` | No | Whole seconds from 0 to 65535. Defaults to `0`, which disables persistent keepalives. |
 
-The endpoint supplies the initial destination address, port and UDP protocol
-before carrier Init. It does not override subsequent nodes' configured routing:
-a connector or proxy can use `dest_context` or select its own transport endpoint.
-The selected transport owns DNS resolution, socket selection and receive
-filtering. When it finishes the carrier after a DNS or I/O failure, the client
-can create another carrier through ordinary Init.
+## Usage and troubleshooting
 
-The chain must deliver one complete WireGuard message per payload callback in
-both directions. UdpConnector is one option; no particular connector is required.
-For a byte stream, use `UdpOverTcpClient` and a matching remote
-`UdpOverTcpServer`. For example, a TCP relay can decode the framing and forward
-datagrams to an ordinary WireGuard UDP server. A plain WireGuard UDP server
-does not understand the TCP framing. The remote WireGuard public key still
-authenticates the peer regardless of the selected transport.
+- **The handshake does not complete.** Verify the server's address and port,
+  each peer's public key, and the preshared key if used. For TCP transport,
+  point the TCP connector at the framing relay. A native WireGuard UDP
+  listener does not decode the TCP framing.
+- **The handshake works, but inner traffic does not pass.** Check that the
+  destination matches the client's `allowedips` and that the server allows the
+  client's inner source address. `WireGuardClient` creates no OS interface or
+  routes. For a TUN setup, configure `TunDevice`, route the intended traffic
+  into it, and keep the outer peer reachable outside the TUN route.
 
+The [runnable WireGuard configuration files](https://github.com/radkesvat/WaterWall/tree/main/tunnels/WireGuardClient/examples)
+include direct UDP, extra datagrams, and a TCP relay.
 
-Complete runnable core/config pairs are available in the
-[WireGuard examples](https://github.com/radkesvat/WaterWall/tree/main/tunnels/WireGuardClient/examples).
+## Advanced behavior
+
+The client retries handshakes and can reopen the carrier after a DNS or I/O
+failure. Carrier creation attempts are spaced at least 400 ms apart. An
+unavailable or paused carrier causes encrypted output to be dropped.
+
+While waiting for a session key, the client queues up to 128 inner packets and
+1 MiB of allocation. It drops new packets when the queue is full and drains
+the queue in order once a key is ready. Shutdown releases any packets still
+queued. Cross-worker packet work is limited to 512 messages and 8 MiB of
+retained allocation per node.
+
+See the developer guide for [carrier ownership and handshake timing](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part4-packet-tunnels#wireguard-authenticated-packet-to-connection-ownership)
+and [worker shutdown](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part7-shutdown-and-signals#wireguard-worker-ownership-and-retirement).
