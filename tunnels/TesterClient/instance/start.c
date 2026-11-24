@@ -6,21 +6,20 @@
 void testerclientStartWorkerTestInvoke(worker_t *worker, tunnel_t *t);
 #endif
 
-static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *arg3)
+void testerclientStartLine(tunnel_t *t, line_t *l)
 {
-    worker_t                    *real_worker = worker;
-    tunnel_t                    *t           = arg1;
-    wid_t                        wid         = real_worker->wid;
+    const wid_t                  wid         = lineGetWID(l);
     testerclient_tstate_t       *ts          = tunnelGetState(t);
-    line_t                      *l           = ts->packet_mode ? tunnelchainGetWorkerPacketLine(tunnelGetChain(t), wid)
-                                                               : lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), wid);
     testerclient_lstate_t       *ls          = lineGetState(l, t);
     testerclient_worker_state_t *slot        = &ts->workers[wid];
 
-    discard arg2;
-    discard arg3;
-
-    testerclientLinestateInitialize(ls, lineGetBufferPool(l));
+    assert(lineIsOnCurrentWorker(l));
+    assert(ts->packet_mode == tunnelchainIsWorkerPacketLine(tunnelGetChain(t), l));
+    // A peer head can initialize this packet line first through a Bridge.
+    if (ls->read_stream.pool == NULL)
+    {
+        testerclientLinestateInitialize(ls, lineGetBufferPool(l));
+    }
     ls->flow_id           = (uint8_t) wid;
     slot->line            = l;
     slot->completed       = false;
@@ -50,7 +49,7 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
 
     if (! ts->packet_mode)
     {
-        if (! wloopNormalDispatchAllowed(real_worker->loop))
+        if (! wloopNormalDispatchAllowed(getWorkerLoop(wid)))
         {
             return;
         }
@@ -102,6 +101,16 @@ static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *
     {
         assert(watchdog_result == kLineTaskSubmitTimerArmed);
     }
+}
+
+static void testerclientStartWorker(void *worker, void *arg1, void *arg2, void *arg3)
+{
+    worker_t *owner = worker;
+    tunnel_t *t     = arg1;
+    discard   arg2;
+    discard   arg3;
+    line_t   *l = lineCreate(tunnelchainGetLinePools(tunnelGetChain(t)), owner->wid);
+    testerclientStartLine(t, l);
 }
 
 #ifdef WW_TESTERCLIENT_START_TEST_SEAM

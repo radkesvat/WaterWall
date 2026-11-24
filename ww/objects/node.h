@@ -122,7 +122,10 @@ enum node_flags
     // Kernel receive trust on an immediate packet pair; does not enable TX offload.
     kNodeFlagTrustedPacketReceiveChecksumsActive = (1 << 10),
     // This configured logical input cannot carry both UDP DNS and TCP fallback.
-    kNodeFlagDnsTransportUnsupported = (1 << 11)
+    kNodeFlagDnsTransportUnsupported = (1 << 11),
+    // On a layer-3 chain head, dispatch startup Init to the head so it can
+    // prepare its worker packet line and forward Init to the next node once.
+    kNodeFlagHandlesPacketHeadInit = (1 << 12)
 };
 
 enum node_layer_group

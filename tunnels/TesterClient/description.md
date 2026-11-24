@@ -216,15 +216,15 @@ Packet mode with synthetic IPv4 packets:
   `transport` is enabled
 - in packet mode, `max-payload-size` reduces the effective chunk size before packet generation; it does not split one
   logical packet into multiple packets
-- `UpStreamInit`, `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
-  intentionally disabled because this node is a chain head
+- packet mode accepts upstream `Init` from NodeManager on the worker packet line
+- `UpStreamEst`, `UpStreamPayload`, `UpStreamPause`, `UpStreamResume`, and `UpStreamFinish` are
+  disabled on this chain head
 
 ## Implementation details
 
 ### What It Does
 
-- acts as a chain head and creates the test lines itself
-- waits `100 ms` after startup before creating one worker-local test line per chain worker
+- in normal mode, schedules creation of one test line per worker with a `100 ms` startup delay
 - initializes per-line state before sending `Init` to the next tunnel
 - sends `11` fixed-size request chunks upstream by default
 - verifies `11` fixed-size response chunks coming back downstream by default
@@ -310,13 +310,10 @@ these sizes:
 
 #### Startup and line creation
 
-On tunnel start, `TesterClient` schedules one startup task per chain worker. Each worker task:
-
-- picks the worker packet line when `packet-mode` is enabled, otherwise creates a fresh normal line
-- initializes this tunnel's per-line state immediately
-- publishes the destination transport offer on a normal line
-- sends upstream `Init` to the next tunnel while holding a temporary line reference
-- arms a `30000 ms` watchdog for that worker line
+In packet mode, NodeManager delivers startup `Init` to `TesterClient` on each worker's packet line.
+In normal mode, the client's timed startup task creates a line on each worker after `100 ms`.
+In both modes the client initializes its line state and applies the configured destination context
+before sending one upstream `Init` to the next tunnel. It arms a `30000 ms` watchdog for that flow.
 
 #### Establishment and request send
 
@@ -365,7 +362,7 @@ Source-backed metadata:
 
 | Property | Value |
 | --- | --- |
-| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagSingleton` |
+| node flags | `kNodeFlagChainHead` &#124; `kNodeFlagSingleton`, plus `kNodeFlagHandlesPacketHeadInit` in packet mode |
 | `can_have_prev` | `false` |
 | `can_have_next` | `true` |
 | `layer_group` | `kNodeLayerAnything` |

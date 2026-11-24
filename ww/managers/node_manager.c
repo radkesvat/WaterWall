@@ -474,7 +474,9 @@ void nodemanagerInitializeLineOnTargetWorker(void *worker, void *_tunnel, void *
 
     assert(lineIsOnCurrentWorker(line));
 
-    if (! lineCallWithRef(line, tunnelNextUpStreamInit, tunnel))
+    const LineTaskFnNoBuf init =
+        (tunnel->node->flags & kNodeFlagHandlesPacketHeadInit) != 0 ? tunnelUpStreamInit : tunnelNextUpStreamInit;
+    if (! lineCallWithRef(line, init, tunnel))
     {
         /*
          * Category D: a persistent worker packet line is process-lifetime state

@@ -22,6 +22,7 @@
 
 #include "wwapi.h"
 
+#include "fixtures/worker_registry_fixture.h"
 #include "node_builder/input_hints.h"
 #include "test_assert.h"
 
@@ -1548,7 +1549,7 @@ static void fakePacketMiddlePayloadU(tunnel_t *t, line_t *l, sbuf_t *buf)
     tunnelNextUpStreamPayload(t, l, buf);
 }
 
-static void fakePacketTailInitU(tunnel_t *t, line_t *l)
+static void absorbPacketInit(tunnel_t *t, line_t *l)
 {
     (void) t;
     (void) l;
@@ -1594,14 +1595,15 @@ static void testPacketLineInitAndPayloadExecution(void)
         .can_have_prev         = true,
     };
 
-    tunnel_t t_head = {.node = &n_head, .fnInitU = tunnelNextUpStreamInit, .fnPayloadU = tunnelNextUpStreamPayload};
+    // The manager starts at the next node for an ordinary packet head.
+    tunnel_t t_head = {.node = &n_head, .fnInitU = absorbPacketInit, .fnPayloadU = tunnelNextUpStreamPayload};
     tunnel_t t_mid  = {
          .node        = &n_mid,
          .lstate_size = sizeof(test_packet_lstate_t),
          .fnInitU     = fakePacketMiddleInitU,
          .fnPayloadU  = fakePacketMiddlePayloadU,
     };
-    tunnel_t t_tail = {.node = &n_tail, .fnInitU = fakePacketTailInitU, .fnPayloadU = fakePacketTailPayloadU};
+    tunnel_t t_tail = {.node = &n_tail, .fnInitU = absorbPacketInit, .fnPayloadU = fakePacketTailPayloadU};
 
     bindTunnels(&t_head, &t_mid);
     bindTunnels(&t_mid, &t_tail);
@@ -1625,8 +1627,16 @@ static void testPacketLineInitAndPayloadExecution(void)
     test_packet_lstate_t *ls = lineGetState(pkt_line, &t_mid);
     require(ls->magic == 0, "Line state was non-zero before Init");
 
-    // 2. Execute Init callback on worker packet line
-    t_head.fnInitU(&t_head, pkt_line);
+    // 2. Run the startup task on the packet line's registered worker.
+    const wid_t saved_workers       = GSTATE.workers_count;
+    GSTATE.workers_count            = 1;
+    test_worker_registry_t registry = {0};
+    testWorkerRegistryInstall(&registry);
+    testWorkerBindWID(0);
+    nodemanagerInitializeLineOnTargetWorker(&registry.slots[0], &t_head, pkt_line, NULL);
+    testWorkerUnbindWID();
+    testWorkerRegistryRestore(&registry);
+    GSTATE.workers_count = saved_workers;
     require(ls->init_count == 1, "Init callback did not run exactly once");
     require(ls->magic == 0xCAFEBABE, "Init callback did not initialize line state magic");
 

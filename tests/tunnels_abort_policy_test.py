@@ -355,7 +355,7 @@ MANIFEST = [
     ("tunnels/AuthenticationClient/instance/start.c", "authenticationclientStartOnWorker0", 1,
      ("AuthenticationClient: startup control task ran on worker %u",),
      "worker-task invariant: AuthClient start worker 0"),
-    ("tunnels/TesterClient/instance/start.c", "testerclientStartWorker", 1,
+    ("tunnels/TesterClient/instance/start.c", "testerclientStartLine", 1,
      ("TesterClient: packet line died during packet-mode init",),
      "worker-task invariant: TesterClient start packet line died"),
     ("tunnels/Internals/KcpCommon/src/session.c", "sendRecord", 1,

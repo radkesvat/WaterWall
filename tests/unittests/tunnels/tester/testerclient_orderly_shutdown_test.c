@@ -29,6 +29,7 @@
  * These cases prove both, plus the refused-worker-0 handoff that is the only
  * reason a verdict may ever reach abortProgramNow().
  */
+#include "TesterClient/interface.h"
 #include "TesterClient/structure.h"
 
 #include "ev_memory.h"
@@ -418,7 +419,8 @@ static void runPacketStartScheduleRefusal(uint32_t start_delay_ms)
     forbid_delayed_line_task               = start_delay_ms == 0;
     forbid_delayed_line_task_after_refusal = start_delay_ms > 0;
     delayed_line_task_submissions          = 0;
-    testerclientStartWorkerTestInvoke(getWorker(0), tester);
+    tester->fnInitU                        = testerclientStartLine;
+    tunnelUpStreamInit(tester, packet_lines[0]);
 
     tosRequireAcceptedRequest(1);
     twfRequireEqualU32(delayed_line_task_submissions,
@@ -455,6 +457,11 @@ static void caseDelayedPacketStartRefusalDoesNotArmWatchdog(void)
 
 static void establishAndResumeDuringPacketInit(tunnel_t *t, line_t *l)
 {
+    const testerclient_tstate_t *ts = tunnelGetState(t->prev);
+    const testerclient_lstate_t *ls = lineGetState(l, t->prev);
+    twfRequire(ts->workers[lineGetWID(l)].line == l, "packet head published Init before its worker slot");
+    twfRequire(ls->request_paused == (lineGetWID(l) == 0), "packet head lost the Pause from its paired branch");
+    twfRequire(! lineIsEstablished(l), "packet head published Init twice on the same worker");
     twfNextInit(t, l);
     tunnelPrevDownStreamEst(t, l);
     tunnelPrevDownStreamResume(t, l);
@@ -462,55 +469,78 @@ static void establishAndResumeDuringPacketInit(tunnel_t *t, line_t *l)
 
 static void caseSynchronousEstPreservesPacketStartDelay(void)
 {
-    twfSetCase("testerclient synchronous Est and Resume preserve packet start delay");
+    twfSetCase("manager starts each TesterClient packet head once and synchronous Est preserves the send delay");
     tosResetProcessApi(true);
     tos_worker_env_t env;
-    tosWorkerEnvSetup(&env, 1, kTestLargeBufferSize, kTestSmallBufferSize);
+    enum
+    {
+        kWorkers = 2
+    };
+    tosWorkerEnvSetup(&env, kWorkers, kTestLargeBufferSize, kTestSmallBufferSize);
 
+    node_t node             = nodeTesterClientGet();
+    node.node_settings_json = cJSON_Parse("{\"packet-mode\":true,\"packet-start-immediately\":true,"
+                                          "\"packet-start-delay-ms\":60000}");
+    twfRequire(node.node_settings_json != NULL, "failed to parse packet-start settings");
     twf_trace_t trace  = {0};
-    tunnel_t   *tester = tunnelCreate(NULL, sizeof(testerclient_tstate_t), sizeof(testerclient_lstate_t));
+    tunnel_t   *tester = node.createHandle(&node);
     tunnel_t   *next   = twfCreateNextTunnel(&trace);
     twfRequire(tester != NULL, "failed to create delayed packet-start fixture");
-    tester->fnEstD    = testerclientTunnelDownStreamEst;
-    tester->fnResumeD = testerclientTunnelDownStreamResume;
-    next->fnInitU     = establishAndResumeDuringPacketInit;
+    next->fnInitU = establishAndResumeDuringPacketInit;
     tunnelBind(tester, next);
 
-    tunnel_chain_t *chain           = memoryAllocateZero(sizeof(tunnel_chain_t) + sizeof(generic_pool_t *));
-    line_t         *packet_lines[1] = {twfLineCreate(tester->lstate_size)};
-    chain->workers_count            = 1;
-    chain->contains_packet_node     = true;
-    chain->finalized                = true;
-    chain->packet_lines             = packet_lines;
-    tester->chain = next->chain  = chain;
-    testerclient_tstate_t *ts    = tunnelGetState(tester);
-    ts->chunk_count              = kTestChunkCount;
-    ts->packet_mode              = true;
-    ts->packet_start_immediately = true;
-    ts->packet_start_delay_ms    = 60000;
-    ts->split_payload_burst      = kTesterClientSplitPayloadBurst;
-
-    const wid_t previous_wid      = tosSetCurrentWorker(0);
+    tunnel_chain_t *chain = tunnelchainCreate(kWorkers);
+    line_t         *packet_lines[kWorkers];
+    chain->contains_packet_node = true;
+    chain->finalized            = true;
+    chain->packet_lines         = packet_lines;
+    tester->chain = next->chain   = chain;
     request_line_task_submissions = delayed_line_task_submissions = delayed_request_submissions = 0;
     last_request_delay_ms                                                                       = 0;
-    testerclientStartWorkerTestInvoke(getWorker(0), tester);
-    tosRequireNoProcessApiCall();
-    twfRequire(lineIsEstablished(packet_lines[0]), "synchronous Est did not mark the packet line established");
-    twfRequireEqualU32(request_line_task_submissions, 0, "synchronous Est bypassed packet start delay");
-    twfRequireEqualU32(delayed_request_submissions, 1, "packet start scheduled more than one delayed request");
-    twfRequireEqualU32(last_request_delay_ms, ts->packet_start_delay_ms, "packet start changed the configured delay");
-    twfRequireEqualU32(delayed_line_task_submissions, 2, "packet start did not schedule one request and one watchdog");
 
-    workerMessagesCloseAdmission(getWorker(0));
-    workerMessagesDestroy(getWorker(0));
-    twfRequireEqualU32(twfLineRefCount(packet_lines[0]), 1, "canceled packet start retained line references");
-    testerclientTunnelOnWorkerStop(tester, 0, wwLifecycleProcessShutdown());
-    twfRequireLineStateZeroed(packet_lines[0], tester, "worker Stop left delayed packet-start state alive");
-    discard tosSetCurrentWorker(previous_wid);
-    twfLineDestroy(packet_lines[0]);
+    // The manager admits each worker's Init before invoking the node's onStart.
+    for (wid_t wid = 0; wid < kWorkers; ++wid)
+    {
+        packet_lines[wid]                 = twfLineCreate(tester->lstate_size);
+        packet_lines[wid]->wid            = wid;
+        packet_lines[wid]->is_packet_line = true;
+        twfRequire(sendWorkerMessageForceQueueWithCleanup(
+                       wid, nodemanagerInitializeLineOnTargetWorker, NULL, tester, packet_lines[wid], NULL) ==
+                       kWorkerMessageSubmitAccepted,
+                   "could not queue the manager's packet-head Init");
+    }
+    tester->onStart(tester);
+    // Another head in a Bridge pair can initialize the same line from downstream first.
+    tunnelDownStreamInit(tester, packet_lines[0]);
+    tunnelDownStreamPause(tester, packet_lines[0]);
+    for (wid_t wid = 0; wid < kWorkers; ++wid)
+    {
+        tosPumpWorker(&env, wid);
+        twfRequire(lineIsEstablished(packet_lines[wid]), "synchronous Est did not mark the packet line established");
+        twfRequireEqualU32(wloopNTimers(env.loops[wid]), 2, "expected only the delayed request and its watchdog");
+    }
+    tosRequireNoProcessApiCall();
+    twfRequireEqualU32(trace.next_init, kWorkers, "expected exactly one packet-side Init per worker");
+    twfRequireEqualU32(request_line_task_submissions, 0, "synchronous Est bypassed packet start delay");
+    twfRequireEqualU32(delayed_request_submissions, kWorkers, "expected one delayed request per worker");
+    twfRequireEqualU32(last_request_delay_ms, 60000, "packet start changed the configured delay");
+    twfRequireEqualU32(trace.next_payload, 0, "packet payload escaped before the configured delay");
+
+    for (wid_t wid = 0; wid < kWorkers; ++wid)
+    {
+        testWorkerBindWID(wid);
+        workerMessagesDestroy(getWorker(wid));
+        twfRequireEqualU32(twfLineRefCount(packet_lines[wid]), 1, "canceled packet start retained line references");
+        tester->onWorkerStop(tester, wid, wwLifecycleProcessShutdown());
+        twfRequireLineStateZeroed(packet_lines[wid], tester, "worker Stop left delayed packet-start state alive");
+    }
+    tester->onDestroy(tester, wwLifecycleProcessShutdown());
+    for (wid_t wid = 0; wid < kWorkers; ++wid)
+        twfLineDestroy(packet_lines[wid]);
     memoryFree(chain);
     tunnelDestroy(next);
-    tunnelDestroy(tester);
+    cJSON_Delete(node.node_settings_json);
+    memoryFree(node.type);
     tosWorkerEnvTeardown(&env);
 }
 
