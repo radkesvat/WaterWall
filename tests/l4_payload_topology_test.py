@@ -22,7 +22,8 @@ from wwtest.run_directory import RunDirectory
 from wwtest.sockets import connect_when_ready, exact
 
 
-def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise=None, restricted=False):
+def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise=None, restricted=False,
+            ready_marker=STARTED_MARKER):
     with RunDirectory("waterwall-l4-" + config["name"] + "-") as root:
         if quic:
             for filename in ("server.crt", "server.key"):
@@ -34,7 +35,7 @@ def startup(binary, config, *, conflict=(), error_terms=(), quic=False, exercise
         with Process(command, cwd=root, log_path=output_path) as process:
             deadline = time.monotonic() + 8
             while process.poll() is None and time.monotonic() < deadline:
-                if STARTED_MARKER in output_path.read_text(errors="replace"):
+                if ready_marker in output_path.read_text(errors="replace"):
                     assert not (conflict or error_terms), f"{config['name']}: invalid payload topology started"
                     if exercise:
                         exercise(process, deadline)
@@ -215,6 +216,36 @@ def routing_cases(binary):
         with tcp, udp:
             startup(binary, {"name": name, "nodes": nodes},
                     exercise=lambda process, deadline: receive_packet(tcp, udp, expected))
+
+
+def udp_destination_rule_case(binary):
+    port = 29845
+    listener = socket_node("ingress", "UdpListener", port, next_node="route")
+    listener["settings"]["address"] = "::"
+    router = {"name": "route", "type": "Router", "next": "fallback",
+              "settings": {"rules": [{"destination-ip": "127.0.0.2/32", "target": "match"}]}}
+    with socket.socket(type=socket.SOCK_DGRAM) as match, socket.socket(type=socket.SOCK_DGRAM) as fallback:
+        match.bind(("127.0.0.1", 0))
+        fallback.bind(("127.0.0.1", 0))
+        nodes = [listener, router, socket_node("match", "UdpConnector", match.getsockname()[1]),
+                 socket_node("fallback", "UdpConnector", fallback.getsockname()[1])]
+
+        def exchange(process, deadline):
+            with socket.socket(type=socket.SOCK_DGRAM) as client:
+                client.settimeout(3)
+                for address, expected in (("127.0.0.2", match), ("127.0.0.3", fallback)):
+                    destination = (address, port)
+                    request = address.encode("ascii")
+                    client.sendto(request, destination)
+                    ready, _, _ = select.select([match, fallback], [], [], 3)
+                    assert ready == [expected], f"unexpected UDP route for destination {address}"
+                    payload, peer = expected.recvfrom(64)
+                    assert payload == request
+                    expected.sendto(payload, peer)
+                    assert client.recvfrom(64) == (request, destination)
+
+        startup(binary, {"name": "mapped-udp-destination", "nodes": nodes}, exercise=exchange,
+                ready_marker=f":[{port}] (UDP)")
 
 
 def socks_udp_ingress_cases(binary):
@@ -516,6 +547,7 @@ if __name__ == "__main__":
         "quic": quic_cases,
         "routing": routing_cases,
         "routing-context": routing_context_cases,
+        "udp-destination-rule": udp_destination_rule_case,
         "runtime-refusal-log": runtime_refusal_log_case,
         "socks-udp-ingress": socks_udp_ingress_cases,
     }

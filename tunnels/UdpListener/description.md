@@ -215,7 +215,9 @@ the client contacted.
 For broadcast or multicast, listener selection and routing use the packet's
 destination, and replies use a local unicast source. If datagrams between the
 same endpoints have different preferred reply IPs, the listener keeps separate
-lines so a delayed reply retains its source.
+lines so a delayed reply retains its source. An IPv4 datagram received through
+a dual-stack `::` listener has an IPv4 destination in `dest_ctx`, so IPv4 Router
+rules can match it.
 
 The `iptables` port-range backend can rewrite the destination IP before the
 socket receives the packet. WaterWall uses the delivered IP and attempts to

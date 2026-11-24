@@ -87,6 +87,13 @@ add_waterwall_integration_test(waterwall.udp_listener_connector_connection_multi
 add_waterwall_integration_test(waterwall.udp_listener_multiport_socket_connection_multiworker_roundtrip udp_listener_multiport_socket_connection_multiworker_roundtrip)
 if(LINUX AND NOT CMAKE_CROSSCOMPILING AND INCLUDE_UDP_LISTENER AND INCLUDE_UDP_CONNECTOR)
   add_waterwall_probe_integration_test(waterwall.udp_listener_wildcard_reply_source udp_listener_wildcard_reply_source 15)
+  if(INCLUDE_ROUTER)
+    add_waterwall_isolated_test(waterwall.udp_listener_mapped_destination_rule
+      "${PYTHON3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/l4_payload_topology_test.py"
+      "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>" udp-destination-rule)
+    set_tests_properties(waterwall.udp_listener_mapped_destination_rule PROPERTIES TIMEOUT 30)
+    add_waterwall_test_labels(waterwall.udp_listener_mapped_destination_rule "integration" "tunnels" "routing")
+  endif()
 endif()
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_tcp_wildcard_specific_tun socket_manager_tcp_wildcard_specific_tun 15)
 add_waterwall_privileged_probe_integration_test(waterwall.socket_manager_udp_wildcard_specific_tun socket_manager_udp_wildcard_specific_tun 15)

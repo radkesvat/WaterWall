@@ -22,6 +22,7 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
     addresscontextFromSockAddrWithProtocol(&(l->routing_context.src_ctx), peer_addr, IP_PROTO_UDP);
     l->routing_context.peer_source_port = sockaddrPort((sockaddr_u *) peer_addr);
     addresscontextFromSockAddrWithProtocol(&l->routing_context.dest_ctx, local_addr, IP_PROTO_UDP);
+    normalizeIpAddr(&l->routing_context.dest_ctx.ip_address);
     const uint16_t real_localport = l->routing_context.dest_ctx.port;
     addresscontextSetPort(&l->routing_context.src_ctx, real_localport);
     l->routing_context.local_listener_port = real_localport;
