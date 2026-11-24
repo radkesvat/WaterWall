@@ -27,7 +27,28 @@ static void deliverInner(void *context, sbuf_t *packet, wireguard_peer_t *peer)
     tunnelPrevDownStreamPayload(state->tunnel, line, packet);
 }
 
+static void keyUnavailable(void *context, sbuf_t *packet, wireguard_peer_t *peer)
+{
+    discard peer;
+
+    wireguardclient_tstate_t *state = context;
+    assert(state->key_refused_packet != NULL && *state->key_refused_packet == NULL);
+    *state->key_refused_packet = packet;
+}
+
+sbuf_t *wireguardclientTrySendInner(wireguardclient_tstate_t *state, sbuf_t *packet)
+{
+    /* Carrier output can reenter the client. Each send owns its own refusal result. */
+    sbuf_t  *refused          = NULL;
+    sbuf_t **outer            = state->key_refused_packet;
+    state->key_refused_packet = &refused;
+    wireguardCommonSendInner(&state->engine, packet);
+    state->key_refused_packet = outer;
+    return refused;
+}
+
 const wireguard_callbacks_t wireguardclientEngineCallbacks = {
-    .output = sendToCarrier,
-    .inner  = deliverInner,
+    .output          = sendToCarrier,
+    .inner           = deliverInner,
+    .key_unavailable = keyUnavailable,
 };

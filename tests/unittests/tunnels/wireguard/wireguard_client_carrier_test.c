@@ -1,5 +1,5 @@
 /* Client carrier ownership, endpoint validation, retry throttling, reentrant
- * replacement, and pending queue expiry.
+ * replacement, and pending packets across key refusal and deadline expiry.
  * CTest: waterwall.wireguard_client_carrier_unit */
 #include "WireGuardClient/structure.h"
 #define __wrap_bufferpoolReuseBuffer carrierLedgerRecycle
@@ -13,6 +13,8 @@ static bool     refuse_init, pause_init, replace_on_send;
 static unsigned carrier_receives;
 static uint64_t received_carrier_id;
 static uint32_t now_millis;
+static unsigned clock_reads_until_advance;
+static uint32_t advance_clock_to;
 
 static buffer_pool_t *expected_recycle_pool;
 static uintptr_t      expected_refused_packet;
@@ -22,6 +24,7 @@ static ip_addr_t          carrier_source;
 static sbuf_t            *remote_response;
 static char               delivered_ids[16];
 static size_t             delivered_count;
+static char               nested_packet_id;
 
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *packet);
 void __wrap_bufferpoolReuseBuffer(buffer_pool_t *pool, sbuf_t *packet)
@@ -45,6 +48,8 @@ static void setTime(uint32_t millis)
 unsigned int __wrap_getTickMS(void);
 unsigned int __wrap_getTickMS(void)
 {
+    if (clock_reads_until_advance != 0 && --clock_reads_until_advance == 0)
+        setTime(advance_clock_to);
     return now_millis;
 }
 
@@ -121,6 +126,15 @@ static void carrierPayload(tunnel_t *t, line_t *line, sbuf_t *packet)
     if (remote_engine.first_peer != NULL)
     {
         wireguardCommonReceive(&remote_engine, packet, &carrier_source, 51820);
+        if (nested_packet_id != 0)
+        {
+            const char id    = nested_packet_id;
+            nested_packet_id = 0;
+            /* Advance on the nested fresh packet's final key check. */
+            clock_reads_until_advance = 2;
+            advance_clock_to          = now_millis + 1U;
+            discard submitInnerPacket(t->prev, id);
+        }
         return;
     }
     ++carrier_sends;
@@ -303,6 +317,47 @@ static void testPendingExpiry(wireguardclient_tstate_t *state)
     expectDelivery(state, "ef");
 }
 
+static void testKeyRefusal(wireguardclient_tstate_t *state)
+{
+    const uint32_t       key_lifetime = REJECT_AFTER_TIME * 1000U;
+    wireguard_keypair_t *key          = &state->engine.first_peer->curr_keypair;
+
+    setTime(key->keypair_millis + key_lifetime);
+    size_t charge = submitInnerPacket(state->tunnel, 'g');
+    expectPending(state, 1, charge, "fresh packet was lost with an already-expired key");
+    renewKey(state);
+    expectDelivery(state, "g");
+
+    setTime(key->keypair_millis + key_lifetime - 1U);
+    clock_reads_until_advance = 2; /* Admission, then the engine's key check. */
+    advance_clock_to          = now_millis + 1U;
+    charge                    = submitInnerPacket(state->tunnel, 'h');
+    expectPending(state, 1, charge, "fresh packet was lost when its key expired after admission");
+    renewKey(state);
+    expectDelivery(state, "h");
+
+    setTime(key->keypair_millis + key_lifetime - 1U);
+    key->sending_valid = false;
+    charge             = submitInnerPacket(state->tunnel, 'i');
+    charge += submitInnerPacket(state->tunnel, 'j');
+    const uint32_t demand_time = now_millis;
+    key->sending_valid         = true;
+    clock_reads_until_advance  = 3; /* Queue age, admission, then the engine's key check. */
+    advance_clock_to           = now_millis + 1U;
+    wireguardclientFlushPending(state);
+    expectPending(state, 2, charge, "final key refusal lost or double-charged the queue head");
+    twfRequire(state->pending_demand_millis == demand_time, "restoring the queue head renewed its deadline");
+    renewKey(state);
+    expectDelivery(state, "ij");
+
+    setTime(key->keypair_millis + key_lifetime - 1U);
+    nested_packet_id = 'l';
+    charge           = submitInnerPacket(state->tunnel, 'k');
+    expectPending(state, 1, charge, "nested key refusal escaped its send or charged the wrong packet");
+    renewKey(state);
+    expectDelivery(state, "kl");
+}
+
 static void testClientEndpoint(node_t *node)
 {
     static const struct
@@ -472,6 +527,7 @@ int main(void)
     testCrossWorkerPendingDiscard(&environment, state);
     setUpRemotePeer();
     testPendingExpiry(state);
+    testKeyRefusal(state);
     wireguardDeviceDestroy(&remote_engine);
     client->onQuiesceRequest(client, wwLifecycleProcessShutdown());
     client->onWorkerQuiesce(client, 0, wwLifecycleProcessShutdown());

@@ -27,6 +27,7 @@ typedef struct wireguardclient_tstate_s
     unsigned             pending_head, pending_count;
     size_t               pending_charge;
     uint32_t             pending_demand_millis;
+    sbuf_t             **key_refused_packet;
 } wireguardclient_tstate_t;
 
 extern const wireguard_callbacks_t wireguardclientEngineCallbacks;
@@ -35,3 +36,4 @@ line_t *wireguardclientEnsureCarrier(wireguardclient_tstate_t *state);
 void    wireguardclientFlushPending(wireguardclient_tstate_t *state);
 void    wireguardclientDiscardPending(wireguardclient_tstate_t *state);
 void    wireguardclientSendInner(tunnel_t *t, sbuf_t *packet, void *argument);
+sbuf_t *wireguardclientTrySendInner(wireguardclient_tstate_t *state, sbuf_t *packet);

@@ -24,7 +24,15 @@ void wireguardclientFlushPending(wireguardclient_tstate_t *state)
         if (state->pending_count == 0 || ! wireguardCommonPeerCanSend(state->engine.first_peer))
             return;
 
-        wireguardCommonSendInner(&state->engine, takePending(state));
+        sbuf_t *packet = wireguardclientTrySendInner(state, takePending(state));
+        if (packet != NULL)
+        {
+            state->pending_head = (state->pending_head + ARRAY_SIZE(state->pending) - 1U) % ARRAY_SIZE(state->pending);
+            state->pending[state->pending_head] = packet;
+            ++state->pending_count;
+            state->pending_charge += sbufGetAllocationCharge(packet);
+            return;
+        }
     }
 }
 
@@ -44,10 +52,11 @@ void wireguardclientSendInner(tunnel_t *t, sbuf_t *packet, void *argument)
 
     discard wireguardclientEnsureCarrier(state);
     wireguardclientFlushPending(state);
-    if (LIKELY(wireguardCommonPeerCanSend(state->engine.first_peer)))
+    if (LIKELY(state->pending_count == 0 && wireguardCommonPeerCanSend(state->engine.first_peer)))
     {
-        wireguardCommonSendInner(&state->engine, packet);
-        return;
+        packet = wireguardclientTrySendInner(state, packet);
+        if (packet == NULL)
+            return;
     }
 
     const uint32_t now = getTickMS();
