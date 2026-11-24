@@ -94,6 +94,73 @@ static void *cancelDetached(void *argument)
     workerMessagesCleanupPendingDetached(argument, kWorkerMessageCancelTeardown);
     return NULL;
 }
+
+static void caseCarrierAdmissionAndDetach(void)
+{
+    testCaseSet("WireGuardServer keepalive admission and remote-worker detach");
+    wg_server_fixture_t f;
+    wgServerFixtureSetup(&f, 2, "");
+    twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
+    wgServerFixtureProof(&f);
+    wgServerFixtureOpenUdp(&f);
+    wireguard_peer_t *peer = &f.state->engine.peers[0];
+    twfRequire(peer->passive_keepalive && f.client_count == 0, "authenticated UDP did not arm a passive reply");
+    peer->passive_keepalive_millis = wireguardRecoveryNow() - KEEPALIVE_TIMEOUT * 1000U;
+
+    discard tosSetCurrentWorker(1);
+    line_t *carrier = f.ingress[1];
+    tunnelNextUpStreamPause(f.adapter, carrier);
+    discard tosSetCurrentWorker(0);
+    tick(f.state->timer);
+    twfRequire(peer->passive_keepalive && atomicLoad(&f.state->dispatch.count) == 0,
+               "paused carrier consumed the due reply");
+    discard tosSetCurrentWorker(1);
+    tunnelNextUpStreamResume(f.adapter, carrier);
+    discard tosSetCurrentWorker(0);
+
+    atomicStore(&f.state->dispatch.count, 512);
+    tick(f.state->timer);
+    twfRequire(peer->passive_keepalive && atomicLoad(&f.state->dispatch.count) == 512,
+               "full WireGuard dispatch consumed the due reply");
+    atomicStore(&f.state->dispatch.count, 0);
+    workerMessagesCloseAdmission(&f.env.workers[1]);
+    tick(f.state->timer);
+    twfRequire(peer->passive_keepalive && atomicLoad(&f.state->dispatch.count) == 0,
+               "worker refusal consumed the due reply");
+    twfRequire(workerMessagesOpenAdmission(&f.env.workers[1]), "failed to reopen carrier worker admission");
+    tick(f.state->timer);
+    twfRequire(! peer->passive_keepalive && atomicLoad(&f.state->dispatch.count) == 1,
+               "writable carrier failed to admit the pending reply");
+    discard tosSetCurrentWorker(1);
+    tunnelNextUpStreamPause(f.adapter, carrier);
+    tosPumpWorker(&f.env, 1);
+    twfRequire(f.client_count == 1 &&
+                   sbufGetLength(f.to_client[0]) == sizeof(message_transport_data_t) + WIREGUARD_AUTHTAG_LEN &&
+                   wireguardGetMessageType(sbufGetRawPtr(f.to_client[0]), sbufGetLength(f.to_client[0])) ==
+                       MESSAGE_TRANSPORT_DATA,
+               "a later Pause swallowed the already-admitted keepalive");
+
+    discard tosSetCurrentWorker(0);
+    peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
+    sbuf_t  *pending                  = wgServerFixtureUdpPacket(&f, 40002);
+    uint8_t *bytes                    = sbufGetMutablePtr(pending);
+    /* Address the proved client using the engine worker's buffer. */
+    memoryCopy(bytes + 16, bytes + 12, 4);
+    twfRequire(calcFullPacketChecksum(bytes, sbufGetLength(pending)), "inner checksum failed");
+    tunnelPrevDownStreamPayload(f.state->ptc, tunnelchainGetWorkerPacketLine(f.chain, 0), pending);
+    tosPumpWorker(&f.env, 0);
+    twfRequire(f.state->bindings[0].pending == pending, "keyless return packet did not occupy the binding slot");
+    discard tosSetCurrentWorker(1);
+    tunnelNextUpStreamFinish(f.adapter, carrier);
+    wgAdapterFinish(f.adapter, carrier);
+    twfRequire(f.state->bindings[0].pending == NULL &&
+                   ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending) &&
+                   ! twfLedgerContains(g_twf_buffers.recycled, g_twf_buffers.recycled_count, pending),
+               "carrier worker retained or locally recycled another worker's pending buffer");
+    discard tosSetCurrentWorker(0);
+    wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
+}
+
 static void caseQueuedShutdown(wid_t workers, bool foreign)
 {
     testCaseSet("WireGuardServer queued ingress/output shutdown");
@@ -200,6 +267,7 @@ static void caseRetirementShutdown(wid_t workers, bool completion_pending)
 
 int main(void)
 {
+    caseCarrierAdmissionAndDetach();
     for (wid_t workers = 1; workers <= 4; workers += 3)
     {
         casePartialConstruction(workers, ",\"mtu\":67");

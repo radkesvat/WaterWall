@@ -8,12 +8,20 @@
 
 typedef struct ingress_s ingress_t;
 typedef struct server_s  server_t;
+enum
+{
+    kPendingPacketChargeLimit = 128U * 1024U
+};
 typedef struct binding_s
 {
     server_t                                      *server;
     authenticationclient_wireguard_authorization_t authorization;
     ingress_t                                     *ingress;
     uint64_t                                       epoch;
+    /* One plaintext packet for this binding and ingress. Guarded by bindings_lock. */
+    sbuf_t                                        *pending;
+    uint64_t                                       pending_epoch;
+    uint32_t                                       pending_since;
     uint8_t                                        public_key[32];
     bool                                           occupied, usable, retiring;
     atomic_bool                                    retirement_done, retirement_ok;
@@ -44,6 +52,8 @@ struct server_s
     ingress_t          **ingress_heads;
     atomic_uint          ingress_count;
     ingress_t           *receiving;
+    bool                 has_pending;     /* Worker 0 hint. Detach may empty a slot before the next sweep. */
+    const uint32_t      *releasing_since; /* Original age during synchronous owner-worker release. */
     wtimer_t            *timer;
     uint64_t             next_epoch, reconciled_generation, receiving_generation;
     bool                 connection;
@@ -101,6 +111,25 @@ static bool bindingCurrent(server_t *state, const binding_t *binding)
     discard state;
     return binding->usable && ! binding->retiring;
 }
+/* Owner-worker check, including cached eligibility while new admissions are closed. */
+static bool bindingAuthorized(server_t *state, const binding_t *binding)
+{
+    return authenticationclientWireGuardAuthorizationMatches(state->auth,
+                                                             binding->public_key,
+                                                             &binding->authorization.handle,
+                                                             binding->authorization.continuity,
+                                                             &binding->authorization.network,
+                                                             &binding->authorization.mask);
+}
+static void discardPending(binding_t *binding)
+{
+    if (binding->pending != NULL)
+    {
+        /* The inner producer and the ingress closing this binding can own different pools. */
+        sbufDestroy(binding->pending);
+        binding->pending = NULL;
+    }
+}
 static uint64_t sourceEpoch(void *context, const ip_addr_t *source)
 {
     server_t                                      *state          = context;
@@ -157,6 +186,7 @@ static void clearBinding(server_t *state, unsigned index)
     mutexLock(&state->bindings_lock);
     ingress                = binding->ingress;
     old                    = binding->authorization;
+    discardPending(binding);
     binding->ingress       = NULL;
     binding->authorization = (authenticationclient_wireguard_authorization_t) {0};
     binding->occupied = binding->usable = binding->retiring = false;
@@ -175,6 +205,7 @@ static void retireBinding(server_t *state, unsigned index)
     const bool had_flows = binding->usable;
     binding->usable      = false;
     binding->retiring    = true;
+    discardPending(binding);
     mutexUnlock(&state->bindings_lock);
     /* No engine processing is concurrent with the single protocol owner. */
     discard wireguardifRemovePeer(&state->engine, (uint8_t) index);
@@ -206,12 +237,7 @@ static void reconcile(server_t *state)
             continue;
         /* A table refresh revalidates the original identity through the cached
          * continuation policy. Explicit control rejection only blocks admission. */
-        if (! binding->usable || ! authenticationclientWireGuardAuthorizationMatches(state->auth,
-                                                                                     binding->public_key,
-                                                                                     &binding->authorization.handle,
-                                                                                     binding->authorization.continuity,
-                                                                                     &binding->authorization.network,
-                                                                                     &binding->authorization.mask))
+        if (! binding->usable || ! bindingAuthorized(state, binding))
             retireBinding(state, i);
         else
             binding->authorization.generation = generation;
@@ -232,13 +258,7 @@ static wireguard_peer_t *candidate(void *context, const uint8_t public_key[32])
             return NULL;
         /* Only a proved, live binding qualifies for continuation, including
          * rekey after all previous crypto keys have expired. */
-        if (binding->usable && ! binding->retiring &&
-            authenticationclientWireGuardAuthorizationMatches(state->auth,
-                                                              binding->public_key,
-                                                              &binding->authorization.handle,
-                                                              binding->authorization.continuity,
-                                                              &binding->authorization.network,
-                                                              &binding->authorization.mask))
+        if (binding->usable && ! binding->retiring && bindingAuthorized(state, binding))
             return peer;
         retireBinding(state, index);
         return NULL;
@@ -300,13 +320,8 @@ static bool authenticated(void *context, wireguard_peer_t *peer)
     {
         bool valid;
         if (binding->usable && ! binding->retiring)
-            valid = binding->authorization.continuity <= state->receiving_generation &&
-                    authenticationclientWireGuardAuthorizationMatches(state->auth,
-                                                                      binding->public_key,
-                                                                      &binding->authorization.handle,
-                                                                      binding->authorization.continuity,
-                                                                      &binding->authorization.network,
-                                                                      &binding->authorization.mask);
+            valid =
+                binding->authorization.continuity <= state->receiving_generation && bindingAuthorized(state, binding);
         else
         {
             authenticationclient_wireguard_authorization_t authorization = {0};
@@ -327,6 +342,8 @@ static bool authenticated(void *context, wireguard_peer_t *peer)
     ingressRetain(state->receiving);
     mutexLock(&state->bindings_lock);
     ingress_t *old   = binding->ingress;
+    if (old != state->receiving)
+        discardPending(binding);
     binding->ingress = state->receiving;
     binding->usable  = true;
     mutexUnlock(&state->bindings_lock);
@@ -429,6 +446,94 @@ static void inner(void *context, sbuf_t *packet, wireguard_peer_t *peer)
     tunnelNextUpStreamPayload(state->tunnel, line, packet);
 }
 
+/* Recheck eligibility on every locally generated initiation, including timeout retries. */
+static bool canInitiate(void *context, wireguard_peer_t *peer)
+{
+    server_t  *state   = context;
+    binding_t *binding = &state->bindings[wireguardPeerIndex(&state->engine, peer)];
+    if (bindingCurrent(state, binding) && binding->ingress != NULL && ingressAvailable(binding->ingress, false) &&
+        (! state->connection || bindingAuthorized(state, binding)))
+        return true;
+    mutexLock(&state->bindings_lock);
+    discardPending(binding);
+    mutexUnlock(&state->bindings_lock);
+    return false;
+}
+
+static void keyUnavailable(void *context, sbuf_t *packet, wireguard_peer_t *peer)
+{
+    server_t  *state   = context;
+    binding_t *binding = &state->bindings[wireguardPeerIndex(&state->engine, peer)];
+    bool       demand  = false;
+    mutexLock(&state->bindings_lock);
+    ingress_t *ingress = binding->ingress;
+    if (bindingCurrent(state, binding) && ingress != NULL && ingressAvailable(ingress, false))
+    {
+        const uint32_t now = getTickMS();
+        if (binding->pending != NULL && now - binding->pending_since >= REKEY_ATTEMPT_TIME * 1000U)
+            discardPending(binding);
+        const uint32_t since = state->releasing_since != NULL ? *state->releasing_since : now;
+        demand               = binding->pending == NULL && now - since < REKEY_ATTEMPT_TIME * 1000U;
+        if (demand && sbufGetAllocationCharge(packet) <= kPendingPacketChargeLimit)
+        {
+            state->has_pending     = true;
+            binding->pending       = packet;
+            binding->pending_epoch = binding->epoch;
+            binding->pending_since = since;
+            packet                 = NULL;
+        }
+    }
+    mutexUnlock(&state->bindings_lock);
+    if (packet != NULL)
+        sbufDestroy(packet);
+    if (demand)
+        wireguardCommonRequestHandshake(&state->engine, peer);
+}
+
+static void sendInner(tunnel_t *t, sbuf_t *packet, void *argument);
+
+static void sendHeldInner(server_t *state, sbuf_t *packet, uint64_t epoch, uint32_t since)
+{
+    /* All other inner deliveries are force-queued. Only this packet can lose its key and reenter keyUnavailable. */
+    assert(state->releasing_since == NULL);
+    state->releasing_since = &since;
+    sendInner(state->tunnel, packet, &epoch);
+    state->releasing_since = NULL;
+}
+
+/* The captured epoch is revalidated by the ordinary reverse packet path before encryption. */
+static void servicePending(server_t *state)
+{
+    if (! state->has_pending)
+        return;
+    state->has_pending = false;
+    mutexLock(&state->bindings_lock);
+    for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
+    {
+        binding_t *binding = &state->bindings[i];
+        if (binding->pending == NULL)
+            continue;
+        if (binding->pending_epoch != binding->epoch || wireguardExpired(binding->pending_since, REKEY_ATTEMPT_TIME))
+        {
+            discardPending(binding);
+            continue;
+        }
+        if (! wireguardCommonPeerCanSend(&state->engine.peers[i]) || ! ingressAvailable(binding->ingress, true))
+        {
+            state->has_pending = true;
+            continue;
+        }
+        sbuf_t        *packet = binding->pending;
+        const uint64_t epoch  = binding->pending_epoch;
+        const uint32_t since  = binding->pending_since;
+        binding->pending      = NULL;
+        mutexUnlock(&state->bindings_lock);
+        sendHeldInner(state, packet, epoch, since);
+        mutexLock(&state->bindings_lock);
+    }
+    mutexUnlock(&state->bindings_lock);
+}
+
 typedef struct receive_s
 {
     ingress_t *ingress;
@@ -456,6 +561,7 @@ static void receive(tunnel_t *t, sbuf_t *packet, void *argument)
     wireguardCommonReceive(&state->engine, packet, &ingress->ip, ingress->port);
     state->receiving            = NULL;
     state->receiving_generation = 0;
+    servicePending(state);
     /* Failed candidate proofs never retain a peer slot or range reservation. */
     if (state->connection)
         for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
@@ -479,7 +585,7 @@ static void payloadUp(tunnel_t *t, line_t *line, sbuf_t *packet)
 }
 static void sendInner(tunnel_t *t, sbuf_t *packet, void *argument)
 {
-    const uint64_t epoch = *(uint64_t *) argument;
+    const uint64_t epoch = *(const uint64_t *) argument;
     server_t      *state = tunnelGetState(t);
     reconcile(state);
     if (state->connection)
@@ -493,10 +599,13 @@ static void sendInner(tunnel_t *t, sbuf_t *packet, void *argument)
         if (UNLIKELY(epoch == 0 || sourceEpoch(state, &ip) != epoch))
             goto refuse;
     }
+    /* Reconciliation and authorization can take time after a packet leaves its slot. */
+    if (state->releasing_since != NULL && wireguardExpired(*state->releasing_since, REKEY_ATTEMPT_TIME))
+        goto refuse;
     wireguardCommonSendInner(&state->engine, packet);
     return;
 refuse:
-    reuseBuffer(packet);
+    sbufDestroy(packet);
 }
 static void freeArgument(void *argument)
 {
@@ -543,6 +652,11 @@ static void detachIngress(tunnel_t *t, line_t *line)
     ingress->line = NULL;
     atomicSub(&state->ingress_count, 1);
     mutexUnlock(&ingress->lock);
+    mutexLock(&state->bindings_lock);
+    for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
+        if (state->bindings[i].ingress == ingress)
+            discardPending(&state->bindings[i]);
+    mutexUnlock(&state->bindings_lock);
     lineUnref(line);
     ingressRelease(ingress);
 }
@@ -712,6 +826,7 @@ static void tick(wtimer_t *timer)
         return;
     reconcile(state);
     wireguardCommonLoop(&state->engine);
+    servicePending(state);
 }
 static void packetInit(void *worker, void *arg1, void *arg2, void *arg3)
 {
@@ -756,11 +871,17 @@ static void quiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *contex
 {
     discard   context;
     server_t *state = tunnelGetState(t);
-    if (wid == 0 && state->timer != NULL)
+    if (wid != 0)
+        return;
+    if (state->timer != NULL)
     {
         wtimerDelete(state->timer);
         state->timer = NULL;
     }
+    mutexLock(&state->bindings_lock);
+    for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
+        discardPending(&state->bindings[i]);
+    mutexUnlock(&state->bindings_lock);
 }
 static void stopWorker(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context)
 {
@@ -793,6 +914,7 @@ static void destroy(tunnel_t *t, const ww_lifecycle_context_t *context)
     destroyChild(&state->controller_node, state->controller);
     for (unsigned i = 0; i < WIREGUARD_MAX_PEERS; ++i)
     {
+        assert(state->bindings[i].pending == NULL);
         ingressRelease(state->bindings[i].ingress);
         authenticationclientWireGuardAuthorizationClear(&state->bindings[i].authorization);
     }
@@ -882,10 +1004,12 @@ static tunnel_t *create(node_t *node)
     if (! wireguardCommonInit(&state->engine,
                               key->valuestring,
                               state,
-                              (wireguard_callbacks_t) {.output        = output,
-                                                       .inner         = inner,
-                                                       .authenticated = authenticated,
-                                                       .candidate     = state->connection ? candidate : NULL}))
+                              (wireguard_callbacks_t) {.output          = output,
+                                                       .inner           = inner,
+                                                       .can_initiate    = canInitiate,
+                                                       .key_unavailable = keyUnavailable,
+                                                       .authenticated   = authenticated,
+                                                       .candidate       = state->connection ? candidate : NULL}))
         goto fail;
     if (state->connection)
     {

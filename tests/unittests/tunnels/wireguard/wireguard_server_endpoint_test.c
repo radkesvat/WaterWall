@@ -74,9 +74,9 @@ static void exchange(tunnel_t *server, line_t *line, wireguard_device_t *client)
     }
     twfRequire(server_output.count == 0 && client_output.count == 0, "endpoint exchange did not settle");
 }
-static sbuf_t *innerPacket(buffer_pool_t *pool)
+static sbuf_t *innerPacket(buffer_pool_t *pool, size_t capacity, uint8_t source, uint8_t destination)
 {
-    sbuf_t *packet = bufferpoolGetSmallBuffer(pool);
+    sbuf_t *packet = bufferpoolGetBestFit(pool, capacity, 32);
     sbufSetLength(packet, 20);
     sbufWriteZeros(packet, 20);
     uint8_t *bytes = sbufGetMutablePtr(packet);
@@ -85,11 +85,68 @@ static sbuf_t *innerPacket(buffer_pool_t *pool)
     bytes[8]       = 64;
     bytes[9]       = 253;
     bytes[12]      = 10;
-    bytes[15]      = 1;
+    bytes[15]      = source;
     bytes[16]      = 10;
-    bytes[19]      = 2;
+    bytes[19]      = destination;
     return packet;
 }
+static void testPendingOnCarrierLoss(server_t *state, line_t *line, buffer_pool_t *pool, wireguard_device_t *client)
+{
+    wireguard_peer_t *peer            = &state->engine.peers[0];
+    peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
+    wtimer_t timer                    = {0};
+    weventSetUserData(&timer, state);
+    getCurrentWorkerLoop()->cur_hrtime = (uint64_t) (getTickMS() - 30000U) * 1000U;
+    sbuf_t *oversized                  = innerPacket(pool, 256 * 1024, 2, 1);
+    wireguardCommonSendInner(&state->engine, oversized);
+    tick(&timer);
+    twfRequire(server_output.count == 1 && ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, oversized),
+               "oversized buffer failed to wake the peer or exceeded the retention budget");
+    /* Leave the initiation queued until its answer can release a held packet. */
+    const uint32_t before  = getTickMS();
+    sbuf_t        *pending = innerPacket(pool, 20, 2, 1);
+    wireguardCommonSendInner(&state->engine, pending);
+    binding_t *binding = &state->bindings[0];
+    twfRequire(binding->pending == pending && binding->pending_since - before <= getTickMS() - before,
+               "stale loop time shortened the lifetime of a newly held packet");
+
+    binding->pending_since = getTickMS() - REKEY_ATTEMPT_TIME * 1000U;
+    sbuf_t *replacement    = innerPacket(pool, 20, 2, 1);
+    wireguardCommonSendInner(&state->engine, replacement);
+    twfRequire(binding->pending == replacement &&
+                   ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
+               "stale loop time kept an expired packet in the slot during fresh admission");
+
+    binding->pending_since    = getTickMS() - REKEY_ATTEMPT_TIME * 1000U;
+    const unsigned deliveries = delivered_count;
+    client->callbacks.inner   = delivered;
+    exchange(state->tunnel, line, client);
+    twfRequire(wireguardCommonPeerCanSend(peer) && delivered_count == deliveries && binding->pending == NULL &&
+                   ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, replacement),
+               "a fresh key released expired plaintext while the loop clock lagged");
+
+    /* Model the interval after the sweep selected a ready packet and before final encryption. */
+    pending = innerPacket(pool, 20, 2, 1);
+    sendHeldInner(state, pending, binding->epoch, getTickMS() - REKEY_ATTEMPT_TIME * 1000U);
+    twfRequire(server_output.count == 0 && ! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
+               "final release sent plaintext after its deadline");
+    peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
+    const uint32_t original_since     = getTickMS() - 10000U;
+    pending                           = innerPacket(pool, 20, 2, 1);
+    sendHeldInner(state, pending, binding->epoch, original_since);
+    twfRequire(binding->pending == pending && binding->pending_since == original_since,
+               "losing the key during release restarted the packet's retention deadline");
+    finishUp(state->tunnel, line);
+    peer->last_initiation_tx -= (REKEY_TIMEOUT + 1) * 1000U;
+    tick(&timer);
+    twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
+               "closed ingress retained its pending packet");
+    sbuf_t *late = innerPacket(pool, 20, 2, 1);
+    wireguardCommonSendInner(&state->engine, late);
+    twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, late) && server_output.count == 0,
+               "closed ingress admitted new recovery work");
+}
+
 static void requireEndpoint(server_t *state, line_t *line, uint16_t port, const char *message)
 {
     server_line_t *ls = lineGetState(line, state->tunnel);
@@ -116,17 +173,19 @@ int main(void)
     wireguardDispatchInit(&state->dispatch);
     state->ingress_heads      = memoryAllocateZero(sizeof(ingress_t *));
     wireguard_device_t client = {0};
-    twfRequire(
-        wireguardCommonInit(&client,
-                            "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
-                            NULL,
-                            (wireguard_callbacks_t) {.output = clientCapture}) &&
-            wireguardCommonInit(
-                &state->engine,
-                "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
-                state,
-                (wireguard_callbacks_t) {.output = serverCapture, .inner = delivered, .authenticated = authenticated}),
-        "engine setup failed");
+    twfRequire(wireguardCommonInit(&client,
+                                   "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=",
+                                   NULL,
+                                   (wireguard_callbacks_t) {.output = clientCapture}) &&
+                   wireguardCommonInit(&state->engine,
+                                       "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
+                                       state,
+                                       (wireguard_callbacks_t) {.output          = serverCapture,
+                                                                .inner           = delivered,
+                                                                .authenticated   = authenticated,
+                                                                .can_initiate    = canInitiate,
+                                                                .key_unavailable = keyUnavailable}),
+               "engine setup failed");
     cJSON *client_peer =
         cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
     cJSON *server_peer =
@@ -139,6 +198,11 @@ int main(void)
     cJSON_Delete(server_peer);
     state->bindings[0].occupied = true;
     state->bindings[0].epoch    = 1;
+    sbuf_t *unbound             = innerPacket(environment.pool, 20, 2, 1);
+    wireguardCommonSendInner(&state->engine, unbound);
+    wireguardCommonLoop(&state->engine);
+    twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, unbound) && server_output.count == 0,
+               "unproven static peer admitted outbound recovery work");
     twf_line_pool_t pool;
     twfLinePoolSetup(&pool, server->lstate_size, 4);
     line_t *lines[2];
@@ -174,7 +238,7 @@ int main(void)
     twfRequire(server_output.count == 2 && output_port == 26960, "valid cookie did not retry on original endpoint");
     requireEndpoint(state, lines[0], 26960, "cookie alone roamed the server binding");
     exchange(server, lines[0], &client);
-    wireguardCommonSendInner(&client, innerPacket(environment.pool));
+    wireguardCommonSendInner(&client, innerPacket(environment.pool, 20, 1, 2));
     sbuf_t *packet = take(&client_output);
     sbuf_t *replay = sbufDuplicate(packet);
     receiveOn(server, lines[0], packet);
@@ -182,7 +246,7 @@ int main(void)
     receiveOn(server, lines[1], replay);
     requireEndpoint(state, lines[0], 26960, "replay roamed the server binding");
     twfRequire(delivered_count == 1, "replay published a packet");
-    wireguardCommonSendInner(&client, innerPacket(environment.pool));
+    wireguardCommonSendInner(&client, innerPacket(environment.pool, 20, 1, 2));
     packet      = take(&client_output);
     sbuf_t *bad = sbufDuplicate(packet);
     sbufGetMutablePtr(bad)[sbufGetLength(bad) - 1] ^= 1;
@@ -195,11 +259,12 @@ int main(void)
     wireguardifSendKeepalive(&state->engine, peer);
     twfRequire(output_port == 26961, "reply metadata retained the previous source port");
     exchange(server, lines[1], &client);
+    testPendingOnCarrierLoss(state, lines[1], environment.pool, &client);
     ingressRelease(state->bindings[0].ingress);
     state->bindings[0].ingress = NULL;
+    finishUp(server, lines[0]);
     for (unsigned i = 0; i < 2; ++i)
     {
-        finishUp(server, lines[i]);
         lineDestroy(lines[i]);
         lineUnref(lines[i]);
     }

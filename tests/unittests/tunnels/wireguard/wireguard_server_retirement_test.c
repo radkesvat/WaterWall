@@ -164,6 +164,63 @@ static void requireProtocolsEmpty(wg_server_fixture_t *f)
     }
     twfRequire(ptc->drain_count == 0, "affected drain survived retirement");
 }
+static uint8_t expected_datagram[29];
+
+static void receiveRecoveredPacket(void *context, sbuf_t *buf, wireguard_peer_t *peer)
+{
+    twfRequire(sbufGetLength(buf) == sizeof(expected_datagram) &&
+                   memcmp(sbufGetRawPtr(buf), expected_datagram, sizeof(expected_datagram)) == 0,
+               "recovery did not deliver the original first datagram");
+    wgClientInner(context, buf, peer);
+}
+
+static void caseServerInitiatedRecovery(void)
+{
+    wg_server_fixture_t f;
+    wgServerFixtureSetup(&f, 2, "");
+    twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
+    wgServerFixtureProof(&f);
+    discard           tosSetCurrentWorker(0);
+    wireguard_peer_t *peer = &f.state->engine.peers[0];
+    /* Expire the key between timer ticks. The UDP carrier and authorization stay live. */
+    peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
+    f.client.callbacks.inner          = receiveRecoveredPacket;
+    sbuf_t *first                     = packet(&f, 17, false, true, 0);
+    memcpy(expected_datagram, sbufGetRawPtr(first), sizeof(expected_datagram));
+    line_t *line = tunnelchainGetWorkerPacketLine(f.chain, 0);
+    tunnelPrevDownStreamPayload(f.state->ptc, line, first);
+    sbuf_t *second = packet(&f, 17, false, true, 0);
+    sbufGetMutablePtr(second)[28] ^= 1;
+    twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(second), sbufGetLength(second)), "checksum failed");
+    tunnelPrevDownStreamPayload(f.state->ptc, line, second);
+    wgServerFixturePump(&f);
+    tick(f.state->timer);
+    wgServerFixturePump(&f);
+    twfRequire(f.client_count == 1 &&
+                   wireguardGetMessageType(sbufGetRawPtr(f.to_client[0]), sbufGetLength(f.to_client[0])) ==
+                       MESSAGE_HANDSHAKE_INITIATION,
+               "server demand did not initiate exactly one handshake on the live carrier");
+    /* Exchange only answers the server. It never initiates on behalf of the client. */
+    wgServerFixtureExchange(&f);
+    tick(f.state->timer);
+    wgServerFixtureExchange(&f);
+    twfRequire(f.delivered == 1, "server failed to send the first datagram exactly once");
+
+    peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
+    keypairDestroy(&peer->prev_keypair);
+    sbuf_t *pending = packet(&f, 17, false, true, 0);
+    tunnelPrevDownStreamPayload(f.state->ptc, line, pending);
+    wgServerFixturePump(&f);
+    twfRequire(twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
+               "fresh demand did not retain its packet");
+    refresh(&f, 1);
+    reconcile(f.state);
+    twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
+               "credential retirement retained queued plaintext");
+    wgServerFixturePump(&f);
+    wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
+}
+
 static void proveOther(wg_server_fixture_t *f, wireguard_device_t *other)
 {
     wireguard_device_t saved = f->client;
@@ -310,6 +367,7 @@ static void scenario(wid_t workers)
 int main(void)
 {
     testCaseSet("wireguard_server_retirement_test");
+    caseServerInitiatedRecovery();
     scenario(1);
     scenario(4);
     return 0;

@@ -24,6 +24,13 @@ traffic supplies the return carrier. All peer ranges must be non-overlapping.
 Decrypted source addresses must belong to the authenticated peer's allowed
 range. Return destinations select the matching peer.
 
+In either mode, outbound traffic can restart an expired session while the
+authenticated peer's carrier is live. During the handshake the server holds
+the first inner packet for up to 90 seconds, with a 128 KiB allocation limit
+per peer. Further packets for that peer can be lost while it waits. If the
+binding and carrier remain current, the server sends the held packet once it
+has a usable key.
+
 ```json
 {
   "nodes": [
