@@ -74,7 +74,7 @@ typedef struct tunnel_chain_s
     bool                                 contains_packet_node : 1;
     bool                                 mux_client_tunnel_present : 1;
     bool                                 mux_server_tunnel_present : 1;
-    bool                                 packet_chain_init_sent : 1;
+    bool : 1; // Preserve the bit positions used by external nodes.
     bool                                 layer_solution_ready : 1;
     bool                                 finalized : 1;
     bool                                 started : 1;
