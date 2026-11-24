@@ -12,32 +12,61 @@ static bool endpointParse(address_context_t *endpoint, const cJSON *value)
 {
     if (! cJSON_IsString(value) || value->valuestring == NULL)
         return false;
-    char *text = stringDuplicate(value->valuestring), *host = text, *colon = strrchr(text, ':');
-    bool  result = false;
-    if (colon == NULL)
-        goto finish;
-    *colon++ = '\0';
-    char         *end;
-    unsigned long port = strtoul(colon, &end, 10);
-    if (*colon == '\0' || *end != '\0' || port == 0 || port > UINT16_MAX)
-        goto finish;
-    size_t length = strlen(host);
-    if (length >= 2 && host[0] == '[' && host[length - 1] == ']')
+
+    const char *host_start = value->valuestring;
+    const bool  ipv6       = *host_start == '[';
+    const char *host_end;
+    const char *port_text;
+    if (ipv6)
     {
-        host[length - 1] = '\0';
-        ++host;
-        length -= 2;
+        ++host_start;
+        host_end = strchr(host_start, ']');
+        if (host_end == NULL || host_end[1] != ':')
+            return false;
+        port_text = host_end + 2;
     }
+    else
+    {
+        host_end = host_start + strcspn(host_start, ":[]");
+        if (*host_end != ':')
+            return false;
+        port_text = host_end + 1;
+    }
+
+    const size_t length = (size_t) (host_end - host_start);
     if (length == 0 || length > UINT8_MAX)
-        goto finish;
-    if (! addresscontextSetIpAddress(endpoint, host))
+        return false;
+    uint32_t port = 0;
+    for (const char *p = port_text; *p != '\0'; ++p)
+    {
+        if (*p < '0' || *p > '9')
+            return false;
+        port = port * 10U + (uint32_t) (*p - '0');
+        if (port > UINT16_MAX)
+            return false;
+    }
+    if (port == 0)
+        return false;
+
+    char host[UINT8_MAX + 1];
+    memoryCopy(host, host_start, length);
+    host[length] = '\0';
+    if (ipv6)
+    {
+        ip_addr_t ip = {.type = IPADDR_TYPE_V6};
+#ifdef OS_WIN
+        WSAInit();
+#endif
+        if (inet_pton(AF_INET6, host, ip.u_addr.ip6.addr) != 1)
+            return false;
+        addresscontextSetIp(endpoint, &ip);
+    }
+    else if (! addresscontextSetIpAddress(endpoint, host))
         addresscontextDomainSet(endpoint, host, (uint8_t) length);
+
     addresscontextSetPort(endpoint, (uint16_t) port);
     addresscontextSetOnlyProtocol(endpoint, IP_PROTO_UDP);
-    result = true;
-finish:
-    memoryFree(text);
-    return result;
+    return true;
 }
 
 tunnel_t *wireguardclientTunnelCreate(node_t *node)
@@ -61,7 +90,7 @@ tunnel_t *wireguardclientTunnelCreate(node_t *node)
         ! endpointParse(&state->endpoint, cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(peers, 0), "endpoint")))
     {
         LOGF("WireGuardClient: requires privatekey and exactly one peer with publickey, allowedips and endpoint "
-             "host:port; optional mtu must be an integer between 68 and 65535");
+             "host:port or [IPv6]:port; optional mtu must be an integer between 68 and 65535");
         wireguardclientTunnelDestroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

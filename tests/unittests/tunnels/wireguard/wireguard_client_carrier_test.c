@@ -83,6 +83,64 @@ static void carrierFinish(tunnel_t *t, line_t *line)
     discard line;
 }
 
+static void testClientEndpoint(node_t *node)
+{
+    static const struct
+    {
+        const char *text;
+        uint16_t    port;
+        uint8_t     family;
+    } cases[] = {
+        {"[2001:db8::1]:443", 443, IPADDR_TYPE_V6},
+        {"192.0.2.1:443", 443, IPADDR_TYPE_V4},
+        {"vpn.example.com:443", 443, IPADDR_TYPE_ANY},
+        {"192.0.2.1:1", 1, IPADDR_TYPE_V4},
+        {"[::1]:65535", 65535, IPADDR_TYPE_V6},
+        {.text = "2001:db8::1:443"},
+        {.text = "[2001:db8::1:443"},
+        {.text = "2001:db8::1]:443"},
+        {.text = "vpn[.example.com:443"},
+        {.text = "[2001:db8::1]extra:443"},
+        {.text = "[2001:db8::1x]:443"},
+        {.text = "[vpn.example.com]:443"},
+        {.text = "[192.0.2.1]:443"},
+        {.text = ":443"},
+        {.text = "vpn.example.com:"},
+        {.text = "vpn.example.com:0"},
+        {.text = "vpn.example.com:65536"},
+        {.text = "vpn.example.com:+443"},
+        {.text = "vpn.example.com: 443"},
+        {.text = "vpn.example.com:443 "},
+        {.text = "vpn.example.com:443x"},
+    };
+    cJSON *peers    = cJSON_GetObjectItemCaseSensitive(node->node_settings_json, "peers");
+    cJSON *endpoint = cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(peers, 0), "endpoint");
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        twfRequire(cJSON_SetValuestring(endpoint, cases[i].text) != NULL, "could not set test endpoint");
+        tunnel_t *client = node->createHandle(node);
+        twfRequire((client != NULL) == (cases[i].port != 0), cases[i].text);
+        if (client == NULL)
+            continue;
+
+        const wireguardclient_tstate_t *state = tunnelGetState(client);
+        twfRequireEqualU32(state->endpoint.port, cases[i].port, "client endpoint port");
+        if (cases[i].family == IPADDR_TYPE_ANY)
+        {
+            twfRequire(addresscontextIsDomain(&state->endpoint) && ! state->endpoint.domain_resolved,
+                       "client endpoint should remain an unresolved hostname");
+            twfRequireEqualText(state->endpoint.domain, "vpn.example.com", "client endpoint hostname");
+        }
+        else
+        {
+            twfRequire(addresscontextIsIpType(&state->endpoint), "client endpoint should be an IP address");
+            twfRequireEqualU32(state->endpoint.ip_address.type, cases[i].family, "client endpoint IP family");
+        }
+        client->onDestroy(client, wwLifecycleStartupRollback());
+    }
+    twfRequire(cJSON_SetValuestring(endpoint, "127.0.0.1:51820") != NULL, "could not restore carrier test endpoint");
+}
+
 static void testClientMtu(node_t *node)
 {
     static const struct
@@ -119,6 +177,7 @@ int main(void)
                                           "\"peers\":[{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\","
                                           "\"allowedips\":\"0.0.0.0/0\",\"endpoint\":\"127.0.0.1:51820\"}]}");
     testClientMtu(&node);
+    testClientEndpoint(&node);
     CORE_DEFAULT_MTU = 1500;
     tunnel_t *client = node.createHandle(&node);
     twfRequire(client != NULL, "client construction failed");
