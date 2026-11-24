@@ -7,7 +7,7 @@
  * testHandshakeResponseFailureClearsPendingState, testInitiationConstructionFailureClearsPendingState,
  * testResponseConstructionFailureInvalidatesHandshake, testCookieMacFailureDoesNotPublishState,
  * testClearHandshakeStateErasesActiveAndPendingState, testDeviceDestroyErasesSecrets,
- * testAllowedRangeErrors, testConfiguredKeysRejectMalformedBase64,
+ * testRawDeviceInitialization, testAllowedRangeErrors, testConfiguredKeysRejectMalformedBase64,
  * testConfiguredKeysAcceptCanonicalBase64
  * Checks: Assertion labels include: WireGuard construction-hash failure was not propagated; WireGuard
  * accepted a failed session KDF; failed session KDF retained handshake secrets; failed session KDF
@@ -372,6 +372,40 @@ static void testDeviceDestroyErasesSecrets(void)
 static const char private_key_base64[] = "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=";
 static const char public_key_base64[]  = "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=";
 
+static void testRawDeviceInitialization(void)
+{
+    /* Alice's X25519 key pair from RFC 7748, section 6.1. */
+    const uint8_t key[WIREGUARD_PRIVATE_KEY_LEN] = {
+        0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d, 0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45,
+        0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a, 0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a,
+    };
+    const uint8_t expected_public[WIREGUARD_PUBLIC_KEY_LEN] = {
+        0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e, 0xf7, 0x5a,
+        0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a,
+    };
+    wireguard_device_t device;
+    memset(&device, 0xa5, sizeof(device));
+    require(wireguardDeviceInit(&device, key) && device.valid && device.store == NULL && device.peer_count == 0 &&
+                device.processing_depth == 0,
+            "raw device initialization did not start with an empty peer store");
+    require(memcmp(device.public_key, expected_public, sizeof(expected_public)) == 0,
+            "raw device initialization produced the wrong public key for separate input");
+    wireguardDeviceDestroy(&device);
+
+    memcpy(device.private_key, key, sizeof(key));
+    require(wireguardDeviceInit(&device, device.private_key) &&
+                memcmp(device.public_key, expected_public, sizeof(expected_public)) == 0,
+            "raw device initialization produced the wrong public key for in-device input");
+    wireguardDeviceDestroy(&device);
+
+    memset(&device, 0xa5, sizeof(device));
+    crypto_failure_injection = kCryptoFailureBlake2sInit;
+    require(! wireguardDeviceInit(&device, key) && isAllZero(&device, sizeof(device)),
+            "failed raw device initialization retained partial state");
+    crypto_failure_injection = kCryptoFailureNone;
+    wireguardDeviceDestroy(&device);
+}
+
 static void testAllowedRangeErrors(void)
 {
     wireguard_device_t device;
@@ -439,9 +473,12 @@ static void testConfiguredKeysRejectMalformedBase64(void)
     checking_key_decode = true;
     for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i)
     {
-        wireguard_device_t device = {0};
-        require(! wireguardCommonInit(&device, invalid[i], NULL, (wireguard_callbacks_t) {0}) && ! device.valid,
+        wireguard_device_t device;
+        memset(&device, 0xa5, sizeof(device));
+        require(! wireguardCommonInit(&device, invalid[i], NULL, (wireguard_callbacks_t) {0}) && ! device.valid &&
+                    device.store == NULL && device.processing_depth == 0,
                 "WireGuard accepted a malformed private key");
+        wireguardDeviceDestroy(&device);
         require(wireguardCommonInit(&device, private_key_base64, NULL, (wireguard_callbacks_t) {0}),
                 "valid private key failed after malformed key rejection");
 
@@ -520,6 +557,7 @@ int main(void)
     testCookieMacFailureDoesNotPublishState();
     testClearHandshakeStateErasesActiveAndPendingState();
     testDeviceDestroyErasesSecrets();
+    testRawDeviceInitialization();
     testAllowedRangeErrors();
     testConfiguredKeysRejectMalformedBase64();
     testConfiguredKeysAcceptCanonicalBase64();

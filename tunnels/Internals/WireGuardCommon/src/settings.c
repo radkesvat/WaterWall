@@ -12,7 +12,6 @@ static bool decodeKey(const cJSON *value, uint8_t key[32])
 bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, void *context,
                          wireguard_callbacks_t callbacks)
 {
-    *device            = (wireguard_device_t) {0};
     uint8_t    key[32] = {0};
     const bool valid =
         private_key != NULL && strlen(private_key) == BASE64_ENCODE_OUT_SIZE(32) &&
@@ -23,6 +22,10 @@ bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, vo
     {
         device->context   = context;
         device->callbacks = callbacks;
+    }
+    else
+    {
+        *device = (wireguard_device_t) {0};
     }
     return valid;
 }

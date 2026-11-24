@@ -66,6 +66,8 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
 /***************************************** WireGuard Device ****************************************** */
 
 WCRYPTO_MUST_USE wcrypto_status_t wireguardInit(void);
+/* Initialize fresh or previously destroyed storage. The input may be device->private_key.
+ * Both outcomes permit destruction. */
 bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key);
 void wireguardDeviceDestroy(wireguard_device_t *device);
 /* Peer pointers and local ids remain stable while registered. */

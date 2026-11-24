@@ -1238,9 +1238,13 @@ bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const
 
 bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
 {
-    // Set the private key and calculate public key from it
-    memoryCopy(device->private_key, private_key, WIREGUARD_PRIVATE_KEY_LEN);
-    // Ensure private key is correctly "clamped"
+    /* The caller may have staged the input in device->private_key. */
+    uint8_t saved_key[WIREGUARD_PRIVATE_KEY_LEN];
+    memoryCopy(saved_key, private_key, sizeof(saved_key));
+    *device = (wireguard_device_t) {0};
+    memoryCopy(device->private_key, saved_key, sizeof(saved_key));
+    wCryptoZero(saved_key, sizeof(saved_key));
+
     wireguardClampPrivateKey(device->private_key);
     device->valid = wireguardGeneratePublicKey(device->public_key, device->private_key);
     if (device->valid)
@@ -1263,11 +1267,7 @@ bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
     }
     if (! device->valid)
     {
-        wCryptoZero(device->private_key, WIREGUARD_PRIVATE_KEY_LEN);
-        wCryptoZero(device->public_key, WIREGUARD_PUBLIC_KEY_LEN);
-        wCryptoZero(device->cookie_secret, WIREGUARD_HASH_LEN);
-        wCryptoZero(device->label_mac1_key, WIREGUARD_SESSION_KEY_LEN);
-        wCryptoZero(device->label_cookie_key, WIREGUARD_SESSION_KEY_LEN);
+        wCryptoZero(device, sizeof(*device));
     }
     return device->valid;
 }
