@@ -65,7 +65,7 @@ MANIFEST = [
      ("WireGuardClient: Finish reached a normal line outside its carrier inventory",), "owned carrier inventory invariant"),
     ("tunnels/WireGuardClient/client.c", "finishUp", 1,
      ("WireGuardClient: unexpected Finish on packet input",), "persistent packet line invariant"),
-    ("tunnels/WireGuardServer/server.c", "candidate", 1,
+    ("tunnels/WireGuardServer/server.c", "createBinding", 1,
      ("WireGuardServer: binding epoch exhausted",), "non-reusable authorization epoch invariant"),
     ("tunnels/WireGuardServer/server.c", "finishDown", 1,
      ("WireGuardServer: unexpected Finish on inner packet line",), "persistent packet line invariant"),

@@ -1,4 +1,4 @@
-#include "WireGuardCommon/engine.h"
+#include "peer_store.h"
 
 #include "loggers/network_logger.h"
 
@@ -12,6 +12,7 @@ bool wireguardCommonPeerCanSend(wireguard_peer_t *peer)
         LOGD("WireGuard: transport key expired or message limit reached (sending_counter=%" PRIu64 ")",
              key->sending_counter);
         keypairDestroy(key);
+        wireguardPeerSyncReceivers(peer);
         return false;
     }
     return true;
@@ -77,9 +78,11 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
     if (keypair->initiator)
         wireguardRequestRekeyAtAge(peer, keypair, REKEY_AFTER_TIME);
 
+    wireguardBeginProcessing(device);
     const err_t result = wireguardifPeerOutput(device, q, peer, unpadded_len != 0);
     if (result == ERR_OK && peer->valid)
         peer->last_tx = wireguardRecoveryNow();
+    wireguardEndProcessing(device);
     return result;
 }
 

@@ -181,7 +181,7 @@ static void caseServerInitiatedRecovery(void)
     twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
     wgServerFixtureProof(&f);
     discard           tosSetCurrentWorker(0);
-    wireguard_peer_t *peer = &f.state->engine.peers[0];
+    wireguard_peer_t *peer = f.state->engine.first_peer;
     /* Expire the key between timer ticks. The UDP carrier and authorization stay live. */
     peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
     f.client.callbacks.inner          = receiveRecoveredPacket;
@@ -234,8 +234,9 @@ static void caseIdleAccountRetirement(bool exhaust_quota)
     }
     twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
     wgServerFixtureProof(&f);
-    binding_t     *binding    = &f.state->bindings[0];
+    binding_t     *binding    = f.state->binding_head;
     const uint64_t generation = binding->authorization.generation;
+    const uint64_t epoch      = binding->epoch;
     tick(f.state->timer);
     twfRequire(binding->usable, "timer retired an eligible idle account");
 
@@ -245,40 +246,66 @@ static void caseIdleAccountRetirement(bool exhaust_quota)
         userSetClientViewExpiry(account, authenticationclientLocalTimeMS(), true);
     twfRequire(authenticationclientUsersGeneration(f.auth) == generation, "local eligibility changed table generation");
     tick(f.state->timer);
-    twfRequire(binding->occupied && binding->retiring && ! binding->usable,
+    twfRequire(bindingByEpoch(f.state, epoch) == binding && binding->retiring && ! binding->usable,
                "timer did not retire the idle account while reserving its range for cleanup");
     wgServerFixturePump(&f);
-    tick(f.state->timer);
-    twfRequire(! binding->occupied, "timer kept the idle binding after worker cleanup");
+    twfRequire(bindingByEpoch(f.state, epoch) == NULL, "worker cleanup kept the retired idle binding");
     wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
 }
 
 static void proveOther(wg_server_fixture_t *f, wireguard_device_t *other)
 {
-    wireguard_device_t saved = f->client;
-    f->client                = (wireguard_device_t) {0};
-    char    private_key[45]  = {0};
-    user_t *account          = usersLookupByIdentifier(&f->users, 44);
+    *other                  = (wireguard_device_t) {0};
+    char    private_key[45] = {0};
+    user_t *account         = usersLookupByIdentifier(&f->users, 44);
     twfRequire(wwBase64Encode(account->sha256_pass.bytes, 32, private_key) == 44, "unaffected key failed");
-    twfRequire(
-        wireguardCommonInit(
-            &f->client, private_key, f, (wireguard_callbacks_t) {.output = wgClientOutput, .inner = wgClientInner}),
-        "unaffected client failed");
+    twfRequire(wireguardCommonInit(
+                   other, private_key, f, (wireguard_callbacks_t) {.output = wgClientOutput, .inner = wgClientInner}),
+               "unaffected client failed");
     cJSON *peer =
         cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
-    uint8_t index;
-    twfRequire(wireguardCommonAddConfiguredPeer(&f->client, peer, &index), "unaffected peer failed");
+    size_t index;
+    twfRequire(wireguardCommonAddConfiguredPeer(other, peer, &index), "unaffected peer failed");
     cJSON_Delete(peer);
-    twfRequire(wireguardifStartHandshake(&f->client, &f->client.peers[0], true) == ERR_OK,
-               "unaffected initiation failed");
-    wgServerFixtureExchange(f);
-    twfRequire(f->state->bindings[1].usable && f->state->bindings[1].authorization.handle.user_id == 44,
+    twfRequire(wireguardifStartHandshake(other, other->first_peer, true) == ERR_OK, "unaffected initiation failed");
+    wgServerFixtureExchangeClient(f, other, 0);
+    twfRequire(f->state->binding_head->usable && f->state->binding_head->authorization.handle.user_id == 44,
                "unaffected proof failed");
-    wireguardCommonSendInner(&f->client, packet(f, 17, true, false, 0));
-    wgServerFixtureExchange(f);
-    *other    = f->client;
-    f->client = saved;
+    wireguardCommonSendInner(other, packet(f, 17, true, false, 0));
+    wgServerFixtureExchangeClient(f, other, 0);
 }
+static void casePendingByteBudget(void)
+{
+    wg_server_fixture_t f;
+    wgServerFixtureSetup(&f, 1, "");
+    refresh(&f, 0);
+    twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
+    wgServerFixtureProof(&f);
+    binding_t         *first  = f.state->binding_head;
+    wireguard_device_t client = {0};
+    proveOther(&f, &client);
+    binding_t *second = f.state->binding_head;
+    twfRequire(first != second, "expected two authenticated peers");
+
+    first->peer->curr_keypair.keypair_millis = second->peer->curr_keypair.keypair_millis =
+        getTickMS() - REJECT_AFTER_TIME * 1000U;
+    sbuf_t      *retained_packet     = packet(&f, 17, false, true, 0);
+    const size_t charge              = sbufGetAllocationCharge(retained_packet);
+    f.state->max_pending_rekey_bytes = charge;
+    wireguardCommonSendInner(&f.state->engine, retained_packet);
+    wireguardCommonSendInner(&f.state->engine, packet(&f, 17, true, true, 0));
+    twfRequire(first->pending == retained_packet && second->pending == NULL && f.state->pending_rekey_bytes == charge,
+               "two peers exceeded their shared pending byte budget");
+    retireBinding(f.state, first);
+    twfRequire(f.state->pending_rekey_bytes == 0, "retirement retained the pending charge");
+    retained_packet = packet(&f, 17, true, true, 0);
+    wireguardCommonSendInner(&f.state->engine, retained_packet);
+    twfRequire(second->pending == retained_packet && f.state->pending_rekey_bytes == charge,
+               "remaining peer could not reuse pending capacity");
+    wireguardDeviceDestroy(&client);
+    wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
+}
+
 static void scenario(wid_t workers)
 {
     held_count = 0;
@@ -287,10 +314,11 @@ static void scenario(wid_t workers)
     refresh(&f, 0);
     twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
     wgServerFixtureProof(&f);
-    const uint64_t     old_epoch = f.state->bindings[0].epoch;
+    binding_t         *binding   = f.state->binding_head;
+    const uint64_t     old_epoch = binding->epoch;
     wireguard_device_t unaffected;
     proveOther(&f, &unaffected);
-    const uint64_t unaffected_epoch = f.state->bindings[1].epoch;
+    const uint64_t unaffected_epoch = f.state->binding_head->epoch;
     discard        tosSetCurrentWorker(0);
     wireguardCommonSendInner(&f.client, packet(&f, 17, false, false, workers - 1));
     wireguardCommonSendInner(&f.client, packet(&f, 6, false, false, workers - 1));
@@ -298,13 +326,12 @@ static void scenario(wid_t workers)
     twfRequire(owned(&f, workers - 1, "10.50.0.5") > 0 && owned(&f, 0, "10.60.0.2") > 0, "real PTC admission missing");
     refresh(&f, 0);
     reconcile(f.state, false);
-    twfRequire(f.state->bindings[0].epoch == old_epoch && f.state->bindings[0].usable,
-               "unchanged refresh replaced binding");
+    twfRequire(bindingByEpoch(f.state, old_epoch) == binding && binding->usable, "unchanged refresh replaced binding");
 
     wg_submit_hook = holdMessage;
     hold_jobs      = true;
     wireguardCommonSendInner(&f.client, packet(&f, 17, false, false, workers - 1));
-    twfRequire(wireguardifStartHandshake(&f.client, &f.client.peers[0], true) == ERR_OK, "held initiation failed");
+    twfRequire(wireguardifStartHandshake(&f.client, f.client.first_peer, true) == ERR_OK, "held initiation failed");
     const wid_t ingress_wid = workers - 1;
     discard     tosSetCurrentWorker(ingress_wid);
     for (unsigned i = 0; i < f.server_count; ++i)
@@ -312,11 +339,10 @@ static void scenario(wid_t workers)
     f.server_count = 0;
     discard tosSetCurrentWorker(0);
     payloadDown(f.server, tunnelchainGetWorkerPacketLine(f.chain, 0), packet(&f, 17, false, true, 0));
-    binding_t *binding  = &f.state->bindings[0];
-    sbuf_t    *old_send = bufferpoolGetSmallBuffer(f.env.pools[0]);
+    sbuf_t *old_send = bufferpoolGetSmallBuffer(f.env.pools[0]);
     sbufSetLength(old_send, 32);
     sbufWriteZeros(old_send, 32);
-    twfRequire(output(f.state, old_send, &f.state->engine.peers[0], &binding->ingress->ip, binding->ingress->port),
+    twfRequire(output(f.state, old_send, binding->peer, &binding->ingress->ip, binding->ingress->port),
                "old output hold failed");
     const unsigned held_dispatches = atomic_load(&f.state->dispatch.count);
     /* A real UDP child exists before its queued Init and payload can run. */
@@ -346,11 +372,11 @@ static void scenario(wid_t workers)
     sbuf_t *stale_affinity = packet(&f, 17, false, false, workers - 1);
     refresh(&f, 1);
     reconcile(f.state, false);
-    twfRequire(binding->retiring && ! binding->usable && ! atomic_load(&binding->retirement_done),
+    twfRequire(binding->retiring && ! binding->usable && bindingByEpoch(f.state, old_epoch) == binding,
                "range barrier did not close");
     for (wid_t wid = 0; wid < workers; ++wid)
         tosPumpWorker(&f.env, wid);
-    twfRequire(! atomic_load(&binding->retirement_done), "held owner acknowledgment was bypassed");
+    twfRequire(bindingByEpoch(f.state, old_epoch) == binding, "held owner acknowledgment was bypassed");
     f.state->receiving_generation = authenticationclientUsersGeneration(f.auth);
     user_t *rotated               = usersLookupByIdentifier(&f.users, 42);
     twfRequire(candidate(f.state, rotated->wireguard_publickey) == NULL, "candidate overlapped retiring range");
@@ -361,16 +387,17 @@ static void scenario(wid_t workers)
                "replacement published before owner barrier");
     releaseMessage(retirement_message);
     wgServerFixturePump(&f);
-    reconcile(f.state, false);
+    twfRequire(bindingByEpoch(f.state, old_epoch) == NULL, "completed retirement kept the old epoch");
     requireProtocolsEmpty(&f);
     twfRequire(usersLookupByIdentifier(&f.users, 42)->runtime.active_cons_out == 0, "old identity leaked reservations");
-    twfRequire(wireguardifStartHandshake(&f.client, &f.client.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&f.client, f.client.first_peer, true) == ERR_OK,
                "replacement initiation failed");
     wgServerFixtureExchangePending(&f, held_dispatches);
-    twfRequire(f.client.peers[0].curr_keypair.valid && f.state->engine.peers[0].curr_keypair.valid,
+    binding = f.state->binding_head;
+    twfRequire(f.client.first_peer->curr_keypair.valid && binding->peer->curr_keypair.valid,
                "replacement proof failed to derive keys");
     twfRequire(binding->epoch != old_epoch && binding->authorization.handle.user_id == 43 &&
-                   f.state->bindings[1].epoch == unaffected_epoch && f.state->bindings[1].usable,
+                   bindingCurrent(bindingByEpoch(f.state, unaffected_epoch)),
                "replacement proof adopted stale identity or disturbed unaffected peer");
     const unsigned opened = f.opened, output_count = f.client_count;
     for (unsigned i = 0; i < stale_count; ++i)
@@ -402,6 +429,7 @@ int main(void)
     caseServerInitiatedRecovery();
     caseIdleAccountRetirement(false);
     caseIdleAccountRetirement(true);
+    casePendingByteBudget();
     scenario(1);
     scenario(4);
     return 0;

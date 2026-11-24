@@ -1,4 +1,4 @@
-add_library(WireGuardCommon STATIC src/wireguard.c src/helpers.c src/device_loop.c src/input.c src/output.c src/settings.c src/dispatch.c)
+add_library(WireGuardCommon STATIC src/wireguard.c src/peer_store.c src/helpers.c src/device_loop.c src/input.c src/output.c src/settings.c src/dispatch.c src/prefix.c)
 target_include_directories(WireGuardCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(WireGuardCommon PUBLIC ww)
 if(NOT APPLE)

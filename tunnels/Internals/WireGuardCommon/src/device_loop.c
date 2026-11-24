@@ -1,4 +1,4 @@
-#include "WireGuardCommon/engine.h"
+#include "peer_store.h"
 
 #include "loggers/network_logger.h"
 
@@ -57,7 +57,7 @@ static err_t sendInitiation(wireguard_device_t *device, wireguard_peer_t *peer, 
     return wireguardifPeerOutput(device, packet, peer, false);
 }
 
-err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force)
+static err_t startHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force)
 {
     err_t                          result;
     sbuf_t                        *buf;
@@ -69,7 +69,8 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
         return ERR_WOULDBLOCK;
     }
 
-    if (device->callbacks.can_initiate != NULL && ! device->callbacks.can_initiate(device->context, peer))
+    if (device->callbacks.can_initiate != NULL &&
+        (! device->callbacks.can_initiate(device->context, peer) || ! peer->valid))
     {
         peer->retry_handshake        = false;
         peer->send_handshake         = false;
@@ -97,7 +98,15 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
     return result;
 }
 
-err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
+err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force)
+{
+    wireguardBeginProcessing(device);
+    const err_t result = startHandshake(device, peer, force);
+    wireguardEndProcessing(device);
+    return result;
+}
+
+static err_t retryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
 {
     wireguard_pending_handshake_t pending;
     sbuf_t                       *buf;
@@ -120,13 +129,22 @@ err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *pe
     {
         if (! peer->retry_handshake)
             return ERR_TIMEOUT;
-        if (device->callbacks.can_initiate != NULL && ! device->callbacks.can_initiate(device->context, peer))
+        if (device->callbacks.can_initiate != NULL &&
+            (! device->callbacks.can_initiate(device->context, peer) || ! peer->valid))
             return ERR_CONN;
     }
     buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
     sbufWrite(buf, pending.packet, pending.packet_len);
     sbufSetLength(buf, pending.packet_len);
     result = initiation ? sendInitiation(device, peer, buf) : wireguardifPeerOutput(device, buf, peer, false);
+    return result;
+}
+
+err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
+{
+    wireguardBeginProcessing(device);
+    const err_t result = retryHandshake(device, peer);
+    wireguardEndProcessing(device);
     return result;
 }
 
@@ -179,14 +197,10 @@ static bool shouldResetPeer(wireguard_peer_t *peer)
 
 void wireguardCommonLoop(wireguard_device_t *device)
 {
-    wireguard_peer_t *peer;
-    int               x;
-
-    // Check periodic things
+    wireguardBeginProcessing(device);
     bool link_up = false;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
+    for (wireguard_peer_t *peer = device->first_peer; peer != NULL; peer = peer->next)
     {
-        peer = &device->peers[x];
         if (peer->valid)
         {
             // Do we need to rekey / send a handshake?
@@ -213,20 +227,23 @@ void wireguardCommonLoop(wireguard_device_t *device)
             if (shouldDestroyKeypair(&peer->curr_keypair))
             {
                 keypairDestroy(&peer->curr_keypair);
+                wireguardPeerSyncReceivers(peer);
             }
             if (shouldDestroyKeypair(&peer->prev_keypair))
             {
                 keypairDestroy(&peer->prev_keypair);
+                wireguardPeerSyncReceivers(peer);
             }
             if (shouldDestroyKeypair(&peer->next_keypair))
             {
                 keypairDestroy(&peer->next_keypair);
+                wireguardPeerSyncReceivers(peer);
             }
             if (shouldSendKeepalive(peer))
             {
                 wireguardifSendKeepalive(device, peer);
             }
-            if (needsHandshakeInitiation(peer))
+            if (peer->valid && needsHandshakeInitiation(peer))
             {
                 wireguardifStartHandshake(device, peer, false);
             }
@@ -243,4 +260,5 @@ void wireguardCommonLoop(wireguard_device_t *device)
         // Clear the IF-UP flag on netif
         device->status_connected = false;
     }
+    wireguardEndProcessing(device);
 }

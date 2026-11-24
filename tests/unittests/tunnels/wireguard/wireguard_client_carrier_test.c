@@ -127,7 +127,7 @@ int main(void)
     twfRequire(! output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) && carrier_sends == 0,
                "Pause during Init did not suppress carrier output");
     tunnelPrevDownStreamResume(sink, first);
-    state->engine.peers[0].active = true;
+    state->engine.first_peer->active = true;
     wireguardCommonLoop(&state->engine);
     twfRequire(carrier_sends == 1, "WireGuard handshake did not start before Est");
     twfRequire(carrier_receives == 1 && received_carrier_id == first_carrier_id,

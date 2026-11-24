@@ -2,12 +2,53 @@
  * protocol timers. A wrapped monotonic clock avoids real-time waits.
  * CTest: waterwall.wireguard_protocol_unit */
 #include "WireGuardCommon/engine.h"
+#include "WireGuardCommon/prefix.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/user_runtime.h"
 #include "loggers/network_logger.h"
 
 static uint32_t now_millis;
 static bool     under_load;
+
+static void testPeerPrefixes(void)
+{
+    wireguard_prefix_table_t table = {0};
+    int                      owner[3];
+    /* The same path covers roots, internal branches, nested reservations and equal prefixes. */
+    const char *ranges[][4] = {{"0.0.0.0/0", "192.0.2.0/24", "192.0.2.19/32", "198.51.100.1/32"},
+                               {"::/0", "2001:db8::/64", "2001:db8::19/128", "2001:db8:1::1/128"}};
+    for (unsigned family = 0; family < 2; ++family)
+    {
+        ip_addr_t ip[4], mask[4];
+        for (unsigned i = 0; i < 4; ++i)
+            twfRequire(parseIPWithSubnetMask(ranges[family][i], &ip[i], &mask[i]) != ERR_ARG, "CIDR parse failed");
+        twfRequire(wireguardPrefixInsert(&table, &ip[2], &mask[2], 3, &owner[2], true) &&
+                       wireguardPrefixInsert(&table, &ip[3], &mask[3], 2, &owner[1], true),
+                   "disjoint host prefixes collided");
+        twfRequire(! wireguardPrefixInsert(&table, &ip[1], &mask[1], 1, &owner[0], true) &&
+                       ! wireguardPrefixInsert(&table, &ip[0], &mask[0], 1, &owner[0], true),
+                   "an exclusive range overlapped an existing descendant");
+        twfRequire(wireguardPrefixInsert(&table, &ip[1], &mask[1], 3, &owner[2], true) &&
+                       wireguardPrefixInsert(&table, &ip[0], &mask[0], 1, &owner[0], false) &&
+                       wireguardPrefixInsert(&table, &ip[1], &mask[1], 2, &owner[1], false),
+                   "overlapping routing prefixes failed");
+        twfRequire(wireguardPrefixLookup(&table, &ip[1]) == &owner[1] &&
+                       wireguardPrefixLookup(&table, &ip[2]) == &owner[2] &&
+                       wireguardPrefixLookup(&table, &ip[0]) == &owner[0],
+                   "longest prefix or equal-prefix precedence failed");
+        wireguardPrefixRemove(&table, &ip[2], &mask[2], 3);
+        twfRequire(! wireguardPrefixInsert(&table, &ip[2], &mask[2], 3, &owner[2], true) &&
+                       wireguardPrefixLookup(&table, &ip[2]) == &owner[1],
+                   "a parent reservation failed to protect a removed host");
+        wireguardPrefixRemove(&table, &ip[1], &mask[1], 2);
+        twfRequire(wireguardPrefixLookup(&table, &ip[2]) == &owner[2], "removal lost an equal-prefix owner");
+        wireguardPrefixRemove(&table, &ip[1], &mask[1], 3);
+        twfRequire(wireguardPrefixLookup(&table, &ip[2]) == &owner[0] &&
+                       wireguardPrefixLookup(&table, &ip[3]) == &owner[1],
+                   "branch pruning lost the fallback route or sibling");
+    }
+    wireguardPrefixDestroy(&table);
+}
 
 /* Tests drive callbacks directly, so advance the worker cache alongside the fresh clock. */
 static void setTime(uint32_t millis)
@@ -138,7 +179,7 @@ static void setupEndpoints(endpoint_t *client, endpoint_t *server)
         cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
     cJSON *server_peer =
         cJSON_Parse("{\"publickey\":\"dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=\",\"allowedips\":\"10.1.0.1/32\"}");
-    uint8_t index;
+    size_t index;
     twfRequire(wireguardCommonAddConfiguredPeer(&client->engine, client_peer, &index) &&
                    wireguardCommonAddConfiguredPeer(&server->engine, server_peer, &index),
                "peer setup failed");
@@ -171,10 +212,10 @@ static void destroyEndpoints(endpoint_t *client, endpoint_t *server)
 
 static void establish(endpoint_t *client, endpoint_t *server)
 {
-    twfRequire(wireguardifStartHandshake(&client->engine, &client->engine.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&client->engine, client->engine.first_peer, true) == ERR_OK,
                "initiation failed");
     exchange(client, server);
-    twfRequire(client->engine.peers[0].curr_keypair.valid && server->engine.peers[0].curr_keypair.valid,
+    twfRequire(client->engine.first_peer->curr_keypair.valid && server->engine.first_peer->curr_keypair.valid,
                "handshake did not establish both sessions");
 }
 
@@ -199,18 +240,19 @@ static void testCarrierCookies(buffer_pool_t *pool)
         endpoint_t *carrier           = responder ? &server : &client;
         endpoint_t *network           = responder ? &client : &server;
         carrier->carrier_id           = 1;
-        const ip_addr_t original_ip   = carrier->engine.peers[0].ip;
-        const uint16_t  original_port = carrier->engine.peers[0].port;
+        const ip_addr_t original_ip   = carrier->engine.first_peer->ip;
+        const uint16_t  original_port = carrier->engine.first_peer->port;
 
         under_load = true;
         establish(&client, &server);
         twfRequire(client.cookie_replies == 1 && server.cookie_replies == 1,
                    "under-load handshake did not challenge both initiation and response");
         twfRequire(carrier->authenticated != 0 &&
-                       memcmp(&carrier->engine.peers[0].ip, &original_ip, sizeof(original_ip)) == 0 &&
-                       carrier->engine.peers[0].port == original_port,
+                       memcmp(&carrier->engine.first_peer->ip, &original_ip, sizeof(original_ip)) == 0 &&
+                       carrier->engine.first_peer->port == original_port,
                    "authenticated carrier handshake skipped admission or learned a network endpoint");
-        twfRequire(ipAddrCmp(&network->engine.peers[0].ip, &carrier->ip) && network->engine.peers[0].port == 51820,
+        twfRequire(ipAddrCmp(&network->engine.first_peer->ip, &carrier->ip) &&
+                       network->engine.first_peer->port == 51820,
                    "network handshake stopped learning the authenticated endpoint");
 
         wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
@@ -220,9 +262,9 @@ static void testCarrierCookies(buffer_pool_t *pool)
                    "carrier handshake did not carry bidirectional authenticated packets");
 
         setTime(2000);
-        const uint32_t prior_index         = carrier->engine.peers[0].curr_keypair.local_index;
+        const uint32_t prior_index         = carrier->engine.first_peer->curr_keypair.local_index;
         const unsigned prior_authenticated = carrier->authenticated;
-        twfRequire(wireguardifStartHandshake(&client.engine, &client.engine.peers[0], true) == ERR_OK,
+        twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
                    "carrier replacement rekey initiation failed");
         if (! responder)
             drain(&client, &server);
@@ -232,20 +274,20 @@ static void testCarrierCookies(buffer_pool_t *pool)
         carrier->carrier_id = 2;
         drain(network, carrier);
         twfRequire(carrier->cookie_replies == 2 && carrier->authenticated == prior_authenticated &&
-                       carrier->engine.peers[0].curr_keypair.local_index == prior_index,
+                       carrier->engine.first_peer->curr_keypair.local_index == prior_index,
                    "old-carrier cookie authorized a handshake on the replacement carrier");
 
         exchange(&client, &server);
-        twfRequire(client.engine.peers[0].curr_keypair.valid && server.engine.peers[0].curr_keypair.valid &&
-                       carrier->engine.peers[0].curr_keypair.local_index != prior_index &&
+        twfRequire(client.engine.first_peer->curr_keypair.valid && server.engine.first_peer->curr_keypair.valid &&
+                       carrier->engine.first_peer->curr_keypair.local_index != prior_index &&
                        carrier->authenticated > prior_authenticated,
                    "fresh replacement-carrier cookie did not complete the exact pending handshake");
         wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
         wireguardCommonSendInner(&server.engine, innerPacket(pool, 2, 1));
         exchange(&client, &server);
         twfRequire(client.delivered == 2 && server.delivered == 2 &&
-                       memcmp(&carrier->engine.peers[0].ip, &original_ip, sizeof(original_ip)) == 0 &&
-                       carrier->engine.peers[0].port == original_port,
+                       memcmp(&carrier->engine.first_peer->ip, &original_ip, sizeof(original_ip)) == 0 &&
+                       carrier->engine.first_peer->port == original_port,
                    "carrier replacement lost traffic or published a synthetic endpoint");
         under_load = false;
         destroyEndpoints(&client, &server);
@@ -314,7 +356,7 @@ static void testAuthenticatedReplayAndMessageLimit(buffer_pool_t *pool)
     endpoint_t client = {0}, server = {0};
     setTime(1000);
     setupEndpoints(&client, &server);
-    twfRequire(wireguardifStartHandshake(&client.engine, &client.engine.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
                "replay fixture initiation failed");
     drain(&client, &server);
     drain(&server, &client);
@@ -323,7 +365,7 @@ static void testAuthenticatedReplayAndMessageLimit(buffer_pool_t *pool)
     sbuf_t        *first      = NULL;
     for (size_t i = 0; i < sizeof(counters) / sizeof(counters[0]); ++i)
     {
-        client.engine.peers[0].curr_keypair.sending_counter = counters[i];
+        client.engine.first_peer->curr_keypair.sending_counter = counters[i];
         wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
         if (i == 0)
             first = sbufDuplicate(client.packets[client.head]);
@@ -332,12 +374,12 @@ static void testAuthenticatedReplayAndMessageLimit(buffer_pool_t *pool)
     twfRequire(server.delivered == 3, "valid wide-counter packets were rejected");
     ip_addr_t foreign;
     twfRequire(ipaddr_aton("198.51.100.9", &foreign), "foreign endpoint parse failed");
-    wireguard_keypair_t before = server.engine.peers[0].curr_keypair;
+    wireguard_keypair_t before = server.engine.first_peer->curr_keypair;
     wireguardCommonReceive(&server.engine, first, &foreign, 60000);
-    twfRequire(server.delivered == 3 && ipAddrCmp(&server.engine.peers[0].ip, &client.ip) &&
-                   server.engine.peers[0].port == 51820 &&
-                   server.engine.peers[0].curr_keypair.replay_counter == before.replay_counter &&
-                   server.engine.peers[0].curr_keypair.replay_bitmap == before.replay_bitmap,
+    twfRequire(server.delivered == 3 && ipAddrCmp(&server.engine.first_peer->ip, &client.ip) &&
+                   server.engine.first_peer->port == 51820 &&
+                   server.engine.first_peer->curr_keypair.replay_counter == before.replay_counter &&
+                   server.engine.first_peer->curr_keypair.replay_bitmap == before.replay_bitmap,
                "replayed wide-distance packet published data, roamed, or changed replay state");
     const uint64_t rejected[] = {REJECT_AFTER_MESSAGES, UINT64_MAX};
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i)
@@ -347,19 +389,19 @@ static void testAuthenticatedReplayAndMessageLimit(buffer_pool_t *pool)
         sbufWriteZeros(packet, sbufGetLength(packet));
         message_transport_data_t *header = (message_transport_data_t *) sbufGetMutablePtr(packet);
         header->type                     = MESSAGE_TRANSPORT_DATA;
-        header->receiver                 = client.engine.peers[0].curr_keypair.remote_index;
+        header->receiver                 = client.engine.first_peer->curr_keypair.remote_index;
         U64TO8_LITTLE(header->counter, rejected[i]);
-        wireguard_keypair_t sending = client.engine.peers[0].curr_keypair;
+        wireguard_keypair_t sending = client.engine.first_peer->curr_keypair;
         sending.sending_counter     = rejected[i];
         twfRequire(wireguardEncryptPacket(header->enc_packet, WIREGUARD_AUTHTAG_LEN, NULL, 0, &sending),
                    "message-limit packet encryption failed");
         wireguardCommonReceive(&server.engine, packet, &foreign, 60000);
-        twfRequire(server.delivered == 3 && ipAddrCmp(&server.engine.peers[0].ip, &client.ip) &&
-                       server.engine.peers[0].port == 51820 &&
-                       server.engine.peers[0].curr_keypair.replay_counter == before.replay_counter,
+        twfRequire(server.delivered == 3 && ipAddrCmp(&server.engine.first_peer->ip, &client.ip) &&
+                       server.engine.first_peer->port == 51820 &&
+                       server.engine.first_peer->curr_keypair.replay_counter == before.replay_counter,
                    "message-limit rejection changed data, endpoint, or replay state");
     }
-    client.engine.peers[0].curr_keypair.sending_counter = REJECT_AFTER_MESSAGES - 1;
+    client.engine.first_peer->curr_keypair.sending_counter = REJECT_AFTER_MESSAGES - 1;
     wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
     drain(&client, &server);
     twfRequire(server.delivered == 4, "last permitted transport nonce was rejected");
@@ -367,11 +409,11 @@ static void testAuthenticatedReplayAndMessageLimit(buffer_pool_t *pool)
     sbuf_t                   *bad        = sbufDuplicate(client.replay);
     message_transport_data_t *bad_header = (message_transport_data_t *) sbufGetMutablePtr(bad);
     U64TO8_LITTLE(bad_header->counter, REJECT_AFTER_MESSAGES - 2);
-    before = server.engine.peers[0].curr_keypair;
+    before = server.engine.first_peer->curr_keypair;
     wireguardCommonReceive(&server.engine, bad, &foreign, 60000);
-    twfRequire(server.delivered == 4 && ipAddrCmp(&server.engine.peers[0].ip, &client.ip) &&
-                   server.engine.peers[0].curr_keypair.replay_counter == before.replay_counter &&
-                   server.engine.peers[0].curr_keypair.replay_bitmap == before.replay_bitmap,
+    twfRequire(server.delivered == 4 && ipAddrCmp(&server.engine.first_peer->ip, &client.ip) &&
+                   server.engine.first_peer->curr_keypair.replay_counter == before.replay_counter &&
+                   server.engine.first_peer->curr_keypair.replay_bitmap == before.replay_bitmap,
                "unauthenticated nonce mutated replay state or endpoint");
     destroyEndpoints(&client, &server);
 }
@@ -384,7 +426,7 @@ static void testIndependentKeypairExpiry(buffer_pool_t *pool)
     establish(&client, &server);
     setTime(101000);
     establish(&client, &server);
-    wireguard_peer_t *peer = &client.engine.peers[0];
+    wireguard_peer_t *peer = client.engine.first_peer;
     twfRequire(peer->prev_keypair.valid && peer->curr_keypair.valid, "mixed-age sessions were not established");
     const wireguard_peer_t before = *peer;
     setTime(180999);
@@ -401,7 +443,7 @@ static void testIndependentKeypairExpiry(buffer_pool_t *pool)
     drain(&client, &server);
     twfRequire(server.delivered == 1, "expired previous slot interrupted the fresh current session");
     // Isolate key expiry from the independent retry and unanswered-data deadlines.
-    wireguardifSendKeepalive(&server.engine, &server.engine.peers[0]);
+    wireguardifSendKeepalive(&server.engine, server.engine.first_peer);
     drain(&server, &client);
     setTime(280000);
     twfRequire(wireguardifStartHandshake(&client.engine, peer, true) == ERR_OK, "unconfirmed rekey initiation failed");
@@ -446,7 +488,7 @@ static void testSessionErasure(buffer_pool_t *pool)
         setTime(start);
         setupEndpoints(&client, &server);
         establish(&client, &server);
-        wireguard_peer_t *peer   = &client.engine.peers[0];
+        wireguard_peer_t *peer   = client.engine.first_peer;
         peer->keepalive_interval = 0;
         twfRequire(peer->session_erase_armed && peer->session_erase_millis == start,
                    "session derivation did not arm erasure, including clock zero");
@@ -483,10 +525,10 @@ static void testSessionErasure(buffer_pool_t *pool)
     endpoint_t client = {0}, server = {0};
     setTime(0);
     setupEndpoints(&client, &server);
-    twfRequire(wireguardifStartHandshake(&client.engine, &client.engine.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
                "next-only initiation failed");
     drain(&client, &server);
-    wireguard_peer_t *peer = &server.engine.peers[0];
+    wireguard_peer_t *peer = server.engine.first_peer;
     twfRequire(! peer->curr_keypair.valid && peer->next_keypair.valid && peer->pending_handshake.valid &&
                    peer->session_erase_armed,
                "responder next-only session did not arm erasure");
@@ -508,7 +550,7 @@ static void testSessionErasure(buffer_pool_t *pool)
     server     = (endpoint_t) {0};
     setTime(0);
     setupEndpoints(&client, &server);
-    peer = &client.engine.peers[0];
+    peer = client.engine.first_peer;
     twfRequire(wireguardifStartHandshake(&client.engine, peer, true) == ERR_OK, "pending-only initiation failed");
     discardOutput(&client);
     setTime(539999);
@@ -529,10 +571,10 @@ static void testRekeyResetsErasure(void)
     setupEndpoints(&client, &server);
     establish(&client, &server);
     setTime(101000);
-    twfRequire(wireguardifStartHandshake(&client.engine, &client.engine.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
                "resetting rekey failed");
     exchange(&client, &server);
-    wireguard_peer_t *peer   = &client.engine.peers[0];
+    wireguard_peer_t *peer   = client.engine.first_peer;
     peer->keepalive_interval = 0;
     setTime(541000);
     wireguardCommonLoop(&client.engine);
@@ -555,7 +597,7 @@ static void testFixedRekeyTimers(buffer_pool_t *pool)
         setTime(1000);
         setupEndpoints(&client, &server);
         establish(&client, &server);
-        wireguard_peer_t *peer   = &client.engine.peers[0];
+        wireguard_peer_t *peer   = client.engine.first_peer;
         peer->keepalive_interval = intervals[i];
         uint32_t previous_index  = peer->curr_keypair.local_index;
         for (uint32_t elapsed = 30000; elapsed <= 150000; elapsed += 30000)
@@ -588,7 +630,7 @@ static void testFixedRekeyTimers(buffer_pool_t *pool)
         setTime(1000);
         setupEndpoints(&client, &server);
         establish(&client, &server);
-        peer                     = &server.engine.peers[0];
+        peer                     = server.engine.first_peer;
         peer->keepalive_interval = intervals[i];
         setTime(170999);
         peer->last_tx            = now_millis;
@@ -611,8 +653,8 @@ static void testPassiveKeepalive(buffer_pool_t *pool, uint16_t interval)
     setTime(1000);
     setupEndpoints(&client, &server);
     establish(&client, &server);
-    client.engine.peers[0].keepalive_interval = interval;
-    server.engine.peers[0].keepalive_interval = interval;
+    client.engine.first_peer->keepalive_interval = interval;
+    server.engine.first_peer->keepalive_interval = interval;
     wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
     drain(&client, &server);
     setTime(10999);
@@ -666,7 +708,7 @@ static void testRecoveryClock(buffer_pool_t *pool)
     discardOutput(&client);
     now_millis = 1000 + REJECT_AFTER_TIME * 1000U;
     wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
-    twfRequire(client.count == 0 && ! client.engine.peers[0].curr_keypair.valid,
+    twfRequire(client.count == 0 && ! client.engine.first_peer->curr_keypair.valid,
                "stale loop clock extended the transport key's hard lifetime");
     destroyEndpoints(&client, &server);
 }
@@ -719,7 +761,7 @@ static void testUnansweredDataRecovery(buffer_pool_t *pool, bool from_server, ui
     setTime(start);
     setupEndpoints(&client, &server);
     establish(&client, &server);
-    wireguard_peer_t *peer   = &sender->engine.peers[0];
+    wireguard_peer_t *peer   = sender->engine.first_peer;
     peer->keepalive_interval = interval;
     peer->active             = ! from_server;
     // Model a restarted server in one direction and delayed return traffic in the other.
@@ -747,7 +789,7 @@ static void testUnansweredDataRecovery(buffer_pool_t *pool, bool from_server, ui
     {
         // Old-key authenticated traffic answers the silence timer. The new handshake still needs a response.
         const unsigned authenticated_before = sender->authenticated;
-        wireguardifSendKeepalive(&receiver->engine, &receiver->engine.peers[0]);
+        wireguardifSendKeepalive(&receiver->engine, receiver->engine.first_peer);
         drain(receiver, sender);
         twfRequire(sender->authenticated == authenticated_before + 1, "old-key keepalive was not authenticated");
     }
@@ -783,7 +825,7 @@ static void testAgingKeyDuringAttempt(buffer_pool_t *pool)
     setTime(1000);
     setupEndpoints(&client, &server);
     establish(&client, &server);
-    wireguard_peer_t *peer = &server.engine.peers[0];
+    wireguard_peer_t *peer = server.engine.first_peer;
 
     setTime(71000);
     wireguardCommonSendInner(&server.engine, innerPacket(pool, 2, 1));
@@ -821,7 +863,7 @@ static void testCookieAtAttemptDeadline(void)
     setTime(1000);
     setupEndpoints(&client, &server);
     under_load             = true;
-    wireguard_peer_t *peer = &client.engine.peers[0];
+    wireguard_peer_t *peer = client.engine.first_peer;
     twfRequire(wireguardifStartHandshake(&client.engine, peer, false) == ERR_OK, "cookie setup initiation failed");
     drain(&client, &server);
     twfRequire(onlyMessage(&server, MESSAGE_COOKIE_REPLY), "missing cookie challenge");
@@ -854,7 +896,7 @@ static void testRetryAndPersistentKeepalive(void)
     setTime(0);
     setupEndpoints(&client, &server);
     now_millis             = 1000; /* First send occurs partway through a long loop iteration. */
-    wireguard_peer_t *peer = &client.engine.peers[0];
+    wireguard_peer_t *peer = client.engine.first_peer;
     peer->active           = true;
     twfRequire(wireguardifStartHandshake(&client.engine, peer, false) == ERR_OK, "retry initiation failed");
     discardOutput(&client);
@@ -885,7 +927,7 @@ static void testRetryAndPersistentKeepalive(void)
         setTime(1000);
         setupEndpoints(&client, &server);
         establish(&client, &server);
-        peer                     = &client.engine.peers[0];
+        peer                     = client.engine.first_peer;
         peer->keepalive_interval = intervals[i];
         const uint32_t deadline  = 1000U + (intervals[i] ? intervals[i] : 65535U) * 1000U;
         setTime(deadline - 1);
@@ -914,10 +956,62 @@ static void testRetryAndPersistentKeepalive(void)
         twfRequire(wireguardifDisconnect(&client.engine, 0) == ERR_OK && ! peer->session_erase_armed &&
                        peer->session_erase_millis == 0,
                    "disconnect retained erasure bookkeeping");
-        twfRequire(wireguardifRemovePeer(&client.engine, 0) == ERR_OK && allZero(peer, sizeof(*peer)),
-                   "peer removal retained secret or erasure state");
+        twfRequire(wireguardifRemovePeer(&client.engine, 0) == ERR_OK &&
+                       peerLookupByPeerIndex(&client.engine, 0) == NULL,
+                   "removed peer remained reachable by its local id");
         destroyEndpoints(&client, &server);
     }
+}
+
+static bool removeSendingPeer(void *context, sbuf_t *packet, wireguard_peer_t *peer, const ip_addr_t *address,
+                              uint16_t port)
+{
+    discard        address;
+    discard        port;
+    endpoint_t    *endpoint = context;
+    const uint32_t receiver = peer->curr_keypair.local_index;
+    twfRequire(peerLookupByReceiver(&endpoint->engine, receiver) == peer, "live receiver id was not indexed");
+    twfRequire(wireguardifRemovePeer(&endpoint->engine, peer->id) == ERR_OK &&
+                   peerLookupByReceiver(&endpoint->engine, receiver) == NULL && endpoint->engine.peer_count == 0,
+               "retirement during output left the peer registered");
+    twfRequire(! peer->valid && allZero(&peer->curr_keypair, sizeof(peer->curr_keypair)) &&
+                   allZero(peer->public_key_dh, sizeof(peer->public_key_dh)),
+               "retired peer retained secrets during an outstanding output callback");
+    reuseBuffer(packet);
+    return true;
+}
+
+static void testReentrantRemoval(void)
+{
+    endpoint_t client = {0}, server = {0};
+    setTime(1000);
+    setupEndpoints(&client, &server);
+    establish(&client, &server);
+    client.engine.first_peer->keepalive_interval = 1;
+    client.engine.callbacks.output               = removeSendingPeer;
+    setTime(2000);
+    wireguardCommonLoop(&client.engine);
+    twfRequire(client.engine.first_peer == NULL && client.engine.retired_peers == NULL,
+               "timer failed to settle a reentrantly removed peer");
+    destroyEndpoints(&client, &server);
+}
+
+static void testLocalIdWrap(void)
+{
+    endpoint_t client = {0}, server = {0};
+    setupEndpoints(&client, &server);
+    wireguard_peer_t *original                      = client.engine.first_peer;
+    uint8_t           key[WIREGUARD_PUBLIC_KEY_LEN] = {9};
+    client.engine.next_peer_id                      = SIZE_MAX - 1;
+    wireguard_peer_t *last                          = wireguardPeerCreate(&client.engine, key, NULL);
+    key[1]                                          = 1;
+    wireguard_peer_t *wrapped                       = wireguardPeerCreate(&client.engine, key, NULL);
+    twfRequire(last != NULL && last->id == SIZE_MAX - 1 && wrapped != NULL && wrapped->id == 1 &&
+                   peerLookupByPeerIndex(&client.engine, 0) == original &&
+                   peerLookupByPeerIndex(&client.engine, last->id) == last &&
+                   peerLookupByPeerIndex(&client.engine, wrapped->id) == wrapped,
+               "local id wrap refused a peer or reused an occupied id");
+    destroyEndpoints(&client, &server);
 }
 
 int main(void)
@@ -927,12 +1021,16 @@ int main(void)
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     twf_worker_env_t environment;
     twfWorkerEnvSetup(&environment, 8192, 32);
+    testLocalIdWrap();
+    testReentrantRemoval();
+    testPeerPrefixes();
     endpoint_t client = {0}, server = {0};
     setTime(1000);
     setupEndpoints(&client, &server);
-    twfRequire(wireguardifStartHandshake(&client.engine, &client.engine.peers[0], true) == ERR_OK, "initiation failed");
+    twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
+               "initiation failed");
     exchange(&client, &server);
-    twfRequire(client.engine.peers[0].curr_keypair.valid && server.engine.peers[0].curr_keypair.valid,
+    twfRequire(client.engine.first_peer->curr_keypair.valid && server.engine.first_peer->curr_keypair.valid,
                "bidirectional handshake did not establish session keys");
     wireguardCommonSendInner(&client.engine, innerPacket(environment.pool, 1, 2));
     exchange(&client, &server);
@@ -941,7 +1039,7 @@ int main(void)
     twfRequire(ipaddr_aton("198.51.100.1", &roaming), "roaming parse failed");
     wireguardCommonReceive(&server.engine, client.replay, &roaming, 51821);
     client.replay = NULL;
-    twfRequire(server.delivered == 1 && ipAddrCmp(&server.engine.peers[0].ip, &client.ip),
+    twfRequire(server.delivered == 1 && ipAddrCmp(&server.engine.first_peer->ip, &client.ip),
                "replay roamed or published");
     wireguardCommonSendInner(&client.engine, innerPacket(environment.pool, 7, 2));
     exchange(&client, &server);
@@ -949,7 +1047,7 @@ int main(void)
     client.ip = roaming;
     wireguardCommonSendInner(&client.engine, innerPacket(environment.pool, 1, 2));
     exchange(&client, &server);
-    twfRequire(server.delivered == 2 && ipAddrCmp(&server.engine.peers[0].ip, &roaming),
+    twfRequire(server.delivered == 2 && ipAddrCmp(&server.engine.first_peer->ip, &roaming),
                "authenticated roaming failed");
     wireguardCommonSendInner(&server.engine, innerPacket(environment.pool, 2, 1));
     exchange(&client, &server);

@@ -9,7 +9,8 @@ static inline uint32_t wireguardRecoveryNow(void)
     return (uint32_t) wloopNowMonotonicMS(getCurrentWorkerLoop());
 }
 
-/* Initialize before publication; all subsequent processing has one worker owner. */
+/* Initialize fresh storage before publication. Destroy the device before initializing it again.
+ * All subsequent processing has one worker owner. */
 bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, void *context,
                          wireguard_callbacks_t callbacks);
 /* Each input is consumed on all paths. No engine locks or neighbour callbacks
@@ -31,8 +32,7 @@ sbuf_t *wireguardCommonDecrypt(buffer_pool_t *pool, const uint8_t *ciphertext, u
                                wireguard_keypair_t *keypair);
 /* Static peer settings: publickey, allowedips, optional presharedkey and
  * persistentkeepalive. Endpoint ownership belongs to each public wrapper. */
-bool wireguardCommonAddConfiguredPeer(wireguard_device_t *device, const cJSON *settings, uint8_t *index);
-bool wireguardCommonRangesOverlap(const wireguard_allowed_ip_t *a, const wireguard_allowed_ip_t *b);
+bool wireguardCommonAddConfiguredPeer(wireguard_device_t *device, const cJSON *settings, size_t *index);
 
 /***************************************** WireGuard Interface ****************************************** */
 
@@ -42,37 +42,35 @@ void wireguardCommonLoop(wireguard_device_t *device);
 // Helper to initialise the peer struct with defaults
 void wireguardifPeerInit(wireguard_peer_init_data_t *peer);
 
-// Add a new peer to the specified interface - see wireguard.h for maximum number of peers allowed
+// Add a new peer to the specified interface.
 // On success the peer_index can be used to reference this peer in future function calls
-err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *peer, uint8_t *peer_index);
-err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip,
+err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *peer, size_t *peer_index);
+err_t wireguardifAddAllowedIp(wireguard_device_t *device, size_t peer_index, const ip_addr_t *ip,
                               const ip_addr_t *mask);
 
 // Remove the given peer from the network interface
-err_t wireguardifRemovePeer(wireguard_device_t *device, uint8_t peer_index);
+err_t wireguardifRemovePeer(wireguard_device_t *device, size_t peer_index);
 
 // Stop trying to connect to the given peer
-err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index);
+err_t wireguardifDisconnect(wireguard_device_t *device, size_t peer_index);
 
 err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force);
 err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer, bool data);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);
-void  wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
+void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer);
 
 /***************************************** WireGuard Device ****************************************** */
 
 WCRYPTO_MUST_USE wcrypto_status_t wireguardInit(void);
-bool                              wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key);
-void                              wireguardDeviceDestroy(wireguard_device_t *device);
-bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const uint8_t *public_key,
-                       const uint8_t *preshared_key);
-
-wireguard_peer_t *peerAlloc(wireguard_device_t *device);
-uint8_t           wireguardPeerIndex(wireguard_device_t *device, wireguard_peer_t *peer);
-wireguard_peer_t *peerLookupByPubkey(wireguard_device_t *device, uint8_t *public_key);
-wireguard_peer_t *peerLookupByPeerIndex(wireguard_device_t *device, uint8_t peer_index);
+bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key);
+void wireguardDeviceDestroy(wireguard_device_t *device);
+/* Peer pointers and local ids remain stable while registered. */
+wireguard_peer_t *wireguardPeerCreate(wireguard_device_t *device, const uint8_t *public_key,
+                                      const uint8_t *preshared_key);
+wireguard_peer_t *peerLookupByPubkey(wireguard_device_t *device, const uint8_t *public_key);
+wireguard_peer_t *peerLookupByPeerIndex(wireguard_device_t *device, size_t peer_index);
 wireguard_peer_t *peerLookupByReceiver(wireguard_device_t *device, uint32_t receiver);
 wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t receiver);
 wireguard_peer_t *peerLookupByPendingHandshake(wireguard_device_t *device, uint32_t receiver);

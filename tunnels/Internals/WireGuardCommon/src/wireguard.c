@@ -1,4 +1,4 @@
-#include "WireGuardCommon/engine.h"
+#include "peer_store.h"
 
 #ifdef COMPILER_MSVC
 
@@ -126,127 +126,6 @@ wcrypto_status_t wireguardInit(void)
         memoryZero(identifier_hash, sizeof(identifier_hash));
     }
     return status;
-}
-
-wireguard_peer_t *peerAlloc(wireguard_device_t *device)
-{
-    wireguard_peer_t *result = NULL;
-    wireguard_peer_t *tmp;
-    int               x;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-    {
-        tmp = &device->peers[x];
-        if (! tmp->valid)
-        {
-            result = tmp;
-            break;
-        }
-    }
-    return result;
-}
-
-wireguard_peer_t *peerLookupByPubkey(wireguard_device_t *device, uint8_t *public_key)
-{
-    wireguard_peer_t *result = NULL;
-    wireguard_peer_t *tmp;
-    int               x;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-    {
-        tmp = &device->peers[x];
-        if (tmp->valid)
-        {
-            if (memcmp(tmp->public_key, public_key, WIREGUARD_PUBLIC_KEY_LEN) == 0)
-            {
-                result = tmp;
-                break;
-            }
-        }
-    }
-    return result;
-}
-
-uint8_t wireguardPeerIndex(wireguard_device_t *device, wireguard_peer_t *peer)
-{
-    uint8_t result = 0xFF;
-    uint8_t x;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-    {
-        if (peer == &device->peers[x])
-        {
-            result = x;
-            break;
-        }
-    }
-    return result;
-}
-
-wireguard_peer_t *peerLookupByPeerIndex(wireguard_device_t *device, uint8_t peer_index)
-{
-    wireguard_peer_t *result = NULL;
-    if (peer_index < WIREGUARD_MAX_PEERS)
-    {
-        if (device->peers[peer_index].valid)
-        {
-            result = &device->peers[peer_index];
-        }
-    }
-    return result;
-}
-
-wireguard_peer_t *peerLookupByReceiver(wireguard_device_t *device, uint32_t receiver)
-{
-    wireguard_peer_t *result = NULL;
-    wireguard_peer_t *tmp;
-    int               x;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-    {
-        tmp = &device->peers[x];
-        if (tmp->valid)
-        {
-            if ((tmp->curr_keypair.valid && (tmp->curr_keypair.local_index == receiver)) ||
-                (tmp->next_keypair.valid && (tmp->next_keypair.local_index == receiver)) ||
-                (tmp->prev_keypair.valid && (tmp->prev_keypair.local_index == receiver)))
-            {
-                result = tmp;
-                break;
-            }
-        }
-    }
-    return result;
-}
-
-wireguard_peer_t *peerLookupByHandshake(wireguard_device_t *device, uint32_t receiver)
-{
-    wireguard_peer_t *result = NULL;
-    wireguard_peer_t *tmp;
-    int               x;
-    for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-    {
-        tmp = &device->peers[x];
-        if (tmp->valid)
-        {
-            if (tmp->handshake.valid && tmp->handshake.initiator && (tmp->handshake.local_index == receiver))
-            {
-                result = tmp;
-                break;
-            }
-        }
-    }
-    return result;
-}
-
-wireguard_peer_t *peerLookupByPendingHandshake(wireguard_device_t *device, uint32_t receiver)
-{
-    for (int x = 0; x < WIREGUARD_MAX_PEERS; ++x)
-    {
-        wireguard_peer_t *peer = &device->peers[x];
-        if (peer->valid && peer->pending_handshake.valid && peer->pending_handshake.sender == receiver)
-        {
-            return peer;
-        }
-    }
-
-    return NULL;
 }
 
 bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds)
@@ -561,31 +440,11 @@ wireguard_keypair_t *getPeerKeypairForIdx(wireguard_peer_t *peer, uint32_t idx)
 
 static uint32_t wireguardGenerateUniqueIndex(wireguard_device_t *device)
 {
-    // We need a random 32-bit number but make sure it's not already been used in the context of this device
-    uint32_t          result = 0;
-    int               x;
-    wireguard_peer_t *peer;
-    bool              existing;
+    uint32_t result;
     do
     {
-        do
-        {
-            result = fastRand32();
-        } while ((result == 0) || (result == 0xFFFFFFFF)); // Don't allow 0 or 0xFFFFFFFF as valid values
-
-        existing = false;
-        for (x = 0; x < WIREGUARD_MAX_PEERS; x++)
-        {
-            peer = &device->peers[x];
-            if ((result == peer->curr_keypair.local_index) || (result == peer->prev_keypair.local_index) ||
-                (result == peer->next_keypair.local_index) || (result == peer->handshake.local_index))
-            {
-                existing = true;
-                break;
-            }
-        }
-    } while (existing);
-
+        result = fastRand32();
+    } while (result == 0 || result == UINT32_MAX || wireguardReceiverInUse(device, result));
     return result;
 }
 
@@ -679,6 +538,7 @@ void keypairUpdate(wireguard_peer_t *peer, wireguard_keypair_t *received_keypair
         peer->prev_keypair = peer->curr_keypair;
         peer->curr_keypair = peer->next_keypair;
         keypairDestroy(&peer->next_keypair);
+        wireguardPeerSyncReceivers(peer);
     }
 }
 
@@ -750,6 +610,7 @@ bool wireguardStartSession(wireguard_peer_t *peer, bool initiator)
     wireguardHandshakeDestroy(handshake);
 
     addNewKeypair(peer, &new_keypair);
+    wireguardPeerSyncReceivers(peer);
     peer->session_erase_millis = new_keypair.keypair_millis;
     peer->session_erase_armed  = true;
     wCryptoZero(&new_keypair, sizeof(new_keypair));
@@ -897,6 +758,7 @@ wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, 
     handshake->remote_index = msg->sender;
     handshake->valid        = true;
     handshake->initiator    = false;
+    wireguardPeerSyncReceivers(peer);
     wireguardArmSessionErasure(peer);
     ret_peer = peer;
 
@@ -1069,6 +931,7 @@ bool wireguardStorePendingHandshake(wireguard_peer_t *peer, const void *packet, 
     memoryCopy(pending->mac1, bytes + packet_len - (2U * WIREGUARD_COOKIE_LEN), WIREGUARD_COOKIE_LEN);
     memoryCopy(pending->packet, bytes, packet_len);
     pending->valid = true;
+    wireguardPeerSyncReceivers(peer);
     wireguardArmSessionErasure(peer);
     return true;
 }
@@ -1078,6 +941,7 @@ void wireguardClearPendingHandshake(wireguard_peer_t *peer)
     if (peer != NULL)
     {
         wCryptoZero(&peer->pending_handshake, sizeof(peer->pending_handshake));
+        wireguardPeerSyncReceivers(peer);
     }
 }
 
@@ -1189,6 +1053,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
     handshake->valid       = true;
     handshake->initiator   = true;
     handshake->local_index = dst->sender;
+    wireguardPeerSyncReceivers(peer);
     wireguardArmSessionErasure(peer);
     result = true;
 
@@ -1276,7 +1141,8 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
     }
 
     handshake->local_index = dst->sender;
-    result                 = true;
+    wireguardPeerSyncReceivers(peer);
+    result = true;
 
 cleanup:
     if (! result)
@@ -1410,6 +1276,7 @@ void wireguardDeviceDestroy(wireguard_device_t *device)
 {
     if (device != NULL)
     {
+        wireguardPeerStoreDestroy(device);
         wCryptoZero(device, sizeof(*device));
     }
 }

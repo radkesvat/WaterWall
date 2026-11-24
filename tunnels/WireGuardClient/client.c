@@ -92,7 +92,7 @@ static void inner(void *context, sbuf_t *packet, wireguard_peer_t *peer)
 
 static bool sessionReady(client_t *state)
 {
-    return wireguardCommonPeerCanSend(&state->engine.peers[0]);
+    return wireguardCommonPeerCanSend(state->engine.first_peer);
 }
 static void flushPending(client_t *state)
 {
@@ -202,9 +202,9 @@ static void tick(wtimer_t *timer)
 }
 static void start(tunnel_t *t)
 {
-    client_t *state               = tunnelGetState(t);
-    state->engine.peers[0].active = true;
-    state->timer                  = wtimerAdd(getWorkerLoop(0), tick, WIREGUARDIF_TIMER_MSECS, INFINITE);
+    client_t *state                  = tunnelGetState(t);
+    state->engine.first_peer->active = true;
+    state->timer                     = wtimerAdd(getWorkerLoop(0), tick, WIREGUARDIF_TIMER_MSECS, INFINITE);
     if (state->timer == NULL)
     {
         startupFailureRecord(1);
@@ -307,7 +307,7 @@ static tunnel_t *create(node_t *node)
     const cJSON *settings = node->node_settings_json;
     const cJSON *key      = cJSON_GetObjectItemCaseSensitive(settings, "privatekey");
     const cJSON *peers    = cJSON_GetObjectItemCaseSensitive(settings, "peers");
-    uint8_t      index    = 0;
+    size_t       index    = 0;
     if (! jsonObjectFieldStringsAreExact(settings, "privatekey") || ! cJSON_IsString(key) || ! cJSON_IsArray(peers) ||
         cJSON_GetArraySize(peers) != 1 ||
         ! wireguardCommonInit(

@@ -153,6 +153,12 @@ typedef struct wireguard_allowed_ip_s
 
 struct wireguard_peer_s
 {
+    struct wireguard_device_s *device;
+    struct wireguard_peer_s   *next, *previous;
+    size_t                     id;
+    void                      *context;              /* Optional wrapper-owned binding. */
+    uint32_t                   indexed_receivers[5]; /* Handshake, pending cookie, three transport keys. */
+
     bool valid : 1;  // Is this peer initialised?
     bool active : 1; // Should we be actively trying to connect?
     bool session_erase_armed : 1;
@@ -256,7 +262,9 @@ struct wireguard_device_s
     uint8_t label_cookie_key[WIREGUARD_SESSION_KEY_LEN];
     uint8_t label_mac1_key[WIREGUARD_SESSION_KEY_LEN];
 
-    // List of peers associated with this device
-    wireguard_peer_t peers[WIREGUARD_MAX_PEERS];
+    struct wireguard_peer_store_s *store;
+    wireguard_peer_t              *first_peer, *retired_peers;
+    size_t                         peer_count, next_peer_id;
+    unsigned                       processing_depth; /* Removed allocations survive reentrant owner callbacks. */
 };
 typedef struct wireguard_device_s wireguard_device_t;

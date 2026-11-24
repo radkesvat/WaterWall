@@ -68,7 +68,7 @@ static void exchangeProof(proof_t *proof)
 {
     proving = proof;
     proof_millis += 1000;
-    twfRequire(wireguardifStartHandshake(&proof->client, &proof->client.peers[0], true) == ERR_OK,
+    twfRequire(wireguardifStartHandshake(&proof->client, proof->client.first_peer, true) == ERR_OK,
                "client initiation failed");
     for (unsigned round = 0; round < 16 && (proof->requests_count || proof->responses_count); ++round)
     {
@@ -86,7 +86,7 @@ static void exchangeProof(proof_t *proof)
     }
     proving = NULL;
 }
-static void setupProof(proof_t *proof, server_t *state, const char *password)
+static void setupProof(proof_t *proof, server_t *state, twf_line_pool_t *pool, const char *password)
 {
     *proof = (proof_t) {.state = state};
     sha256_hash_t digest;
@@ -99,7 +99,7 @@ static void setupProof(proof_t *proof, server_t *state, const char *password)
         "proof client initialization failed");
     cJSON *peer =
         cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
-    uint8_t index;
+    size_t index;
     twfRequire(wireguardCommonAddConfiguredPeer(&proof->client, peer, &index), "proof client peer failed");
     cJSON_Delete(peer);
     proof->ingress = memoryAllocateZero(sizeof(ingress_t));
@@ -107,6 +107,7 @@ static void setupProof(proof_t *proof, server_t *state, const char *password)
     atomic_init(&proof->ingress->references, 1);
     twfRequire(ipaddr_aton("192.0.2.1", &proof->ingress->ip), "proof endpoint invalid");
     proof->ingress->port = 40000;
+    proof->ingress->line = twfLinePoolCreateLine(pool);
 }
 static void controlResponse(tunnel_t *auth, bool reject)
 {
@@ -177,7 +178,7 @@ static void closeFixtureLine(tunnel_t *owner, line_t *line)
     lineDestroy(line);
     lineUnref(line);
 }
-static line_t *prepareFixtureLine(server_t *state, twf_line_pool_t *pool, unsigned binding, const char *source,
+static line_t *prepareFixtureLine(server_t *state, twf_line_pool_t *pool, const binding_t *binding, const char *source,
                                   bool datagram)
 {
     line_t *line = twfLinePoolCreateLine(pool);
@@ -187,10 +188,10 @@ static line_t *prepareFixtureLine(server_t *state, twf_line_pool_t *pool, unsign
         lineGetDestinationAddressContext(line), "203.0.113.1", 443, datagram ? 17 : 6);
     ptc_lstate_t *metadata = lineGetState(line, state->ptc);
     metadata->kind         = datagram ? kPtcLineKindUdp : kPtcLineKindTcp;
-    metadata->source_epoch = state->bindings[binding].epoch;
+    metadata->source_epoch = binding->epoch;
     return line;
 }
-static line_t *openFixtureLine(server_t *state, twf_line_pool_t *pool, unsigned binding, const char *source,
+static line_t *openFixtureLine(server_t *state, twf_line_pool_t *pool, const binding_t *binding, const char *source,
                                bool datagram)
 {
     line_t *line = prepareFixtureLine(state, pool, binding, source, datagram);
@@ -246,6 +247,7 @@ int main(void)
     server_t *state              = tunnelGetState(server);
     mutexInit(&state->bindings_lock);
     wireguardDispatchInit(&state->dispatch);
+    twfRequire(readServerLimits(state, NULL), "server default limits failed");
     state->tunnel               = server;
     state->auth                 = auth;
     state->connection           = true;
@@ -278,36 +280,40 @@ int main(void)
     twf_line_pool_t pool;
     twfLinePoolSetup(&pool, state->ptc->lstate_size + state->controller->lstate_size, 16);
     state->receiving_generation = 2;
-    twfRequire(candidate(state, keys[0]) == NULL && ! state->bindings[0].occupied,
+    twfRequire(candidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
                "queued handshake predating credential ownership published a binding");
     state->receiving_generation = 7;
     proof_t proofs[2];
-    setupProof(&proofs[0], state, "first-account");
-    setupProof(&proofs[1], state, "second-account");
+    setupProof(&proofs[0], state, &pool, "first-account");
+    setupProof(&proofs[1], state, &pool, "second-account");
     for (unsigned i = 0; i < 2; ++i)
     {
         exchangeProof(&proofs[i]);
-        twfRequire(state->bindings[i].usable && state->engine.peers[i].curr_keypair.valid,
+        wireguard_peer_t *peer = peerLookupByPubkey(&state->engine, keys[i]);
+        twfRequire(peer != NULL && bindingCurrent(peer->context) && peer->curr_keypair.valid,
                    "real protocol proof did not publish binding");
     }
-    line_t *a     = openFixtureLine(state, &pool, 0, "10.50.0.5", false);
-    line_t *b     = openFixtureLine(state, &pool, 0, "10.50.0.5", true);
-    line_t *other = openFixtureLine(state, &pool, 1, "10.60.0.2", true);
+    wireguard_peer_t *first_peer     = peerLookupByPubkey(&state->engine, keys[0]);
+    binding_t        *first_binding  = first_peer->context;
+    binding_t        *second_binding = peerLookupByPubkey(&state->engine, keys[1])->context;
+    line_t           *a              = openFixtureLine(state, &pool, first_binding, "10.50.0.5", false);
+    line_t           *b              = openFixtureLine(state, &pool, first_binding, "10.50.0.5", true);
+    line_t           *other          = openFixtureLine(state, &pool, second_binding, "10.60.0.2", true);
     twfRequire(opened_count == 3 && lineGetCurrentUser(a)->user_id == 42 && lineGetCurrentUser(other)->user_id == 43,
                "two accounts lost their independent inner-flow identities");
     atomicIncU64(&as->users_generation);
-    twfRequire(candidate(state, keys[0]) == &state->engine.peers[0],
+    twfRequire(candidate(state, keys[0]) == first_peer,
                "queued handshake lost continuous authorization across a full refresh");
     ip_addr_t continuous_source;
     twfRequire(ipaddr_aton("10.50.0.5", &continuous_source) &&
-                   sourceEpoch(state, &continuous_source) == state->bindings[0].epoch,
+                   sourceEpoch(state, &continuous_source) == first_binding->epoch,
                "unchanged full refresh revoked the source epoch of an active account");
     user_t *account = usersLookupByIdentifier(&users, 42);
     twfRequire(account->runtime.active_cons_out == 2 && account->runtime.ip_usage_count == 1,
                "same inner IP did not share its account IP slot");
-    const uint64_t saved_epoch = state->bindings[0].epoch;
-    line_t        *delayed_tcp = prepareFixtureLine(state, &pool, 0, "10.50.0.5", false);
-    line_t        *delayed_udp = prepareFixtureLine(state, &pool, 0, "10.50.0.5", true);
+    const uint64_t saved_epoch = first_binding->epoch;
+    line_t        *delayed_tcp = prepareFixtureLine(state, &pool, first_binding, "10.50.0.5", false);
+    line_t        *delayed_udp = prepareFixtureLine(state, &pool, first_binding, "10.50.0.5", true);
     controlResponse(auth, true);
     twfRequire(! authenticationclientCanAuthenticate(auth) && sourceEpoch(state, &continuous_source) == saved_epoch &&
                    ! authenticationclientUserShouldClose(auth, lineGetCurrentUser(a), 0),
@@ -330,24 +336,23 @@ int main(void)
                "control rejection interrupted existing TCP/UDP accounting or delivery");
     twfRequire(candidate(state, keys[2]) == NULL, "new eligible peer bypassed control rejection");
     /* Crypto expiry does not erase the logical binding or prevent rekey. */
-    keypairDestroy(&state->engine.peers[0].curr_keypair);
-    keypairDestroy(&state->engine.peers[0].next_keypair);
-    keypairDestroy(&state->engine.peers[0].prev_keypair);
+    keypairDestroy(&first_peer->curr_keypair);
+    keypairDestroy(&first_peer->next_keypair);
+    keypairDestroy(&first_peer->prev_keypair);
     exchangeProof(&proofs[0]);
-    twfRequire(state->bindings[0].usable && state->bindings[0].epoch == saved_epoch &&
-                   state->engine.peers[0].curr_keypair.valid,
+    twfRequire(first_binding->usable && first_binding->epoch == saved_epoch && first_peer->curr_keypair.valid,
                "cached live binding could not rekey during control rejection");
     atomicIncU64(&as->users_generation);
     reconcile(state, true);
-    twfRequire(state->bindings[0].usable && sourceEpoch(state, &continuous_source) == saved_epoch,
+    twfRequire(first_binding->usable && sourceEpoch(state, &continuous_source) == saved_epoch,
                "unchanged refresh during rejection retired existing flows");
     controlResponse(auth, false);
-    twfRequire(authenticationclientCanAuthenticate(auth) && state->bindings[0].epoch == saved_epoch,
+    twfRequire(authenticationclientCanAuthenticate(auth) && first_binding->epoch == saved_epoch,
                "admission recovery changed a continuous epoch");
-    line_t *denied = openFixtureLine(state, &pool, 0, "10.50.0.6", false);
+    line_t *denied = openFixtureLine(state, &pool, first_binding, "10.50.0.6", false);
     twfRequire(! lineIsAlive(denied) && opened_count == 3, "second inner IP bypassed its limit");
     lineUnref(denied);
-    line_t *spoof = openFixtureLine(state, &pool, 1, "10.50.0.5", true);
+    line_t *spoof = openFixtureLine(state, &pool, second_binding, "10.50.0.5", true);
     twfRequire(! lineIsAlive(spoof) && opened_count == 3, "peer acquired another account through source spoofing");
     lineUnref(spoof);
     closeFixtureLine(state->ptc, a);
@@ -355,28 +360,36 @@ int main(void)
     closeFixtureLine(state->ptc, b);
     twfRequire(account->runtime.ip_usage_count == 0 && account->runtime.active_cons_out == 0,
                "last flow leaked reservations");
-    line_t *replacement = openFixtureLine(state, &pool, 0, "10.50.0.6", false);
+    line_t *replacement = openFixtureLine(state, &pool, first_binding, "10.50.0.6", false);
     twfRequire(lineIsAlive(replacement) && opened_count == 4, "released IP slot was not reusable");
     closeFixtureLine(state->ptc, replacement);
     closeFixtureLine(state->ptc, other);
     twfRequire(usersSetUserEnabled(&users, account, false), "disable failed");
-    denied = openFixtureLine(state, &pool, 0, "10.50.0.5", true);
+    denied = openFixtureLine(state, &pool, first_binding, "10.50.0.5", true);
     twfRequire(! lineIsAlive(denied) && opened_count == 4 && account->runtime.active_cons_out == 0,
                "disabled account admitted a flow or leaked a reservation");
     lineUnref(denied);
     twfRequire(usersSetUserEnabled(&users, account, true), "enable before retirement failed");
-    clearBinding(state, 0);
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        line_t *outer           = proofs[i].ingress->line;
+        proofs[i].ingress->line = NULL;
+        lineDestroy(outer);
+    }
+    clearBinding(state, first_binding);
     controlResponse(auth, true);
-    twfRequire(candidate(state, keys[0]) == NULL && ! state->bindings[0].occupied,
+    twfRequire(candidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
                "retired binding resurrected during rejection");
     state->controller->onDestroy(state->controller, wwLifecycleStartupRollback());
     tunnelDestroy(state->ptc);
     tunnelDestroy(state->binder);
     tunnelDestroy(sink);
+    while (state->binding_head != NULL)
+        clearBinding(state, state->binding_head);
+    binding_map_t_drop(&state->epochs);
+    wireguardPrefixDestroy(&state->ranges);
     for (unsigned i = 0; i < 2; ++i)
     {
-        ingressRelease(state->bindings[i].ingress);
-        authenticationclientWireGuardAuthorizationClear(&state->bindings[i].authorization);
         wireguardDeviceDestroy(&proofs[i].client);
         ingressRelease(proofs[i].ingress);
     }

@@ -1,19 +1,6 @@
-#include "WireGuardCommon/engine.h"
+#include "peer_store.h"
 
 #include "loggers/network_logger.h"
-
-static uint8_t wireguardCommonCountMaskBits32(uint32_t value)
-{
-    uint8_t bits = 0;
-
-    while (value != 0)
-    {
-        value &= (value - 1U);
-        bits++;
-    }
-
-    return bits;
-}
 
 static bool wireguardCommonAllowedIpMatches(const wireguard_allowed_ip_t *allowed, const ip_addr_t *ipaddr)
 {
@@ -33,69 +20,6 @@ static bool wireguardCommonAllowedIpMatches(const wireguard_allowed_ip_t *allowe
     }
 
     return false;
-}
-
-static uint8_t wireguardCommonAllowedIpPrefixBits(const wireguard_allowed_ip_t *allowed)
-{
-    if (! allowed->valid)
-    {
-        return 0;
-    }
-
-    if (allowed->mask.type == IPADDR_TYPE_V4)
-    {
-        return wireguardCommonCountMaskBits32(ip_2_ip4(&allowed->mask)->addr);
-    }
-
-    if (allowed->mask.type == IPADDR_TYPE_V6)
-    {
-        uint8_t bits = 0;
-
-        for (int i = 0; i < 4; ++i)
-        {
-            bits += wireguardCommonCountMaskBits32(ip_2_ip6(&allowed->mask)->addr[i]);
-        }
-
-        return bits;
-    }
-
-    return 0;
-}
-
-wireguard_peer_t *wireguardCommonPeerForIp(wireguard_device_t *device, const ip_addr_t *ipaddr)
-{
-    wireguard_peer_t *result      = NULL;
-    uint8_t           best_prefix = 0;
-
-    for (int x = 0; x < WIREGUARD_MAX_PEERS; ++x)
-    {
-        wireguard_peer_t *peer = &device->peers[x];
-
-        if (! peer->valid)
-        {
-            continue;
-        }
-
-        for (int y = 0; y < WIREGUARD_MAX_SRC_IPS; ++y)
-        {
-            wireguard_allowed_ip_t *allowed = &peer->allowed_source_ips[y];
-
-            if (! wireguardCommonAllowedIpMatches(allowed, ipaddr))
-            {
-                continue;
-            }
-
-            uint8_t prefix_bits = wireguardCommonAllowedIpPrefixBits(allowed);
-
-            if ((result == NULL) || (prefix_bits > best_prefix))
-            {
-                result      = peer;
-                best_prefix = prefix_bits;
-            }
-        }
-    }
-
-    return result;
 }
 
 bool wireguardCommonPeerAllowsIp(const wireguard_peer_t *peer, const ip_addr_t *ipaddr)
@@ -128,25 +52,28 @@ err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *packet, wireguar
     /* The carrier may synchronously deliver more data. A new passive reply must
      * start at that receive, independently of the reply this output satisfies. */
     peer->passive_keepalive = false;
-    if (! device->callbacks.output(device->context, packet, peer, &peer->ip, peer->port))
+    wireguardBeginProcessing(device);
+    const bool accepted = device->callbacks.output(device->context, packet, peer, &peer->ip, peer->port);
+    if (! accepted)
     {
         if (owed_reply && peer->valid && sent == peer->authenticated_sends)
         {
             peer->passive_keepalive        = true;
             peer->passive_keepalive_millis = reply_since;
         }
-        return ERR_CONN;
     }
-    if (! peer->valid)
-        return ERR_OK;
-    ++peer->authenticated_sends;
-    if (data && received == peer->authenticated_receives && peer->unanswered_interval_ms == 0)
+    else if (peer->valid)
     {
-        peer->unanswered_millis = now;
-        peer->unanswered_interval_ms =
-            (KEEPALIVE_TIMEOUT + REKEY_TIMEOUT) * 1000U + fastRandRange32(0, REKEY_TIMEOUT_JITTER_MS);
+        ++peer->authenticated_sends;
+        if (data && received == peer->authenticated_receives && peer->unanswered_interval_ms == 0)
+        {
+            peer->unanswered_millis = now;
+            peer->unanswered_interval_ms =
+                (KEEPALIVE_TIMEOUT + REKEY_TIMEOUT) * 1000U + fastRandRange32(0, REKEY_TIMEOUT_JITTER_MS);
+        }
     }
-    return ERR_OK;
+    wireguardEndProcessing(device);
+    return accepted ? ERR_OK : ERR_CONN;
 }
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *packet, const ip_addr_t *ip, uint16_t port)
@@ -157,41 +84,25 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *packet, const 
 
 static bool peerAddIp(wireguard_peer_t *peer, ip_addr_t ip, ip_addr_t mask)
 {
-    bool                    result = false;
-    wireguard_allowed_ip_t *allowed;
-    int                     x;
-    // Look for existing match first
-    for (x = 0; x < WIREGUARD_MAX_SRC_IPS; x++)
+    for (size_t i = 0; i < WIREGUARD_MAX_SRC_IPS; ++i)
     {
-        allowed = &peer->allowed_source_ips[x];
-        if ((allowed->valid) && ipAddrCmp(&allowed->ip, &ip) && ipAddrCmp(&allowed->mask, &mask))
+        wireguard_allowed_ip_t *allowed = &peer->allowed_source_ips[i];
+        if (! allowed->valid)
         {
-            result = true;
-            break;
+            if (! wireguardPeerIndexRange(peer, &ip, &mask))
+                return false;
+            *allowed = (wireguard_allowed_ip_t) {.valid = true, .ip = ip, .mask = mask};
+            return true;
         }
+        if (ipAddrCmp(&allowed->ip, &ip) && ipAddrCmp(&allowed->mask, &mask))
+            return true;
     }
-    if (! result)
-    {
-        // Look for a free slot
-        for (x = 0; x < WIREGUARD_MAX_SRC_IPS; x++)
-        {
-            allowed = &peer->allowed_source_ips[x];
-            if (! allowed->valid)
-            {
-                allowed->valid = true;
-                allowed->ip    = ip;
-                allowed->mask  = mask;
-                result         = true;
-                break;
-            }
-        }
-    }
-    return result;
+    return false;
 }
 
-static err_t wireguardifLookupPeer(wireguard_device_t *device, uint8_t peer_index, wireguard_peer_t **out);
+static err_t wireguardifLookupPeer(wireguard_device_t *device, size_t peer_index, wireguard_peer_t **out);
 
-err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *p, uint8_t *peer_index)
+err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *p, size_t *peer_index)
 {
     assert(p != NULL);
 
@@ -218,46 +129,27 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     peer = peerLookupByPubkey(device, public_key);
     if (! peer)
     {
-        // Not active - see if we have room to allocate a new one
-        peer = peerAlloc(device);
-        if (peer)
+        peer = wireguardPeerCreate(device, public_key, p->preshared_key);
+        if (peer == NULL)
         {
-
-            if (wireguardPeerInit(device, peer, public_key, p->preshared_key))
-            {
-
-                peer->connect_ip   = p->endpoint_ip;
-                peer->connect_port = p->endpoint_port;
-                peer->ip           = peer->connect_ip;
-                peer->port         = peer->connect_port;
-                if (p->keep_alive == WIREGUARDIF_KEEPALIVE_DEFAULT)
-                {
-                    peer->keepalive_interval = KEEPALIVE_TIMEOUT;
-                }
-                else
-                {
-                    peer->keepalive_interval = p->keep_alive;
-                }
-                if (! peerAddIp(peer, p->allowed_ip, p->allowed_mask))
-                {
-                    wCryptoZero(peer, sizeof(*peer));
-                    peer->valid = false;
-                    result      = ERR_MEM;
-                }
-                else
-                {
-                    memoryCopy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
-                    result = ERR_OK;
-                }
-            }
-            else
-            {
-                result = ERR_ARG;
-            }
+            result = ERR_ARG;
+        }
+        else if (! peerAddIp(peer, p->allowed_ip, p->allowed_mask))
+        {
+            discard wireguardifRemovePeer(device, peer->id);
+            peer   = NULL;
+            result = ERR_MEM;
         }
         else
         {
-            result = ERR_MEM;
+            peer->connect_ip   = p->endpoint_ip;
+            peer->connect_port = p->endpoint_port;
+            peer->ip           = peer->connect_ip;
+            peer->port         = peer->connect_port;
+            peer->keepalive_interval =
+                p->keep_alive == WIREGUARDIF_KEEPALIVE_DEFAULT ? KEEPALIVE_TIMEOUT : p->keep_alive;
+            memoryCopy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
+            result = ERR_OK;
         }
     }
     else
@@ -265,23 +157,13 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
         result = ERR_OK;
     }
 
-    if (peer_index)
-    {
-        if (peer)
-        {
-            *peer_index = wireguardPeerIndex(device, peer);
-        }
-        else
-        {
-            *peer_index = WIREGUARDIF_INVALID_INDEX;
-        }
-    }
+    if (peer_index != NULL)
+        *peer_index = peer != NULL ? peer->id : WIREGUARDIF_INVALID_INDEX;
     wCryptoZero(public_key, sizeof(public_key));
     return result;
 }
 
-err_t wireguardifAddAllowedIp(wireguard_device_t *device, uint8_t peer_index, const ip_addr_t *ip,
-                              const ip_addr_t *mask)
+err_t wireguardifAddAllowedIp(wireguard_device_t *device, size_t peer_index, const ip_addr_t *ip, const ip_addr_t *mask)
 {
     wireguard_peer_t *peer;
     err_t             result = wireguardifLookupPeer(device, peer_index, &peer);
@@ -306,7 +188,7 @@ void wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer
     wireguardifOutputToPeer(device, empty_buf, NULL, peer);
 }
 
-static err_t wireguardifLookupPeer(wireguard_device_t *device, uint8_t peer_index, wireguard_peer_t **out)
+static err_t wireguardifLookupPeer(wireguard_device_t *device, size_t peer_index, wireguard_peer_t **out)
 {
     assert(device != NULL);
     wireguard_peer_t *peer = NULL;
@@ -332,20 +214,7 @@ static err_t wireguardifLookupPeer(wireguard_device_t *device, uint8_t peer_inde
     return result;
 }
 
-err_t wireguardifRemovePeer(wireguard_device_t *device, uint8_t peer_index)
-{
-    wireguard_peer_t *peer;
-    err_t             result = wireguardifLookupPeer(device, peer_index, &peer);
-    if (result == ERR_OK)
-    {
-        wCryptoZero(peer, sizeof(wireguard_peer_t));
-        peer->valid = false;
-        result      = ERR_OK;
-    }
-    return result;
-}
-
-err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index)
+err_t wireguardifDisconnect(wireguard_device_t *device, size_t peer_index)
 {
     wireguard_peer_t *peer;
     err_t             result = wireguardifLookupPeer(device, peer_index, &peer);

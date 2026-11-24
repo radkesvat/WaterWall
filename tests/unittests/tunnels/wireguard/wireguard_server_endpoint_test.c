@@ -39,7 +39,7 @@ static bool serverCapture(void *context, sbuf_t *packet, wireguard_peer_t *peer,
 {
     server_t *state = context;
     discard   peer;
-    twfRequire(ipAddrCmp(ip, &state->bindings[0].ingress->ip), "server output lost its authenticated IP");
+    twfRequire(ipAddrCmp(ip, &state->binding_head->ingress->ip), "server output lost its authenticated IP");
     output_port = port;
     return capture(&server_output, packet);
 }
@@ -92,7 +92,7 @@ static sbuf_t *innerPacket(buffer_pool_t *pool, size_t capacity, uint8_t source,
 }
 static void testPendingOnCarrierLoss(server_t *state, line_t *line, buffer_pool_t *pool, wireguard_device_t *client)
 {
-    wireguard_peer_t *peer            = &state->engine.peers[0];
+    wireguard_peer_t *peer            = state->engine.first_peer;
     peer->curr_keypair.keypair_millis = getTickMS() - REJECT_AFTER_TIME * 1000U;
     wtimer_t timer                    = {0};
     weventSetUserData(&timer, state);
@@ -106,7 +106,7 @@ static void testPendingOnCarrierLoss(server_t *state, line_t *line, buffer_pool_
     const uint32_t before  = getTickMS();
     sbuf_t        *pending = innerPacket(pool, 20, 2, 1);
     wireguardCommonSendInner(&state->engine, pending);
-    binding_t *binding = &state->bindings[0];
+    binding_t *binding = state->binding_head;
     twfRequire(binding->pending == pending && binding->pending_since - before <= getTickMS() - before,
                "stale loop time shortened the lifetime of a newly held packet");
 
@@ -150,17 +150,92 @@ static void testPendingOnCarrierLoss(server_t *state, line_t *line, buffer_pool_
 static void requireEndpoint(server_t *state, line_t *line, uint16_t port, const char *message)
 {
     server_line_t *ls = lineGetState(line, state->tunnel);
-    twfRequire(state->bindings[0].ingress == ls->ingress && state->bindings[0].usable &&
-                   state->engine.peers[0].port == port && ipAddrCmp(&state->engine.peers[0].ip, &ls->ingress->ip),
+    twfRequire(state->binding_head->ingress == ls->ingress && state->binding_head->usable &&
+                   state->engine.first_peer->port == port && ipAddrCmp(&state->engine.first_peer->ip, &ls->ingress->ip),
                message);
 }
+static void addStaticPeer(cJSON *peers, unsigned id, const char *ranges)
+{
+    const uint8_t basepoint[32] = {9};
+    uint8_t       secret[32]    = {0}, public_key[32];
+    secret[1]                   = (uint8_t) id;
+    secret[2]                   = (uint8_t) (id >> 8U);
+    char encoded[45]            = {0};
+    twfRequire(wCryptoX25519(public_key, secret, basepoint) == kWCryptoOk &&
+                   wwBase64Encode(public_key, sizeof(public_key), encoded) == 44,
+               "could not derive static peer key");
+    cJSON *peer = cJSON_CreateObject();
+    cJSON_AddStringToObject(peer, "publickey", encoded);
+    cJSON_AddStringToObject(peer, "allowedips", ranges);
+    cJSON_AddItemToArray(peers, peer);
+}
+
+static void testStaticPeerConfiguration(void)
+{
+    cJSON *settings = cJSON_CreateObject();
+    cJSON_AddStringToObject(settings, "mode", "packet");
+    cJSON_AddStringToObject(settings, "privatekey", "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=");
+    cJSON *peers = cJSON_AddArrayToObject(settings, "peers");
+    for (unsigned i = 0; i < 256; ++i)
+    {
+        char range[32];
+        snprintf(range, sizeof(range), "10.70.0.%u/32", i);
+        addStaticPeer(peers, i, range);
+    }
+    addStaticPeer(peers, 256, "10.70.1.0/31,10.70.1.1/32,198.51.100.0/24,2001:db8::/64");
+    node_t    node   = {.hash_next = 1, .node_settings_json = settings};
+    tunnel_t *server = create(&node);
+    twfRequire(server != NULL, "disjoint static peers or nested ranges of one peer were rejected");
+    server_t         *state = tunnelGetState(server);
+    wireguard_peer_t *last  = peerLookupByPeerIndex(&state->engine, 256);
+    twfRequire(last != NULL && last->context != NULL && state->engine.peer_count == 257,
+               "high-index static peer has no binding");
+    const char *targets[] = {"10.70.1.0", "10.70.1.1", "198.51.100.42", "2001:db8::1"};
+    for (unsigned i = 0; i < sizeof(targets) / sizeof(targets[0]); ++i)
+    {
+        ip_addr_t target;
+        twfRequire(ipaddr_aton(targets[i], &target) && wireguardCommonPeerForIp(&state->engine, &target) == last,
+                   "static route did not select its high-index owner");
+    }
+    destroy(server, wwLifecycleStartupRollback());
+    /* The last range overlaps an existing owner after the first range was inserted. */
+    addStaticPeer(peers, 257, "203.0.113.128/25,10.70.1.0/24");
+    twfRequire(create(&node) == NULL, "overlapping static peers survived constructor rollback");
+    cJSON_Delete(settings);
+}
+
+static void testServerLimits(void)
+{
+    server_t state = {0};
+    twfRequire(readServerLimits(&state, NULL) && state.max_unauthenticated_ingress == 1024 &&
+                   state.max_pending_rekey_bytes == 4U * 1024U * 1024U,
+               "server budget defaults changed");
+    cJSON *settings = cJSON_Parse("{\"max-unauthenticated-ingress\":1,\"max-pending-rekey-bytes\":0}");
+    twfRequire(settings != NULL && readServerLimits(&state, settings) && state.max_unauthenticated_ingress == 1 &&
+                   state.max_pending_rekey_bytes == 0,
+               "server ignored configured ingress or zero pending budget");
+    cJSON_Delete(settings);
+    const char *invalid[] = {"{\"max-unauthenticated-ingress\":0}",
+                             "{\"max-unauthenticated-ingress\":1.5}",
+                             "{\"max-pending-rekey-bytes\":-1}",
+                             "{\"max-pending-rekey-bytes\":4294967296}"};
+    for (size_t i = 0; i < sizeof(invalid) / sizeof(*invalid); ++i)
+    {
+        settings = cJSON_Parse(invalid[i]);
+        twfRequire(settings != NULL && ! readServerLimits(&state, settings), "invalid server budget was accepted");
+        cJSON_Delete(settings);
+    }
+}
+
 int main(void)
 {
+    testServerLimits();
     testCaseSet("wireguard_server_endpoint_test");
     twfRequire(userTestRuntimeInitialize(), "crypto setup failed");
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     twf_worker_env_t environment;
     twfWorkerEnvSetup(&environment, 8192, 32);
+    testStaticPeerConfiguration();
     tunnel_t *owner  = tunnelCreate(NULL, 0, 0);
     owner->fnEstD    = established;
     tunnel_t *server = tunnelCreate(NULL, sizeof(server_t), sizeof(server_line_t));
@@ -171,6 +246,7 @@ int main(void)
     state->tunnel         = server;
     mutexInit(&state->bindings_lock);
     wireguardDispatchInit(&state->dispatch);
+    twfRequire(readServerLimits(state, NULL), "server default limits failed");
     state->ingress_heads      = memoryAllocateZero(sizeof(ingress_t *));
     wireguard_device_t client = {0};
     twfRequire(wireguardCommonInit(&client,
@@ -190,15 +266,15 @@ int main(void)
         cJSON_Parse("{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\",\"allowedips\":\"0.0.0.0/0\"}");
     cJSON *server_peer =
         cJSON_Parse("{\"publickey\":\"dDUfRvZSDy8jZBsB4kQflTO+iwlLbR+jgb840fumqUM=\",\"allowedips\":\"10.0.0.1/32\"}");
-    uint8_t index;
+    size_t index;
     twfRequire(wireguardCommonAddConfiguredPeer(&client, client_peer, &index) &&
                    wireguardCommonAddConfiguredPeer(&state->engine, server_peer, &index),
                "peer setup failed");
     cJSON_Delete(client_peer);
     cJSON_Delete(server_peer);
-    state->bindings[0].occupied = true;
-    state->bindings[0].epoch    = 1;
-    sbuf_t *unbound             = innerPacket(environment.pool, 20, 2, 1);
+    twfRequire(createBinding(state, peerLookupByPeerIndex(&state->engine, index), NULL) != NULL,
+               "server peer binding failed");
+    sbuf_t *unbound = innerPacket(environment.pool, 20, 2, 1);
     wireguardCommonSendInner(&state->engine, unbound);
     wireguardCommonLoop(&state->engine);
     twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, unbound) && server_output.count == 0,
@@ -218,12 +294,12 @@ int main(void)
         twfRequire(ls->ingress != NULL && ls->ingress->port == 26960 + i,
                    "ingress used the local listener port instead of the remote source port");
     }
-    twfRequire(wireguardifStartHandshake(&client, &client.peers[0], true) == ERR_OK, "initiation failed");
+    twfRequire(wireguardifStartHandshake(&client, client.first_peer, true) == ERR_OK, "initiation failed");
     receiveOn(server, lines[0], take(&client_output));
     requireEndpoint(state, lines[0], 26960, "authenticated initiation learned the wrong endpoint");
     /* A valid cookie can cause an exact response retry, but cannot authorize the
      * different ingress from which it arrived. */
-    wireguard_peer_t      *peer = &state->engine.peers[0];
+    wireguard_peer_t      *peer = state->engine.first_peer;
     message_cookie_reply_t cookie;
     uint8_t                source[6] = {192, 0, 2, 2, 0x69, 0x47};
     twfRequire(
@@ -260,8 +336,7 @@ int main(void)
     twfRequire(output_port == 26961, "reply metadata retained the previous source port");
     exchange(server, lines[1], &client);
     testPendingOnCarrierLoss(state, lines[1], environment.pool, &client);
-    ingressRelease(state->bindings[0].ingress);
-    state->bindings[0].ingress = NULL;
+    clearBinding(state, state->binding_head);
     finishUp(server, lines[0]);
     for (unsigned i = 0; i < 2; ++i)
     {
@@ -272,6 +347,8 @@ int main(void)
                "borrowed ingress references did not settle");
     twfLinePoolTeardown(&pool);
     wireguardDeviceDestroy(&client);
+    binding_map_t_drop(&state->epochs);
+    wireguardPrefixDestroy(&state->ranges);
     wireguardDeviceDestroy(&state->engine);
     memoryFree(state->ingress_heads);
     mutexDestroy(&state->bindings_lock);

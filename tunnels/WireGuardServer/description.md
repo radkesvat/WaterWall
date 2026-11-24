@@ -9,7 +9,7 @@ what it delivers to the next node.
 | | `packet` | `connection` |
 | --- | --- | --- |
 | Use case | Deliver inner IP packets to a TUN interface or another L3 node. | Open outbound TCP connections and UDP associations for authenticated accounts. |
-| Peer configuration | One to 32 static peers with non-overlapping allowed ranges. A preshared key is optional. | A named `AuthenticationClient` supplies accounts. Static peers and preshared keys are rejected. |
+| Peer configuration | One or more static peers with non-overlapping allowed ranges. A preshared key is optional. | A named `AuthenticationClient` supplies accounts. Static peers and preshared keys are rejected. |
 | Inner traffic | Raw IP packets. The example uses IPv4 with `TunDevice`. | Unfragmented IPv4 TCP and UDP. IPv6, ICMP and fragment reassembly are unsupported. |
 | Host networking | The OS handles routes, forwarding and any required NAT when a TUN interface is used. | An outbound adapter opens sockets for each flow. The server needs no TUN interface or NAT for this path. |
 
@@ -97,10 +97,12 @@ including one trailing `=`.
 | --- | --- | --- |
 | `mode` | Both | Required. Use `"packet"` or `"connection"`. |
 | `privatekey` | Both | Required local WireGuard private key. |
-| `peers` | Packet | Required array of 1–32 peers. Omit in connection mode. |
+| `peers` | Packet | Required nonempty array of static peers. Omit in connection mode. |
 | `auth-client-node-name` | Connection | Required name of the `AuthenticationClient` node. Omit in packet mode. |
+| `max-unauthenticated-ingress` | Both | Maximum live UDP endpoints awaiting peer authentication. Range 1–2147483647, default 1024. |
+| `max-pending-rekey-bytes` | Both | Total allocated bytes the server can retain for packets awaiting new keys. Range 0–4294967295, default 4194304 (4 MiB). Set to 0 to disable retention. |
 | `udp-idle-timeout-ms` | Connection | Idle timeout for an inner UDP association. Range 1–4294967295 ms, default 300000 ms. |
-| `mtu` and pending-byte settings | Connection | Follow the [PacketsToConnection settings](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/PacketsToConnection). |
+| `mtu` and `max-pending-bytes` | Connection | Follow the [PacketsToConnection settings](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/PacketsToConnection). |
 
 Each static peer requires `publickey` and `allowedips`. The latter is a
 comma-separated string of up to 16 CIDRs. It authorizes source addresses on
@@ -146,15 +148,16 @@ accounting. Handshakes, keepalives and encrypted overhead do not consume those
 quotas. Packet mode uses static peer authorization without account limits.
 
 Connection-mode peer admission requires a valid handshake against an eligible
-account. There are at most 32 active, provisional and retiring bindings.
-Capacity refusal leaves existing sessions and the account table in place.
+account. The server allocates peer state on demand as clients authenticate.
+Both server modes support a dynamically sized peer table. Available memory
+and processing capacity determine how many peers a node can serve.
 Every 400 ms, subject to owner-loop scheduling, the server rechecks each active
 peer's account, including quiet peers. Account expiry or a locally exhausted
 traffic quota starts retirement even when the account table has the same version.
 New handshakes and flows also check eligibility. An unchanged, eligible account
 keeps its binding across a refresh. A change of key, range or account owner
-starts retirement. The slot and address range become available after all workers
-finish cleanup successfully. Reuse requires a fresh authenticated handshake.
+starts retirement. The server releases the binding and its address range after
+all workers finish cleanup successfully. Reuse requires a fresh authenticated handshake.
 A failed retirement keeps the range reserved until node shutdown.
 
 Existing authenticated peers can continue under cached account enforcement and
@@ -169,7 +172,11 @@ packet for up to 90 seconds with a 128 KiB allocation limit per peer. Further
 packets may be dropped while it waits. It sends the retained packet when it has
 a usable key and the binding and ingress line remain current.
 
-The server permits up to 1024 live UDP ingress lines. Cross-worker packet work
+A new UDP endpoint uses one unauthenticated ingress slot until it proves a peer.
+Several peers can share an authenticated endpoint. After its last peer retires
+or moves, that endpoint may wait for a new proof. When slots run out, the
+server can close one of these unused endpoints to admit a new arrival.
+Endpoints still serving a peer keep their association. Cross-worker packet work
 is bounded to 512 messages and 8 MiB of retained allocation per node, with
 excess input or output dropped. See
 [packet ownership](https://radkesvat.github.io/WaterWall-Docs/docs/devguides/part4-packet-tunnels#wireguard-authenticated-packet-to-connection-ownership)

@@ -1,4 +1,4 @@
-#include "WireGuardCommon/engine.h"
+#include "peer_store.h"
 
 #include "loggers/network_logger.h"
 
@@ -79,6 +79,8 @@ static void wireguardifSendHandshakeCookie(wireguard_device_t *device, const uin
 static bool updatePeerAddr(wireguard_device_t *device, wireguard_peer_t *peer, const receive_source_t *source)
 {
     if (device->callbacks.authenticated != NULL && ! device->callbacks.authenticated(device->context, peer))
+        return false;
+    if (! peer->valid)
         return false;
     ++peer->authenticated_receives;
     peer->unanswered_interval_ms = 0;
@@ -200,6 +202,7 @@ static void wireguardifProcessDataMessage(wireguard_device_t *device, wireguard_
     {
         // Reject-After-Time has passed for this keypair. Drop this packet and force a new handshake.
         keypairDestroy(keypair);
+        wireguardPeerSyncReceivers(peer);
         goto finish;
     }
 
@@ -446,6 +449,7 @@ static void receive(wireguard_device_t *device, sbuf_t *p, const receive_source_
     message_cookie_reply_t         *msg_cookie;
     message_transport_data_t       *msg_data;
 
+    wireguardBeginProcessing(device);
     uint8_t type = wireguardGetMessageType(data, len);
 
     switch (type)
@@ -520,7 +524,7 @@ static void receive(wireguard_device_t *device, sbuf_t *p, const receive_source_
         // Unknown or bad packet header
         break;
     }
-    // Release data!
+    wireguardEndProcessing(device);
     reuseBuffer(p);
 }
 

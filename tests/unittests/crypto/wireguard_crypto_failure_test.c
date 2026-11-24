@@ -359,8 +359,11 @@ static void testClearHandshakeStateErasesActiveAndPendingState(void)
 
 static void testDeviceDestroyErasesSecrets(void)
 {
-    wireguard_device_t device;
-    memset(&device, 0xa5, sizeof(device));
+    wireguard_device_t device = {0};
+    memset(device.private_key, 0xa5, sizeof(device.private_key));
+    memset(device.cookie_secret, 0xa5, sizeof(device.cookie_secret));
+    memset(device.label_cookie_key, 0xa5, sizeof(device.label_cookie_key));
+    memset(device.label_mac1_key, 0xa5, sizeof(device.label_mac1_key));
     wireguardDeviceDestroy(&device);
     require(isAllZero(&device, sizeof(device)), "WireGuard device destruction retained secret state");
 }
@@ -400,8 +403,8 @@ static void testConfiguredKeysRejectMalformedBase64(void)
         require(wireguardCommonInit(&device, private_key_base64, NULL, (wireguard_callbacks_t) {0}),
                 "valid private key failed after malformed key rejection");
 
-        uint8_t index    = WIREGUARDIF_INVALID_INDEX;
-        cJSON  *settings = configuredPeer(invalid[i], NULL);
+        size_t index    = WIREGUARDIF_INVALID_INDEX;
+        cJSON *settings = configuredPeer(invalid[i], NULL);
         require(! wireguardCommonAddConfiguredPeer(&device, settings, &index),
                 "WireGuard accepted a malformed configured public key");
         cJSON_Delete(settings);
@@ -416,10 +419,7 @@ static void testConfiguredKeysRejectMalformedBase64(void)
         peer.public_key = (const uint8_t *) invalid[i];
         require(wireguardifAddPeer(&device, &peer, &index) == ERR_ARG,
                 "WireGuard peer helper accepted a malformed public key");
-        for (size_t p = 0; p < WIREGUARD_MAX_PEERS; ++p)
-        {
-            require(! device.peers[p].valid, "malformed key published a peer");
-        }
+        require(device.peer_count == 0 && device.first_peer == NULL, "malformed key published a peer");
         wireguardDeviceDestroy(&device);
     }
     checking_key_decode = false;
@@ -440,11 +440,11 @@ static void testConfiguredKeysAcceptCanonicalBase64(void)
     checking_key_decode = true;
     require(wireguardCommonInit(&device, private_key_base64, NULL, (wireguard_callbacks_t) {0}),
             "WireGuard rejected a canonical private key");
-    uint8_t index    = WIREGUARDIF_INVALID_INDEX;
+    size_t  index    = WIREGUARDIF_INVALID_INDEX;
     cJSON  *settings = configuredPeer(public_key_base64, encoded);
-    require(wireguardCommonAddConfiguredPeer(&device, settings, &index) && index < WIREGUARD_MAX_PEERS &&
-                device.peers[index].valid &&
-                memcmp(device.peers[index].preshared_key, preshared, sizeof(preshared)) == 0,
+    require(wireguardCommonAddConfiguredPeer(&device, settings, &index) &&
+                peerLookupByPeerIndex(&device, index) != NULL &&
+                memcmp(peerLookupByPeerIndex(&device, index)->preshared_key, preshared, sizeof(preshared)) == 0,
             "WireGuard rejected or changed canonical configured keys");
     cJSON_Delete(settings);
     require(wireguardifRemovePeer(&device, index) == ERR_OK, "configured peer removal failed");
@@ -453,8 +453,7 @@ static void testConfiguredKeysAcceptCanonicalBase64(void)
     wireguardifPeerInit(&peer);
     peer.public_key    = (const uint8_t *) public_key_base64;
     peer.preshared_key = preshared;
-    require(wireguardifAddPeer(&device, &peer, &index) == ERR_OK && index < WIREGUARD_MAX_PEERS &&
-                device.peers[index].valid,
+    require(wireguardifAddPeer(&device, &peer, &index) == ERR_OK && peerLookupByPeerIndex(&device, index) != NULL,
             "WireGuard peer helper rejected a canonical public key");
     wireguardDeviceDestroy(&device);
     checking_key_decode = false;
