@@ -15,7 +15,8 @@ void udplistenerTunnelDownStreamPayload(tunnel_t *t, line_t *l, sbuf_t *buf)
             return;
         }
         localidletableKeepIdleItemForAtleast(udpsockGetWorkerIdleTable(ls->uio), ls->idle_handle, kUdpKeepExpireTime);
-        postUdpWrite(ls->uio, lineGetWID(l), buf, ls->peer_addr);
+        postUdpWriteFrom(
+            ls->uio, lineGetWID(l), buf, ls->peer_addr, ls->route_reply ? (sockaddr_u) {0} : ls->reply_source);
         return;
     }
 

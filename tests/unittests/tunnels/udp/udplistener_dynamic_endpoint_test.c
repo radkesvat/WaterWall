@@ -968,6 +968,8 @@ static void testStaticSpliceRetirement(void)
         wioSetCallBackClose(io, retireStaticFixtureSocket);
         sockaddr_u peer;
         sockaddrSetIpAddressPort(&peer, "127.0.0.1", 32001);
+        sockaddr_u local;
+        sockaddrSetIpAddressPort(&local, "127.0.0.1", 32000);
         line_t *lines[2];
         for (wid_t wid = 0; wid < 2; ++wid)
         {
@@ -975,7 +977,7 @@ static void testStaticSpliceRetirement(void)
             lines[wid] = lineCreate(tunnelchainGetLinePools(chain), wid);
             lineRef(lines[wid]);
             udplistener_lstate_t *ls = lineGetState(lines[wid], source);
-            udplistenerLinestateInitialize(ls, lines[wid], source, &socket, 32000, &peer, &peer);
+            udplistenerLinestateInitialize(ls, lines[wid], source, &socket, &peer, &local, &local);
             ls->idle_handle = localidletableCreateItem(
                 udpsockGetWorkerIdleTable(&socket), 1, ls, udplistenerOnConnectionExpire, 30000);
         }

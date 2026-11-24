@@ -75,11 +75,11 @@ typedef struct udp_payload_s
     tunnel_t  *tunnel;
     sbuf_t    *buf;
     sockaddr_u peer_addr;
-    // Local destination snapshot for listen-aware UDP dispatch; wildcard sockets may report a wildcard address.
+    // Received destination with the logical listener port.
     sockaddr_u real_localaddr;
     uint16_t   real_localport;
     wid_t      wid;
-
+    sockaddr_u reply_source;
 } udp_payload_t;
 
 /**
@@ -228,3 +228,6 @@ void socketManagerBuildRedirectCommand(char *out, size_t out_len, const char *to
  * @param peer_addr Peer address.
  */
 void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr);
+
+// Reply from the line's local address on the original listener socket.
+void postUdpWriteFrom(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr, sockaddr_u local_addr);

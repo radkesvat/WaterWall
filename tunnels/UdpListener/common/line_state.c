@@ -13,19 +13,17 @@ void udplistenerRequireCurrentLineWorker(const line_t *l, const char *callback_n
 }
 
 void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_t *t, udpsock_t *uio,
-                                    uint16_t real_localport, const sockaddr_u *peer_addr, const sockaddr_u *local_addr)
+                                    const sockaddr_u *peer_addr, const sockaddr_u *local_addr,
+                                    const sockaddr_u *reply_source)
 {
     assert(peer_addr != NULL);
     assert(local_addr != NULL);
 
     addresscontextFromSockAddrWithProtocol(&(l->routing_context.src_ctx), peer_addr, IP_PROTO_UDP);
     l->routing_context.peer_source_port = sockaddrPort((sockaddr_u *) peer_addr);
-    addresscontextSetPort(&(l->routing_context.src_ctx), real_localport);
-
-    sockaddr_u effective_local_addr = *local_addr;
-    sockaddrSetPort(&effective_local_addr, real_localport);
-    addresscontextFromSockAddrWithProtocol(&(l->routing_context.dest_ctx), &effective_local_addr, IP_PROTO_UDP);
-
+    addresscontextFromSockAddrWithProtocol(&l->routing_context.dest_ctx, local_addr, IP_PROTO_UDP);
+    const uint16_t real_localport = l->routing_context.dest_ctx.port;
+    addresscontextSetPort(&l->routing_context.src_ctx, real_localport);
     l->routing_context.local_listener_port = real_localport;
 
     *ls = (udplistener_lstate_t) {.line             = l,
@@ -38,12 +36,14 @@ void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_
                                   .listener_fd      = uio->listener_fd,
                                   .read_paused      = false,
                                   .peer_addr        = *peer_addr,
-                                  .local_addr       = effective_local_addr};
+                                  .local_addr       = *local_addr,
+                                  .reply_source     = *reply_source,
+                                  .route_reply      = udpReplySourceNeedsRoute(reply_source)};
 
     if (loggerCheckWriteLevel(getNetworkLogger(), LOG_LEVEL_DEBUG))
     {
 
-        sockaddr_u log_localaddr = effective_local_addr;
+        sockaddr_u log_localaddr = *local_addr;
 
         char localaddrstr[SOCKADDR_STRLEN] = {0};
         char peeraddrstr[SOCKADDR_STRLEN]  = {0};

@@ -68,7 +68,9 @@ typedef struct udplistener_lstate_s
     local_idle_item_t                    *idle_handle;
     int                                   listener_fd;
     sockaddr_u                            peer_addr;  // peer address of the connection
-    sockaddr_u                            local_addr; // local destination snapshot used for idle identity
+    sockaddr_u                            local_addr; // Received destination and logical port for static line identity.
+    sockaddr_u                            reply_source;
+    bool                                  route_reply : 1;
     bool                                  read_paused : 1;
 } udplistener_lstate_t;
 
@@ -96,7 +98,8 @@ void udplistenerTunnelDownStreamPause(tunnel_t *t, line_t *l);
 void udplistenerTunnelDownStreamResume(tunnel_t *t, line_t *l);
 
 void udplistenerLinestateInitialize(udplistener_lstate_t *ls, line_t *l, tunnel_t *t, udpsock_t *uio,
-                                    uint16_t real_localport, const sockaddr_u *peer_addr, const sockaddr_u *local_addr);
+                                    const sockaddr_u *peer_addr, const sockaddr_u *local_addr,
+                                    const sockaddr_u *reply_source);
 void udplistenerLinestateDestroy(udplistener_lstate_t *ls);
 void udplistenerRequireCurrentLineWorker(const line_t *l, const char *callback_name);
 

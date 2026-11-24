@@ -1,0 +1,56 @@
+{
+  "name": "udp-listener-wildcard-reply-source",
+  "nodes": [
+    {
+      "name": "listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "0.0.0.0",
+        "port": 26752
+      },
+      "next": "backend"
+    },
+    {
+      "name": "backend",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26753
+      }
+    },
+    {
+      "name": "exact-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26752
+      },
+      "next": "exact-backend"
+    },
+    {
+      "name": "exact-backend",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26757
+      }
+    },
+    {
+      "name": "dual-stack-listener",
+      "type": "UdpListener",
+      "settings": {
+        "address": "::",
+        "port": 26754
+      },
+      "next": "dual-stack-backend"
+    },
+    {
+      "name": "dual-stack-backend",
+      "type": "UdpConnector",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26753
+      }
+    }
+  ]
+}

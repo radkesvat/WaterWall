@@ -26,7 +26,7 @@
           {
             "publickey": "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=",
             "allowedips": "0.0.0.0/0",
-            "endpoint": "127.0.0.1:26751",
+            "endpoint": "127.0.0.2:26751",
             "persistentkeepalive": 1
           }
         ]
@@ -45,7 +45,7 @@
       "name": "udp-server",
       "type": "UdpListener",
       "settings": {
-        "address": "127.0.0.1",
+        "address": "0.0.0.0",
         "port": 26751
       },
       "next": "wg-server"

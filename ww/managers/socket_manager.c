@@ -15,6 +15,7 @@
 #include "wfrand.h"
 #include "widle_table.h"
 #include "wloop.h"
+#include "wloop_internal.h"
 #include "wmutex.h"
 #include "wproc.h"
 #include "wthread.h"
@@ -1857,7 +1858,7 @@ static listener_endpoint_t *createTcpListener(wloop_t *loop, socket_filter_t *fi
  * After publication, read-setup failure closes the socket but leaves its
  * endpoint and side-data owned by reg for rollback.
  */
-static listener_endpoint_t *createUdpListener(wloop_t *loop, socket_filter_t *filter, char *host, uint16_t port,
+static listener_endpoint_t *createUdpEndpoint(wloop_t *loop, socket_filter_t *filter, const char *host, uint16_t port,
                                               endpoint_registry_t *reg, wread_cb callback, bool stop_on_read_failure)
 {
     listener_endpoint_t *endpoint = prepareEndpoint(reg, filter, IPPROTO_UDP, port);
@@ -1870,13 +1871,13 @@ static listener_endpoint_t *createUdpListener(wloop_t *loop, socket_filter_t *fi
         releaseUnpublishedEndpoint(endpoint);
         return NULL;
     }
-    wio_t *io = wloopCreateUdpServerWithBufferOptions(loop,
-                                                      bind_host,
-                                                      port,
-                                                      filter->option.interface_name,
-                                                      filter->option.fwmark,
-                                                      filter->option.send_buffer_size,
-                                                      filter->option.recv_buffer_size);
+    wio_t *io = wloopCreateUdpListener(loop,
+                                       bind_host,
+                                       port,
+                                       filter->option.interface_name,
+                                       filter->option.fwmark,
+                                       filter->option.send_buffer_size,
+                                       filter->option.recv_buffer_size);
     if (io == NULL)
     {
         releaseUnpublishedEndpoint(endpoint);
@@ -1895,6 +1896,39 @@ static listener_endpoint_t *createUdpListener(wloop_t *loop, socket_filter_t *fi
         }
         return NULL;
     }
+    return endpoint;
+}
+
+static listener_endpoint_t *createUdpListener(wloop_t *loop, socket_filter_t *filter, const char *host, uint16_t port,
+                                              endpoint_registry_t *reg, wread_cb callback, bool stop_on_read_failure)
+{
+    listener_endpoint_t *endpoint = createUdpEndpoint(loop, filter, host, port, reg, callback, stop_on_read_failure);
+#ifdef OS_NETBSD
+    // NetBSD omits destination packet info for IPv4 datagrams on an IPv6 socket.
+    // The IPv6-only socket and the IPv4 socket use the same logical filter selection.
+    if (endpoint == NULL)
+        return NULL;
+    const sockaddr_u *bound = wioGetLocaladdrU(endpoint->listen_io);
+    if (bound->sa.sa_family == AF_INET6 && IN6_IS_ADDR_UNSPECIFIED(&bound->sin6.sin6_addr))
+    {
+        socket_filter_t ipv4        = *filter;
+        char            ipv4_host[] = "0.0.0.0";
+        ipv4.option.host            = ipv4_host;
+        ipv4.bind_endpoint_ready    = false;
+        listener_endpoint_t *shared = endpointRegistryFind(reg, IPPROTO_UDP, &ipv4, endpoint->port);
+        if (shared != NULL)
+            ensureUdpSharedEndpointCompatible(shared, &ipv4, ipv4.option.host, endpoint->port);
+        else if (createUdpEndpoint(
+                     loop, &ipv4, ipv4.option.host, endpoint->port, reg, callback, stop_on_read_failure) == NULL)
+        {
+            // Retire the IPv6 half too. The caller handles a refused port like any other bind failure.
+            wioClose(endpoint->listen_io);
+            return NULL;
+        }
+        if (startupFailurePending())
+            return NULL; // The registry owns both published sockets through rollback.
+    }
+#endif
     return endpoint;
 }
 
@@ -2300,25 +2334,37 @@ static void distributeUdpPayload(const udp_payload_t pl, const listener_endpoint
 }
 
 /**
- * @brief UDP read callback for single-port listeners.
+ * @brief Snapshot both endpoints before handing this datagram off to its line worker.
  */
-static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
+static void dispatchReceivedUdpDatagram(wio_t *io, sbuf_t *buf, uint16_t local_port)
 {
-    listener_endpoint_t *endpoint    = weventGetUserdata(io);
-    udpsock_t           *socket      = endpoint->udp_socket;
-    sockaddr_u local_addr  = *wioGetLocaladdrU(io);
-    uint16_t   local_port  = sockaddrPort(&local_addr);
-    uint16_t   remote_port = sockaddrPort(wioGetPeerAddrU(io));
-    wid_t      target_wid  = (wid_t) remote_port % (getWorkersCount());
+    listener_endpoint_t *endpoint = weventGetUserdata(io);
+    sockaddr_u           local_addr;
+    sockaddr_u           reply_source;
+    if (! wioGetDatagramLocalAddresses(io, &local_addr, &reply_source))
+    {
+        bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
+        return;
+    }
+    // Redirects keep the logical listener port independently of the physical reply socket.
+    sockaddrSetPort(&local_addr, local_port);
+    sockaddr_u *peer_addr  = wioGetPeerAddrU(io);
+    wid_t       target_wid = (wid_t) sockaddrPort(peer_addr) % getWorkersCount();
 
-    udp_payload_t item = (udp_payload_t) {.sock           = socket,
+    udp_payload_t item = (udp_payload_t) {.sock           = endpoint->udp_socket,
                                           .buf            = buf,
                                           .wid            = target_wid,
-                                          .peer_addr      = *wioGetPeerAddrU(io),
+                                          .peer_addr      = *peer_addr,
                                           .real_localaddr = local_addr,
-                                          .real_localport = local_port};
+                                          .real_localport = local_port,
+                                          .reply_source   = reply_source};
 
     distributeUdpPayload(item, endpoint);
+}
+
+static void onUdpPacketReceived(wio_t *io, sbuf_t *buf)
+{
+    dispatchReceivedUdpDatagram(io, buf, sockaddrPort(wioGetLocaladdrU(io)));
 }
 
 /**
@@ -2328,12 +2374,7 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
 {
 
 #ifdef OS_UNIX
-    listener_endpoint_t *endpoint        = weventGetUserdata(io);
-    udpsock_t           *socket          = endpoint->udp_socket;
-    sockaddr_u local_addr      = *wioGetLocaladdrU(io);
-    uint16_t   remote_port     = sockaddrPort(wioGetPeerAddrU(io));
-    wid_t      target_wid      = (wid_t) remote_port % (getWorkersCount());
-    uint16_t   real_local_port = sockaddrPort(&local_addr); // default fallback
+    uint16_t real_local_port = sockaddrPort(wioGetLocaladdrU(io)); // default fallback
 
     ip_addr_t paddr;
     if (sockaddrToIpAddr(wioGetPeerAddrU(io), &paddr))
@@ -2358,17 +2399,7 @@ static void onUdpPacketReceivedMultiPort(wio_t *io, sbuf_t *buf)
         }
     }
 
-    // UDP redirects recover the original port only; specific-address iptables ranges are rejected at startup.
-    sockaddrSetPort(&local_addr, real_local_port);
-
-    udp_payload_t item = (udp_payload_t) {.sock           = socket,
-                                          .buf            = buf,
-                                          .wid            = target_wid,
-                                          .peer_addr      = *wioGetPeerAddrU(io),
-                                          .real_localaddr = local_addr,
-                                          .real_localport = real_local_port};
-
-    distributeUdpPayload(item, endpoint);
+    dispatchReceivedUdpDatagram(io, buf, real_local_port);
 #else
     onUdpPacketReceived(io, buf);
 #endif
@@ -2590,9 +2621,16 @@ static void listenUdp(wloop_t *loop, endpoint_registry_t *reg)
     }
 }
 
-/**
- * @brief Run a UDP write on the socket-manager worker.
- */
+static void writeUdpDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr, const sockaddr_u *local_addr)
+{
+    if (local_addr->sa.sa_family == AF_UNSPEC || sockaddrCmpIP(wioGetLocaladdrU(io), local_addr))
+    {
+        discard wioWriteDatagram(io, buf, peer_addr);
+        return;
+    }
+    discard wioWriteDatagramFrom(io, buf, peer_addr, local_addr);
+}
+
 static void runUdpWriteCallback(void *worker_ptr, void *arg1, void *arg2, void *arg3)
 {
     discard worker_ptr;
@@ -2609,8 +2647,7 @@ static void runUdpWriteCallback(void *worker_ptr, void *arg1, void *arg2, void *
         return;
     }
 
-    int     nwrite = wioWriteDatagram(sock->io, upl->buf, &upl->peer_addr);
-    discard nwrite;
+    writeUdpDatagram(sock->io, upl->buf, &upl->peer_addr, &upl->reply_source);
     udppayloadDestroy(upl);
 }
 
@@ -2631,7 +2668,7 @@ static void cleanupUdpWriteDispatch(void *arg1, void *arg2, void *arg3, worker_m
     }
 }
 
-void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr)
+void postUdpWriteFrom(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr, sockaddr_u local_addr)
 {
     if (wid_from == socketmanager_gstate->wid)
     {
@@ -2640,17 +2677,22 @@ void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u 
             reuseBuffer(buf);
             return;
         }
-        int     nwrite = wioWriteDatagram(socket_io->io, buf, &peer_addr);
-        discard nwrite;
+        writeUdpDatagram(socket_io->io, buf, &peer_addr, &local_addr);
         return;
     }
 
     udp_payload_t *item = newUdpPayload(wid_from);
 
-    *item = (udp_payload_t) {.sock = socket_io, .buf = buf, .wid = wid_from, .peer_addr = peer_addr};
+    *item = (udp_payload_t) {
+        .sock = socket_io, .buf = buf, .wid = wid_from, .peer_addr = peer_addr, .reply_source = local_addr};
 
     sendWorkerMessageForceQueueBestEffortWithCleanup(
         socketmanager_gstate->wid, runUdpWriteCallback, cleanupUdpWriteDispatch, item, NULL, NULL);
+}
+
+void postUdpWrite(udpsock_t *socket_io, wid_t wid_from, sbuf_t *buf, sockaddr_u peer_addr)
+{
+    postUdpWriteFrom(socket_io, wid_from, buf, peer_addr, (sockaddr_u) {0});
 }
 
 struct socket_manager_s *socketmanagerGet(void)

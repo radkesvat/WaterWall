@@ -29,11 +29,12 @@ static bool udpEndpointEquals(const sockaddr_u *left, const sockaddr_u *right)
     return sockaddrPort(&left_copy) == sockaddrPort(&right_copy);
 }
 
-static bool idleLineMatchesPacket(const udplistener_lstate_t *ls, tunnel_t *t, const sockaddr_u *peer_addr,
-                                  const sockaddr_u *local_addr)
+static bool idleLineMatchesPacket(const udplistener_lstate_t *ls, const udp_payload_t *data)
 {
-    return ls != NULL && ls->tunnel == t && udpEndpointEquals(&ls->peer_addr, peer_addr) &&
-           udpEndpointEquals(&ls->local_addr, local_addr);
+    return ls != NULL && ls->tunnel == data->tunnel && udpEndpointEquals(&ls->peer_addr, &data->peer_addr) &&
+           udpEndpointEquals(&ls->local_addr, &data->real_localaddr) &&
+           (data->reply_source.sa.sa_family == AF_UNSPEC ? ls->reply_source.sa.sa_family == AF_UNSPEC
+                                                         : sockaddrCmpIP(&ls->reply_source, &data->reply_source));
 }
 
 // payload that comes here has passed filtering (whitelist, etc that we gave socketmanager) and is ready to be processed
@@ -45,7 +46,6 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     tunnel_t           *t              = data->tunnel;
     wid_t               wid            = data->wid;
     sbuf_t             *buf            = data->buf;
-    uint16_t            real_localport = data->real_localport;
     if (udpsockIsRetired(sock))
     {
         bufferpoolReuseBuffer(getWorkerBufferPool(wid), buf);
@@ -70,13 +70,17 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
     hash_t idle_key       = peeraddr_hash;
     idle_key ^= localaddr_hash + 0x9E3779B97F4A7C15ULL + (idle_key << 6) + (idle_key >> 2);
     idle_key ^= tunnel_hash + 0x9E3779B97F4A7C15ULL + (idle_key << 6) + (idle_key >> 2);
+    // A group destination can receive packets for the same peer on different local return paths.
+    if (data->reply_source.sa.sa_family != AF_UNSPEC && ! sockaddrCmpIP(&data->reply_source, &data->real_localaddr))
+        idle_key ^=
+            sockaddrCalcHashWithPort(&data->reply_source) + 0x9E3779B97F4A7C15ULL + (idle_key << 6) + (idle_key >> 2);
 
     local_idle_item_t *idle = localidletableGetIdleItemByHash(table, idle_key);
     // A hash hit must match the full identity; otherwise this is a collision and must fail closed.
     if (idle != NULL)
     {
         udplistener_lstate_t *existing = idle->userdata;
-        if (! idleLineMatchesPacket(existing, t, &data->peer_addr, &data->real_localaddr))
+        if (! idleLineMatchesPacket(existing, data))
         {
             LOGW("UdpListener: dropping datagram: peer idle-key collision (worker=%u, packet_bytes=%zu)",
                  (unsigned) wid,
@@ -106,7 +110,7 @@ void onUdpListenerFilteredPayloadReceived(wevent_t *ev)
 
         udplistener_lstate_t *ls = lineGetState(l, t);
 
-        udplistenerLinestateInitialize(ls, l, t, sock, real_localport, &data->peer_addr, &data->real_localaddr);
+        udplistenerLinestateInitialize(ls, l, t, sock, &data->peer_addr, &data->real_localaddr, &data->reply_source);
 
         idle->userdata  = ls;
         ls->idle_handle = idle;
