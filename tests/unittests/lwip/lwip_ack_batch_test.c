@@ -821,6 +821,22 @@ static void gapRecovery(void)
     }
 }
 
+static void reorderedFin(void)
+{
+    fixture_t     *f    = start(false);
+    const uint32_t base = f->peer_next;
+    inject(f, base + 64, TCP_FIN | TCP_ACK, 0);
+    CHECK(f->last_ack == base && f->pcb->state == ESTABLISHED);
+    CHECK(f->received == 0 && f->fins == 0);
+
+    data(f, 32);
+    CHECK(f->received == 32 && f->fins == 0 && f->last_ack == base + 32);
+    data(f, 32);
+    CHECK(f->received == 64 && f->fins == 1 && f->last_ack == base + 65);
+    CHECK(f->pcb->state == CLOSE_WAIT && f->pcb->ooseq == NULL);
+    stop(f);
+}
+
 static void piggybackAndRetirement(void)
 {
     fixture_t *f = start(true);
@@ -954,6 +970,8 @@ int main(void)
     recoveryAndControl();
     testCaseSet("gap recovery ACKs with and without batching");
     gapRecovery();
+    testCaseSet("reordered FIN waits for all preceding data");
+    reorderedFin();
     testCaseSet("piggyback and queued PCB retirement");
     piggybackAndRetirement();
     testCaseSet("retire queued middle and head connections");

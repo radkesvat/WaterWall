@@ -318,6 +318,18 @@ static void gapRanges(uint32_t initial_sequence)
     stop(f);
 }
 
+static void sackAtReceiveWindowEdge(void)
+{
+    fixture_t     *f    = start(100, permission_valid, false);
+    const uint32_t edge = f->pcb->ww_rcv_advertised_edge;
+    CHECK(f->pcb->ww_rcv_advertised_valid && edge == f->peer_next + f->pcb->rcv_wnd);
+    inject(f, edge - 32, TCP_ACK, 64, permission_none);
+    expectAck(f, 1, f->peer_next, 1);
+    expectRange(f, 0, edge - 32, edge);
+    CHECK(f->received == 0);
+    stop(f);
+}
+
 static void boundedRetention(void)
 {
     fixture_t     *f    = start(100, permission_valid, false);
@@ -437,6 +449,8 @@ int main(void)
     gapRanges(100);
     testCaseSet("selective gap ranges across sequence wrap");
     gapRanges(UINT32_MAX - 192U);
+    testCaseSet("SACK covers only data inside the receive window");
+    sackAtReceiveWindowEdge();
     testCaseSet("bounded out-of-order eviction and cumulative recovery");
     boundedRetention();
     testCaseSet("four wire SACK ranges retain the most recent gaps");
