@@ -118,7 +118,7 @@ static void authenticate(wg_server_fixture_t *f, wireguard_device_t *client, con
     wireguard_peer_t *peer       = peerLookupByPeerIndex(client, id);
     f->ingress[lineGetWID(line)] = line;
     twfRequire(wireguardifStartHandshake(client, peer, true) == ERR_OK, "scale client initiation failed");
-    wgServerFixtureExchangeClient(f, client, 0);
+    wgServerFixtureExchangeClientOnWorker(f, client, lineGetWID(line), 0);
     const wireguard_peer_t *server_side = peerLookupByPubkey(&f->state->engine, client->public_key);
     twfRequire(server_side != NULL && server_side->curr_keypair.valid && peer->curr_keypair.valid,
                "authenticated session keys missing");
@@ -135,7 +135,7 @@ static void roundTrip(wg_server_fixture_t *f, wireguard_device_t *client, line_t
     twfRequire(calcFullPacketChecksum(bytes, 29), "scale packet checksum failed");
     const unsigned before = received;
     wireguardCommonSendInner(client, packet);
-    wgServerFixtureExchangeClient(f, client, 0);
+    wgServerFixtureExchangeClientOnWorker(f, client, lineGetWID(line), 0);
     twfRequire(received == before + 1 && echoed == received, "authenticated UDP round trip failed");
 }
 
@@ -186,7 +186,8 @@ static void orphanAdmissionPressure(void)
     cJSON             *server_peer = cJSON_Parse(server_peer_settings);
     for (unsigned i = 0; i < 6; ++i)
     {
-        lines[i] = i == 5 ? lines[4] : openIngress(&f, 1, (uint16_t) (kPortBase + i));
+        const wid_t owner = i == 1 ? 0 : 1;
+        lines[i]          = i == 5 ? lines[4] : openIngress(&f, owner, (uint16_t) (kPortBase + i));
         twfRequire(lines[i] != NULL, "pressure fixture ingress refused");
         authenticate(&f, &clients[i], addAccount(&f, i), server_peer, lines[i]);
         if (i < 4)
@@ -203,10 +204,17 @@ static void orphanAdmissionPressure(void)
     twfRequire(f.state->unauthenticated_ingress == 2 && lineIsAlive(lines[4]), "last-binding demotion lost a slot");
     roundTrip(&f, &clients[5], lines[5], 5);
 
-    /* The server and both loops remain live, but this worker temporarily
-     * refuses submissions. No failed close may transfer a waiting slot. */
+    /* Worker 1 refuses closes while worker 0 can settle the other unused
+     * endpoint. New arrivals must reach it without reopening worker 1. */
     workerMessagesCloseAdmission(&f.env.workers[1]);
-    twfRequire(openIngress(&f, 0, 11000) == NULL, "failed eviction transferred an occupied slot");
+    line_t *elsewhere = openIngress(&f, 0, 11000);
+    if (elsewhere == NULL)
+        elsewhere = openIngress(&f, 0, 11000);
+    twfRequire(elsewhere != NULL, "unavailable worker prevented another worker from reclaiming its endpoint");
+    wgServerFixturePump(&f);
+    twfRequire(lineIsAlive(lines[0]) && ! lineIsAlive(lines[1]) && f.state->unauthenticated_ingress == 2 &&
+                   openIngress(&f, 0, 11002) == NULL,
+               "a refused close transferred the wrong endpoint or waiting slot");
     for (unsigned i = 2; i <= 3; ++i)
     {
         f.ingress[1]           = lines[5];
@@ -223,10 +231,8 @@ static void orphanAdmissionPressure(void)
     discard tosSetCurrentWorker(0);
     twfRequire(workerMessagesOpenAdmission(&f.env.workers[1]), "could not resume owner queue");
 
-    line_t *elsewhere = openIngress(&f, 0, 11000);
-    line_t *newcomer  = openIngress(&f, 1, 11001);
-    twfRequire(elsewhere != NULL && newcomer != NULL && openIngress(&f, 0, 11002) == NULL &&
-                   f.state->unauthenticated_ingress == 2,
+    line_t *newcomer = openIngress(&f, 1, 11001);
+    twfRequire(newcomer != NULL && openIngress(&f, 0, 11002) == NULL && f.state->unauthenticated_ingress == 2,
                "fresh ingress failed to reclaim only charged orphans");
     tick(f.state->timer);
     wgServerFixturePump(&f);
@@ -241,7 +247,7 @@ static void orphanAdmissionPressure(void)
     closeIngress(&f, elsewhere);
     closeIngress(&f, newcomer);
     closeIngress(&f, lines[5]);
-    f.ingress[1] = NULL;
+    f.ingress[0] = f.ingress[1] = NULL;
     for (unsigned i = 0; i < ARRAY_SIZE(clients); ++i)
         wireguardDeviceDestroy(&clients[i]);
     cJSON_Delete(server_peer);

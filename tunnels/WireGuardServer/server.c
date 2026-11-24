@@ -71,7 +71,7 @@ struct server_s
     wireguard_prefix_table_t ranges;
     ingress_t              **ingress_heads;
     atomic_uint              ingress_count;
-    struct hlist_head        orphan_ingresses;
+    struct hlist_head        orphan_ingresses, reclaim_batch;
     struct hlist_head        retry_closes, deferred_closes;
     unsigned                 unauthenticated_ingress; /* Protected by bindings_lock. */
     unsigned                 max_unauthenticated_ingress;
@@ -122,23 +122,35 @@ static bool scheduleOrphanClose(server_t *state, ingress_t *ingress)
     return queued;
 }
 
+/* Try one charged endpoint per arrival. Finish this batch before revisiting
+ * refusals or endpoints that lost their last binding in the meantime. */
+static bool reclaimIngressSlot(server_t *state)
+{
+    if (hlist_empty(&state->reclaim_batch))
+        hlist_move_list(&state->orphan_ingresses, &state->reclaim_batch);
+    if (hlist_empty(&state->reclaim_batch))
+        return false;
+
+    ingress_t *orphan = hlist_entry(state->reclaim_batch.first, ingress_t, orphan);
+    hlist_del_init(&orphan->orphan);
+    if (! scheduleOrphanClose(state, orphan))
+    {
+        hlist_add_head(&orphan->orphan, &state->orphan_ingresses);
+        return false;
+    }
+    /* The new ingress takes over the old charge. */
+    orphan->awaiting_proof = false;
+    return true;
+}
+
 static bool reserveFreshIngress(server_t *state)
 {
     mutexLock(&state->bindings_lock);
     bool accepted = state->unauthenticated_ingress < state->max_unauthenticated_ingress;
     if (accepted)
         ++state->unauthenticated_ingress;
-    else if (! hlist_empty(&state->orphan_ingresses))
-    {
-        ingress_t *orphan = hlist_entry(state->orphan_ingresses.first, ingress_t, orphan);
-        if (scheduleOrphanClose(state, orphan))
-        {
-            /* Transfer the charge directly to the new line. */
-            hlist_del_init(&orphan->orphan);
-            orphan->awaiting_proof = false;
-            accepted               = true;
-        }
-    }
+    else
+        accepted = reclaimIngressSlot(state);
     mutexUnlock(&state->bindings_lock);
     return accepted;
 }

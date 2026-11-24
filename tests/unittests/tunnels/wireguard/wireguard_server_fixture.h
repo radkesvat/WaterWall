@@ -375,9 +375,9 @@ static line_t *wgServerFixtureIngress(wg_server_fixture_t *f, wid_t wid)
     discard tosSetCurrentWorker(previous);
     return line;
 }
-static void wgServerFixtureExchangeClient(wg_server_fixture_t *f, wireguard_device_t *client, unsigned held_dispatches)
+static void wgServerFixtureExchangeClientOnWorker(wg_server_fixture_t *f, wireguard_device_t *client, wid_t wid,
+                                                  unsigned held_dispatches)
 {
-    const wid_t wid = f->env.count - 1;
     if (f->ingress[wid] == NULL)
         wgServerFixtureIngress(f, wid);
     for (unsigned iteration = 0; iteration < 32; ++iteration)
@@ -399,6 +399,10 @@ static void wgServerFixtureExchangeClient(wg_server_fixture_t *f, wireguard_devi
             return;
     }
     twfRequire(false, "server proof exchange did not settle");
+}
+static void wgServerFixtureExchangeClient(wg_server_fixture_t *f, wireguard_device_t *client, unsigned held_dispatches)
+{
+    wgServerFixtureExchangeClientOnWorker(f, client, f->env.count - 1, held_dispatches);
 }
 static void wgServerFixtureExchangePending(wg_server_fixture_t *f, unsigned held_dispatches)
 {
