@@ -456,7 +456,8 @@ The first application `Finish` starts a fixed `close-drain-timeout-ms` deadline,
 
 HTTP/2 upload pressure pauses the application above **1 MiB** of pending body bytes and resumes below **256 KiB**, provided the next transport is also ready. The provider queue additionally has hard limits of **16 MiB pending payload** and **16 MiB retained allocation charge**; exceeding either closes that connection. Allocation charge remains counted until its buffer is released, even if part of that buffer has already been sent. These are queue limits, not total upload-size limits. The separate pre-handshake queue retains its **2 MiB payload / 8 MiB allocation-charge** limits.
 
-By default, handing the final HTTP/2 frames to the next node finishes the carrier and normally leads to a full TCP close.
+By default, handing the final HTTP/2 frames to the next node finishes the carrier. A TCP adapter then follows its
+own close policy, which defaults to bounded linger for eligible ordinary sockets on Linux.
 The upload deadline covers local handoff. With `"stay-alive": true`, the timer stops at handoff and the HTTP/2 session stays open.
 This models the HTTP/2 session that Chrome can keep after a tab closes. `HttpClient` still answers peer `PING` frames and
 discards any remaining response body. Each later application connection gets a new session.

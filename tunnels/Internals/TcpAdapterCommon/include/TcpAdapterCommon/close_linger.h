@@ -1,10 +1,18 @@
 #pragma once
 
+#include "line.h"
 #include "local_widle_table.h"
 
+static inline bool tcpAdapterShouldLingerOnClose(const line_t *line, bool linger_on_normal_close)
+{
+    return lineHasCloseLingerReason(line, kLineCloseLingerPeerWriteShutdown) ||
+           (linger_on_normal_close && ! lineIsFallback(line));
+}
+
 /* Caller runs on the socket/table owner worker, has removed the socket's old
- * idle item and detached callbacks reaching line state, and has transferred all
- * accepted output to WIO. The key wioGetID(io) must be unused in this table.
+ * idle item and detached callbacks reaching line state, has verified that the
+ * socket is established, and has transferred all accepted output to WIO. The
+ * key wioGetID(io) must be unused in this table.
  *
  * On Linux, takes over a healthy socket while normal dispatch is open. It
  * flushes output for at most WIO_DEFAULT_CLOSE_TIMEOUT, shuts down sending, then

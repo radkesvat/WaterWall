@@ -12,9 +12,11 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `service`: `TcpConnector` (the probe's service)
 
 In each production-pair round, the service reads a short request and writes a 16 MiB response.
-The client acknowledges receipt of all but the final byte through the same chain. The service then
-writes the final byte and immediately closes. The client requires the exact response and EOF.
-The receipt keeps outstanding bulk flow-control updates from racing ordinary TCP close.
+In the first three rounds, the client acknowledges the bulk through the same chain and the
+service writes the final byte and closes. In the next three rounds, the service closes as soon
+as it writes the response. The HTTP/2 client can still send flow-control updates as it reads
+that response. All rounds use the TCP nodes' default settings and require the exact response
+followed by EOF.
 
 Two focused cases connect directly to `carrier-in` with a raw HTTP/2 client. A
 1 KiB receive window leaves a 128 KiB response blocked after the service closes.
@@ -25,7 +27,7 @@ has processed the close before the client continues:
   frames. The closed service must receive no further data, while the client gets
   the exact response, END_STREAM, and TCP EOF.
 - The client disconnects while the response is blocked. The runtime must survive
-  and complete the three subsequent 16 MiB response rounds. Native HTTP transport
+  and complete the six subsequent 16 MiB response rounds. Native HTTP transport
   tests separately verify exact cleanup of the retained session and buffers.
 
 An independent `timed-carrier-in` → `timed-http-server` → `timed-service` chain

@@ -481,6 +481,15 @@ if(LINUX)
   endforeach()
 endif()
 
+if(LINUX AND TARGET TcpUdpListener AND TARGET TcpUdpConnector)
+  waterwall_add_native_executable(tcp_close_linger_settings_test SUPPORT
+    SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcp/tcp_close_linger_settings_test.c
+    LIBRARIES TcpUdpListener TcpUdpConnector ww)
+  target_link_options(tcp_close_linger_settings_test PRIVATE ${WATERWALL_LINE_FAILURE_WRAPS})
+  add_waterwall_unit_test(waterwall.tcp_close_linger_settings_unit tcp_close_linger_settings_test
+    "unit;tunnels;tcp;configuration;close")
+endif()
+
 if(TARGET TcpUdpConnector AND TARGET TcpConnector AND TARGET UdpConnector)
   waterwall_add_native_executable(tcpudpconnector_selection_failure_test SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/tcpudp/tcpudpconnector_selection_failure_test.c
     ${WATERWALL_LINE_FAILURE_WW_SOURCES})

@@ -99,6 +99,10 @@ One of `port` or `port-range` is required.
   Enables `TCP_NODELAY` on accepted sockets.
   Default: `false`
 
+- `linger-on-normal-close` `(boolean)`
+  Enables bounded linger for ordinary accepted TCP sockets on Linux.
+  Default: `true`
+
 - `large-send-buffer` `(boolean or positive integer)`
   Sets `SO_SNDBUF` on accepted TCP sockets.
   `true` uses WaterWall's default large socket buffer size, currently `16777216` bytes. `false` leaves the kernel default unchanged. A positive integer sets the requested byte size directly.
@@ -265,11 +269,28 @@ connection through its line owner.
 
 This protects the process from unbounded buffering when the client is slow or stalled.
 
-On `Finish`, TcpListener hands accepted writes to WIO, retires its line and
-normally closes the socket fully, including while client reads are paused.
-Only a line marked for a confirmed fallback peer write shutdown can use bounded
-socket linger on supported Linux systems. The listener can then detach its
-socket, flush writes, shut down its write side and briefly read and discard client input.
+#### TCP close linger
+
+On `Finish`, `TcpListener` hands accepted writes to WIO and retires its line.
+On Linux, an eligible socket flushes those writes, sends FIN and briefly
+discards late client input, including when reads were paused before `Finish`.
+This reduces the risk that unread input causes a reset and truncates the
+response. The client can see EOF while the detached socket is still open.
+
+Set `linger-on-normal-close` to `false` in this node's `settings` to use
+ordinary WIO close for ordinary connections. This avoids the extra socket
+retention at the cost of a greater risk of reset and truncation. A confirmed
+fallback peer write shutdown still uses linger so the client can finish reading
+the response. A full fallback close or an unconfirmed shutdown uses ordinary
+close. Platforms without linger support accept the setting and use ordinary close.
+
+```json
+{
+  "address": "127.0.0.1",
+  "port": 8080,
+  "linger-on-normal-close": false
+}
+```
 
 #### Idle timeout behavior
 

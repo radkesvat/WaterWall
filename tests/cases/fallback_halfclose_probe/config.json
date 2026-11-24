@@ -40,7 +40,8 @@
         "address": "127.0.0.1",
         "port": 26631,
         "nodelay": true,
-        "large-send-buffer": 4096
+        "large-send-buffer": 4096,
+        "linger-on-normal-close": false
       },
       "next": "vless-server"
     },
@@ -64,7 +65,7 @@
     {
       "name": "vless-fallback",
       "type": "TcpConnector",
-      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false, "linger-on-normal-close": false }
     },
     {
       "name": "trojan-listener",
@@ -73,7 +74,8 @@
         "address": "127.0.0.1",
         "port": 26632,
         "nodelay": true,
-        "large-send-buffer": 4096
+        "large-send-buffer": 4096,
+        "linger-on-normal-close": true
       },
       "next": "trojan-server"
     },
@@ -97,7 +99,7 @@
     {
       "name": "trojan-fallback",
       "type": "TcpConnector",
-      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false, "linger-on-normal-close": true }
     },
     {
       "name": "reality-listener",
@@ -106,7 +108,8 @@
         "address": "127.0.0.1",
         "port": 26635,
         "nodelay": true,
-        "large-send-buffer": 4096
+        "large-send-buffer": 4096,
+        "linger-on-normal-close": false
       },
       "next": "reality-server"
     },
@@ -127,7 +130,7 @@
     {
       "name": "reality-destination",
       "type": "TcpConnector",
-      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false, "linger-on-normal-close": false }
     },
     {
       "name": "ordinary-listener",
@@ -144,6 +147,23 @@
       "name": "ordinary-connector",
       "type": "TcpConnector",
       "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false }
+    },
+    {
+      "name": "ordinary-no-linger-listener",
+      "type": "TcpListener",
+      "settings": {
+        "address": "127.0.0.1",
+        "port": 26636,
+        "nodelay": true,
+        "large-send-buffer": 4096,
+        "linger-on-normal-close": false
+      },
+      "next": "ordinary-no-linger-connector"
+    },
+    {
+      "name": "ordinary-no-linger-connector",
+      "type": "TcpConnector",
+      "settings": { "address": "127.0.0.1", "port": 26634, "fastopen": false, "linger-on-normal-close": true }
     }
   ]
 }

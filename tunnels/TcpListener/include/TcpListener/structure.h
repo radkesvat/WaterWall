@@ -13,6 +13,7 @@ typedef struct tcplistener_tstate_s
     uint16_t listen_port_min;          // min port to listen on (minimum of the range)
     uint16_t listen_port_max;          // max port to listen on (maximum of the range)
     bool     option_tcp_no_delay;      // apply TCP no delay option on sockets
+    bool     linger_on_normal_close;
     int      send_buffer_size;         // optional socket SO_SNDBUF size
     int      recv_buffer_size;         // optional socket SO_RCVBUF size
     bool     send_buffer_size_set;     // whether large-send-buffer was explicitly configured

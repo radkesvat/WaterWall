@@ -109,6 +109,7 @@ One of `port` or `port-range` is required.
 Most options are inherited directly from `TcpListener` and `UdpListener`:
 
 - `nodelay` applies to the internal TCP listener.
+- `linger-on-normal-close` applies only to the internal `TcpListener` and defaults to `true`.
 - `large-send-buffer` and `large-recv-buffer` are parsed by both child listeners; an explicit `false` also leaves kernel defaults unchanged for dynamic UDP child sockets.
 - `interface`, `fwmark`, `balance-group`, `balance-interval`, `multiport-backend`, `whitelist`, and `blacklist` are passed to both child listeners.
 

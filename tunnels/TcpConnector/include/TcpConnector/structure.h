@@ -37,6 +37,7 @@ typedef struct tcpconnector_tstate_s
     dynamic_value_t dest_port_selected;   // dynamic value for destination port
     bool            option_tcp_no_delay;  // apply TCP no delay option on sockets
     bool            option_tcp_fast_open; // apply TCP fast open option on sockets
+    bool            linger_on_normal_close;
     int             domain_strategy;      // prefer ipv4 or ipv6
     int             fwmark;               // firewall mark on linux (beta)
     int             send_buffer_size;     // optional socket SO_SNDBUF size

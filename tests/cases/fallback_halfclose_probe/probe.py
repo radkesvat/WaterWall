@@ -1,7 +1,7 @@
-"""Exercise real local fallback half/full closes for TLS, VLESS, Trojan and Reality, plus
-an ordinary connector control. Check response draining, local discard, backend
-retirement and idle expiry. CTest: waterwall.fallback_halfclose_probe. The existing
-runner supplies a private Linux network namespace and owns the runtime.
+"""Exercise local fallback half and full closes with normal-close linger enabled
+and disabled, plus ordinary TCP close controls. Check response draining, local
+discard, backend retirement and idle expiry. CTest: waterwall.fallback_halfclose_probe.
+The existing runner supplies a private Linux network namespace and owns the runtime.
 """
 
 import os
@@ -79,7 +79,7 @@ def expect_reset(client, label):
     raise AssertionError(f"{label}: still accepting data after full close")
 
 
-def run_case(listener, executor, label, port, halfclose, fallback=True, idle=False):
+def run_case(listener, executor, label, port, halfclose, linger, idle=False):
     backend = executor.submit(serve_target, listener, halfclose)
     with connect_listener(port) as client:
         client.sendall(REQUEST)
@@ -92,7 +92,9 @@ def run_case(listener, executor, label, port, halfclose, fallback=True, idle=Fal
             raise AssertionError(f"{label}: missing EOF after response")
         backend.result(timeout=5)
 
-        if halfclose and fallback:
+        # Both socket policies can send FIN. Late writes expose whether the
+        # listener still reads and discards input after sending FIN.
+        if linger:
             expect_discard(client, label)
             if idle:
                 time.sleep(5.5)
@@ -102,21 +104,37 @@ def run_case(listener, executor, label, port, halfclose, fallback=True, idle=Fal
     print(f"{label}: passed", flush=True)
 
 
-def main():
+def run_probe(fallback_cases, ordinary_cases=()):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         listener.bind((HOST, TARGET_PORT))
         listener.listen()
         listener.settimeout(5)
         with ThreadPoolExecutor(max_workers=1) as executor:
-            for name, port in (("tls", 26630), ("vless", 26631), ("trojan", 26632),
-                               ("reality", 26635)):
-                run_case(listener, executor, f"{name} half-close", port, True,
-                         idle=name == "tls")
-                run_case(listener, executor, f"{name} full close", port, False)
-            run_case(listener, executor, "ordinary connector half-close", 26633,
-                     True, fallback=False)
+            for name, port, setting in fallback_cases:
+                label = f"{name}, {setting}"
+                run_case(listener, executor, f"{label}: target half-close", port,
+                         halfclose=True, linger=True, idle=name == "TLS")
+                run_case(listener, executor, f"{label}: target full close", port,
+                         halfclose=False, linger=False)
+
+            for halfclose in (True, False):
+                mode = "half-close" if halfclose else "full close"
+                for label, port, linger in ordinary_cases:
+                    run_case(listener, executor, f"{label}: target {mode}", port,
+                             halfclose=halfclose, linger=linger)
 
 
 if __name__ == "__main__":
-    main()
+    run_probe(
+        fallback_cases=(
+            ("TLS", 26630, "default setting"),
+            ("VLESS", 26631, "normal-close linger disabled"),
+            ("Trojan", 26632, "normal-close linger enabled"),
+            ("Reality", 26635, "normal-close linger disabled"),
+        ),
+        ordinary_cases=(
+            ("ordinary, default setting", 26633, True),
+            ("ordinary, listener linger disabled", 26636, False),
+        ),
+    )

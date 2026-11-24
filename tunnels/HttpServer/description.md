@@ -444,8 +444,9 @@ direction. It never sends another callback toward the finished backend. Completi
 cancellation cancel the timer; process shutdown also aborts the wait instead of waiting for the deadline.
 The same rule applies to WebSocket over HTTP/2 and HTTP/2 selected by h2c upgrade. It does not introduce a hard
 response-queue memory cap. Transport idle limits remain independent and can close the connection sooner.
-The deadline covers HTTP response work up to handoff or expiry. In either case HttpServer sends Finish
-to the live carrier. A TCP adapter normally flushes accepted writes and closes the socket fully.
+The deadline covers HTTP response work up to handoff or expiry. In either case `HttpServer` sends `Finish` to the
+live carrier. A TCP adapter applies its own close policy to writes it already accepted. Eligible ordinary sockets
+on Linux linger by default.
 
 Response headers are generated internally from the configured `status`, `content-type`, and `headers`.
 

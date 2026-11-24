@@ -63,6 +63,12 @@ static bool parseBasicSettings(tcpconnector_tstate_t *state, const cJSON *settin
 
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_no_delay), settings, "nodelay", true);
     getBoolFromJsonObjectOrDefault(&(state->option_tcp_fast_open), settings, "fastopen", false);
+    state->linger_on_normal_close = true;
+    if (jsonGetObjectBoolean(settings, "linger-on-normal-close", &state->linger_on_normal_close) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TcpConnector->settings->linger-on-normal-close must be a boolean");
+        return false;
+    }
     const dns_policy_defaults_t dns_defaults = {
         .resolve          = true,
         .strategy         = GSTATE.domain_strategy,

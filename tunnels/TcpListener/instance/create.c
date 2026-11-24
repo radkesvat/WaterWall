@@ -179,6 +179,12 @@ static bool parseBasicSettings(tcplistener_tstate_t *state, const cJSON *setting
     }
 
     getBoolFromJsonObject(&(state->option_tcp_no_delay), settings, "nodelay");
+    state->linger_on_normal_close = true;
+    if (jsonGetObjectBoolean(settings, "linger-on-normal-close", &state->linger_on_normal_close) == kJsonValueInvalid)
+    {
+        LOGF("JSON Error: TcpListener->settings->linger-on-normal-close must be a boolean");
+        return false;
+    }
     state->send_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-send-buffer") != NULL;
     state->recv_buffer_size_set = cJSON_GetObjectItemCaseSensitive(settings, "large-recv-buffer") != NULL;
     if (! getPositiveIntFromJsonObjectOrBoolDefault(

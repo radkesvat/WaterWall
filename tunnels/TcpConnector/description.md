@@ -124,6 +124,10 @@ array and connect the neighboring nodes shown above.
   Enables `TCP_NODELAY` on the outbound socket.
   Default: `true`
 
+- `linger-on-normal-close` `(boolean)`
+  Enables bounded linger for ordinary outbound TCP sockets on Linux. This node setting applies across all destinations.
+  Default: `true`
+
 - `fastopen` `(boolean)`
   Requests `TCP_FASTOPEN` on the outbound socket when the platform exposes that socket option.
   Default: `false`
@@ -159,7 +163,7 @@ array and connect the neighboring nodes shown above.
 - `dns-behaviour` `(object)`
   Controls local lookup, address selection and DNS transport. By default, native resolution uses the core address preference. See DNS behaviour below.
 
-When `addresses` is used, socket options can be set at the top level as defaults and overridden independently by each address object. A destination's `dns-behaviour` accepts only `strategy`; lookup enablement and DNS transport remain node settings.
+When `addresses` is used, destination-specific options can be set at the top level as defaults and overridden independently by each address object. A destination's `dns-behaviour` accepts only `strategy`; lookup enablement and DNS transport remain node settings.
 For `large-send-buffer` and `large-recv-buffer`, an omitted top-level value becomes `true` automatically when the finalized chain contains `MuxClient` or `MuxServer`, independently of core `misc.tcp-tune`. A per-address omitted value inherits the effective top-level value. Explicit `false` still disables explicit socket buffer sizing.
 
 ### DNS behaviour
@@ -399,12 +403,25 @@ connection through its line owner.
 
 This prevents unlimited buffering when the remote side is slow or the connection is not ready yet.
 
-On `Finish`, TcpConnector hands accepted writes to WIO and normally closes the
-socket fully, including while reads are paused. On a fallback connection, clean
-EOF triggers a peer socket check on supported Linux systems. Only a confirmed
-peer write shutdown marks the line for bounded socket linger before Finish
-propagates. A TCP adapter receiving Finish on that marked line can detach its
-socket, flush writes, shut down its write side and briefly read and discard peer input.
+#### TCP close linger
+
+On `Finish`, `TcpConnector` hands accepted writes to WIO and retires its state
+on the borrowed line. On Linux, an eligible established socket flushes those
+writes, sends FIN and briefly discards late peer input to reduce the risk of
+reset and truncation. The policy applies even when reads were paused before
+`Finish`. A pending connect follows its existing close path.
+
+Set `linger-on-normal-close` to `false` for ordinary WIO close on ordinary
+connections. This avoids the extra socket retention and increases the risk that
+unread peer data causes a reset and truncates outgoing data. A confirmed fallback
+peer write shutdown still requests linger so the receiving peer can finish
+reading. A full fallback close or an unconfirmed shutdown uses ordinary close.
+Platforms without linger support accept the setting and use ordinary close.
+
+After backend EOF, a still-live client-facing adapter makes its own decision.
+On clean fallback EOF, the connector can use the Linux diagnostic to confirm
+peer write shutdown in the same network namespace and mark the line before
+propagating `Finish`.
 
 #### Connection establishment timeout
 

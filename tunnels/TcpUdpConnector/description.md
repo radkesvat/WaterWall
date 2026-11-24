@@ -96,6 +96,7 @@ Most options are inherited directly from `TcpConnector` and `UdpConnector`:
 - `dns-behaviour` sets one shared DNS policy for both child connectors.
 - `large-send-buffer`, `large-recv-buffer`, `interface`, `source-ip`, and `fwmark` are parsed by both child connectors where supported.
 - `nodelay` and `fastopen` apply to the internal `TcpConnector`.
+- `linger-on-normal-close` applies only to the internal `TcpConnector` and defaults to `true`.
 - `balance-mode` applies to the internal `UdpConnector`.
 
 See `TcpConnector` and `UdpConnector` documentation for detailed destination selection and socket behavior.

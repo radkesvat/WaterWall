@@ -101,7 +101,7 @@ bool tcpAdapterBeginCloseLinger(wio_t *io, local_idle_table_t *table)
 {
     assert(io != NULL && table != NULL);
 #ifdef OS_LINUX
-    if (! wloopNormalDispatchAllowed(weventGetLoop(io)) || wioIsClosed(io) || wioGetError(io) != 0)
+    if (! wloopNormalDispatchAllowed(weventGetLoop(io)) || wioIsClosed(io) || wioHasReadEOF(io) || wioGetError(io) != 0)
         return false;
 
     // The socket owns no line reference and remains in the worker's drain inventory.

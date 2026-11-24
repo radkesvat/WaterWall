@@ -50,7 +50,7 @@ The direction budgets cover plaintext and encoded output together, and carrier i
 
 An orderly RTMP close or carrier `Finish` delivers already-decoded bytes to the live application before closing it, including when EOF arrives in the same read as the final data. An application-side `Finish` cancels any unsent application bytes and ends the stream in both directions. Applications that need a final reply must receive it while the stream is open.
 
-On direct TCP chains, RTMP pauses application reads while it retains unsent bytes, allowing ordinary source EOF to follow handoff to the next node on the carrier side. Each carrier node handles its accepted output during `Finish`. In an RTMPS chain, TLS handles pending ciphertext and the TCP adapter hands accepted writes to WIO for ordinary socket close. A transport error or peer reset can interrupt final delivery.
+On direct TCP chains, RTMP pauses application reads while it retains unsent bytes, allowing ordinary source EOF to follow handoff to the next node on the carrier side. Each carrier node handles its accepted output during `Finish`. In an RTMPS chain, TLS handles pending ciphertext and the TCP adapter hands accepted writes to WIO. On Linux, eligible sockets linger by default under the TCP adapter close policy. A transport error or peer reset can interrupt final delivery.
 
 The peer must implement WaterWall’s `ww.data` profile. Use external WaterWall nodes for TLS, datagram framing, and multiplexing.
 
