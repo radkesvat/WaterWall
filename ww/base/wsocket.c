@@ -166,6 +166,35 @@ uint16_t sockaddrPort(sockaddr_u *addr)
     return port;
 }
 
+#if (defined(OS_DARWIN) || defined(OS_FREEBSD)) && ! defined(MSG_BCAST)
+bool udpReplySourceNeedsRoute(const sockaddr_u *candidate)
+{
+    struct in_addr address;
+    if (candidate->sa.sa_family == AF_INET)
+        address = candidate->sin.sin_addr;
+    else if (candidate->sa.sa_family == AF_INET6 && IN6_IS_ADDR_V4MAPPED(&candidate->sin6.sin6_addr))
+        memcpy(&address, &candidate->sin6.sin6_addr.s6_addr[12], sizeof(address));
+    else
+        return false;
+
+    struct ifaddrs *interfaces;
+    if (getifaddrs(&interfaces) != 0)
+        return true;
+    bool assigned = false;
+    for (struct ifaddrs *ifa = interfaces; ifa != NULL; ifa = ifa->ifa_next)
+    {
+        if (ifa->ifa_addr != NULL && ifa->ifa_addr->sa_family == AF_INET &&
+            ((const struct sockaddr_in *) ifa->ifa_addr)->sin_addr.s_addr == address.s_addr)
+        {
+            assigned = true;
+            break;
+        }
+    }
+    freeifaddrs(interfaces);
+    return ! assigned;
+}
+#endif
+
 int sockaddrSetIpAddress(sockaddr_u *addr, const char *host)
 {
     if (! host || *host == '\0')

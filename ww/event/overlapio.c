@@ -69,6 +69,7 @@ static void recordAttach(wio_t *io, woverlapped_t *record, woverlapped_kind_e ki
     record->send_buffer    = NULL;
     record->addr           = NULL;
     record->addrlen        = 0;
+    record->udp_receive    = NULL;
     record->error          = 0;
     record->bytes          = 0;
 
@@ -192,6 +193,8 @@ static void recordReleaseResources(woverlapped_t *record)
     {
         EVENTLOOP_FREE(record->addr);
     }
+    if (record->udp_receive != NULL)
+        EVENTLOOP_FREE(record->udp_receive);
     if (record->kind == WOVERLAPPED_ACCEPT)
     {
         // AcceptEx output buffer. RECV buf.buf points into sbuf (recycled above);
@@ -370,29 +373,39 @@ static int post_recv(wio_t *io, woverlapped_t *record)
         // WSARecvFrom overwrites addrlen with the completed peer length. Restore
         // the full capacity before every receive (dual-stack IPv4-then-IPv6).
         record->addrlen = sizeof(struct sockaddr_in6);
-        ret             = WSARecvFrom(
-            wioGetFD(io), &record->buf, 1, &dwbytes, &flags, record->addr, &record->addrlen, &record->ovlp, NULL);
+        if (io->udp_track_local_address)
+        {
+            if (record->udp_receive == NULL)
+                EVENTLOOP_ALLOC_SIZEOF(record->udp_receive);
+            udpWinPrepareReceive(record->udp_receive, &record->buf, record->addr, record->addrlen);
+            ret = io->udp_recvmsg(wioGetFD(io), &record->udp_receive->message, NULL, &record->ovlp, NULL);
+        }
+        else
+            ret = WSARecvFrom(
+                wioGetFD(io), &record->buf, 1, &dwbytes, &flags, record->addr, &record->addrlen, &record->ovlp, NULL);
     }
     else
     {
         WSASetLastError(WSAEINVAL);
         ret = -1;
     }
-    if (! control_io)
+    int err = ret != 0 ? WSAGetLastError() : 0;
+    if (record->udp_receive != NULL && udpWinIsTruncationError(err))
     {
-        wloopNormalAdmissionEnd(io->loop);
+        // The datagram was consumed and no OS completion will arrive. Reuse
+        // normal completion dispatch to drop it and post the next receive on
+        // a later loop turn, even if several oversized packets are queued.
+        record->udp_receive->message.dwFlags |= MSG_TRUNC;
+        err = wioIocpRequeueReceive(record);
     }
-
-    if (ret != 0)
+    if (! control_io)
+        wloopNormalAdmissionEnd(io->loop);
+    if (err != 0 && err != ERROR_IO_PENDING)
     {
-        int err = WSAGetLastError();
-        if (err != ERROR_IO_PENDING)
-        {
-            printError("WSARecv error: %d\n", err);
-            recordUnpost(record);
-            recordRetire(record);
-            return err;
-        }
+        printError("WSARecv error: %d\n", err);
+        recordUnpost(record);
+        recordRetire(record);
+        return err;
     }
     // Exactly one uncancelled logical receive per wio_t: the one just posted.
     assert(countUncancelledReceives(io) == 1);
@@ -847,7 +860,8 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
         io->iocp_held_recv = record;
         return;
     }
-    if (record->error != 0 || (record->bytes == 0 && ! is_dgram))
+    bool drop_datagram = record->udp_receive != NULL && udpWinIsTruncationError(record->error);
+    if ((record->error != 0 && ! drop_datagram) || (record->bytes == 0 && ! is_dgram))
     {
         // Real error or stream EOF.
         io->error = record->error;
@@ -868,13 +882,19 @@ static void dispatch_recv(wio_t *io, woverlapped_t *record)
 
     if (io->io_type == WIO_TYPE_UDP || io->io_type == WIO_TYPE_IP)
     {
-        if (record->addr != NULL && record->addrlen > 0)
+        if (record->udp_receive != NULL && ! drop_datagram)
+        {
+            udpWinReadLocalAddress(io, record->udp_receive);
+            record->addrlen = record->udp_receive->message.namelen;
+            drop_datagram   = io->udp_local_address.sa.sa_family == AF_UNSPEC;
+        }
+        if (! drop_datagram && record->addr != NULL && record->addrlen > 0)
         {
             wioSetPeerAddr(io, record->addr, record->addrlen);
         }
     }
 
-    if (io->read_cb != NULL)
+    if (io->read_cb != NULL && ! drop_datagram)
     {
         sbufSetLength(buf, record->bytes);
         io->last_read_hrtime = io->loop->cur_hrtime;
@@ -1562,6 +1582,12 @@ int wioRead(wio_t *io)
 
 int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 {
+    return wioWriteDatagramFrom(io, buf, peer_addr, NULL);
+}
+
+int wioWriteDatagramFrom(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr, const sockaddr_u *local_addr)
+{
+    assert(local_addr == NULL || io->io_type == WIO_TYPE_UDP);
     if (io->closed)
     {
         io->error = EBADF;
@@ -1586,7 +1612,10 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 
     int len    = (int) sbufGetLength(buf);
     int nwrite =
-        sendto(wioGetFD(io), (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+        local_addr != NULL
+            ? udpWinSendFrom(wioGetFD(io), sbufGetRawPtr(buf), len, peer_addr, local_addr)
+            : sendto(wioGetFD(io), (const char *) sbufGetRawPtr(buf), len, 0, &peer_addr->sa, SOCKADDR_LEN(peer_addr));
+    int err = nwrite < 0 ? socketERRNO() : 0;
     bufferpoolReuseBuffer(io->loop->bufpool, buf);
     if (! nested_callback)
     {
@@ -1595,7 +1624,6 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     runAfterDirectSendHook(io);
     if (nwrite < 0)
     {
-        int err = socketERRNO();
         if (err == EAGAIN || err == EINTR || err == WSAENOBUFS)
         {
             // Transient pressure: drop without logging; the pressure path must not

@@ -12,6 +12,9 @@
 #include "heap.h"
 #include "list.h"
 #include "queue.h"
+#ifdef OS_WIN
+#include <mswsock.h>
+#endif
 
 // #define WLOOP_READ_BUFSIZE          (1U << 15)  // 32K
 #define READ_BUFSIZE_HIGH_WATER  (1U << 20) // 1M
@@ -185,6 +188,7 @@ struct wio_s
     unsigned close : 1;
     unsigned release_no_close : 1;
     unsigned splice_enabled : 1;
+    unsigned udp_track_local_address : 1;
 #ifdef OS_WIN
     unsigned fd_is_socket : 1; // Capture the native close kind when the descriptor is adopted.
 #endif
@@ -215,6 +219,11 @@ struct wio_s
         struct sockaddr *peeraddr;
         sockaddr_u      *peeraddr_u;
     };
+    sockaddr_u udp_local_address; // Destination from the received IP header.
+    sockaddr_u udp_reply_address; // Reply-source candidate reported by the backend, or AF_UNSPEC.
+#ifdef OS_WIN
+    LPFN_WSARECVMSG udp_recvmsg;
+#endif
 
     uint64_t last_read_hrtime;
     uint64_t last_write_hrtime;

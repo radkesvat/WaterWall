@@ -2,6 +2,15 @@
 
 #include "wevent.h"
 
+wio_t *wloopCreateUdpListener(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark,
+                              int send_buffer_size, int recv_buffer_size);
+
+// A datagram was consumed but could not be delivered in full.
+enum
+{
+    kNioReadDropped = -2
+};
+
 /* Internal non-owning task transport for event and worker plumbing. */
 bool wloopPostEvent(wloop_t *loop, wevent_t *ev);
 /* Cleanup roots accepted here are drained before the worker publishes Quiesced. */

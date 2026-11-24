@@ -2461,8 +2461,16 @@ static bool wioApplySocketOptions(int sockfd, const char *interface_name, int fw
     return true;
 }
 
-wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side,
-                                  const char *interface_name, int fwmark)
+static wio_t *adoptSocket(wloop_t *loop, int fd)
+{
+    wio_t *io = wioGet(loop, fd);
+    if (io == NULL)
+        closesocket(fd);
+    return io != NULL && ! wioIsClosed(io) ? io : NULL;
+}
+
+static wio_t *createSocketWithOptions(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side,
+                                      const char *interface_name, int fwmark, bool listener_packet_info)
 {
     int sock_type = (type & WIO_TYPE_SOCK_STREAM)  ? SOCK_STREAM
                     : (type & WIO_TYPE_SOCK_DGRAM) ? SOCK_DGRAM
@@ -2498,16 +2506,51 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
     if (side == WIO_SERVER_SIDE)
     {
         socketOptionServerAddressUse(sockfd);
-        // so_reuseport(sockfd, 1);
+        ip_addr_t  local_ip;
+        const bool track =
+            listener_packet_info && sockaddrToNormalizedIpAddr(&addr, &local_ip) && ipAddrIsWildcard(&local_ip);
         if (addr.sa.sa_family == AF_INET6)
         {
-            ipV6Only(sockfd, 0);
+#ifdef OS_NETBSD
+            if (track && IN6_IS_ADDR_UNSPECIFIED(&addr.sin6.sin6_addr))
+            {
+                // SocketManager opens a companion IPv4 socket for this logical listener.
+                if (ipV6Only(sockfd, 1) != 0)
+                {
+                    printError("socket setup rejected: could not select IPv6-only UDP (fd=%d, error=%d)",
+                               sockfd,
+                               socketERRNO());
+                    closesocket(sockfd);
+                    return NULL;
+                }
+            }
+            else
+#endif
+                ipV6Only(sockfd, 0);
+        }
+        if (track)
+        {
+            // Packet info must already be active when bind makes the socket reachable.
+            io = adoptSocket(loop, sockfd);
+            if (io == NULL)
+                return NULL;
+            wioSetLocaladdr(io, &addr.sa, (int) sockaddrLen(&addr));
+            if (! wioEnableDatagramLocalAddress(io))
+            {
+                printError(
+                    "socket setup rejected: could not enable UDP packet info (fd=%d, error=%d)", sockfd, socketERRNO());
+                wioClose(io);
+                return NULL;
+            }
         }
         if (bind(sockfd, &addr.sa, sockaddrLen(&addr)) < 0)
         {
             const int error = socketERRNO();
             printError("socket setup rejected: bind failed (fd=%d, port=%d, error=%d)", sockfd, port, error);
-            closesocket(sockfd);
+            if (io != NULL)
+                wioClose(io);
+            else
+                closesocket(sockfd);
             return NULL;
         }
         if (sock_type == SOCK_STREAM)
@@ -2522,17 +2565,10 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
             }
         }
     }
-    io = wioGet(loop, sockfd);
-    if (io == NULL || wioIsClosed(io))
-    {
-        if (io == NULL)
-        {
-            // No event io took ownership of the socket.
-            closesocket(sockfd);
-        }
-        // A closed event io already released the socket.
+    if (io == NULL)
+        io = adoptSocket(loop, sockfd);
+    if (io == NULL)
         return NULL;
-    }
     io->io_type = type;
     if (side == WIO_SERVER_SIDE)
     {
@@ -2544,6 +2580,12 @@ wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio
         wioSetPeerAddr(io, &addr.sa, (int) sockaddrLen(&addr));
     }
     return io;
+}
+
+wio_t *wioCreateSocketWithOptions(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side,
+                                  const char *interface_name, int fwmark)
+{
+    return createSocketWithOptions(loop, host, port, type, side, interface_name, fwmark, false);
 }
 
 wio_t *wioCreateSocket(wloop_t *loop, const char *host, int port, wio_type_e type, wio_side_e side)
@@ -2592,10 +2634,11 @@ wio_t *wloopCreateUdpServerWithOptions(wloop_t *loop, const char *host, int port
         loop, host, port, interface_name, fwmark, kDefaultLargeSocketBufferSize, kDefaultLargeSocketBufferSize);
 }
 
-wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, int port, const char *interface_name,
-                                             int fwmark, int send_buffer_size, int recv_buffer_size)
+static wio_t *createUdpServer(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark,
+                              int send_buffer_size, int recv_buffer_size, bool listener_packet_info)
 {
-    wio_t *io = wioCreateSocketWithOptions(loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE, interface_name, fwmark);
+    wio_t *io = createSocketWithOptions(
+        loop, host, port, WIO_TYPE_UDP, WIO_SERVER_SIDE, interface_name, fwmark, listener_packet_info);
     if (io == NULL)
     {
         return NULL;
@@ -2624,6 +2667,18 @@ wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, in
     }
 
     return io;
+}
+
+wio_t *wloopCreateUdpServerWithBufferOptions(wloop_t *loop, const char *host, int port, const char *interface_name,
+                                             int fwmark, int send_buffer_size, int recv_buffer_size)
+{
+    return createUdpServer(loop, host, port, interface_name, fwmark, send_buffer_size, recv_buffer_size, false);
+}
+
+wio_t *wloopCreateUdpListener(wloop_t *loop, const char *host, int port, const char *interface_name, int fwmark,
+                              int send_buffer_size, int recv_buffer_size)
+{
+    return createUdpServer(loop, host, port, interface_name, fwmark, send_buffer_size, recv_buffer_size, true);
 }
 
 wio_t *wloopCreateUdpClient(wloop_t *loop, const char *host, int port)

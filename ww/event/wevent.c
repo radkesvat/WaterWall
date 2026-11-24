@@ -146,6 +146,9 @@ void wioReady(wio_t *io)
     io->close                 = 0;
     io->release_no_close      = 0;
     io->splice_enabled        = 0;
+    io->udp_track_local_address        = 0;
+    io->udp_local_address.sa.sa_family = AF_UNSPEC;
+    io->udp_reply_address.sa.sa_family = AF_UNSPEC;
 #ifndef EVENT_IOCP
     io->close_in_progress = 0;
 #endif
@@ -501,6 +504,16 @@ int wioGetREvents(wio_t *io)
 sockaddr_u *wioGetLocaladdrU(wio_t *io)
 {
     return io->localaddr_u;
+}
+
+bool wioGetDatagramLocalAddresses(wio_t *io, sockaddr_u *destination, sockaddr_u *reply_source)
+{
+    assert(io->io_type == WIO_TYPE_UDP);
+    if (io->udp_track_local_address && io->udp_local_address.sa.sa_family == AF_UNSPEC)
+        return false;
+    *destination  = io->udp_track_local_address ? io->udp_local_address : *io->localaddr_u;
+    *reply_source = io->udp_track_local_address ? io->udp_reply_address : (sockaddr_u) {0};
+    return true;
 }
 
 sockaddr_u *wioGetPeerAddrU(wio_t *io)

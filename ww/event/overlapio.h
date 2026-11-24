@@ -6,6 +6,7 @@
 #ifdef EVENT_IOCP
 
 #include "hbuf.h"
+#include "udp_pktinfo_win.h"
 #include "wsocket.h"
 #include <mswsock.h>
 #ifdef _MSC_VER
@@ -59,6 +60,7 @@ typedef struct woverlapped_s
     // recvfrom peer address scratch (UDP/raw receive)
     struct sockaddr *addr;
     int              addrlen;
+    udp_win_receive_t *udp_receive;
 
     // AcceptEx sizing, computed per listener family (Phase 5).
     int   accept_family;         // AF_INET or AF_INET6 the buffer was built for

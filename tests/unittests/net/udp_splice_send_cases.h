@@ -55,16 +55,19 @@ static int boundPeer(int family, const char *host, sockaddr_u *addr)
     require(getsockname(fd, &addr->sa, &size) == 0, "query UDP peer");
     return fd;
 }
-static void expectPipeDatagram(int fd, uint32_t body, const char *prefix)
+static sockaddr_u expectPipeDatagram(int fd, uint32_t body, const char *prefix)
 {
-    char     bytes[65536];
-    uint32_t prefix_len = (uint32_t) strlen(prefix);
-    int      n          = (int) recv(fd, bytes, sizeof(bytes), 0);
+    char       bytes[65536];
+    uint32_t   prefix_len = (uint32_t) strlen(prefix);
+    sockaddr_u source     = {0};
+    socklen_t  size       = sizeof(source);
+    int        n          = (int) recvfrom(fd, bytes, sizeof(bytes), 0, &source.sa, &size);
     require(n == (int) (body + prefix_len), "UDP splice length or boundary changed");
     require(memcmp(bytes, prefix, prefix_len) == 0, "UDP splice prefix changed");
     for (uint32_t i = prefix_len; i < (uint32_t) n; ++i)
         require(bytes[i] == 'B', "UDP pipe body changed");
     require(recv(fd, bytes, sizeof(bytes), 0) < 0 && errno == EAGAIN, "extra UDP datagram emitted");
+    return source;
 }
 static void runSegmentedAndTcpPipeChecks(wloop_t *loop, buffer_pool_t *pool)
 {
@@ -308,6 +311,20 @@ static void runSpliceUdpChecks(wloop_t *loop, buffer_pool_t *pool)
     runPooledMaterializationChecks(loop, pool);
     sockaddr_u peer;
     int        receiver = boundPeer(AF_INET, "127.0.0.1", &peer);
+    wio_t     *wildcard = wloopCreateUdpServer(loop, "0.0.0.0", 0);
+    require(wildcard != NULL, "create wildcard UDP splice sender");
+    sockaddr_u bound      = {0};
+    socklen_t  bound_size = sizeof(bound);
+    require(getsockname(wioGetFD(wildcard), &bound.sa, &bound_size) == 0, "query wildcard UDP splice sender");
+    sockaddr_u local;
+    require(sockaddrSetIpAddressPort(&local, "127.0.0.2", 0) == 0, "prepare UDP reply source address");
+    require(wioWriteDatagramFrom(wildcard, makePipePayload(pool, 4000, "head"), &peer, &local) == 4004,
+            "source-aware UDP splice send failed");
+    sockaddr_u source = expectPipeDatagram(receiver, 4000, "head");
+    require(source.sa.sa_family == AF_INET && source.sin.sin_addr.s_addr == local.sin.sin_addr.s_addr &&
+                sockaddrPort(&source) == sockaddrPort(&bound),
+            "UDP splice reply came from the wrong endpoint");
+    wioClose(wildcard);
     const int  errors[] = {EINTR, EAGAIN, ENOBUFS, EMSGSIZE, EHOSTUNREACH};
     for (unsigned e = 0; e < ARRAY_SIZE(errors); ++e)
     {

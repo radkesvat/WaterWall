@@ -196,7 +196,7 @@
   target_link_libraries(udp_zero_length_test PRIVATE ww)
   if(LINUX)
     target_compile_definitions(udp_zero_length_test PRIVATE WW_UDP_READ_IOCTL_TEST=1)
-    target_link_options(udp_zero_length_test PRIVATE "-Wl,--wrap=ioctl")
+    target_link_options(udp_zero_length_test PRIVATE "-Wl,--wrap=ioctl" "-Wl,--wrap=bind")
   endif()
   add_dependencies(waterwall_unit_tests udp_zero_length_test)
 

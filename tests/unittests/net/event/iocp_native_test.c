@@ -396,6 +396,87 @@ static void testDirectDatagramWriteAdmission(env_t *env)
     closesocket(receiver);
 }
 
+static int WSAAPI immediateTruncatedReceive(SOCKET socket, WSAMSG *message, DWORD *bytes, OVERLAPPED *op,
+                                            LPWSAOVERLAPPED_COMPLETION_ROUTINE callback)
+{
+    discard socket;
+    discard message;
+    discard bytes;
+    discard op;
+    discard callback;
+    WSASetLastError(WSAEMSGSIZE);
+    return SOCKET_ERROR;
+}
+
+static void readAfterTruncatedDatagram(wio_t *io, sbuf_t *buf)
+{
+    unsigned *reads = weventGetUserdata(io);
+    require(sbufGetLength(buf) == 1 && *(const char *) sbufGetRawPtr(buf) == 'v',
+            "truncated datagram reached the user callback");
+    sockaddr_u destination, reply_source;
+    require(wioGetDatagramLocalAddresses(io, &destination, &reply_source) && destination.sa.sa_family == AF_INET &&
+                destination.sin.sin_addr.s_addr == htonl(INADDR_LOOPBACK) && sockaddrCmpIP(&destination, &reply_source),
+            "valid datagram lost its unicast addresses");
+    ++*reads;
+    bufferpoolReuseBuffer(io->loop->bufpool, buf);
+}
+
+static woverlapped_t *dequeueTrackedReceive(wio_t *listener)
+{
+    for (unsigned i = 0; i < 200 && listener->iocp_completed_head == NULL; ++i)
+        require(iowatcherPollEvents(listener->loop, 10) >= 0, "UDP completion poll failed");
+    woverlapped_t *record = listener->iocp_completed_head;
+    require(record != NULL && record->udp_receive != NULL, "tracked UDP receive did not complete");
+    return record;
+}
+
+static void testTrackedUdpTruncation(env_t *env)
+{
+    wloop_t *loop     = createRunningTestLoop(env, 0);
+    wio_t   *listener = wloopCreateUdpServer(loop, "0.0.0.0", 0);
+    require(listener != NULL && wioEnableDatagramLocalAddress(listener), "tracked UDP listener setup failed");
+    unsigned reads = 0;
+    weventSetUserData(listener, &reads);
+    wioSetCallBackRead(listener, readAfterTruncatedDatagram);
+
+    // Provider-dependent on Windows. Force one immediate error before posting
+    // a real receive, then let an oversized UDP datagram complete that receive.
+    LPFN_WSARECVMSG receive = listener->udp_recvmsg;
+    listener->udp_recvmsg   = immediateTruncatedReceive;
+    require(wioReadOnce(listener) == 0, "immediate truncation closed the UDP listener");
+    listener->udp_recvmsg = receive;
+    discard dequeueTrackedReceive(listener);
+    wloopProcessEvents(loop, 0);
+    require(reads == 0 && liveUncancelledReceives(listener) == 1 && wioIsOpened(listener),
+            "immediate truncation consumed the one-shot read");
+
+    sockaddr_u dest;
+    require(sockaddrSetIpAddressPort(&dest, "127.0.0.1", boundPort(listener)) == 0, "UDP test address setup failed");
+    SOCKET client = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    require(client != INVALID_SOCKET, "UDP truncation test client creation failed");
+    char oversized[kTestLargeBufferSize + 1] = {0};
+    require(sendto(client, oversized, sizeof(oversized), 0, &dest.sa, sizeof(dest.sin)) == sizeof(oversized),
+            "could not send oversized UDP datagram");
+    woverlapped_t *truncated = dequeueTrackedReceive(listener);
+    require(truncated->buf.len < sizeof(oversized) &&
+                (truncated->error == 0 || udpWinIsTruncationError(truncated->error)),
+            "oversized UDP datagram did not reach the posted receive");
+    // Exercise the Win32 status from GetQueuedCompletionStatus regardless of
+    // which status or flags the local Winsock provider returned for this packet.
+    truncated->error = ERROR_MORE_DATA;
+    wloopProcessEvents(loop, 0);
+    require(reads == 0 && liveUncancelledReceives(listener) == 1 && wioIsOpened(listener),
+            "truncated completion consumed the one-shot read");
+    require(sendto(client, "v", 1, 0, &dest.sa, sizeof(dest.sin)) == 1, "could not send valid UDP datagram");
+    for (unsigned i = 0; i < 200 && reads == 0; ++i)
+        wloopProcessEvents(loop, 10);
+    require(reads == 1 && liveUncancelledReceives(listener) == 0 && wioIsOpened(listener),
+            "one-shot receive did not deliver the valid UDP datagram exactly once");
+    closesocket(client);
+    wioClose(listener);
+    wloopDestroy(&loop);
+}
+
 typedef struct cross_loop_write_state_s
 {
     wio_t         *target;
@@ -2997,6 +3078,7 @@ int main(int argc, char **argv)
 
     testDirectStreamWriteAdmission(&env);
     testDirectDatagramWriteAdmission(&env);
+    testTrackedUdpTruncation(&env);
     testCrossLoopNestedWriteAdmission(&env);
     testAcceptedCrossLoopWriteCallbackAuthority(&env);
     testCrossLoopCloseSettlement(&env, false);

@@ -345,6 +345,12 @@ WW_EXPORT int              wioGetREvents(wio_t *io);
 WW_EXPORT wio_type_e       wioGetType(wio_t *io);
 WW_EXPORT sockaddr_u      *wioGetLocaladdrU(wio_t *io);
 WW_EXPORT sockaddr_u      *wioGetPeerAddrU(wio_t *io);
+// Enable per-datagram local addressing before starting a wildcard UDP listener.
+WW_EXPORT bool wioEnableDatagramLocalAddress(wio_t *io);
+// Snapshot the packet destination and reply-source candidate in the read callback.
+// AF_UNSPEC selects the socket default. At line creation udpReplySourceNeedsRoute() checks candidates
+// from backends that report only the IPv4 destination. The caller supplies the logical listener port.
+WW_EXPORT bool             wioGetDatagramLocalAddresses(wio_t *io, sockaddr_u *destination, sockaddr_u *reply_source);
 WW_EXPORT struct sockaddr *wioGetLocaladdr(wio_t *io);
 WW_EXPORT struct sockaddr *wioGetPeerAddr(wio_t *io);
 WW_EXPORT void             wioSetContext(wio_t *io, void *ctx);
@@ -472,6 +478,8 @@ WW_EXPORT int wioWriteWithHint(wio_t *io, sbuf_t *buf, bool more_after);
 // associated lines or the WIO. Callers must protect/recheck any continuation.
 // Ordinary UDP receive/write policy and raw-IP writes remain unchanged.
 WW_EXPORT int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr);
+// Same send and ownership contract, with an optional local UDP source address. The socket supplies the port.
+WW_EXPORT int wioWriteDatagramFrom(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr, const sockaddr_u *local_addr);
 
 // Owner-worker close; may invoke the close callback synchronously. No foreign-caller dispatch.
 // wioDel(io, WW_RDWR) => close => wclose_cb

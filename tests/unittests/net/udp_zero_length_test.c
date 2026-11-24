@@ -2,7 +2,7 @@
  * Covers: udp zero length; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: queueDatagram, receiveQueued, sendDatagram
+ * Cases: queueDatagram, receiveQueued, sendDatagram, checkFirstDatagram (Linux)
  * Checks: Assertion labels include: received too many UDP callbacks; UDP datagram was truncated or
  * combined; UDP read selected the wrong buffer tier; UDP read lost its ordinary representation or
  * required padding
@@ -23,6 +23,8 @@
 #include "wsocket.h"
 
 #ifdef WW_UDP_READ_IOCTL_TEST
+#include "wloop_internal.h"
+
 #include <stdarg.h>
 #include <sys/ioctl.h>
 
@@ -30,8 +32,56 @@ static int          query_fd = -1;
 static int          query_error;
 static int          query_override = -1;
 static unsigned int query_calls;
+static int          first_datagram_sender = -1;
+int                 __real_bind(int fd, const struct sockaddr *addr, socklen_t len);
+int                 __wrap_bind(int fd, const struct sockaddr *addr, socklen_t len);
 int                 __real_ioctl(int fd, unsigned long request, ...);
 int                 __wrap_ioctl(int fd, unsigned long request, ...);
+
+int __wrap_bind(int fd, const struct sockaddr *addr, socklen_t len)
+{
+    int result = __real_bind(fd, addr, len);
+    if (result == 0 && first_datagram_sender >= 0)
+    {
+        // Queue the first datagram after the kernel binds the port, before the constructor resumes.
+        struct sockaddr_in target;
+        socklen_t          size = sizeof(target);
+        require(getsockname(fd, (struct sockaddr *) &target, &size) == 0 && target.sin_family == AF_INET,
+                "query newly bound UDP listener");
+        require(inet_pton(AF_INET, "127.0.0.2", &target.sin_addr) == 1, "parse first destination");
+        require(sendto(first_datagram_sender, "A", 1, 0, (struct sockaddr *) &target, size) == 1,
+                "queue first datagram during bind");
+        first_datagram_sender = -1;
+    }
+    return result;
+}
+
+static void onFirstDatagram(wio_t *io, sbuf_t *buf)
+{
+    sockaddr_u     destination, reply_source;
+    struct in_addr alias;
+    require(inet_pton(AF_INET, "127.0.0.2", &alias) == 1, "parse expected first destination");
+    require(wioGetDatagramLocalAddresses(io, &destination, &reply_source) && destination.sa.sa_family == AF_INET &&
+                reply_source.sa.sa_family == AF_INET && destination.sin.sin_addr.s_addr == alias.s_addr &&
+                reply_source.sin.sin_addr.s_addr == alias.s_addr,
+            "first queued datagram lost its destination or unicast reply source");
+    require(sbufGetLength(buf) == 1 && *sbufGetRawPtr(buf) == 'A', "unexpected first datagram payload");
+    bool *received = weventGetUserdata(io);
+    *received      = true;
+    bufferpoolReuseBuffer(wloopGetBufferPool(weventGetLoop(io)), buf);
+}
+
+static void checkFirstDatagram(wloop_t *loop, int sender)
+{
+    first_datagram_sender = sender;
+    wio_t *listener       = wloopCreateUdpListener(loop, "0.0.0.0", 0, NULL, -1, 0, 0);
+    require(listener != NULL && first_datagram_sender == -1, "create tracked wildcard UDP listener");
+    bool received = false;
+    weventSetUserData(listener, &received);
+    wioSetCallBackRead(listener, onFirstDatagram);
+    require(wioRead(listener) == 0 && wloopRun(loop) == 0 && received, "first queued datagram was not delivered");
+    wioClose(listener);
+}
 
 int __wrap_ioctl(int fd, unsigned long request, ...)
 {
@@ -209,6 +259,7 @@ int main(void)
     query_override = -1;
     queueDatagram(&state, sender, &target, 1, 512);
     receiveQueued(loop, &state);
+    checkFirstDatagram(loop, sender);
 #endif
 
     closesocket(sender);

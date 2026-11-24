@@ -9,14 +9,14 @@
 #include "wevent.h"
 #include "wsocket.h"
 #include "wthread.h"
+#ifdef OS_WIN
+#include "udp_pktinfo_win.h"
+#else
+#include "udp_pktinfo_posix.h"
+#endif
 #if WW_HAVE_SPLICE || defined(OS_LINUX)
 #include <sys/ioctl.h>
 #endif
-
-enum
-{
-    kNioReadDropped = -2
-};
 
 static void __connect_timeout_cb(wtimer_t *timer)
 {
@@ -212,13 +212,178 @@ static int nio_connect_async(wio_t *io)
     return wloopPostEvent(io->loop, &ev) ? 0 : -1;
 }
 
+#ifdef OS_UNIX
+bool wioEnableDatagramLocalAddress(wio_t *io)
+{
+    assert(io->io_type == WIO_TYPE_UDP);
+    int level;
+    int option;
+    switch (io->localaddr->sa_family)
+    {
+    case AF_INET:
+        level = IPPROTO_IP;
+#if defined(IP_RECVDSTADDR) && defined(IP_SENDSRCADDR)
+        option = IP_RECVDSTADDR;
+#elif defined(IP_RECVPKTINFO) && defined(IP_PKTINFO)
+        option = IP_RECVPKTINFO;
+#elif defined(IP_PKTINFO)
+        option = IP_PKTINFO;
+#else
+        errno = ENOPROTOOPT;
+        return false;
+#endif
+        break;
+    case AF_INET6:
+        level = IPPROTO_IPV6;
+#if defined(IPV6_RECVPKTINFO) && defined(IPV6_PKTINFO)
+        option = IPV6_RECVPKTINFO;
+#elif defined(OS_CYGWIN) && defined(IPV6_PKTINFO)
+        option = IPV6_PKTINFO;
+#else
+        errno = ENOPROTOOPT;
+        return false;
+#endif
+        break;
+    default:
+        errno = EAFNOSUPPORT;
+        return false;
+    }
+
+    const int enabled = 1;
+    if (setsockopt(wioGetFD(io), level, option, &enabled, sizeof(enabled)) != 0)
+        return false;
+#if defined(OS_LINUX) && defined(IP_PKTINFO)
+    /* Mapped IPv4 on a dual-stack socket also needs the IPv4 local unicast address. */
+    if (level == IPPROTO_IPV6 && setsockopt(wioGetFD(io), IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled)) != 0)
+        return false;
+#endif
+    io->udp_track_local_address = true;
+    return true;
+}
+
+static sockaddr_u nioLocalIPv4(const sockaddr_u *bound, struct in_addr address)
+{
+    sockaddr_u local = *bound;
+    if (bound->sa.sa_family == AF_INET6)
+    {
+        /* Keep both endpoints in the dual-stack socket's mapped-v4 representation. */
+        local.sin6.sin6_addr = (struct in6_addr) {.s6_addr = {[10] = 0xff, [11] = 0xff}};
+        memcpy(&local.sin6.sin6_addr.s6_addr[12], &address, sizeof(address));
+    }
+    else
+        local.sin.sin_addr = address;
+    return local;
+}
+
+/* Linux and illumos can supply a unicast reply source distinct from the on-wire destination. */
+static bool nioSetDatagramIPv4Addresses(wio_t *io, struct in_addr destination, struct in_addr source, bool group)
+{
+    if (destination.s_addr == INADDR_ANY)
+        return false;
+    group           = group || udpIPv4GroupAddress(destination);
+    bool has_source = source.s_addr != INADDR_ANY && ! udpIPv4GroupAddress(source) &&
+                      ! (group && source.s_addr == destination.s_addr);
+    if (! has_source && ! group)
+        return false;
+
+    io->udp_local_address = nioLocalIPv4(wioGetLocaladdrU(io), destination);
+    io->udp_reply_address = has_source ? nioLocalIPv4(wioGetLocaladdrU(io), source) : (sockaddr_u) {0};
+    return true;
+}
+
+static bool nioReadDatagramAddresses(wio_t *io, struct msghdr *msg)
+{
+    bool group = false;
+#ifdef MSG_BCAST
+    group = (msg->msg_flags & MSG_BCAST) != 0;
+#endif
+#ifdef MSG_MCAST
+    group = group || (msg->msg_flags & MSG_MCAST) != 0;
+#endif
+    for (struct cmsghdr *cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg))
+    {
+#if defined(IP_RECVDSTADDR) && defined(IP_SENDSRCADDR)
+        if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_RECVDSTADDR &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(struct in_addr)))
+        {
+            struct in_addr destination;
+            memcpy(&destination, CMSG_DATA(cmsg), sizeof(destination));
+            return nioSetDatagramIPv4Addresses(io, destination, destination, group);
+        }
+#elif defined(IP_PKTINFO)
+        if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(struct in_pktinfo)))
+        {
+            struct in_pktinfo info;
+            memcpy(&info, CMSG_DATA(cmsg), sizeof(info));
+#if (defined(OS_LINUX) && ! defined(OS_CYGWIN)) || defined(OS_SOLARIS)
+            return nioSetDatagramIPv4Addresses(io, info.ipi_addr, info.ipi_spec_dst, group);
+#else
+            return nioSetDatagramIPv4Addresses(io, info.ipi_addr, info.ipi_addr, group);
+#endif
+        }
+#endif
+#ifdef IPV6_PKTINFO
+        if (cmsg->cmsg_level == IPPROTO_IPV6 && cmsg->cmsg_type == IPV6_PKTINFO &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(struct in6_pktinfo)))
+        {
+            struct in6_pktinfo info;
+            memcpy(&info, CMSG_DATA(cmsg), sizeof(info));
+            if (IN6_IS_ADDR_V4MAPPED(&info.ipi6_addr))
+            {
+#if defined(OS_LINUX) && ! defined(OS_CYGWIN) && defined(IP_PKTINFO)
+                continue; /* IPv4 packet info includes both the destination and the reply source. */
+#else
+                struct in_addr destination;
+                memcpy(&destination, &info.ipi6_addr.s6_addr[12], sizeof(destination));
+                return nioSetDatagramIPv4Addresses(io, destination, destination, group);
+#endif
+            }
+            if (IN6_IS_ADDR_UNSPECIFIED(&info.ipi6_addr))
+                return false;
+            sockaddr_u local     = *wioGetLocaladdrU(io);
+            local.sin6.sin6_addr = info.ipi6_addr;
+            if (IN6_IS_ADDR_LINKLOCAL(&info.ipi6_addr) || IN6_IS_ADDR_MULTICAST(&info.ipi6_addr))
+                local.sin6.sin6_scope_id = info.ipi6_ifindex;
+            io->udp_local_address = local;
+            io->udp_reply_address = group || IN6_IS_ADDR_MULTICAST(&info.ipi6_addr) ? (sockaddr_u) {0} : local;
+            return true;
+        }
+#endif
+    }
+    return false;
+}
+#endif
+
 static int __nio_read_udp(wio_t *io, void *buf, unsigned int len)
 {
-#if defined(OS_LINUX) && defined(MSG_TRUNC)
+#ifdef OS_WIN
+    if (io->udp_track_local_address)
+        return udpWinReadDatagram(io, buf, len);
+    socklen_t addrlen = sizeof(sockaddr_u);
+    return recvfrom(wioGetFD(io), buf, (size_t) len, 0, io->peeraddr, &addrlen);
+#else
+#if defined(OS_LINUX) && ! defined(OS_CYGWIN) && defined(MSG_TRUNC)
+    const int flags = MSG_TRUNC;
+#else
+    if (! io->udp_track_local_address)
+    {
+        socklen_t addrlen = sizeof(sockaddr_u);
+        return recvfrom(wioGetFD(io), buf, (size_t) len, 0, io->peeraddr, &addrlen);
+    }
+    const int flags = 0;
+#endif
     struct iovec  iov = {.iov_base = buf, .iov_len = (size_t) len};
     struct msghdr msg = {.msg_name = io->peeraddr, .msg_namelen = sizeof(sockaddr_u), .msg_iov = &iov, .msg_iovlen = 1};
-
-    ssize_t nread = recvmsg(wioGetFD(io), &msg, MSG_TRUNC);
+    udp_packet_control_t control;
+    if (io->udp_track_local_address)
+    {
+        io->udp_local_address.sa.sa_family = AF_UNSPEC;
+        io->udp_reply_address.sa.sa_family = AF_UNSPEC;
+        msg.msg_control                    = control.bytes;
+        msg.msg_controllen                 = sizeof(control.bytes);
+    }
+    ssize_t nread = recvmsg(wioGetFD(io), &msg, flags);
     if (nread < 0)
     {
         return -1;
@@ -236,10 +401,12 @@ static int __nio_read_udp(wio_t *io, void *buf, unsigned int len)
         return kNioReadDropped;
     }
 
+    if (io->udp_track_local_address)
+    {
+        if ((msg.msg_flags & MSG_CTRUNC) != 0 || ! nioReadDatagramAddresses(io, &msg))
+            return kNioReadDropped;
+    }
     return (int) nread;
-#else
-    socklen_t addrlen = sizeof(sockaddr_u);
-    return recvfrom(wioGetFD(io), buf, (size_t) len, 0, io->peeraddr, &addrlen);
 #endif
 }
 
@@ -768,6 +935,12 @@ static bool nio_sendto_error_is_transient(int err)
 
 int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
 {
+    return wioWriteDatagramFrom(io, buf, peer_addr, NULL);
+}
+
+int wioWriteDatagramFrom(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr, const sockaddr_u *local_addr)
+{
+    assert(local_addr == NULL || io->io_type == WIO_TYPE_UDP);
     if (io->closed)
     {
         wloge("wioWriteDatagram called but fd[%d] already closed!", wioGetFD(io));
@@ -803,7 +976,12 @@ int wioWriteDatagram(wio_t *io, sbuf_t *buf, const sockaddr_u *peer_addr)
     int len = (int) sbufGetLength(buf);
     udp_send_result_t result;
     if (io->io_type == WIO_TYPE_UDP)
-        result = udpSendBuffer(wioGetFD(io), io->loop->bufpool, buf, peer_addr, false);
+    {
+        if (local_addr == NULL)
+            result = udpSendBuffer(wioGetFD(io), io->loop->bufpool, buf, peer_addr, false);
+        else
+            result = udpSendBufferFrom(wioGetFD(io), io->loop->bufpool, buf, peer_addr, local_addr, false);
+    }
     else
     {
         int sent = sendto(

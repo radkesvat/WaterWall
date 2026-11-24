@@ -21,3 +21,8 @@ typedef struct udp_send_result_s
  * splice(SPLICE_F_MORE), then an empty sendto to commit exactly one datagram.
  */
 udp_send_result_t udpSendBuffer(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer, bool retry_eintr);
+
+/* The optional local address selects the source of this datagram only, including
+ * the initial MSG_MORE write when a splice-backed datagram is assembled. */
+udp_send_result_t udpSendBufferFrom(int fd, buffer_pool_t *pool, sbuf_t *buf, const sockaddr_u *peer,
+                                    const sockaddr_u *local, bool retry_eintr);

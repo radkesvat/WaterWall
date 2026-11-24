@@ -203,6 +203,19 @@ typedef union {
 #endif
 } sockaddr_u;
 
+/* Resolve a new UDP line's reply source on systems that only report the IPv4
+ * destination. An interface lookup distinguishes assigned unicast addresses
+ * from subnet-directed broadcasts. */
+#if (defined(OS_DARWIN) || defined(OS_FREEBSD)) && ! defined(MSG_BCAST)
+WW_EXPORT bool udpReplySourceNeedsRoute(const sockaddr_u *candidate);
+#else
+static inline bool udpReplySourceNeedsRoute(const sockaddr_u *candidate)
+{
+    discard candidate;
+    return false;
+}
+#endif
+
 /**
  * @brief Resolve a host string into a socket address.
  *
