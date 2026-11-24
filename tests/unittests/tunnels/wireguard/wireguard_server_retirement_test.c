@@ -194,7 +194,7 @@ static void caseServerInitiatedRecovery(void)
     twfRequire(calcFullPacketChecksum(sbufGetMutablePtr(second), sbufGetLength(second)), "checksum failed");
     tunnelPrevDownStreamPayload(f.state->ptc, line, second);
     wgServerFixturePump(&f);
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     wgServerFixturePump(&f);
     twfRequire(f.client_count == 1 &&
                    wireguardGetMessageType(sbufGetRawPtr(f.to_client[0]), sbufGetLength(f.to_client[0])) ==
@@ -202,7 +202,7 @@ static void caseServerInitiatedRecovery(void)
                "server demand did not initiate exactly one handshake on the live carrier");
     /* Exchange only answers the server. It never initiates on behalf of the client. */
     wgServerFixtureExchange(&f);
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     wgServerFixtureExchange(&f);
     twfRequire(f.delivered == 1, "server failed to send the first datagram exactly once");
 
@@ -214,7 +214,7 @@ static void caseServerInitiatedRecovery(void)
     twfRequire(twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
                "fresh demand did not retain its packet");
     refresh(&f, 1);
-    reconcile(f.state, false);
+    wireguardserverReconcile(f.state, false);
     twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
                "credential retirement retained queued plaintext");
     wgServerFixturePump(&f);
@@ -237,7 +237,7 @@ static void caseIdleAccountRetirement(bool exhaust_quota)
     binding_t     *binding    = f.state->binding_head;
     const uint64_t generation = binding->authorization.generation;
     const uint64_t epoch      = binding->epoch;
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     twfRequire(binding->usable, "timer retired an eligible idle account");
 
     if (exhaust_quota)
@@ -245,11 +245,11 @@ static void caseIdleAccountRetirement(bool exhaust_quota)
     else
         userSetClientViewExpiry(account, authenticationclientLocalTimeMS(), true);
     twfRequire(authenticationclientUsersGeneration(f.auth) == generation, "local eligibility changed table generation");
-    tick(f.state->timer);
-    twfRequire(bindingByEpoch(f.state, epoch) == binding && binding->retiring && ! binding->usable,
+    wireguardserverTick(f.state->timer);
+    twfRequire(wireguardserverBindingByEpoch(f.state, epoch) == binding && binding->retiring && ! binding->usable,
                "timer did not retire the idle account while reserving its range for cleanup");
     wgServerFixturePump(&f);
-    twfRequire(bindingByEpoch(f.state, epoch) == NULL, "worker cleanup kept the retired idle binding");
+    twfRequire(wireguardserverBindingByEpoch(f.state, epoch) == NULL, "worker cleanup kept the retired idle binding");
     wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
 }
 
@@ -296,7 +296,7 @@ static void casePendingByteBudget(void)
     wireguardCommonSendInner(&f.state->engine, packet(&f, 17, true, true, 0));
     twfRequire(first->pending == retained_packet && second->pending == NULL && f.state->pending_rekey_bytes == charge,
                "two peers exceeded their shared pending byte budget");
-    retireBinding(f.state, first);
+    wireguardserverRetireBinding(f.state, first);
     twfRequire(f.state->pending_rekey_bytes == 0, "retirement retained the pending charge");
     retained_packet = packet(&f, 17, true, true, 0);
     wireguardCommonSendInner(&f.state->engine, retained_packet);
@@ -325,8 +325,9 @@ static void scenario(wid_t workers)
     wgServerFixtureExchange(&f);
     twfRequire(owned(&f, workers - 1, "10.50.0.5") > 0 && owned(&f, 0, "10.60.0.2") > 0, "real PTC admission missing");
     refresh(&f, 0);
-    reconcile(f.state, false);
-    twfRequire(bindingByEpoch(f.state, old_epoch) == binding && binding->usable, "unchanged refresh replaced binding");
+    wireguardserverReconcile(f.state, false);
+    twfRequire(wireguardserverBindingByEpoch(f.state, old_epoch) == binding && binding->usable,
+               "unchanged refresh replaced binding");
 
     wg_submit_hook = holdMessage;
     hold_jobs      = true;
@@ -338,11 +339,11 @@ static void scenario(wid_t workers)
         tunnelNextUpStreamPayload(f.adapter, f.ingress[ingress_wid], f.to_server[i]);
     f.server_count = 0;
     discard tosSetCurrentWorker(0);
-    payloadDown(f.server, tunnelchainGetWorkerPacketLine(f.chain, 0), packet(&f, 17, false, true, 0));
+    tunnelDownStreamPayload(f.server, tunnelchainGetWorkerPacketLine(f.chain, 0), packet(&f, 17, false, true, 0));
     sbuf_t *old_send = bufferpoolGetSmallBuffer(f.env.pools[0]);
     sbufSetLength(old_send, 32);
     sbufWriteZeros(old_send, 32);
-    twfRequire(output(f.state, old_send, binding->peer, &binding->ingress->ip, binding->ingress->port),
+    twfRequire(wireguardserverOutput(f.state, old_send, binding->peer, &binding->ingress->ip, binding->ingress->port),
                "old output hold failed");
     const unsigned held_dispatches = atomic_load(&f.state->dispatch.count);
     /* A real UDP child exists before its queued Init and payload can run. */
@@ -371,23 +372,24 @@ static void scenario(wid_t workers)
     twfRequire(stale_count >= 4, "stale ingress/reverse/send work was not retained");
     sbuf_t *stale_affinity = packet(&f, 17, false, false, workers - 1);
     refresh(&f, 1);
-    reconcile(f.state, false);
-    twfRequire(binding->retiring && ! binding->usable && bindingByEpoch(f.state, old_epoch) == binding,
+    wireguardserverReconcile(f.state, false);
+    twfRequire(binding->retiring && ! binding->usable && wireguardserverBindingByEpoch(f.state, old_epoch) == binding,
                "range barrier did not close");
     for (wid_t wid = 0; wid < workers; ++wid)
         tosPumpWorker(&f.env, wid);
-    twfRequire(bindingByEpoch(f.state, old_epoch) == binding, "held owner acknowledgment was bypassed");
+    twfRequire(wireguardserverBindingByEpoch(f.state, old_epoch) == binding, "held owner acknowledgment was bypassed");
     f.state->receiving_generation = authenticationclientUsersGeneration(f.auth);
     user_t *rotated               = usersLookupByIdentifier(&f.users, 42);
-    twfRequire(candidate(f.state, rotated->wireguard_publickey) == NULL, "candidate overlapped retiring range");
+    twfRequire(wireguardserverCandidate(f.state, rotated->wireguard_publickey) == NULL,
+               "candidate overlapped retiring range");
     refresh(&f, 2); /* A further update must win over an outstanding lookup. */
     f.state->receiving_generation = authenticationclientUsersGeneration(f.auth);
     user_t *replacement           = usersLookupByIdentifier(&f.users, 43);
-    twfRequire(candidate(f.state, replacement->wireguard_publickey) == NULL,
+    twfRequire(wireguardserverCandidate(f.state, replacement->wireguard_publickey) == NULL,
                "replacement published before owner barrier");
     releaseMessage(retirement_message);
     wgServerFixturePump(&f);
-    twfRequire(bindingByEpoch(f.state, old_epoch) == NULL, "completed retirement kept the old epoch");
+    twfRequire(wireguardserverBindingByEpoch(f.state, old_epoch) == NULL, "completed retirement kept the old epoch");
     requireProtocolsEmpty(&f);
     twfRequire(usersLookupByIdentifier(&f.users, 42)->runtime.active_cons_out == 0, "old identity leaked reservations");
     twfRequire(wireguardifStartHandshake(&f.client, f.client.first_peer, true) == ERR_OK,
@@ -397,7 +399,7 @@ static void scenario(wid_t workers)
     twfRequire(f.client.first_peer->curr_keypair.valid && binding->peer->curr_keypair.valid,
                "replacement proof failed to derive keys");
     twfRequire(binding->epoch != old_epoch && binding->authorization.handle.user_id == 43 &&
-                   bindingCurrent(bindingByEpoch(f.state, unaffected_epoch)),
+                   wireguardserverBindingCurrent(wireguardserverBindingByEpoch(f.state, unaffected_epoch)),
                "replacement proof adopted stale identity or disturbed unaffected peer");
     const unsigned opened = f.opened, output_count = f.client_count;
     for (unsigned i = 0; i < stale_count; ++i)

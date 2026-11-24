@@ -10,8 +10,10 @@
 #include "AuthenticationClient/structure.h"
 #undef kTunnelStateSize
 #undef kLineStateSize
-#include "../../../../../tunnels/WireGuardServer/server.c"
 #include "PacketsToConnection/structure.h"
+#include "WireGuardServer/interface.h"
+#include "WireGuardServer/structure.h"
+#include "loggers/network_logger.h"
 #include "lwip/engine_runtime.h"
 #include "managers/node_manager.c" /* Actual central lifecycle traversal. */
 
@@ -291,7 +293,7 @@ static tunnel_t *wgServerFixtureConstruct(wg_server_fixture_t *f, const char *ex
     f->server_node.node_settings_json = cJSON_Parse(settings);
     ww_startup_context_t startup      = {0};
     wwStartupContextBegin(&startup);
-    f->server = create(&f->server_node);
+    f->server = f->server_node.createHandle(&f->server_node);
     discard wwStartupContextEnd(&startup);
     f->server_node.instance = f->server;
     if (f->server != NULL)

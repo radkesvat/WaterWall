@@ -9,9 +9,9 @@ endif()
 if(LINUX AND TARGET WireGuardServer)
   waterwall_add_native_executable(wireguard_server_endpoint_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_server_endpoint_test.c)
-  target_link_libraries(wireguard_server_endpoint_test PRIVATE ww_test_support WireGuardCommon AuthenticationClient UserController PacketsToConnection)
-  target_include_directories(wireguard_server_endpoint_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_libraries(wireguard_server_endpoint_test PRIVATE ww_test_support WireGuardServer)
   target_link_options(wireguard_server_endpoint_test PRIVATE
+    "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
     "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
     "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
@@ -210,8 +210,7 @@ endif()
 if(LINUX AND TARGET WireGuardServer)
   waterwall_add_native_executable(wireguard_user_binding_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_user_binding_test.c)
-  target_link_libraries(wireguard_user_binding_test PRIVATE ww_test_support WireGuardCommon AuthenticationClient UserController PacketsToConnection)
-  target_include_directories(wireguard_user_binding_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_libraries(wireguard_user_binding_test PRIVATE ww_test_support WireGuardServer)
   target_link_options(wireguard_user_binding_test PRIVATE
     "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
@@ -227,8 +226,7 @@ if(LINUX AND TARGET WireGuardServer)
   waterwall_add_native_executable(wireguard_server_lifecycle_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_server_lifecycle_test.c
     ${CMAKE_SOURCE_DIR}/ww/lwip/engine_runtime.c)
-  target_link_libraries(wireguard_server_lifecycle_test PRIVATE ptc_engine_test ww_lwip_engine_test WireGuardCommon AuthenticationClient UserController)
-  target_include_directories(wireguard_server_lifecycle_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+  target_link_libraries(wireguard_server_lifecycle_test PRIVATE WireGuardServer ptc_engine_test ww_lwip_engine_test)
   target_link_options(wireguard_server_lifecycle_test PRIVATE
     "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup"
     "-Wl,--wrap=tunnelDestroy"
@@ -248,8 +246,7 @@ if(LINUX AND TARGET WireGuardServer)
     set(target wireguard_server_${suite}_test)
     waterwall_add_native_executable(${target} SUPPORT SOURCES
       ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/${target}.c)
-    target_link_libraries(${target} PRIVATE ww_test_support ptc_engine_test ww_lwip_engine_test WireGuardCommon AuthenticationClient UserController)
-    target_include_directories(${target} PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardServer/include)
+    target_link_libraries(${target} PRIVATE ww_test_support WireGuardServer ptc_engine_test ww_lwip_engine_test)
     target_link_options(${target} PRIVATE
       "-Wl,--wrap=sendWorkerMessageForceQueueWithCleanup" "-Wl,--wrap=tunnelDestroy" "-Wl,--wrap=tunnelOwnedChildDestroy"
       "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"

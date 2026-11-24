@@ -8,8 +8,10 @@
 #include "AuthenticationClient/structure.h"
 #undef kTunnelStateSize
 #undef kLineStateSize
-#include "../../../../../tunnels/WireGuardServer/server.c"
 #include "PacketsToConnection/structure.h"
+#include "WireGuardServer/interface.h"
+#include "WireGuardServer/structure.h"
+#include "loggers/network_logger.h"
 
 /* Only the absent control transport is stubbed: correlated response parsing,
  * sticky rejection and Session recovery remain the production transitions. */
@@ -247,7 +249,7 @@ int main(void)
     server_t *state              = tunnelGetState(server);
     mutexInit(&state->bindings_lock);
     wireguardDispatchInit(&state->dispatch);
-    twfRequire(readServerLimits(state, NULL), "server default limits failed");
+    twfRequire(wireguardserverReadLimits(state, NULL), "server default limits failed");
     state->tunnel               = server;
     state->auth                 = auth;
     state->connection           = true;
@@ -255,19 +257,20 @@ int main(void)
     twfRequire(wireguardCommonInit(&state->engine,
                                    "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=",
                                    state,
-                                   (wireguard_callbacks_t) {
-                                       .candidate = candidate, .authenticated = authenticated, .output = proofOutput}),
+                                   (wireguard_callbacks_t) {.candidate     = wireguardserverCandidate,
+                                                            .authenticated = wireguardserverAuthenticated,
+                                                            .output        = proofOutput}),
                "engine setup failed");
     state->ptc                                   = tunnelCreate(NULL, 0, sizeof(ptc_lstate_t));
     state->ptc->fnFinD                           = fixtureOwnedFinish;
     state->binder                                = tunnelCreate(NULL, sizeof(server_t *), 0);
     *(server_t **) tunnelGetState(state->binder) = state;
-    state->binder->fnInitU                       = bindingInit;
+    state->binder->fnInitU                       = wireguardserverBindingInit;
     node_t controller_node                       = nodeUserControllerGet();
     controller_node.node_settings_json           = cJSON_Parse("{\"auth-client-node-name\":\"accounts\"}");
     state->controller                            = controller_node.createHandle(&controller_node);
     twfRequire(state->controller != NULL, "controller setup failed");
-    usercontrollerSetPayloadModeResolver(state->controller, server, payloadMode);
+    usercontrollerSetPayloadModeResolver(state->controller, server, wireguardserverPayloadMode);
     state->controller->onPrepare(state->controller);
     tunnel_t *sink   = tunnelCreate(NULL, 0, 0);
     sink->fnInitU    = fixtureOpened;
@@ -280,7 +283,7 @@ int main(void)
     twf_line_pool_t pool;
     twfLinePoolSetup(&pool, state->ptc->lstate_size + state->controller->lstate_size, 16);
     state->receiving_generation = 2;
-    twfRequire(candidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
+    twfRequire(wireguardserverCandidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
                "queued handshake predating credential ownership published a binding");
     state->receiving_generation = 7;
     proof_t proofs[2];
@@ -290,7 +293,7 @@ int main(void)
     {
         exchangeProof(&proofs[i]);
         wireguard_peer_t *peer = peerLookupByPubkey(&state->engine, keys[i]);
-        twfRequire(peer != NULL && bindingCurrent(peer->context) && peer->curr_keypair.valid,
+        twfRequire(peer != NULL && wireguardserverBindingCurrent(peer->context) && peer->curr_keypair.valid,
                    "real protocol proof did not publish binding");
     }
     wireguard_peer_t *first_peer     = peerLookupByPubkey(&state->engine, keys[0]);
@@ -302,11 +305,11 @@ int main(void)
     twfRequire(opened_count == 3 && lineGetCurrentUser(a)->user_id == 42 && lineGetCurrentUser(other)->user_id == 43,
                "two accounts lost their independent inner-flow identities");
     atomicIncU64(&as->users_generation);
-    twfRequire(candidate(state, keys[0]) == first_peer,
+    twfRequire(wireguardserverCandidate(state, keys[0]) == first_peer,
                "queued handshake lost continuous authorization across a full refresh");
     ip_addr_t continuous_source;
     twfRequire(ipaddr_aton("10.50.0.5", &continuous_source) &&
-                   sourceEpoch(state, &continuous_source) == first_binding->epoch,
+                   wireguardserverSourceEpoch(state, &continuous_source) == first_binding->epoch,
                "unchanged full refresh revoked the source epoch of an active account");
     user_t *account = usersLookupByIdentifier(&users, 42);
     twfRequire(account->runtime.active_cons_out == 2 && account->runtime.ip_usage_count == 1,
@@ -315,7 +318,8 @@ int main(void)
     line_t        *delayed_tcp = prepareFixtureLine(state, &pool, first_binding, "10.50.0.5", false);
     line_t        *delayed_udp = prepareFixtureLine(state, &pool, first_binding, "10.50.0.5", true);
     controlResponse(auth, true);
-    twfRequire(! authenticationclientCanAuthenticate(auth) && sourceEpoch(state, &continuous_source) == saved_epoch &&
+    twfRequire(! authenticationclientCanAuthenticate(auth) &&
+                   wireguardserverSourceEpoch(state, &continuous_source) == saved_epoch &&
                    ! authenticationclientUserShouldClose(auth, lineGetCurrentUser(a), 0),
                "control rejection revoked an eligible established binding");
     line_t *blocked = delayed_tcp;
@@ -334,7 +338,7 @@ int main(void)
     twfRequire(payload_count == 2 && account->stats.traffic.u == before_traffic + 38 && lineIsAlive(a) &&
                    lineIsAlive(b),
                "control rejection interrupted existing TCP/UDP accounting or delivery");
-    twfRequire(candidate(state, keys[2]) == NULL, "new eligible peer bypassed control rejection");
+    twfRequire(wireguardserverCandidate(state, keys[2]) == NULL, "new eligible peer bypassed control rejection");
     /* Crypto expiry does not erase the logical binding or prevent rekey. */
     keypairDestroy(&first_peer->curr_keypair);
     keypairDestroy(&first_peer->next_keypair);
@@ -343,8 +347,8 @@ int main(void)
     twfRequire(first_binding->usable && first_binding->epoch == saved_epoch && first_peer->curr_keypair.valid,
                "cached live binding could not rekey during control rejection");
     atomicIncU64(&as->users_generation);
-    reconcile(state, true);
-    twfRequire(first_binding->usable && sourceEpoch(state, &continuous_source) == saved_epoch,
+    wireguardserverReconcile(state, true);
+    twfRequire(first_binding->usable && wireguardserverSourceEpoch(state, &continuous_source) == saved_epoch,
                "unchanged refresh during rejection retired existing flows");
     controlResponse(auth, false);
     twfRequire(authenticationclientCanAuthenticate(auth) && first_binding->epoch == saved_epoch,
@@ -376,22 +380,22 @@ int main(void)
         proofs[i].ingress->line = NULL;
         lineDestroy(outer);
     }
-    clearBinding(state, first_binding);
+    wireguardserverClearBinding(state, first_binding);
     controlResponse(auth, true);
-    twfRequire(candidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
+    twfRequire(wireguardserverCandidate(state, keys[0]) == NULL && peerLookupByPubkey(&state->engine, keys[0]) == NULL,
                "retired binding resurrected during rejection");
     state->controller->onDestroy(state->controller, wwLifecycleStartupRollback());
     tunnelDestroy(state->ptc);
     tunnelDestroy(state->binder);
     tunnelDestroy(sink);
     while (state->binding_head != NULL)
-        clearBinding(state, state->binding_head);
+        wireguardserverClearBinding(state, state->binding_head);
     binding_map_t_drop(&state->epochs);
     wireguardPrefixDestroy(&state->ranges);
     for (unsigned i = 0; i < 2; ++i)
     {
         wireguardDeviceDestroy(&proofs[i].client);
-        ingressRelease(proofs[i].ingress);
+        wireguardserverIngressRelease(proofs[i].ingress);
     }
     wireguardDeviceDestroy(&state->engine);
     mutexDestroy(&state->bindings_lock);

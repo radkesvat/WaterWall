@@ -149,14 +149,14 @@ static void measureTimer(wg_server_fixture_t *f)
 {
     uint64_t reconciliation[kTimingSamples], timer[kTimingSamples];
     for (unsigned i = 0; i < 2; ++i)
-        tick(f->state->timer);
+        wireguardserverTick(f->state->timer);
     for (unsigned i = 0; i < kTimingSamples; ++i)
     {
         uint64_t start = __real_getHRTimeUs();
-        reconcile(f->state, true);
+        wireguardserverReconcile(f->state, true);
         reconciliation[i] = __real_getHRTimeUs() - start;
         start             = __real_getHRTimeUs();
-        tick(f->state->timer);
+        wireguardserverTick(f->state->timer);
         timer[i] = __real_getHRTimeUs() - start;
     }
     qsort(reconciliation, kTimingSamples, sizeof(reconciliation[0]), compareTime);
@@ -199,7 +199,7 @@ static void orphanAdmissionPressure(void)
     for (unsigned i = 0; i < 5; ++i)
         if (i < 2 || i == 4)
             userSetClientViewExpiry(usersLookupByIdentifier(&f.users, kAccountIdBase + i), 1, true);
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     wgServerFixturePump(&f);
     twfRequire(f.state->unauthenticated_ingress == 2 && lineIsAlive(lines[4]), "last-binding demotion lost a slot");
     roundTrip(&f, &clients[5], lines[5], 5);
@@ -234,7 +234,7 @@ static void orphanAdmissionPressure(void)
     line_t *newcomer = openIngress(&f, 1, 11001);
     twfRequire(newcomer != NULL && openIngress(&f, 0, 11002) == NULL && f.state->unauthenticated_ingress == 2,
                "fresh ingress failed to reclaim only charged orphans");
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     wgServerFixturePump(&f);
     for (unsigned i = 0; i < 4; ++i)
     {
@@ -289,23 +289,24 @@ int main(void)
     roundTrip(&f, &clients[kPeerCount - 1], lines[kPeerCount - 1], kPeerCount - 1);
 
     user_t        *expired        = usersLookupByIdentifier(&f.users, kAccountIdBase);
-    const uint64_t previous_epoch = sourceEpoch(f.state, &expired->wireguard_allowed_ip);
+    const uint64_t previous_epoch = wireguardserverSourceEpoch(f.state, &expired->wireguard_allowed_ip);
     twfRequire(previous_epoch != 0 && expired->runtime.active_cons_out == 1, "first account has no binding or flow");
     userSetClientViewExpiry(expired, fixture_millis + WIREGUARDIF_TIMER_MSECS, true);
     fixture_millis += WIREGUARDIF_TIMER_MSECS;
     wloopUpdateTime(f.env.loops[0]);
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     wgServerFixturePump(&f);
-    tick(f.state->timer);
+    wireguardserverTick(f.state->timer);
     twfRequire(binding_map_t_size(&f.state->epochs) == kPeerCount - 1 &&
-                   sourceEpoch(f.state, &expired->wireguard_allowed_ip) == 0 && expired->runtime.active_cons_out == 0,
+                   wireguardserverSourceEpoch(f.state, &expired->wireguard_allowed_ip) == 0 &&
+                   expired->runtime.active_cons_out == 0,
                "expired account retained its binding or inner flow");
     roundTrip(&f, &clients[kPeerCount - 1], lines[kPeerCount - 1], kPeerCount - 1);
     userSetClientViewExpiry(expired, 0, false);
     wireguardDeviceDestroy(&clients[0]);
     authenticate(&f, &clients[0], expired, server_peer, lines[0]);
     twfRequire(binding_map_t_size(&f.state->epochs) == kPeerCount &&
-                   sourceEpoch(f.state, &expired->wireguard_allowed_ip) > previous_epoch,
+                   wireguardserverSourceEpoch(f.state, &expired->wireguard_allowed_ip) > previous_epoch,
                "reactivated account did not obtain a new binding");
     roundTrip(&f, &clients[0], lines[0], 0);
 
