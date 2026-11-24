@@ -3,7 +3,8 @@
  * Setup: a private raw engine and a recording netif that owns one /32 address and has no route to the
  * peer, as ConnectionToPackets' virtual netif has; its MTU is 1420 and the peer offers an MSS of 1460.
  * Checks: active and passive opens, including a passive open that retransmits its SYN-ACK, use an MSS
- * of 1380 and send a 3000-byte write as three whole datagrams within the MTU.
+ * of 1380 and send a 3000-byte write as three whole datagrams within the MTU. When the active
+ * opener negotiates timestamps, full data packets carry 1368 bytes of payload.
  * Limits: IPv4 only; this checks the segment sizes, not what a path does with fragments.
  * CTest: waterwall.lwip_bound_mss_unit (Debug and Release).
  */
@@ -14,12 +15,13 @@
 
 enum
 {
-    netif_mtu  = 1420,
-    netif_mss  = netif_mtu - 40,
-    peer_mss   = 1460,
-    peer_port  = 80,
-    local_port = 1234,
-    write_size = 3000
+    netif_mtu       = 1420,
+    netif_mss       = netif_mtu - 40,
+    peer_mss        = 1460,
+    peer_port       = 80,
+    local_port      = 1234,
+    write_size      = 3000,
+    timestamp_bytes = 12 /* TCP timestamp option with alignment padding */
 };
 
 typedef struct
@@ -27,10 +29,11 @@ typedef struct
     ww_lwip_engine_t *engine, *previous;
     struct netif      netif;
     struct tcp_pcb   *pcb;
-    uint32_t          last_sequence, payload;
-    uint16_t          syn_mss, largest;
+    uint32_t          last_sequence, last_timestamp, payload;
+    uint16_t          syn_mss, largest_datagram, largest_payload;
     uint8_t           last_flags;
     unsigned          outputs, fragments;
+    bool              peer_timestamps;
 } fixture_t;
 
 static fixture_t fixture;
@@ -66,7 +69,7 @@ static err_t output(struct netif *netif, struct pbuf *packet, const ip4_addr_t *
     const uint16_t copied = (uint16_t) LWIP_MIN(packet->tot_len, sizeof(bytes));
     CHECK(pbuf_copy_partial(packet, bytes, copied, 0) == copied);
     ++f->outputs;
-    f->largest = LWIP_MAX(f->largest, packet->tot_len);
+    f->largest_datagram = LWIP_MAX(f->largest_datagram, packet->tot_len);
     /* The more-fragments flag or a fragment offset: the datagram did not fit the netif. */
     if ((get16(bytes + 6) & 0x3fffU) != 0)
     {
@@ -75,28 +78,41 @@ static err_t output(struct netif *netif, struct pbuf *packet, const ip4_addr_t *
     }
     CHECK(packet->tot_len >= 40);
     const unsigned header_length = 20U + (bytes[32] >> 4) * 4U;
-    CHECK(header_length <= packet->tot_len && header_length <= sizeof(bytes));
-    f->last_sequence = get32(bytes + 24);
-    f->last_flags    = bytes[33];
-    f->payload += packet->tot_len - header_length;
-    if ((f->last_flags & TCP_SYN) == 0)
+    CHECK(header_length >= 40 && header_length <= copied);
+    f->last_sequence   = get32(bytes + 24);
+    f->last_flags      = bytes[33];
+    bool has_timestamp = false;
+    for (unsigned i = 40; i < header_length && bytes[i] != LWIP_TCP_OPT_EOL;)
     {
-        return ERR_OK;
-    }
-    for (unsigned i = 40; i < header_length && bytes[i] != 0;)
-    {
-        if (bytes[i] == 1)
+        if (bytes[i] == LWIP_TCP_OPT_NOP)
         {
             ++i;
             continue;
         }
         CHECK(i + 1 < header_length && bytes[i + 1] >= 2 && i + bytes[i + 1] <= header_length);
-        if (bytes[i] == 2)
+        if (bytes[i] == LWIP_TCP_OPT_MSS)
         {
-            CHECK(bytes[i + 1] == 4);
+            CHECK((f->last_flags & TCP_SYN) && bytes[i + 1] == LWIP_TCP_OPT_LEN_MSS);
             f->syn_mss = get16(bytes + i + 2);
         }
+        else if (bytes[i] == LWIP_TCP_OPT_TS)
+        {
+            CHECK(bytes[i + 1] == LWIP_TCP_OPT_LEN_TS);
+            has_timestamp     = true;
+            f->last_timestamp = get32(bytes + i + 2);
+        }
         i += bytes[i + 1];
+    }
+    const uint16_t payload_length = (uint16_t) (packet->tot_len - header_length);
+    if (f->peer_timestamps && (f->last_flags & TCP_SYN))
+    {
+        CHECK(has_timestamp);
+    }
+    if (payload_length > 0)
+    {
+        CHECK(has_timestamp == f->peer_timestamps);
+        f->largest_payload = LWIP_MAX(f->largest_payload, payload_length);
+        f->payload += payload_length;
     }
     return ERR_OK;
 }
@@ -110,14 +126,15 @@ static err_t initNetif(struct netif *netif)
     return ERR_OK;
 }
 
-/* A segment from the peer without payload; an mss of 0 sends no option. */
+/* A segment from the peer without payload. An MSS of 0 omits the MSS option. */
 static void inject(fixture_t *f, uint16_t port, uint32_t sequence, uint32_t acknowledgement, uint8_t flags,
                    uint16_t mss)
 {
-    const uint16_t options    = mss == 0 ? 0 : 4;
-    const uint16_t length     = (uint16_t) (40 + options);
-    uint8_t        bytes[44]  = {0x45};
-    uint8_t        pseudo[36] = {0};
+    const uint16_t mss_bytes = mss == 0 ? 0 : LWIP_TCP_OPT_LEN_MSS;
+    const uint16_t options   = mss_bytes + (f->peer_timestamps ? timestamp_bytes : 0);
+    const uint16_t length    = (uint16_t) (40 + options);
+    uint8_t        bytes[40 + LWIP_TCP_OPT_LEN_MSS + timestamp_bytes] = {0x45};
+    uint8_t        pseudo[sizeof(bytes) - 8]                          = {0};
     put16(bytes + 2, length);
     bytes[8]  = 64;
     bytes[9]  = 6;
@@ -133,11 +150,20 @@ static void inject(fixture_t *f, uint16_t port, uint32_t sequence, uint32_t ackn
     bytes[32] = (uint8_t) ((5 + options / 4) << 4);
     bytes[33] = flags;
     put16(bytes + 34, UINT16_MAX);
-    if (options != 0)
+    if (mss_bytes != 0)
     {
-        bytes[40] = 2;
-        bytes[41] = 4;
+        bytes[40] = LWIP_TCP_OPT_MSS;
+        bytes[41] = LWIP_TCP_OPT_LEN_MSS;
         put16(bytes + 42, mss);
+    }
+    if (f->peer_timestamps)
+    {
+        uint8_t *option = bytes + 40 + mss_bytes;
+        option[0] = option[1] = LWIP_TCP_OPT_NOP;
+        option[2]             = LWIP_TCP_OPT_TS;
+        option[3]             = LWIP_TCP_OPT_LEN_TS;
+        put32(option + 4, 500);
+        put32(option + 8, f->last_timestamp);
     }
     memcpy(pseudo, bytes + 12, 8);
     pseudo[9] = 6;
@@ -187,10 +213,11 @@ static void writeFitsTheNetif(fixture_t *f)
     CHECK(f->pcb->mss == netif_mss);
     tcp_nagle_disable(f->pcb);
     f->outputs = f->fragments = 0;
-    f->payload = f->largest = 0;
+    f->payload = f->largest_datagram = f->largest_payload = 0;
     CHECK(tcp_write(f->pcb, data, write_size, TCP_WRITE_FLAG_COPY) == ERR_OK);
     CHECK(tcp_output(f->pcb) == ERR_OK);
-    CHECK(f->fragments == 0 && f->largest == netif_mtu && f->payload == write_size && f->outputs == 3);
+    CHECK(f->fragments == 0 && f->largest_datagram == netif_mtu && f->payload == write_size && f->outputs == 3);
+    CHECK(f->largest_payload == netif_mss - (f->peer_timestamps ? timestamp_bytes : 0));
 }
 
 static err_t connected(void *argument, struct tcp_pcb *pcb, err_t error)
@@ -200,10 +227,11 @@ static err_t connected(void *argument, struct tcp_pcb *pcb, err_t error)
     return ERR_OK;
 }
 
-static void activeOpen(void)
+static void activeOpen(bool peer_timestamps)
 {
-    fixture_t *f = start();
-    ip_addr_t  local, peer;
+    fixture_t *f       = start();
+    f->peer_timestamps = peer_timestamps;
+    ip_addr_t local, peer;
     IP_ADDR4(&local, 10, 0, 0, 1);
     IP_ADDR4(&peer, 203, 0, 113, 9);
     f->pcb = tcp_new();
@@ -255,7 +283,9 @@ int main(void)
 {
     wwLwipEngineSharedInit();
     testCaseSet("an active open sends within the bound netif's MTU");
-    activeOpen();
+    activeOpen(false);
+    testCaseSet("an active open with timestamps reserves room for the option on every data packet");
+    activeOpen(true);
     testCaseSet("a passive open sends within the bound netif's MTU");
     passiveOpen(false);
     testCaseSet("a passive open preserves the send MSS after the peer retries its SYN");
