@@ -37,6 +37,8 @@
 #define REKEY_AFTER_TIME      (120)
 #define REJECT_AFTER_TIME     (180)
 #define REKEY_TIMEOUT         (5)
+#define REKEY_TIMEOUT_JITTER_MS (333U)
+#define REKEY_ATTEMPT_TIME      (90)
 #define KEEPALIVE_TIMEOUT     (10)
 
 #define SYSTEM_LOAD_THRESHOULD (0.9)

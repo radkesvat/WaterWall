@@ -3,6 +3,12 @@
 #include "wireguard_types.h"
 #include "wwapi.h"
 
+/* Cached milliseconds on the engine's owner loop. Subtract unsigned timestamps across tick wrap. */
+static inline uint32_t wireguardRecoveryNow(void)
+{
+    return (uint32_t) wloopNowMonotonicMS(getCurrentWorkerLoop());
+}
+
 /* Initialize before publication; all subsequent processing has one worker owner. */
 bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, void *context,
                          wireguard_callbacks_t callbacks);
@@ -16,6 +22,9 @@ void wireguardCommonReceive(wireguard_device_t *device, sbuf_t *packet, const ip
  * (source NULL, port zero) through the same carrier. Input is always consumed. */
 void              wireguardCommonReceiveOnCarrier(wireguard_device_t *device, sbuf_t *packet, uint64_t carrier_id);
 void              wireguardCommonSendInner(wireguard_device_t *device, sbuf_t *packet);
+bool              wireguardCommonPeerCanSend(wireguard_peer_t *peer);
+/* Explicit new outbound demand renews the retry window and observes the initiation rate limit. */
+void              wireguardCommonRequestHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
 wireguard_peer_t *wireguardCommonPeerForIp(wireguard_device_t *device, const ip_addr_t *ip);
 bool              wireguardCommonPeerAllowsIp(const wireguard_peer_t *peer, const ip_addr_t *ip);
 sbuf_t *wireguardCommonDecrypt(buffer_pool_t *pool, const uint8_t *ciphertext, uint32_t length, uint64_t nonce,
@@ -47,7 +56,7 @@ err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index);
 
 err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force);
 err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
-err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer);
+err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer, bool data);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);
 void  wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, wireguard_peer_t *peer);
@@ -96,6 +105,15 @@ bool wireguardCheckMac2(wireguard_device_t *device, const uint8_t *data, size_t 
                         size_t source_length, const uint8_t *mac2);
 
 bool wireguardExpired(uint32_t created_millis, uint32_t valid_seconds);
+
+static inline void wireguardRequestRekeyAtAge(wireguard_peer_t *peer, wireguard_keypair_t *key, uint32_t age_seconds)
+{
+    if (! key->age_rekey_requested && wireguardExpired(key->keypair_millis, age_seconds))
+    {
+        key->age_rekey_requested = true;
+        peer->send_handshake     = true;
+    }
+}
 
 WCRYPTO_MUST_USE bool wireguardEncryptPacket(uint8_t *dst, size_t dst_capacity, const uint8_t *src, size_t src_len,
                                              wireguard_keypair_t *keypair);

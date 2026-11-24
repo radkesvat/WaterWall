@@ -116,10 +116,37 @@ bool wireguardCommonPeerAllowsIp(const wireguard_peer_t *peer, const ip_addr_t *
     return false;
 }
 
-err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *packet, wireguard_peer_t *peer)
+err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *packet, wireguard_peer_t *peer, bool data)
 {
     assert(device->callbacks.output != NULL);
-    return device->callbacks.output(device->context, packet, peer, &peer->ip, peer->port) ? ERR_OK : ERR_CONN;
+    const uint32_t received    = peer->authenticated_receives;
+    const uint32_t sent        = peer->authenticated_sends;
+    const bool     owed_reply  = peer->passive_keepalive;
+    const uint32_t reply_since = peer->passive_keepalive_millis;
+    const uint32_t now         = wireguardRecoveryNow();
+
+    /* The carrier may synchronously deliver more data. A new passive reply must
+     * start at that receive, independently of the reply this output satisfies. */
+    peer->passive_keepalive = false;
+    if (! device->callbacks.output(device->context, packet, peer, &peer->ip, peer->port))
+    {
+        if (owed_reply && peer->valid && sent == peer->authenticated_sends)
+        {
+            peer->passive_keepalive        = true;
+            peer->passive_keepalive_millis = reply_since;
+        }
+        return ERR_CONN;
+    }
+    if (! peer->valid)
+        return ERR_OK;
+    ++peer->authenticated_sends;
+    if (data && received == peer->authenticated_receives && peer->unanswered_interval_ms == 0)
+    {
+        peer->unanswered_millis = now;
+        peer->unanswered_interval_ms =
+            (KEEPALIVE_TIMEOUT + REKEY_TIMEOUT) * 1000U + fastRandRange32(0, REKEY_TIMEOUT_JITTER_MS);
+    }
+    return ERR_OK;
 }
 
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *packet, const ip_addr_t *ip, uint16_t port)
@@ -326,6 +353,10 @@ err_t wireguardifDisconnect(wireguard_device_t *device, uint8_t peer_index)
     {
         // Set the flag that we want to try connecting
         peer->active = false;
+        peer->send_handshake         = false;
+        peer->retry_handshake        = false;
+        peer->passive_keepalive      = false;
+        peer->unanswered_interval_ms = 0;
         // Wipe out current keys
         keypairDestroy(&peer->next_keypair);
         keypairDestroy(&peer->curr_keypair);

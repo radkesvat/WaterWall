@@ -115,15 +115,13 @@ struct wireguard_keypair_s
     bool     initiator : 1; // Did we send the handshake initiation?
     bool     sending_valid : 1;
     bool     receiving_valid : 1;
+    bool     age_rekey_requested : 1;
     uint32_t keypair_millis;
 
     uint8_t  sending_key[WIREGUARD_SESSION_KEY_LEN];
     uint64_t sending_counter;
 
     uint8_t receiving_key[WIREGUARD_SESSION_KEY_LEN];
-
-    uint32_t last_tx;
-    uint32_t last_rx;
 
     uint32_t replay_bitmap;
     uint64_t replay_counter;
@@ -160,6 +158,8 @@ struct wireguard_peer_s
     bool session_erase_armed : 1;
     // We set this flag on RX/TX of packets if we think that we should initiate a new handshake
     bool send_handshake : 1;
+    bool retry_handshake : 1;
+    bool passive_keepalive : 1;
 
     // This is the configured IP of the peer (endpoint)
     ip_addr_t connect_ip;
@@ -208,9 +208,19 @@ struct wireguard_peer_s
     // The last time we sent an initiation message to this peer
     uint32_t last_initiation_tx;
 
-    // last_tx and last_rx of data packets
+    // A zero interval disarms the timer. Tick zero is a valid start time.
+    uint16_t initiation_interval_ms;
+    uint16_t unanswered_interval_ms;
+    uint32_t handshake_attempt_millis;
+    uint32_t unanswered_millis;
+    uint32_t passive_keepalive_millis;
+
+    // Detect synchronous authenticated activity inside output, including at the same clock tick.
+    uint32_t authenticated_receives;
+    uint32_t authenticated_sends;
+
+    // Cached monotonic milliseconds of the last transport send, for persistent keepalive.
     uint32_t last_tx;
-    uint32_t last_rx;
 };
 typedef struct wireguard_peer_s wireguard_peer_t;
 
@@ -223,6 +233,10 @@ typedef struct wireguard_callbacks_s
     void (*inner)(void *context, sbuf_t *packet, wireguard_peer_t *peer);
     wireguard_peer_t *(*candidate)(void *context, const uint8_t public_key[32]);
     bool (*authenticated)(void *context, wireguard_peer_t *peer);
+    /* Optional: reject background/demand initiations without a live authorized carrier. */
+    bool (*can_initiate)(void *context, wireguard_peer_t *peer);
+    /* Optional: consumes a routed inner datagram when no transport key can send it. */
+    void (*key_unavailable)(void *context, sbuf_t *packet, wireguard_peer_t *peer);
 } wireguard_callbacks_t;
 
 struct wireguard_device_s

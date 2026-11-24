@@ -2,8 +2,6 @@
 
 #include "loggers/network_logger.h"
 
-static bool wireguardifCanSendInitiation(wireguard_peer_t *peer);
-
 static sbuf_t *wireguardCommonCreateiateHandshake(wireguard_device_t *device, wireguard_peer_t *peer,
                                                   message_handshake_initiation_t *msg, err_t *error)
 {
@@ -27,30 +25,75 @@ static sbuf_t *wireguardCommonCreateiateHandshake(wireguard_device_t *device, wi
     return buf;
 }
 
+static void armInitiationRateLimit(wireguard_peer_t *peer, uint32_t now)
+{
+    peer->last_initiation_tx     = now;
+    peer->initiation_interval_ms = REKEY_TIMEOUT * 1000U + fastRandRange32(0, REKEY_TIMEOUT_JITTER_MS);
+}
+
+static bool handshakeAttemptExpired(const wireguard_peer_t *peer, uint32_t now)
+{
+    return now - peer->handshake_attempt_millis >= REKEY_ATTEMPT_TIME * 1000U;
+}
+
+static bool wireguardifCanSendInitiation(const wireguard_peer_t *peer, uint32_t now)
+{
+    /* Give the responder's newly issued response time for a cookie or key confirmation. */
+    if (peer->next_keypair.valid && now - peer->next_keypair.keypair_millis < REKEY_TIMEOUT * 1000U)
+        return false;
+    return now - peer->last_initiation_tx >= peer->initiation_interval_ms;
+}
+
+static err_t sendInitiation(wireguard_device_t *device, wireguard_peer_t *peer, sbuf_t *packet)
+{
+    /* Authorization and packet preparation can outlast the attempt on this same loop iteration. */
+    const uint32_t now = getTickMS();
+    if (handshakeAttemptExpired(peer, now))
+    {
+        reuseBuffer(packet);
+        return ERR_TIMEOUT;
+    }
+    armInitiationRateLimit(peer, now);
+    return wireguardifPeerOutput(device, packet, peer, false);
+}
+
 err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force)
 {
     err_t                          result;
     sbuf_t                        *buf;
     message_handshake_initiation_t msg;
 
-    if ((! force) && (! wireguardifCanSendInitiation(peer)))
+    const uint32_t now = getTickMS();
+    if ((! force) && (! wireguardifCanSendInitiation(peer, now)))
     {
         return ERR_WOULDBLOCK;
     }
 
+    if (device->callbacks.can_initiate != NULL && ! device->callbacks.can_initiate(device->context, peer))
+    {
+        peer->retry_handshake        = false;
+        peer->send_handshake         = false;
+        peer->unanswered_interval_ms = 0;
+        return ERR_CONN;
+    }
+
+    if (! peer->retry_handshake || (force && handshakeAttemptExpired(peer, now)))
+        peer->handshake_attempt_millis = now;
+    peer->retry_handshake        = true;
+    peer->send_handshake         = false;
+    peer->unanswered_interval_ms = 0;
+
+    LOGD("Preparing handshake initiation for peer %s", ipAddrNetworkToAddress(&peer->ip));
     buf = wireguardCommonCreateiateHandshake(device, peer, &msg, &result);
     if (buf)
     {
-        if (UNLIKELY(! wireguardStorePendingHandshake(peer, &msg, sizeof(msg))))
-        {
-            reuseBuffer(buf);
-            return ERR_ARG;
-        }
-
-        peer->send_handshake     = false;
-        peer->last_initiation_tx = getTickMS();
-        result                   = wireguardifPeerOutput(device, buf, peer);
+        if (LIKELY(wireguardStorePendingHandshake(peer, &msg, sizeof(msg))))
+            return sendInitiation(device, peer, buf);
+        reuseBuffer(buf);
+        result = ERR_ARG;
     }
+    /* Throttle unsuccessful creation as well as normal transmissions. */
+    armInitiationRateLimit(peer, getTickMS());
     return result;
 }
 
@@ -72,54 +115,50 @@ err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *pe
         return ERR_ARG;
     }
 
+    const bool initiation = pending.message_type == MESSAGE_HANDSHAKE_INITIATION;
+    if (initiation)
+    {
+        if (! peer->retry_handshake)
+            return ERR_TIMEOUT;
+        if (device->callbacks.can_initiate != NULL && ! device->callbacks.can_initiate(device->context, peer))
+            return ERR_CONN;
+    }
     buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
     sbufWrite(buf, pending.packet, pending.packet_len);
     sbufSetLength(buf, pending.packet_len);
-    result = wireguardifPeerOutput(device, buf, peer);
+    result = initiation ? sendInitiation(device, peer, buf) : wireguardifPeerOutput(device, buf, peer, false);
     return result;
 }
 
-static bool wireguardifCanSendInitiation(wireguard_peer_t *peer)
+void wireguardCommonRequestHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
 {
-    return ((peer->last_initiation_tx == 0) || (wireguardExpired(peer->last_initiation_tx, REKEY_TIMEOUT)));
+    peer->handshake_attempt_millis = getTickMS();
+    peer->retry_handshake          = true;
+    peer->send_handshake           = true;
+    wireguardifStartHandshake(device, peer, false);
 }
 
-static bool shouldSendInitiation(wireguard_peer_t *peer)
+static bool needsHandshakeInitiation(wireguard_peer_t *peer)
 {
-    bool result = false;
-    if (wireguardifCanSendInitiation(peer))
+    /* A key reaching its threshold during an outstanding attempt joins that attempt's retry budget. */
+    if (peer->curr_keypair.valid && ! peer->curr_keypair.initiator)
+        wireguardRequestRekeyAtAge(peer, &peer->curr_keypair, REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT);
+    if (peer->retry_handshake && handshakeAttemptExpired(peer, getTickMS()))
     {
-        if (peer->send_handshake)
-        {
-            result = true;
-        }
-        else if (peer->curr_keypair.valid && ! peer->curr_keypair.initiator &&
-                 wireguardExpired(peer->curr_keypair.keypair_millis, REJECT_AFTER_TIME - KEEPALIVE_TIMEOUT))
-        {
-            result = true;
-        }
-        else if (! peer->curr_keypair.valid && peer->active)
-        {
-            result = true;
-        }
+        peer->retry_handshake = false;
+        peer->send_handshake  = false;
     }
-    return result;
+    const bool unanswered = peer->unanswered_interval_ms != 0 &&
+                            wireguardRecoveryNow() - peer->unanswered_millis >= peer->unanswered_interval_ms;
+    return peer->retry_handshake || peer->send_handshake || unanswered || (! peer->curr_keypair.valid && peer->active);
 }
 
 static bool shouldSendKeepalive(wireguard_peer_t *peer)
 {
-    bool result = false;
-    if (peer->keepalive_interval > 0)
-    {
-        if ((peer->curr_keypair.valid) || (peer->prev_keypair.valid))
-        {
-            if (wireguardExpired(peer->last_tx, peer->keepalive_interval))
-            {
-                result = true;
-            }
-        }
-    }
-    return result;
+    const uint32_t now = wireguardRecoveryNow();
+    const bool passive = peer->passive_keepalive && now - peer->passive_keepalive_millis >= KEEPALIVE_TIMEOUT * 1000U;
+    const bool persistent = peer->keepalive_interval > 0 && now - peer->last_tx >= peer->keepalive_interval * 1000U;
+    return (passive || persistent) && wireguardCommonPeerCanSend(peer);
 }
 
 static bool shouldDestroyKeypair(const wireguard_keypair_t *keypair)
@@ -160,6 +199,10 @@ void wireguardCommonLoop(wireguard_device_t *device)
                 wireguardClearHandshakeState(peer);
                 peer->session_erase_millis = 0;
                 peer->session_erase_armed  = false;
+                peer->passive_keepalive      = false;
+                peer->unanswered_interval_ms = 0;
+                /* A fresh demand can start a retry window shortly before secret erasure.
+                 * Its next attempt creates fresh ephemeral state. */
 
                 // Revert back to default IP/port if these were altered
                 peer->ip   = peer->connect_ip;
@@ -183,9 +226,8 @@ void wireguardCommonLoop(wireguard_device_t *device)
             {
                 wireguardifSendKeepalive(device, peer);
             }
-            if (shouldSendInitiation(peer))
+            if (needsHandshakeInitiation(peer))
             {
-                LOGD("Sending handshake to peer %s", ipAddrNetworkToAddress(&peer->ip));
                 wireguardifStartHandshake(device, peer, false);
             }
 

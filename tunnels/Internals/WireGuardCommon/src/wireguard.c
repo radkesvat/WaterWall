@@ -715,7 +715,7 @@ bool wireguardStartSession(wireguard_peer_t *peer, bool initiator)
     new_keypair.remote_index = handshake->remote_index;
 
     new_keypair.keypair_millis  = getTickMS();
-    new_keypair.sending_valid   = true;
+    new_keypair.sending_valid   = initiator; // The responder waits for authenticated transport to confirm this key.
     new_keypair.receiving_valid = true;
 
     // 5.4.5 Transport Data Key Derivation
@@ -743,9 +743,6 @@ bool wireguardStartSession(wireguard_peer_t *peer, bool initiator)
 
     new_keypair.replay_bitmap  = 0;
     new_keypair.replay_counter = 0;
-
-    new_keypair.last_tx = 0;
-    new_keypair.last_rx = 0; // No packets received yet
 
     new_keypair.valid = true;
 

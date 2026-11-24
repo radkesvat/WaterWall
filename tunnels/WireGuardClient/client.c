@@ -90,10 +90,9 @@ static void inner(void *context, sbuf_t *packet, wireguard_peer_t *peer)
     tunnelPrevDownStreamPayload(state->tunnel, line, packet);
 }
 
-static bool sessionReady(const client_t *state)
+static bool sessionReady(client_t *state)
 {
-    const wireguard_keypair_t *key = &state->engine.peers[0].curr_keypair;
-    return key->valid && (key->initiator || key->last_rx != 0);
+    return wireguardCommonPeerCanSend(&state->engine.peers[0]);
 }
 static void flushPending(client_t *state)
 {
@@ -113,9 +112,9 @@ static void sendInner(tunnel_t *t, sbuf_t *packet, void *argument)
     discard   argument;
     client_t *state = tunnelGetState(t);
     discard   ensureCarrier(state);
+    flushPending(state);
     if (LIKELY(sessionReady(state)))
     {
-        flushPending(state);
         wireguardCommonSendInner(&state->engine, packet);
         return;
     }
