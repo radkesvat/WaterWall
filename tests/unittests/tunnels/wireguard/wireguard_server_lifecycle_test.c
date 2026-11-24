@@ -61,6 +61,33 @@ static void caseStartRefusal(wid_t workers, bool refuse_timer)
     wgServerFixtureClose(&f, wwLifecycleStartupRollback());
 }
 
+static unsigned packet_init_count[kTosMaxWorkers];
+
+static void countPacketInit(tunnel_t *t, line_t *line)
+{
+    const wid_t wid = getCurrentWorkerWID();
+    twfRequire(line == tunnelchainGetWorkerPacketLine(t->chain, wid) && lineIsAlive(line),
+               "packet-side Init did not use the current worker's live packet line");
+    ++packet_init_count[wid];
+}
+
+static void casePacketInitPerWorker(wid_t workers)
+{
+    testCaseSet("WireGuardServer initializes its packet edge once on each worker");
+    wg_server_fixture_t f;
+    wgServerFixtureSetup(&f, workers, "");
+    f.state->ptc->fnInitU = countPacketInit;
+    memoryZero(packet_init_count, sizeof(packet_init_count));
+    twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
+    for (wid_t wid = 0; wid < workers; ++wid)
+    {
+        twfRequire(packet_init_count[wid] == 0, "packet-side Init ran before its worker queue was pumped");
+        tosPumpWorker(&f.env, wid);
+        twfRequire(packet_init_count[wid] == 1, "worker did not receive exactly one packet-side Init");
+    }
+    wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
+}
+
 static void *cancelDetached(void *argument)
 {
     twfRequire(! currentThreadIsWorker(), "foreign cancellation borrowed a worker identity");
@@ -179,6 +206,7 @@ int main(void)
         casePartialConstruction(workers, ",\"sweep-interval-ms\":0");
         caseStartRefusal(workers, false);
         caseStartRefusal(workers, true);
+        casePacketInitPerWorker(workers);
         caseQueuedShutdown(workers, false);
         caseQueuedShutdown(workers, true);
         caseRetirementShutdown(workers, false);

@@ -1,5 +1,13 @@
 # Explicit integration registrations; preserve namespace and family variants.
 add_waterwall_integration_test(waterwall.wireguard_udpconnector_packet_roundtrip wireguard_udpconnector_packet_roundtrip)
+if(LINUX AND NOT CMAKE_CROSSCOMPILING AND WATERWALL_ENABLE_INTEGRATION_TEST_NETNS
+   AND INCLUDE_UDP_LISTENER AND INCLUDE_ROUTER AND INCLUDE_WIREGUARD_SERVER
+   AND INCLUDE_PACKETS_TO_STREAM AND INCLUDE_TCPCONNECTOR)
+  add_waterwall_isolated_test(waterwall.wireguard_server_branch_startup "${PYTHON3_EXECUTABLE}"
+    "${WATERWALL_TEST_SOURCE_ROOT}/wireguard_server_branch_startup.py" "$<TARGET_FILE:${WATERWALL_TEST_TARGET}>")
+  set_tests_properties(waterwall.wireguard_server_branch_startup PROPERTIES TIMEOUT 30)
+  add_waterwall_test_labels(waterwall.wireguard_server_branch_startup "integration" "tunnels" "wireguard")
+endif()
 add_waterwall_integration_test(waterwall.wireguard_tcpcarrier_packet_roundtrip wireguard_tcpcarrier_packet_roundtrip)
 add_waterwall_test_labels(waterwall.wireguard_tcpcarrier_packet_roundtrip "wireguard")
 add_waterwall_integration_test(waterwall.wireguard_tcpcarrier_cookie_roundtrip wireguard_tcpcarrier_packet_roundtrip)

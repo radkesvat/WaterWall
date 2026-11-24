@@ -721,19 +721,16 @@ static void packetInit(void *worker, void *arg1, void *arg2, void *arg3)
 static void start(tunnel_t *t)
 {
     server_t *state = tunnelGetState(t);
-    if (! t->chain->packet_chain_init_sent)
+    /* Each routed server initializes its own consumers on the shared worker packet lines. */
+    for (wid_t wid = 0; wid < t->chain->workers_count; ++wid)
     {
-        for (unsigned i = 0; i < t->chain->workers_count; ++i)
+        const worker_message_submit_result_e result =
+            sendWorkerMessageForceQueueWithCleanup(wid, packetInit, NULL, t, NULL, NULL);
+        if (result != kWorkerMessageSubmitAccepted)
         {
-            const worker_message_submit_result_e result =
-                sendWorkerMessageForceQueueWithCleanup((wid_t) i, packetInit, NULL, t, NULL, NULL);
-            if (result != kWorkerMessageSubmitAccepted)
-            {
-                startupFailureRecord(1);
-                return;
-            }
+            startupFailureRecord(1);
+            return;
         }
-        t->chain->packet_chain_init_sent = true;
     }
     state->timer = wtimerAdd(getWorkerLoop(0), tick, WIREGUARDIF_TIMER_MSECS, INFINITE);
     if (state->timer == NULL)
