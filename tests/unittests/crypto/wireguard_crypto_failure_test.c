@@ -5,13 +5,13 @@
  * shown below.
  * Cases: testConstructionHashFailure, testSessionKdfFailureInvalidatesHandshake,
  * testHandshakeResponseFailureClearsPendingState, testInitiationConstructionFailureClearsPendingState,
- * testResponseConstructionFailureInvalidatesHandshake, testCookieMacFailureDoesNotPublishState,
+ * testResponseConstructionFailureInvalidatesHandshake, testCookieMacFailureSuppressesResponse,
  * testClearHandshakeStateErasesActiveAndPendingState, testDeviceDestroyErasesSecrets,
  * testRawDeviceInitialization, testAllowedRangeErrors, testConfiguredKeysRejectMalformedBase64,
  * testConfiguredKeysAcceptCanonicalBase64
  * Checks: Assertion labels include: WireGuard construction-hash failure was not propagated; WireGuard
  * accepted a failed session KDF; failed session KDF retained handshake secrets; failed session KDF
- * retained pending handshake packet
+ * retained pending handshake authentication data
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
  * CTest: waterwall.wireguard_crypto_failure_unit
@@ -27,7 +27,7 @@ typedef enum crypto_failure_injection_e
 {
     kCryptoFailureNone,
     kCryptoFailureBlake2sInit,
-    kCryptoFailureBlake2sOneShot,
+    kCryptoFailureCookieMac,
     kCryptoFailureX25519,
     kCryptoFailureChaChaEncrypt,
 } crypto_failure_injection_t;
@@ -102,8 +102,9 @@ wcrypto_status_t __wrap_wCryptoBlake2sInit(wcrypto_blake2s_ctx_t *ctx, size_t ou
 wcrypto_status_t __wrap_wCryptoBlake2s(unsigned char *out, size_t outlen, const unsigned char *key, size_t keylen,
                                        const unsigned char *in, size_t inlen)
 {
-    if (crypto_failure_injection == kCryptoFailureBlake2sOneShot)
+    if (crypto_failure_injection == kCryptoFailureCookieMac && keylen == WIREGUARD_COOKIE_LEN)
     {
+        crypto_failure_injection = kCryptoFailureNone;
         if (out != NULL)
         {
             memoryZero(out, outlen);
@@ -187,7 +188,7 @@ static void testSessionKdfFailureInvalidatesHandshake(void)
 
         require(isAllZero(&peer.handshake, sizeof(peer.handshake)), "failed session KDF retained handshake secrets");
         require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
-                "failed session KDF retained pending handshake packet");
+                "failed session KDF retained pending handshake authentication data");
         require(isAllZero(&peer.curr_keypair, sizeof(peer.curr_keypair)) &&
                     isAllZero(&peer.prev_keypair, sizeof(peer.prev_keypair)) &&
                     isAllZero(&peer.next_keypair, sizeof(peer.next_keypair)),
@@ -216,7 +217,7 @@ static void testHandshakeResponseFailureClearsPendingState(void)
 
     require(isAllZero(&peer.handshake, sizeof(peer.handshake)), "failed handshake response retained handshake secrets");
     require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
-            "failed handshake response retained pending handshake packet");
+            "failed handshake response retained pending handshake authentication data");
 }
 
 static void testInitiationConstructionFailureClearsPendingState(void)
@@ -238,7 +239,7 @@ static void testInitiationConstructionFailureClearsPendingState(void)
     require(isAllZero(&peer.handshake, sizeof(peer.handshake)),
             "failed initiation construction retained handshake secrets");
     require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
-            "failed initiation construction retained pending handshake packet");
+            "failed initiation construction retained pending handshake authentication data");
     require(isAllZero(&initiation, sizeof(initiation)), "failed initiation construction retained partial wire output");
 }
 
@@ -295,53 +296,48 @@ static void testResponseConstructionFailureInvalidatesHandshake(void)
         require(isAllZero(&peer.handshake, sizeof(peer.handshake)),
                 "failed response construction retained handshake secrets");
         require(isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
-                "failed response construction retained pending handshake packet");
+                "failed response construction retained pending handshake authentication data");
         require(isAllZero(&response, sizeof(response)), "failed response construction retained partial wire output");
         require(memcmp(&peer, &expected, sizeof(peer)) == 0,
                 "failed response erasure changed bytes outside the handshake and pending state");
     }
 }
 
-static void testCookieMacFailureDoesNotPublishState(void)
+static void testCookieMacFailureSuppressesResponse(void)
 {
-    wireguard_device_t             device;
-    wireguard_peer_t               peer;
-    message_handshake_initiation_t initiation;
-    message_cookie_reply_t         reply;
-    wireguard_pending_handshake_t  pending_before;
-    uint8_t                        cookie_before[WIREGUARD_COOKIE_LEN];
-    const uint8_t                  source[]             = {127, 0, 0, 1, 0x69, 0x46};
-    const uint32_t                 cookie_millis_before = 0x12345678U;
+    wireguard_device_t           device = {0};
+    wireguard_peer_t             peer;
+    message_handshake_response_t response;
+    message_cookie_reply_t       reply;
+    uint8_t                      source[] = {127, 0, 0, 1, 0x69, 0x46};
 
-    memset(&device, 0, sizeof(device));
-    memset(&peer, 0, sizeof(peer));
-    memset(&initiation, 0, sizeof(initiation));
+    prepareResponderHandshake(&peer);
     memset(device.label_cookie_key, 0x31, sizeof(device.label_cookie_key));
     memcpy(peer.label_cookie_key, device.label_cookie_key, sizeof(peer.label_cookie_key));
 
-    initiation.type   = MESSAGE_HANDSHAKE_INITIATION;
-    initiation.sender = 0x10203040U;
-    memset(initiation.mac1, 0x52, sizeof(initiation.mac1));
-    require(wireguardStorePendingHandshake(&peer, &initiation, sizeof(initiation)),
-            "failed to retain cookie test handshake");
-    require(wireguardCreateCookieReply(
-                &device, &reply, initiation.mac1, initiation.sender, (uint8_t *) source, sizeof(source)),
+    const uint32_t sender_index = 0x10203040U;
+    uint8_t        mac1[WIREGUARD_COOKIE_LEN];
+    memset(mac1, 0x52, sizeof(mac1));
+    wireguardStorePendingHandshake(&peer, MESSAGE_HANDSHAKE_RESPONSE, sender_index, mac1);
+    require(wireguardCreateCookieReply(&device, &reply, mac1, sender_index, source, sizeof(source)),
             "failed to create cookie test reply");
 
-    memset(peer.cookie, 0x73, sizeof(peer.cookie));
-    peer.cookie_millis = cookie_millis_before;
-    memcpy(cookie_before, peer.cookie, sizeof(cookie_before));
-    pending_before = peer.pending_handshake;
-
-    crypto_failure_injection = kCryptoFailureBlake2sOneShot;
-    require(! wireguardProcessCookieMessage(&device, &peer, &reply), "WireGuard accepted a failed cookie mac2");
-    crypto_failure_injection = kCryptoFailureNone;
-
-    require(memcmp(peer.cookie, cookie_before, sizeof(cookie_before)) == 0 &&
-                peer.cookie_millis == cookie_millis_before,
-            "failed cookie mac2 published cookie state");
-    require(memcmp(&peer.pending_handshake, &pending_before, sizeof(pending_before)) == 0,
-            "failed cookie mac2 modified the pending handshake packet");
+    crypto_failure_injection = kCryptoFailureCookieMac;
+    require(wireguardProcessCookieMessage(&peer, &reply) && peer.cookie_valid &&
+                crypto_failure_injection == kCryptoFailureCookieMac,
+            "receiving a cookie attempted to generate mac2");
+    const uint32_t cookie_millis = peer.cookie_millis;
+    uint8_t        cookie[WIREGUARD_COOKIE_LEN];
+    memcpy(cookie, peer.cookie, sizeof(cookie));
+    require(! wireguardCreateHandshakeResponse(&device, &peer, &response) &&
+                crypto_failure_injection == kCryptoFailureNone,
+            "response construction did not reject failed mac2 generation");
+    require(isAllZero(&response, sizeof(response)) && isAllZero(&peer.handshake, sizeof(peer.handshake)) &&
+                isAllZero(&peer.pending_handshake, sizeof(peer.pending_handshake)),
+            "failed mac2 generation retained partial response or handshake state");
+    require(peer.cookie_valid && peer.cookie_millis == cookie_millis &&
+                memcmp(peer.cookie, cookie, sizeof(cookie)) == 0,
+            "failed mac2 generation modified the cached cookie");
 }
 
 static void testClearHandshakeStateErasesActiveAndPendingState(void)
@@ -554,7 +550,7 @@ int main(void)
     testHandshakeResponseFailureClearsPendingState();
     testInitiationConstructionFailureClearsPendingState();
     testResponseConstructionFailureInvalidatesHandshake();
-    testCookieMacFailureDoesNotPublishState();
+    testCookieMacFailureSuppressesResponse();
     testClearHandshakeStateErasesActiveAndPendingState();
     testDeviceDestroyErasesSecrets();
     testRawDeviceInitialization();

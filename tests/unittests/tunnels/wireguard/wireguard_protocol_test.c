@@ -276,6 +276,20 @@ static void testTransportPadding(buffer_pool_t *pool)
     destroyEndpoints(&client, &server);
 }
 
+static void requireScheduledRetry(endpoint_t *initiator)
+{
+    wireguard_peer_t *peer       = initiator->engine.first_peer;
+    const uint32_t    previous   = peer->pending_handshake.sender;
+    const uint32_t    retry_time = peer->last_initiation_tx + peer->initiation_interval_ms;
+    setTime(retry_time - 1);
+    wireguardCommonLoop(&initiator->engine);
+    twfRequire(initiator->count == 0, "cookie caused output before the ordinary retry");
+    setTime(retry_time);
+    wireguardCommonLoop(&initiator->engine);
+    twfRequire(onlyMessage(initiator, MESSAGE_HANDSHAKE_INITIATION) && peer->pending_handshake.sender != previous,
+               "ordinary retry did not build a fresh initiation");
+}
+
 static void testCarrierCookies(buffer_pool_t *pool)
 {
     /* Exercise both roles: a carrier initiator challenges responses, while a
@@ -284,7 +298,7 @@ static void testCarrierCookies(buffer_pool_t *pool)
     for (unsigned responder = 0; responder < 2; ++responder)
     {
         endpoint_t client = {0}, server = {0};
-        setTime(1000);
+        setTime(0);
         setupEndpoints(&client, &server);
         endpoint_t *carrier           = responder ? &server : &client;
         endpoint_t *network           = responder ? &client : &server;
@@ -293,7 +307,32 @@ static void testCarrierCookies(buffer_pool_t *pool)
         const uint16_t  original_port = carrier->engine.first_peer->port;
 
         under_load = true;
-        establish(&client, &server);
+        wireguard_peer_t *client_peer = client.engine.first_peer;
+        wireguard_peer_t *server_peer = server.engine.first_peer;
+        twfRequire(wireguardifStartHandshake(&client.engine, client_peer, true) == ERR_OK,
+                   "under-load handshake initiation failed");
+        drain(&client, &server);
+        twfRequire(onlyMessage(&server, MESSAGE_COOKIE_REPLY), "under-load server failed to challenge initiation");
+        drain(&server, &client);
+        twfRequire(client.count == 0 && client_peer->cookie_valid && client_peer->cookie_millis == 0,
+                   "initiation cookie caused output or was not cached at tick zero");
+        requireScheduledRetry(&client);
+        drain(&client, &server);
+        twfRequire(onlyMessage(&server, MESSAGE_HANDSHAKE_RESPONSE), "fresh initiation did not use the cached cookie");
+        const uint32_t challenged_response = server_peer->pending_handshake.sender;
+        drain(&server, &client);
+        twfRequire(onlyMessage(&client, MESSAGE_COOKIE_REPLY), "under-load client failed to challenge response");
+        drain(&client, &server);
+        twfRequire(server.count == 0 && server_peer->cookie_valid && server_peer->cookie_millis == now_millis,
+                   "response cookie caused output or was not cached");
+        requireScheduledRetry(&client);
+        drain(&client, &server);
+        twfRequire(onlyMessage(&server, MESSAGE_HANDSHAKE_RESPONSE) &&
+                       server_peer->pending_handshake.sender != challenged_response,
+                   "responder did not build a fresh response for the next initiation");
+        exchange(&client, &server);
+        twfRequire(client_peer->curr_keypair.valid && server_peer->curr_keypair.valid,
+                   "cookie-protected handshake did not establish both sessions");
         twfRequire(client.cookie_replies == 1 && server.cookie_replies == 1,
                    "under-load handshake did not challenge both initiation and response");
         twfRequire(carrier->authenticated != 0 &&
@@ -310,7 +349,7 @@ static void testCarrierCookies(buffer_pool_t *pool)
         twfRequire(client.delivered == 1 && server.delivered == 1,
                    "carrier handshake did not carry bidirectional authenticated packets");
 
-        setTime(2000);
+        setTime(20000);
         const uint32_t prior_index         = carrier->engine.first_peer->curr_keypair.local_index;
         const unsigned prior_authenticated = carrier->authenticated;
         twfRequire(wireguardifStartHandshake(&client.engine, client.engine.first_peer, true) == ERR_OK,
@@ -327,10 +366,12 @@ static void testCarrierCookies(buffer_pool_t *pool)
                    "old-carrier cookie authorized a handshake on the replacement carrier");
 
         exchange(&client, &server);
+        requireScheduledRetry(&client);
+        exchange(&client, &server);
         twfRequire(client.engine.first_peer->curr_keypair.valid && server.engine.first_peer->curr_keypair.valid &&
                        carrier->engine.first_peer->curr_keypair.local_index != prior_index &&
                        carrier->authenticated > prior_authenticated,
-                   "fresh replacement-carrier cookie did not complete the exact pending handshake");
+                   "fresh replacement-carrier cookie did not complete the next handshake");
         wireguardCommonSendInner(&client.engine, innerPacket(pool, 1, 2));
         wireguardCommonSendInner(&server.engine, innerPacket(pool, 2, 1));
         exchange(&client, &server);
@@ -917,20 +958,20 @@ static void testCookieAtAttemptDeadline(void)
     drain(&client, &server);
     twfRequire(onlyMessage(&server, MESSAGE_COOKIE_REPLY), "missing cookie challenge");
     sbuf_t *late = sbufDuplicate(server.packets[server.head]);
+    sbuf_t *invalid = sbufDuplicate(late);
+    sbufGetMutablePtr(invalid)[sbufGetLength(invalid) - 1] ^= 1;
+    wireguardCommonReceive(&client.engine, invalid, &server.ip, 51820);
+    twfRequire(! peer->cookie_valid && client.count == 0, "invalid cookie changed state or caused output");
 
     setTime(90999);
     drain(&server, &client);
-    twfRequire(onlyMessage(&client, MESSAGE_HANDSHAKE_INITIATION) && peer->last_initiation_tx == 90999,
-               "timely cookie did not retransmit the pending initiation");
-    discardOutput(&client);
-    /* Eligibility crosses the deadline before the periodic loop can observe it. */
-    client.engine.callbacks.can_initiate = reachAttemptDeadline;
-    wireguardCommonReceive(&client.engine, sbufDuplicate(late), &server.ip, 51820);
-    twfRequire(client.count == 0 && peer->last_initiation_tx == 90999 && now_millis == 91000,
-               "cookie retransmitted after eligibility crossed the attempt deadline");
-    client.engine.callbacks.can_initiate = NULL;
+    twfRequire(client.count == 0 && peer->cookie_valid && peer->cookie_millis == now_millis &&
+                   peer->last_initiation_tx == 1000 && peer->handshake_attempt_millis == 1000,
+               "timely cookie caused output or changed the initiation timers");
+    setTime(91000);
     wireguardCommonReceive(&client.engine, late, &server.ip, 51820);
-    twfRequire(client.count == 0, "cookie arriving after the deadline rearmed the attempt");
+    twfRequire(client.count == 0 && peer->cookie_millis == now_millis && peer->handshake_attempt_millis == 1000,
+               "cookie arriving at the deadline caused output or rearmed the attempt");
     wireguardCommonLoop(&client.engine);
     setTime(97000);
     wireguardCommonLoop(&client.engine);

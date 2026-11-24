@@ -59,7 +59,6 @@ err_t wireguardifRemovePeer(wireguard_device_t *device, size_t peer_index);
 err_t wireguardifDisconnect(wireguard_device_t *device, size_t peer_index);
 
 err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *peer, bool force);
-err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer);
 err_t wireguardifPeerOutput(wireguard_device_t *device, sbuf_t *q, wireguard_peer_t *peer, bool data);
 err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *q, const ip_addr_t *ipaddr, uint16_t port);
 err_t wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer);
@@ -92,8 +91,8 @@ uint8_t              wireguardGetMessageType(const uint8_t *data, size_t len);
 wireguard_peer_t *wireguardProcessInitiationMessage(wireguard_device_t *device, message_handshake_initiation_t *msg);
 bool              wireguardProcessHandshakeResponse(wireguard_device_t *device, wireguard_peer_t *peer,
                                                     message_handshake_response_t *src);
-bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t *peer, message_cookie_reply_t *src);
-bool wireguardStorePendingHandshake(wireguard_peer_t *peer, const void *packet, size_t packet_len);
+bool              wireguardProcessCookieMessage(wireguard_peer_t *peer, const message_cookie_reply_t *src);
+void wireguardStorePendingHandshake(wireguard_peer_t *peer, uint8_t message_type, uint32_t sender, const uint8_t *mac1);
 void wireguardClearPendingHandshake(wireguard_peer_t *peer);
 void wireguardClearHandshakeState(wireguard_peer_t *peer);
 

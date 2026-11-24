@@ -58,10 +58,8 @@ typedef struct wireguard_pending_handshake_s
 {
     bool     valid;
     uint8_t  message_type;
-    uint16_t packet_len;
     uint32_t sender;
     uint8_t  mac1[WIREGUARD_COOKIE_LEN];
-    uint8_t  packet[sizeof(message_handshake_initiation_t)];
 } wireguard_pending_handshake_t;
 
 // 5.4.6 Subsequent Messages: Transport Data Messages
@@ -166,6 +164,7 @@ struct wireguard_peer_s
     bool send_handshake : 1;
     bool retry_handshake : 1;
     bool passive_keepalive : 1;
+    bool cookie_valid : 1;
 
     // This is the configured IP of the peer (endpoint)
     ip_addr_t connect_ip;
@@ -198,7 +197,7 @@ struct wireguard_peer_s
     // The active handshake that is happening
     struct wireguard_handshake_s handshake;
 
-    // Decrypted cookie from the responder
+    // Cookie cached for the next outbound handshake message.
     uint32_t cookie_millis;
     uint8_t  cookie[WIREGUARD_COOKIE_LEN];
 

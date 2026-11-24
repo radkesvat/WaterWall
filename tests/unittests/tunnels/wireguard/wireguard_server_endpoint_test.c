@@ -313,8 +313,7 @@ int main(void)
     twfRequire(wireguardifStartHandshake(&client, client.first_peer, true) == ERR_OK, "initiation failed");
     tunnelUpStreamPayload(server, lines[0], take(&client_output));
     requireEndpoint(state, lines[0], 26960, "authenticated initiation learned the wrong endpoint");
-    /* A valid cookie can cause an exact response retry, but cannot authorize the
-     * different ingress from which it arrived. */
+    /* A cookie arriving on another ingress only updates the cookie cache. */
     wireguard_peer_t      *peer = state->engine.first_peer;
     message_cookie_reply_t cookie;
     uint8_t                source[6] = {192, 0, 2, 2, 0x69, 0x47};
@@ -327,7 +326,8 @@ int main(void)
     sbufSetLength(cookie_packet, sizeof(cookie));
     sbufWrite(cookie_packet, &cookie, sizeof(cookie));
     tunnelUpStreamPayload(server, lines[1], cookie_packet);
-    twfRequire(server_output.count == 2 && output_port == 26960, "valid cookie did not retry on original endpoint");
+    twfRequire(peer->cookie_valid && server_output.count == 1 && output_port == 26960,
+               "valid cookie failed to cache or emitted another response");
     requireEndpoint(state, lines[0], 26960, "cookie alone roamed the server binding");
     exchange(server, lines[0], &client);
     wireguardCommonSendInner(&client, innerPacket(environment.pool, 20, 1, 2));

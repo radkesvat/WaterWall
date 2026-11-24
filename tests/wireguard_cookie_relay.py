@@ -3,9 +3,8 @@
 
 The owner, tests/run_wireguard_cookie_case.sh, starts this loopback UDP relay,
 runs WaterWall with forced system load, then invokes --verify on its JSONL trace.
-The relay drops each side's first cookie-protected retry and repeats its valid
-cookie. Verification requires ordered cookie exchanges, preserved handshake
-indices/MAC1/body, exact repeated retries, and subsequent data in both directions.
+Verification requires ordered cookie exchanges, fresh protected handshakes,
+and subsequent data in both directions using their new indices.
 The endpoint probe requires a new cookie after moving that initiation to another
 source port, then verifies authenticated data roaming with replies on both ports.
 This helper checks the recorded packet sequence; the owner supplies the runtime
@@ -59,10 +58,6 @@ def describe_packet(packet: bytes, source_port: int) -> dict:
 def run_relay(args: argparse.Namespace) -> int:
     running = True
     client_endpoint = None
-    initiation_cookie = None
-    response_cookie = None
-    initiation_cookie_replayed = False
-    response_cookie_replayed = False
     moved_probe = False
     moved_challenge = False
     moved_retry = False
@@ -121,68 +116,23 @@ def run_relay(args: argparse.Namespace) -> int:
                         ready_to_roam = True
                 elif incoming is relay and event["type"] == 4 and roaming_started:
                     event["endpoint_step"] = "roaming_delivery"
-            trace.write(json.dumps(event, sort_keys=True) + "\n")
-
-            if args.junk:
-                relay.sendto(packet, client_endpoint if source_port == args.server_port else ("127.0.0.1", args.server_port))
-                continue
-
-            if source_port == args.server_port and event.get("type") == 3:
-                initiation_cookie = packet
-            elif source_port == args.client_port and event.get("type") == 3:
-                response_cookie = packet
-
-            # Make each side process the same valid cookie twice before its
-            # handshake completes. The first cookie-protected retry was
-            # successfully forwarded to this relay but is deliberately dropped;
-            # retaining pending state is what permits the second retry.
-            if (
-                source_port == args.client_port
-                and event.get("type") == 1
-                and event.get("mac2") != ZERO_MAC
-                and initiation_cookie is not None
-                and not initiation_cookie_replayed
-            ):
-                replay = describe_packet(initiation_cookie, args.server_port)
-                replay["injected"] = True
-                trace.write(json.dumps(replay, sort_keys=True) + "\n")
-                relay.sendto(initiation_cookie, client_endpoint)
-                initiation_cookie_replayed = True
-                continue
-
-            if (
-                source_port == args.server_port
-                and event.get("type") == 2
-                and event.get("mac2") != ZERO_MAC
-                and response_cookie is not None
-                and not response_cookie_replayed
-            ):
-                replay = describe_packet(response_cookie, args.client_port)
-                replay["injected"] = True
-                trace.write(json.dumps(replay, sort_keys=True) + "\n")
-                server_route.sendto(response_cookie, ("127.0.0.1", args.server_port))
-                response_cookie_replayed = True
-                continue
-
             if args.endpoint_probe and source_port == args.client_port:
-                if event["type"] == 1 and event.get("mac2") != ZERO_MAC and initiation_cookie_replayed:
+                if event["type"] == 1 and event["mac2"] != ZERO_MAC:
                     if not moved_probe:
                         moved_probe = True
-                        step = "moved_probe"
+                        event["endpoint_step"] = "moved_probe"
                     elif moved_challenge and not moved_retry:
                         moved_retry = True
-                        step = "moved_retry"
-                    else:
-                        step = None
+                        event["endpoint_step"] = "moved_retry"
                     server_route = alternate
-                    if step:
-                        trace.write(json.dumps({"endpoint_step": step, "raw": packet.hex()}, sort_keys=True) + "\n")
                 # A new authenticated packet from the original source port must
                 # move the peer back after data was delivered through the new one.
                 if event["type"] == 4 and moved_delivery and ready_to_roam and not roaming_started:
                     roaming_started = True
                     server_route = relay
-                    trace.write(json.dumps({"endpoint_step": "authenticated_roam", "raw": packet.hex()}, sort_keys=True) + "\n")
+                    event["endpoint_step"] = "authenticated_roam"
+
+            trace.write(json.dumps(event, sort_keys=True) + "\n")
 
             if destination_port == args.client_port:
                 if (args.endpoint_probe and incoming is alternate and event["type"] == 4
@@ -231,9 +181,12 @@ def verify_trace(args: argparse.Namespace) -> int:
                 position += 1
         assert position == len(expected), f"source-port cookie/roaming sequence incomplete: {steps}"
         probe = next(event for event in events if event.get("endpoint_step") == "moved_probe")
+        challenge = next(event for event in events if event.get("endpoint_step") == "moved_challenge")
         retry = next(event for event in events if event.get("endpoint_step") == "moved_retry")
-        assert probe["raw"][:-32] == retry["raw"][:-32], "port challenge replaced pending initiation"
-        assert probe["raw"][-32:] != retry["raw"][-32:], "new source port reused the old cookie MAC"
+        assert challenge["receiver"] == probe["sender"], "port challenge did not match the moved initiation"
+        assert probe["sender"] != retry["sender"] and probe["mac1"] != retry["mac1"], (
+            "retry after the port challenge did not build a fresh initiation"
+        )
 
     for start, initiation in enumerate(events):
         if not (
@@ -243,116 +196,77 @@ def verify_trace(args: argparse.Namespace) -> int:
         ):
             continue
 
-        initiator_index = initiation["sender"]
         cookie1_pos, _ = next_matching(
             events,
             start + 1,
             lambda event: event.get("source_port") == args.server_port
             and event.get("type") == 3
-            and event.get("receiver") == initiator_index,
+            and event.get("receiver") == initiation["sender"],
         )
         if cookie1_pos is None:
             continue
 
-        retry1_pos, retry_initiation = next_matching(
-            events,
-            cookie1_pos + 1,
-            lambda event: event.get("source_port") == args.client_port
-            and event.get("type") == 1
-            and event.get("sender") == initiator_index
-            and event.get("mac1") == initiation.get("mac1")
-            and event.get("mac2") != ZERO_MAC
-            and bytes.fromhex(event["raw"][:-32]) == bytes.fromhex(initiation["raw"][:-32]),
-        )
-        if retry1_pos is None:
-            continue
-
-        cookie1_repeat_pos, _ = next_matching(
-            events,
-            retry1_pos + 1,
-            lambda event: event.get("injected") is True
-            and event.get("source_port") == args.server_port
-            and event.get("type") == 3
-            and event.get("receiver") == initiator_index,
-        )
-        if cookie1_repeat_pos is None:
-            continue
-
-        retry1_repeat_pos, _ = next_matching(
-            events,
-            cookie1_repeat_pos + 1,
-            lambda event: event.get("source_port") == args.client_port
-            and event.get("type") == 1
-            and event.get("sender") == initiator_index
-            and event.get("raw") == retry_initiation.get("raw"),
-        )
-        if retry1_repeat_pos is None:
-            continue
-
         response_pos, response = next_matching(
             events,
-            retry1_repeat_pos + 1,
+            cookie1_pos + 1,
             lambda event: event.get("source_port") == args.server_port
             and event.get("type") == 2
-            and event.get("receiver") == initiator_index
             and event.get("mac2") == ZERO_MAC,
         )
         if response_pos is None:
             continue
 
-        responder_index = response["sender"]
+        if not any(
+            event.get("source_port") == args.client_port
+            and event.get("type") == 1
+            and event.get("sender") == response["receiver"]
+            and event.get("sender") != initiation["sender"]
+            and event.get("mac1") != initiation["mac1"]
+            and event.get("mac2") != ZERO_MAC
+            for event in events[cookie1_pos + 1:response_pos]
+        ):
+            continue
+
         cookie2_pos, _ = next_matching(
             events,
             response_pos + 1,
             lambda event: event.get("source_port") == args.client_port
             and event.get("type") == 3
-            and event.get("receiver") == responder_index,
+            and event.get("receiver") == response["sender"],
         )
         if cookie2_pos is None:
             continue
 
-        retry2_pos, retry_response = next_matching(
+        retry_pos, retry = next_matching(
             events,
             cookie2_pos + 1,
-            lambda event: event.get("source_port") == args.server_port
-            and event.get("type") == 2
-            and event.get("sender") == responder_index
-            and event.get("receiver") == initiator_index
-            and event.get("mac1") == response.get("mac1")
-            and event.get("mac2") != ZERO_MAC
-            and bytes.fromhex(event["raw"][:-32]) == bytes.fromhex(response["raw"][:-32]),
+            lambda event: event.get("source_port") == args.client_port
+            and event.get("type") == 1
+            and event.get("sender") != response["receiver"]
+            and event.get("mac2") != ZERO_MAC,
         )
-        if retry2_pos is None:
+        if retry_pos is None:
             continue
 
-        cookie2_repeat_pos, _ = next_matching(
+        response2_pos, response2 = next_matching(
             events,
-            retry2_pos + 1,
-            lambda event: event.get("injected") is True
-            and event.get("source_port") == args.client_port
-            and event.get("type") == 3
-            and event.get("receiver") == responder_index,
-        )
-        if cookie2_repeat_pos is None:
-            continue
-
-        retry2_repeat_pos, _ = next_matching(
-            events,
-            cookie2_repeat_pos + 1,
+            retry_pos + 1,
             lambda event: event.get("source_port") == args.server_port
             and event.get("type") == 2
-            and event.get("sender") == responder_index
-            and event.get("raw") == retry_response.get("raw"),
+            and event.get("receiver") == retry["sender"]
+            and event.get("sender") != response["sender"]
+            and event.get("mac1") != response["mac1"]
+            and event.get("mac2") != ZERO_MAC,
         )
-        if retry2_repeat_pos is None:
+        if response2_pos is None:
             continue
 
         client_data_pos, _ = next_matching(
             events,
-            retry2_repeat_pos + 1,
+            response2_pos + 1,
             lambda event: event.get("source_port") == args.client_port
             and event.get("type") == 4
-            and event.get("receiver") == responder_index,
+            and event.get("receiver") == response2["sender"],
         )
         if client_data_pos is None:
             continue
@@ -362,12 +276,10 @@ def verify_trace(args: argparse.Namespace) -> int:
             client_data_pos + 1,
             lambda event: event.get("source_port") == args.server_port
             and event.get("type") == 4
-            and event.get("receiver") == initiator_index,
+            and event.get("receiver") == retry["sender"],
         )
         if server_data_pos is not None:
-            print(
-                "WireGuard overload cookie sequence verified, including repeated exact initiation and response retries"
-            )
+            print("WireGuard overload cookie sequence verified with fresh initiations and responses")
             return 0
 
     print("WireGuard overload cookie sequence was not observed", file=sys.stderr)

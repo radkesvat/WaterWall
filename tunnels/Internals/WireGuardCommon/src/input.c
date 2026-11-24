@@ -324,16 +324,8 @@ static void wireguardifSendHandshakeResponse(wireguard_device_t *device, wiregua
             return;
         }
 
-        // Send this packet out!
+        wireguardStorePendingHandshake(peer, packet.type, packet.sender, packet.mac1);
         buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
-
-        if (UNLIKELY(! wireguardStorePendingHandshake(peer, &packet, sizeof(packet))))
-        {
-            reuseBuffer(buf);
-            LOGW("WireGuard: failed to retain outbound handshake response");
-            return;
-        }
-
         sbufSetLength(buf, sizeof(message_handshake_response_t));
 
         sbufWrite(buf, &packet, sizeof(message_handshake_response_t));
@@ -496,17 +488,8 @@ static void receive(wireguard_device_t *device, sbuf_t *p, const receive_source_
         peer       = peerLookupByPendingHandshake(device, msg_cookie->receiver);
         if (peer)
         {
-            if (wireguardProcessCookieMessage(device, peer, msg_cookie))
-            {
-                // Update the peer location
-                /* A cookie authenticates the responder cookie key, not a new carrier. */
-
-                // Retry the exact initiation or response authenticated by this
-                // cookie. A response cannot be replaced with a new initiation.
-                const bool retry_response = peer->pending_handshake.message_type == MESSAGE_HANDSHAKE_RESPONSE;
-                if (wireguardifRetryHandshake(device, peer) != ERR_OK && retry_response)
-                    LOGW("WireGuard: failed to retransmit cookie-protected handshake response");
-            }
+            /* Cache the cookie for the next ordinary initiation or response. */
+            wireguardProcessCookieMessage(peer, msg_cookie);
         }
         break;
 

@@ -88,10 +88,8 @@ static err_t startHandshake(wireguard_device_t *device, wireguard_peer_t *peer, 
     buf = wireguardCommonCreateiateHandshake(device, peer, &msg, &result);
     if (buf)
     {
-        if (LIKELY(wireguardStorePendingHandshake(peer, &msg, sizeof(msg))))
-            return sendInitiation(device, peer, buf);
-        reuseBuffer(buf);
-        result = ERR_ARG;
+        wireguardStorePendingHandshake(peer, msg.type, msg.sender, msg.mac1);
+        return sendInitiation(device, peer, buf);
     }
     /* Throttle unsuccessful creation as well as normal transmissions. */
     armInitiationRateLimit(peer, getTickMS());
@@ -102,48 +100,6 @@ err_t wireguardifStartHandshake(wireguard_device_t *device, wireguard_peer_t *pe
 {
     wireguardBeginProcessing(device);
     const err_t result = startHandshake(device, peer, force);
-    wireguardEndProcessing(device);
-    return result;
-}
-
-static err_t retryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
-{
-    wireguard_pending_handshake_t pending;
-    sbuf_t                       *buf;
-    err_t                         result;
-
-    if (peer == NULL || ! peer->pending_handshake.valid)
-    {
-        return ERR_ARG;
-    }
-
-    pending = peer->pending_handshake;
-    if (wireguardGetMessageType(pending.packet, pending.packet_len) != pending.message_type || pending.sender == 0 ||
-        (pending.message_type != MESSAGE_HANDSHAKE_INITIATION && pending.message_type != MESSAGE_HANDSHAKE_RESPONSE))
-    {
-        return ERR_ARG;
-    }
-
-    const bool initiation = pending.message_type == MESSAGE_HANDSHAKE_INITIATION;
-    if (initiation)
-    {
-        if (! peer->retry_handshake)
-            return ERR_TIMEOUT;
-        if (device->callbacks.can_initiate != NULL &&
-            (! device->callbacks.can_initiate(device->context, peer) || ! peer->valid))
-            return ERR_CONN;
-    }
-    buf = bufferpoolGetSmallBuffer(getCurrentWorkerBufferPool());
-    sbufWrite(buf, pending.packet, pending.packet_len);
-    sbufSetLength(buf, pending.packet_len);
-    result = initiation ? sendInitiation(device, peer, buf) : wireguardifPeerOutput(device, buf, peer, false);
-    return result;
-}
-
-err_t wireguardifRetryHandshake(wireguard_device_t *device, wireguard_peer_t *peer)
-{
-    wireguardBeginProcessing(device);
-    const err_t result = retryHandshake(device, peer);
     wireguardEndProcessing(device);
     return result;
 }

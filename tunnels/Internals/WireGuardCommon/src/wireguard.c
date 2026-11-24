@@ -849,91 +849,45 @@ cleanup:
     return result;
 }
 
-bool wireguardProcessCookieMessage(wireguard_device_t *device, wireguard_peer_t *peer, message_cookie_reply_t *src)
+bool wireguardProcessCookieMessage(wireguard_peer_t *peer, const message_cookie_reply_t *src)
 {
-    discard                        device;
-    wireguard_pending_handshake_t *pending                      = &peer->pending_handshake;
-    uint8_t                        cookie[WIREGUARD_COOKIE_LEN] = {0};
-    uint8_t                        mac2[WIREGUARD_COOKIE_LEN]   = {0};
-    bool                           result                       = false;
+    const wireguard_pending_handshake_t *pending = &peer->pending_handshake;
+    if (! pending->valid || pending->sender != src->receiver)
+        return false;
 
-    if (! pending->valid || pending->sender != src->receiver ||
-        (pending->message_type != MESSAGE_HANDSHAKE_INITIATION &&
-         pending->message_type != MESSAGE_HANDSHAKE_RESPONSE) ||
-        (pending->packet_len != sizeof(message_handshake_initiation_t) &&
-         pending->packet_len != sizeof(message_handshake_response_t)))
-    {
-        goto cleanup;
-    }
-
-    result = wCryptoXChaCha20Poly1305Decrypt(cookie,
-                                             sizeof(cookie),
-                                             src->enc_cookie,
-                                             sizeof(src->enc_cookie),
-                                             pending->mac1,
-                                             WIREGUARD_COOKIE_LEN,
-                                             src->nonce,
-                                             peer->label_cookie_key) == kWCryptoOk;
+    uint8_t    cookie[WIREGUARD_COOKIE_LEN] = {0};
+    const bool result                       = wCryptoXChaCha20Poly1305Decrypt(cookie,
+                                                        sizeof(cookie),
+                                                        src->enc_cookie,
+                                                        sizeof(src->enc_cookie),
+                                                        pending->mac1,
+                                                        WIREGUARD_COOKIE_LEN,
+                                                        src->nonce,
+                                                        peer->label_cookie_key) == kWCryptoOk;
 
     if (result)
     {
-        // 5.4.7 Under Load: authenticate the reply with the mac1 of the exact
-        // outbound packet. Do not publish either the cookie or updated packet
-        // until mac2 generation succeeds.
-        result = wireguardMac(
-                     mac2, pending->packet, pending->packet_len - WIREGUARD_COOKIE_LEN, cookie, WIREGUARD_COOKIE_LEN) ==
-                 kWCryptoOk;
-    }
-
-    if (result)
-    {
-        memoryCopy(pending->packet + pending->packet_len - WIREGUARD_COOKIE_LEN, mac2, WIREGUARD_COOKIE_LEN);
         memoryCopy(peer->cookie, cookie, WIREGUARD_COOKIE_LEN);
         peer->cookie_millis = getTickMS();
+        peer->cookie_valid  = true;
     }
 
-cleanup:
     wCryptoZero(cookie, sizeof(cookie));
-    wCryptoZero(mac2, sizeof(mac2));
     return result;
 }
 
-bool wireguardStorePendingHandshake(wireguard_peer_t *peer, const void *packet, size_t packet_len)
+void wireguardStorePendingHandshake(wireguard_peer_t *peer, uint8_t message_type, uint32_t sender, const uint8_t *mac1)
 {
-    const uint8_t *bytes = packet;
-    uint8_t        type;
-    uint32_t       sender;
-
-    if (peer == NULL || packet == NULL || packet_len > UINT16_MAX)
-    {
-        return false;
-    }
-
-    type = wireguardGetMessageType(bytes, packet_len);
-    if ((type == MESSAGE_HANDSHAKE_INITIATION && packet_len != sizeof(message_handshake_initiation_t)) ||
-        (type == MESSAGE_HANDSHAKE_RESPONSE && packet_len != sizeof(message_handshake_response_t)) ||
-        (type != MESSAGE_HANDSHAKE_INITIATION && type != MESSAGE_HANDSHAKE_RESPONSE))
-    {
-        return false;
-    }
-
-    memoryCopy(&sender, bytes + offsetof(message_handshake_initiation_t, sender), sizeof(sender));
-    if (sender == 0)
-    {
-        return false;
-    }
+    assert(peer != NULL && sender != 0 && mac1 != NULL);
+    assert(message_type == MESSAGE_HANDSHAKE_INITIATION || message_type == MESSAGE_HANDSHAKE_RESPONSE);
 
     wireguard_pending_handshake_t *pending = &peer->pending_handshake;
-    wCryptoZero(pending, sizeof(*pending));
-    pending->message_type = type;
-    pending->packet_len   = (uint16_t) packet_len;
+    pending->message_type                  = message_type;
     pending->sender       = sender;
-    memoryCopy(pending->mac1, bytes + packet_len - (2U * WIREGUARD_COOKIE_LEN), WIREGUARD_COOKIE_LEN);
-    memoryCopy(pending->packet, bytes, packet_len);
+    memoryCopy(pending->mac1, mac1, WIREGUARD_COOKIE_LEN);
     pending->valid = true;
     wireguardPeerSyncReceivers(peer);
     wireguardArmSessionErasure(peer);
-    return true;
 }
 
 void wireguardClearPendingHandshake(wireguard_peer_t *peer)
@@ -1037,7 +991,7 @@ bool wireguardCreateHandshakeInitiation(wireguard_device_t *device, wireguard_pe
         goto cleanup;
     }
 
-    if ((peer->cookie_millis == 0) || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE))
+    if (! peer->cookie_valid || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE))
     {
         wCryptoZero(dst->mac2, WIREGUARD_COOKIE_LEN);
     }
@@ -1127,7 +1081,7 @@ bool wireguardCreateHandshakeResponse(wireguard_device_t *device, wireguard_peer
         goto cleanup;
     }
 
-    if ((peer->cookie_millis == 0) || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE))
+    if (! peer->cookie_valid || wireguardExpired(peer->cookie_millis, COOKIE_SECRET_MAX_AGE))
     {
         wCryptoZero(dst->mac2, WIREGUARD_COOKIE_LEN);
     }
@@ -1213,10 +1167,6 @@ bool wireguardPeerInit(wireguard_device_t *device, wireguard_peer_t *peer, const
             // Zero out handshake
             memoryZero(&peer->handshake, sizeof(wireguard_handshake_t));
             peer->handshake.valid = false;
-
-            // Zero out any cookie info - we haven't received one yet
-            peer->cookie_millis = 0;
-            memoryZero(&peer->cookie, WIREGUARD_COOKIE_LEN);
 
             // Precompute keys to deal with mac1/2 calculation
             peer->valid =
