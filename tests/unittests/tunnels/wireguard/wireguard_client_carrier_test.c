@@ -9,6 +9,13 @@ static unsigned carrier_inits, carrier_sends;
 static bool     refuse_init, pause_init, replace_on_send;
 static unsigned carrier_receives;
 static uint64_t received_carrier_id;
+static uint32_t now_millis;
+
+unsigned int __wrap_getTickMS(void);
+unsigned int __wrap_getTickMS(void)
+{
+    return now_millis;
+}
 
 void __wrap_wireguardCommonReceiveOnCarrier(wireguard_device_t *device, sbuf_t *packet, uint64_t carrier_id);
 void __wrap_wireguardCommonReceiveOnCarrier(wireguard_device_t *device, sbuf_t *packet, uint64_t carrier_id)
@@ -65,7 +72,7 @@ static void carrierPayload(tunnel_t *t, line_t *line, sbuf_t *packet)
         replace_on_send = false;
         tunnelPrevDownStreamFinish(t, line);
         client_t *state = tunnelGetState(t->prev);
-        state->last_attempt -= 400;
+        now_millis += 400;
         twfRequire(ensureCarrier(state) != NULL, "reentrant replacement was refused");
     }
 }
@@ -99,12 +106,17 @@ int main(void)
     tunnelchainFinalize(chain);
     client->chain = sink->chain = chain;
     refuse_init                 = true;
+    /* The worker sampled its clock before a long callback in the same batch. */
+    getCurrentWorkerLoop()->cur_hrtime = 1000000;
+    now_millis                         = 1500;
     twfRequire(ensureCarrier(state) == NULL && state->carrier == NULL && carrier_inits == 1,
                "synchronous rejection leaked its owned normal line");
-    twfRequire(ensureCarrier(state) == NULL && carrier_inits == 1, "rejection caused a tight carrier retry");
-    refuse_init = false;
-    pause_init  = true;
-    state->last_attempt -= 400;
+    now_millis                         = 1899;
+    getCurrentWorkerLoop()->cur_hrtime = (uint64_t) now_millis * 1000U;
+    twfRequire(ensureCarrier(state) == NULL && carrier_inits == 1, "loop clock refresh shortened the 400 ms retry gap");
+    refuse_init   = false;
+    pause_init    = true;
+    now_millis    = 1900;
     line_t *first = ensureCarrier(state);
     twfRequire(first != NULL, "carrier did not recover after rejection");
     const uint64_t first_carrier_id = state->carrier_id;

@@ -172,7 +172,7 @@ if(LINUX AND TARGET WireGuardClient)
   target_link_libraries(wireguard_client_carrier_test PRIVATE ww_test_support WireGuardCommon)
   target_include_directories(wireguard_client_carrier_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardClient/include)
   target_link_options(wireguard_client_carrier_test PRIVATE
-    "-Wl,--wrap=wireguardCommonReceiveOnCarrier"
+    "-Wl,--wrap=getTickMS" "-Wl,--wrap=wireguardCommonReceiveOnCarrier"
     "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"
     "-Wl,--wrap=bufferpoolGetLargeBuffer" "-Wl,--wrap=bufferpoolTryGetBestFit"
     "-Wl,--wrap=bufferpoolGetBestFit" "-Wl,--wrap=bufferpoolGetSpliceBuffer"
