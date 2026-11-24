@@ -312,12 +312,13 @@ static tunnel_t *create(node_t *node)
         cJSON_GetArraySize(peers) != 1 ||
         ! wireguardCommonInit(
             &state->engine, key->valuestring, state, (wireguard_callbacks_t) {.output = output, .inner = inner}) ||
+        ! wireguardCommonConfigureMtu(&state->engine, settings) ||
         ! wireguardCommonAddConfiguredPeer(&state->engine, cJSON_GetArrayItem(peers, 0), &index) ||
         ! jsonObjectFieldStringsAreExact(cJSON_GetArrayItem(peers, 0), "endpoint") ||
         ! endpointParse(&state->endpoint, cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(peers, 0), "endpoint")))
     {
         LOGF("WireGuardClient: requires privatekey and exactly one peer with publickey, allowedips and endpoint "
-             "host:port");
+             "host:port; optional mtu must be an integer between 68 and 65535");
         destroy(t, wwLifecycleStartupRollback());
         return NULL;
     }

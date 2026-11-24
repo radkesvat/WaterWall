@@ -1241,7 +1241,7 @@ bool wireguardDeviceInit(wireguard_device_t *device, const uint8_t *private_key)
     /* The caller may have staged the input in device->private_key. */
     uint8_t saved_key[WIREGUARD_PRIVATE_KEY_LEN];
     memoryCopy(saved_key, private_key, sizeof(saved_key));
-    *device = (wireguard_device_t) {0};
+    *device = (wireguard_device_t) {.padding_mtu = WIREGUARDIF_MTU};
     memoryCopy(device->private_key, saved_key, sizeof(saved_key));
     wCryptoZero(saved_key, sizeof(saved_key));
 

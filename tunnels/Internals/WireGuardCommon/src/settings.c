@@ -30,6 +30,20 @@ bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, vo
     return valid;
 }
 
+bool wireguardCommonConfigureMtu(wireguard_device_t *device, const cJSON *settings)
+{
+    int64_t                   mtu    = min(CORE_DEFAULT_MTU, WIREGUARDIF_MTU);
+    const json_value_status_t status = jsonGetObjectIntegerInRange(settings, "mtu", 68, UINT16_MAX, &mtu);
+    if (status == kJsonValueInvalid || mtu < 68)
+    {
+        LOGF("WireGuard: settings.mtu must be an integer between 68 and 65535%s",
+             status == kJsonValueMissing ? "; inherited core misc.mtu is too small; set an explicit node mtu" : "");
+        return false;
+    }
+    device->padding_mtu = (uint16_t) mtu;
+    return true;
+}
+
 bool wireguardCommonAddConfiguredPeer(wireguard_device_t *device, const cJSON *settings, size_t *index)
 {
     const cJSON *public_key = cJSON_GetObjectItemCaseSensitive(settings, "publickey");

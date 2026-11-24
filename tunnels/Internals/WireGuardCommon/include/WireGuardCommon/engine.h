@@ -13,6 +13,8 @@ static inline uint32_t wireguardRecoveryNow(void)
  * All subsequent processing has one worker owner. */
 bool wireguardCommonInit(wireguard_device_t *device, const char *private_key, void *context,
                          wireguard_callbacks_t callbacks);
+/* Apply the node's inner MTU to an initialized engine before starting packet processing. */
+bool wireguardCommonConfigureMtu(wireguard_device_t *device, const cJSON *settings);
 /* Each input is consumed on all paths. No engine locks or neighbour callbacks
  * under locks: wrappers marshal processing to their designated event worker. */
 void wireguardCommonReceive(wireguard_device_t *device, sbuf_t *packet, const ip_addr_t *source, uint16_t port);

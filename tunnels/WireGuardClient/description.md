@@ -75,6 +75,7 @@ of 32 bytes, written as 44 characters ending in one `=`.
 | --- | --- | --- |
 | `privatekey` | Yes | Client's WireGuard private key. |
 | `peers` | Yes | Array containing exactly one peer object. |
+| `mtu` | No | Inner IP size in bytes up to which WireGuard may add padding. Integer from 68 to 65535. Defaults to the smaller of core `misc.mtu` and 1420. |
 
 | Peer field | Required | Description |
 | --- | --- | --- |
@@ -83,6 +84,15 @@ of 32 bytes, written as 44 characters ending in one `=`.
 | `endpoint` | Yes | Initial transport destination in `host:port` or `[IPv6]:port` form, with a port from 1 to 65535. |
 | `presharedkey` | No | Optional preshared key. For a static packet-mode peer, use the same value at both ends. WaterWall server connection mode uses no preshared key. |
 | `persistentkeepalive` | No | Whole seconds from 0 to 65535. Defaults to `0`, which disables persistent keepalives. |
+
+Before encryption, WireGuard rounds the inner IP packet length up to a multiple
+of 16 bytes, capping the padding at `mtu` bytes of total plaintext. At or above
+that size it encrypts the whole packet with zero added padding. Set the MTU of
+the inner packet source and the WireGuard padding ceiling to leave room for
+the carrier and WireGuard headers.
+For example, on a 1500-byte path, direct UDP over IPv6 with a 40-byte IP
+header leaves 1420 bytes for the inner packet. WireGuard uses the configured
+ceiling without probing the path.
 
 ## Usage and troubleshooting
 

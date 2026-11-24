@@ -102,7 +102,21 @@ including one trailing `=`.
 | `max-unauthenticated-ingress` | Both | Maximum live UDP endpoints awaiting peer authentication. Range 1–2147483647, default 1024. |
 | `max-pending-rekey-bytes` | Both | Total allocated bytes the server can retain for packets awaiting new keys. Range 0–4294967295, default 4194304 (4 MiB). Set to 0 to disable retention. |
 | `udp-idle-timeout-ms` | Connection | Idle timeout for an inner UDP association. Range 1–4294967295 ms, default 300000 ms. |
-| `mtu` and `max-pending-bytes` | Connection | Follow the [PacketsToConnection settings](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/PacketsToConnection). |
+| `mtu` | Both | Inner IP size in bytes up to which WireGuard may add padding. Integer from 68 to 65535. Defaults to the smaller of core `misc.mtu` and 1420. |
+| `max-pending-bytes` | Connection | See the [PacketsToConnection settings](https://radkesvat.github.io/WaterWall-Docs/docs/noderefs/PacketsToConnection). |
+
+Before encryption, WireGuard rounds the inner IP packet length up to a multiple
+of 16 bytes, capping the padding at `mtu` bytes of total plaintext. At or above
+that size it encrypts the whole packet with zero added padding. Set the MTU of
+the inner packet source and the WireGuard padding ceiling to leave room for
+the carrier and WireGuard headers.
+For example, on a 1500-byte path, direct UDP over IPv6 with a 40-byte IP
+header leaves 1420 bytes for the inner packet. WireGuard uses the configured
+ceiling without probing the path.
+
+In connection mode, an explicit `mtu` also sets the MTU of the embedded
+`PacketsToConnection` IPv4 interface. When omitted, that interface uses core
+`misc.mtu` in full.
 
 Each static peer requires `publickey` and `allowedips`. The latter is a
 comma-separated string of up to 16 CIDRs. It authorizes source addresses on

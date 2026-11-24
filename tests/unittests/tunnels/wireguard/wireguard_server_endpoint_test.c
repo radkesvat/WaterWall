@@ -174,6 +174,7 @@ static void testStaticPeerConfiguration(void)
 {
     cJSON *settings = cJSON_CreateObject();
     cJSON_AddStringToObject(settings, "mode", "packet");
+    cJSON_AddNumberToObject(settings, "mtu", 9000);
     cJSON_AddStringToObject(settings, "privatekey", "EBJOHctLU2w8uteyTE+WU0hruB09Ub0vwVS+Gt9wAls=");
     cJSON *peers = cJSON_AddArrayToObject(settings, "peers");
     for (unsigned i = 0; i < 256; ++i)
@@ -186,8 +187,9 @@ static void testStaticPeerConfiguration(void)
     node_t    node   = {.hash_next = 1, .node_settings_json = settings};
     tunnel_t *server = create(&node);
     twfRequire(server != NULL, "disjoint static peers or nested ranges of one peer were rejected");
-    server_t         *state = tunnelGetState(server);
-    wireguard_peer_t *last  = peerLookupByPeerIndex(&state->engine, 256);
+    server_t *state = tunnelGetState(server);
+    twfRequireEqualU32(state->engine.padding_mtu, 9000, "packet-mode server padding MTU");
+    wireguard_peer_t *last = peerLookupByPeerIndex(&state->engine, 256);
     twfRequire(last != NULL && last->context != NULL && state->engine.peer_count == 257,
                "high-index static peer has no binding");
     const char *targets[] = {"10.70.1.0", "10.70.1.1", "198.51.100.42", "2001:db8::1"};
@@ -198,6 +200,9 @@ static void testStaticPeerConfiguration(void)
                    "static route did not select its high-index owner");
     }
     destroy(server, wwLifecycleStartupRollback());
+    cJSON_ReplaceItemInObjectCaseSensitive(settings, "mtu", cJSON_CreateNull());
+    twfRequire(create(&node) == NULL, "packet-mode server accepted a null MTU");
+    cJSON_DeleteItemFromObjectCaseSensitive(settings, "mtu");
     /* The last range overlaps an existing owner after the first range was inserted. */
     addStaticPeer(peers, 257, "203.0.113.128/25,10.70.1.0/24");
     twfRequire(create(&node) == NULL, "overlapping static peers survived constructor rollback");
@@ -235,6 +240,7 @@ int main(void)
     twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     twf_worker_env_t environment;
     twfWorkerEnvSetup(&environment, 8192, 32);
+    CORE_DEFAULT_MTU = 1500;
     testStaticPeerConfiguration();
     tunnel_t *owner  = tunnelCreate(NULL, 0, 0);
     owner->fnEstD    = established;

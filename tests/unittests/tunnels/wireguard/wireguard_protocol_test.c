@@ -78,6 +78,7 @@ typedef struct endpoint_s
     unsigned           cookie_replies, authenticated;
     sbuf_t            *replay;
     sbuf_t            *receive_during_output;
+    const sbuf_t      *expected_plaintext;
     bool               refuse_next_output;
     ip_addr_t          ip;
     uint64_t           carrier_id;
@@ -123,7 +124,13 @@ static void delivered(void *context, sbuf_t *packet, wireguard_peer_t *peer)
 {
     discard     peer;
     endpoint_t *endpoint = context;
-    twfRequire(sbufGetLength(packet) == 20, "decoded packet length differs from IPv4 length");
+    const sbuf_t *expected = endpoint->expected_plaintext;
+    twfRequireEqualU32(sbufGetLength(packet),
+                       expected != NULL ? sbufGetLength(expected) : 20,
+                       "decoded packet length differs from IPv4 length");
+    if (expected != NULL)
+        twfRequire(memoryEqual(sbufGetRawPtr(packet), sbufGetRawPtr(expected), sbufGetLength(expected)),
+                   "transport padding changed the delivered inner packet");
     ++endpoint->delivered;
     reuseBuffer(packet);
 }
@@ -225,6 +232,48 @@ static bool onlyMessage(const endpoint_t *endpoint, uint8_t type)
         return false;
     const sbuf_t *packet = endpoint->packets[endpoint->head];
     return wireguardGetMessageType(sbufGetRawPtr(packet), sbufGetLength(packet)) == type;
+}
+
+static void checkTransportPadding(endpoint_t *client, endpoint_t *server, buffer_pool_t *pool, uint16_t inner_length,
+                                  uint16_t padded_length)
+{
+    sbuf_t *inner = sbufReserveSpace(innerPacket(pool, 1, 2), inner_length);
+    sbufSetLength(inner, inner_length);
+    uint8_t *bytes = sbufGetMutablePtr(inner);
+    PUT_BE16(bytes + 2, inner_length);
+    for (uint16_t i = 20; i < inner_length; ++i)
+        bytes[i] = (uint8_t) (i + 1U);
+
+    const unsigned before      = server->delivered;
+    server->expected_plaintext = inner;
+    wireguardCommonSendInner(&client->engine, sbufDuplicate(inner));
+    twfRequire(onlyMessage(client, MESSAGE_TRANSPORT_DATA), "expected one encrypted transport datagram");
+    twfRequireEqualU32(sbufGetLength(client->packets[client->head]),
+                       (uint32_t) sizeof(message_transport_data_t) + padded_length + WIREGUARD_AUTHTAG_LEN,
+                       "transport datagram has unexpected padding");
+    drain(client, server);
+    twfRequire(server->delivered == before + 1, "padded transport datagram failed to deliver");
+    server->expected_plaintext = NULL;
+    reuseBuffer(inner);
+}
+
+static void testTransportPadding(buffer_pool_t *pool)
+{
+    endpoint_t client = {0}, server = {0};
+    setTime(1000);
+    setupEndpoints(&client, &server);
+    establish(&client, &server);
+
+    checkTransportPadding(&client, &server, pool, 1407, 1408);
+    checkTransportPadding(&client, &server, pool, 1408, 1408);
+    checkTransportPadding(&client, &server, pool, 1409, 1420);
+    checkTransportPadding(&client, &server, pool, 1419, 1420);
+    checkTransportPadding(&client, &server, pool, 1420, 1420);
+    checkTransportPadding(&client, &server, pool, 1421, 1421);
+    client.engine.padding_mtu = 1500;
+    checkTransportPadding(&client, &server, pool, 1420, 1424);
+    checkTransportPadding(&client, &server, pool, 1499, 1500);
+    destroyEndpoints(&client, &server);
 }
 
 static void testCarrierCookies(buffer_pool_t *pool)
@@ -1120,6 +1169,7 @@ int main(void)
     testReentrantRemoval();
     testTimerFairness();
     testPeerPrefixes();
+    testTransportPadding(environment.pool);
     endpoint_t client = {0}, server = {0};
     setTime(1000);
     setupEndpoints(&client, &server);

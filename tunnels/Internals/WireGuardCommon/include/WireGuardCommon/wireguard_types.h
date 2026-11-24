@@ -251,6 +251,7 @@ struct wireguard_device_s
     wireguard_callbacks_t callbacks;
     bool                  status_connected : 1;
     bool                  valid : 1;
+    uint16_t              padding_mtu; /* Inner IP byte ceiling for optional transport padding. */
 
     uint8_t public_key[WIREGUARD_PUBLIC_KEY_LEN];
     uint8_t private_key[WIREGUARD_PRIVATE_KEY_LEN];

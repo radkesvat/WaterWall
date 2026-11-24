@@ -1238,7 +1238,8 @@ static tunnel_t *create(node_t *node)
                                                        .can_initiate    = canInitiate,
                                                        .key_unavailable = keyUnavailable,
                                                        .authenticated   = authenticated,
-                                                       .candidate       = state->connection ? candidate : NULL}))
+                                                       .candidate       = state->connection ? candidate : NULL}) ||
+        ! wireguardCommonConfigureMtu(&state->engine, settings))
         goto fail;
     if (state->connection)
     {
@@ -1285,7 +1286,7 @@ static tunnel_t *create(node_t *node)
     t->onDestroy        = destroy;
     return t;
 fail:
-    LOGF("WireGuardServer: invalid mode, key, peer ranges, or authentication configuration");
+    LOGF("WireGuardServer: invalid mode, key, mtu, peer ranges, or authentication configuration");
     destroy(t, wwLifecycleStartupRollback());
     return NULL;
 }

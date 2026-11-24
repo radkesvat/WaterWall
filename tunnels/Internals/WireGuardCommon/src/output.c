@@ -37,7 +37,9 @@ err_t wireguardifOutputToPeer(wireguard_device_t *device, sbuf_t *q, const ip_ad
     }
 
     const uint32_t header_len = sizeof(message_transport_data_t);
-    const uint32_t padded_len = (unpadded_len + 15U) & ~15U;
+    uint32_t       padded_len = unpadded_len;
+    if (unpadded_len < device->padding_mtu)
+        padded_len = min((unpadded_len + 15U) & ~15U, device->padding_mtu);
     if (UNLIKELY(sbufGetHeadroom(q) < header_len))
     {
         LOGW("WireGuard: dropping packet: insufficient left padding for transport header "

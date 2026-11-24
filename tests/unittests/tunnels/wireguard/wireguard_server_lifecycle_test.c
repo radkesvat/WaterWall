@@ -100,6 +100,7 @@ static void caseCarrierAdmissionAndDetach(void)
     testCaseSet("WireGuardServer keepalive admission and remote-worker detach");
     wg_server_fixture_t f;
     wgServerFixtureSetup(&f, 2, "");
+    twfRequireEqualU32(f.state->engine.padding_mtu, 1420, "connection-mode server default padding MTU");
     twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
     wgServerFixtureProof(&f);
     wgServerFixtureOpenUdp(&f);
@@ -270,7 +271,7 @@ int main(void)
     caseCarrierAdmissionAndDetach();
     for (wid_t workers = 1; workers <= 4; workers += 3)
     {
-        casePartialConstruction(workers, ",\"mtu\":67");
+        casePartialConstruction(workers, ",\"max-pending-bytes\":0");
         casePartialConstruction(workers, ",\"sweep-interval-ms\":0");
         caseStartRefusal(workers, false);
         caseStartRefusal(workers, true);

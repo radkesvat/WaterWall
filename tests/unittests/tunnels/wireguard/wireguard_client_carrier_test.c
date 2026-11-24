@@ -82,19 +82,47 @@ static void carrierFinish(tunnel_t *t, line_t *line)
     discard line;
 }
 
+static void testClientMtu(node_t *node)
+{
+    static const struct
+    {
+        const char *json;
+        uint16_t    expected;
+    } cases[] = {{NULL, 1280}, {"68", 68}, {"65535", 65535}, {"67", 0}, {"65536", 0}, {"1420.5", 0}, {"\"1420\"", 0}};
+    CORE_DEFAULT_MTU = 1280;
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        if (cases[i].json != NULL)
+            cJSON_AddItemToObject(node->node_settings_json, "mtu", cJSON_Parse(cases[i].json));
+        tunnel_t *client = node->createHandle(node);
+        twfRequire((client != NULL) == (cases[i].expected != 0), "client MTU range or type validation failed");
+        if (client != NULL)
+        {
+            const client_t *state = tunnelGetState(client);
+            twfRequireEqualU32(state->engine.padding_mtu, cases[i].expected, "client padding MTU");
+            destroy(client, wwLifecycleStartupRollback());
+        }
+        cJSON_DeleteItemFromObjectCaseSensitive(node->node_settings_json, "mtu");
+    }
+}
+
 int main(void)
 {
     testCaseSet("wireguard_client_carrier_test");
     twfRequire(userTestRuntimeInitialize(), "runtime crypto setup failed");
+    twfRequire(createNetworkLogger(NULL, false) != NULL, "logger setup failed");
     twf_worker_env_t environment;
     twfWorkerEnvSetup(&environment, 8192, 32);
     node_t node             = nodeWireGuardClientGet();
     node.node_settings_json = cJSON_Parse("{\"privatekey\":\"0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=\","
                                           "\"peers\":[{\"publickey\":\"GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=\","
                                           "\"allowedips\":\"0.0.0.0/0\",\"endpoint\":\"127.0.0.1:51820\"}]}");
-    tunnel_t *client        = node.createHandle(&node);
+    testClientMtu(&node);
+    CORE_DEFAULT_MTU = 1500;
+    tunnel_t *client = node.createHandle(&node);
     twfRequire(client != NULL, "client construction failed");
-    client_t *state  = tunnelGetState(client);
+    client_t *state = tunnelGetState(client);
+    twfRequireEqualU32(state->engine.padding_mtu, 1420, "client default padding MTU");
     tunnel_t *sink   = tunnelCreate(NULL, 0, 0);
     sink->fnInitU    = carrierInit;
     sink->fnPayloadU = carrierPayload;
@@ -170,6 +198,7 @@ int main(void)
     cJSON_Delete(node.node_settings_json);
     memoryFree(node.type);
     twfWorkerEnvTeardown(&environment);
+    networkloggerDestroy();
     userTestRuntimeCleanup();
     return 0;
 }
