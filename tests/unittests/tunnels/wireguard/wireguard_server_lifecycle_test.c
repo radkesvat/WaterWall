@@ -259,7 +259,7 @@ static void caseRetirementShutdown(wid_t workers, bool completion_pending)
     twfRequire(atomic_load(&binding->retirement_done) && ! atomic_load(&binding->retirement_ok) && binding->occupied &&
                    binding->retiring && ! binding->usable && binding->epoch == epoch,
                "canceled retirement reopened a range or lost its binding context");
-    reconcile(f.state);
+    reconcile(f.state, false);
     twfRequire(binding->occupied && binding->retiring && binding->epoch == epoch,
                "failed retirement completion permitted range reuse");
     wgServerFixtureClose(&f, wwLifecycleProcessShutdown());

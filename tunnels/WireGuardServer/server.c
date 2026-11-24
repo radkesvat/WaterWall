@@ -219,7 +219,7 @@ static void retireBinding(server_t *state, unsigned index)
     else
         clearBinding(state, index);
 }
-static void reconcile(server_t *state)
+static void reconcile(server_t *state, bool periodic)
 {
     if (! state->connection)
         return;
@@ -233,10 +233,10 @@ static void reconcile(server_t *state)
                 clearBinding(state, i);
             continue;
         }
-        if (! binding->occupied || binding->authorization.generation == generation)
+        /* Local usage and time can revoke an account without a table update.
+         * Check those on the timer without scanning every account on each packet. */
+        if (! binding->occupied || (! periodic && binding->authorization.generation == generation))
             continue;
-        /* A table refresh revalidates the original identity through the cached
-         * continuation policy. Explicit control rejection only blocks admission. */
         if (! binding->usable || ! bindingAuthorized(state, binding))
             retireBinding(state, i);
         else
@@ -550,7 +550,7 @@ static void receive(tunnel_t *t, sbuf_t *packet, void *argument)
     server_t  *state    = tunnelGetState(t);
     receive_t *received = argument;
     ingress_t *ingress  = received->ingress;
-    reconcile(state);
+    reconcile(state, false);
     if (UNLIKELY(! ingressAvailable(ingress, false)))
     {
         reuseBuffer(packet);
@@ -587,7 +587,7 @@ static void sendInner(tunnel_t *t, sbuf_t *packet, void *argument)
 {
     const uint64_t epoch = *(const uint64_t *) argument;
     server_t      *state = tunnelGetState(t);
-    reconcile(state);
+    reconcile(state, false);
     if (state->connection)
     {
         if (UNLIKELY(sbufGetLength(packet) < 20 || (sbufGetRawPtr(packet)[0] >> 4U) != 4))
@@ -824,7 +824,7 @@ static void tick(wtimer_t *timer)
     server_t *state = weventGetUserdata(timer);
     if (! atomicLoad(&state->dispatch.open))
         return;
-    reconcile(state);
+    reconcile(state, true);
     wireguardCommonLoop(&state->engine);
     servicePending(state);
 }

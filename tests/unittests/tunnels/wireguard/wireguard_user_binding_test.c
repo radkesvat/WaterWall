@@ -338,7 +338,7 @@ int main(void)
                    state->engine.peers[0].curr_keypair.valid,
                "cached live binding could not rekey during control rejection");
     atomicIncU64(&as->users_generation);
-    reconcile(state);
+    reconcile(state, true);
     twfRequire(state->bindings[0].usable && sourceEpoch(state, &continuous_source) == saved_epoch,
                "unchanged refresh during rejection retired existing flows");
     controlResponse(auth, false);

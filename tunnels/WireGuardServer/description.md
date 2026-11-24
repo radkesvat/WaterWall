@@ -148,12 +148,14 @@ quotas. Packet mode uses static peer authorization without account limits.
 Connection-mode peer admission requires a valid handshake against an eligible
 account. There are at most 32 active, provisional and retiring bindings.
 Capacity refusal leaves existing sessions and the account table in place.
-The server checks for updated accounts every 400 ms, subject to owner-loop
-scheduling, and revalidates on new handshakes and flows. Unchanged account
-refreshes preserve existing bindings. A changed key, range or account owner
-closes the affected admission. The old range stays reserved until retirement
-completes and a fresh handshake validates the current account. A failed
-retirement keeps that range closed until node shutdown.
+Every 400 ms, subject to owner-loop scheduling, the server rechecks each active
+peer's account, including quiet peers. Account expiry or a locally exhausted
+traffic quota starts retirement even when the account table has the same version.
+New handshakes and flows also check eligibility. An unchanged, eligible account
+keeps its binding across a refresh. A change of key, range or account owner
+starts retirement. The slot and address range become available after all workers
+finish cleanup successfully. Reuse requires a fresh authenticated handshake.
+A failed retirement keeps the range reserved until node shutdown.
 
 Existing authenticated peers can continue under cached account enforcement and
 rekey during explicit control authentication rejection. New peers and new flows,

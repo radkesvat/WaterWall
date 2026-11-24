@@ -214,10 +214,42 @@ static void caseServerInitiatedRecovery(void)
     twfRequire(twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
                "fresh demand did not retain its packet");
     refresh(&f, 1);
-    reconcile(f.state);
+    reconcile(f.state, false);
     twfRequire(! twfLedgerContains(g_twf_buffers.live, g_twf_buffers.live_count, pending),
                "credential retirement retained queued plaintext");
     wgServerFixturePump(&f);
+    wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
+}
+
+static void caseIdleAccountRetirement(bool exhaust_quota)
+{
+    wg_server_fixture_t f;
+    wgServerFixtureSetup(&f, 1, "");
+    user_t *account = usersLookupByIdentifier(&f.users, 42);
+    if (exhaust_quota)
+    {
+        user_limit_t limit  = account->limit;
+        limit.traffic.total = 1;
+        twfRequire(usersSetUserLimit(&f.users, account, &limit), "traffic limit setup failed");
+    }
+    twfRequire(wwStartupSucceeded(wgServerFixtureStart(&f)), "server startup failed");
+    wgServerFixtureProof(&f);
+    binding_t     *binding    = &f.state->bindings[0];
+    const uint64_t generation = binding->authorization.generation;
+    tick(f.state->timer);
+    twfRequire(binding->usable, "timer retired an eligible idle account");
+
+    if (exhaust_quota)
+        twfRequire(usersAddTraffic(&f.users, account, 1, 0), "local usage charge failed");
+    else
+        userSetClientViewExpiry(account, authenticationclientLocalTimeMS(), true);
+    twfRequire(authenticationclientUsersGeneration(f.auth) == generation, "local eligibility changed table generation");
+    tick(f.state->timer);
+    twfRequire(binding->occupied && binding->retiring && ! binding->usable,
+               "timer did not retire the idle account while reserving its range for cleanup");
+    wgServerFixturePump(&f);
+    tick(f.state->timer);
+    twfRequire(! binding->occupied, "timer kept the idle binding after worker cleanup");
     wgServerFixtureClose(&f, wwLifecycleProcessShutdown());
 }
 
@@ -265,7 +297,7 @@ static void scenario(wid_t workers)
     wgServerFixtureExchange(&f);
     twfRequire(owned(&f, workers - 1, "10.50.0.5") > 0 && owned(&f, 0, "10.60.0.2") > 0, "real PTC admission missing");
     refresh(&f, 0);
-    reconcile(f.state);
+    reconcile(f.state, false);
     twfRequire(f.state->bindings[0].epoch == old_epoch && f.state->bindings[0].usable,
                "unchanged refresh replaced binding");
 
@@ -313,7 +345,7 @@ static void scenario(wid_t workers)
     twfRequire(stale_count >= 4, "stale ingress/reverse/send work was not retained");
     sbuf_t *stale_affinity = packet(&f, 17, false, false, workers - 1);
     refresh(&f, 1);
-    reconcile(f.state);
+    reconcile(f.state, false);
     twfRequire(binding->retiring && ! binding->usable && ! atomic_load(&binding->retirement_done),
                "range barrier did not close");
     for (wid_t wid = 0; wid < workers; ++wid)
@@ -329,7 +361,7 @@ static void scenario(wid_t workers)
                "replacement published before owner barrier");
     releaseMessage(retirement_message);
     wgServerFixturePump(&f);
-    reconcile(f.state);
+    reconcile(f.state, false);
     requireProtocolsEmpty(&f);
     twfRequire(usersLookupByIdentifier(&f.users, 42)->runtime.active_cons_out == 0, "old identity leaked reservations");
     twfRequire(wireguardifStartHandshake(&f.client, &f.client.peers[0], true) == ERR_OK,
@@ -368,6 +400,8 @@ int main(void)
 {
     testCaseSet("wireguard_server_retirement_test");
     caseServerInitiatedRecovery();
+    caseIdleAccountRetirement(false);
+    caseIdleAccountRetirement(true);
     scenario(1);
     scenario(4);
     return 0;
