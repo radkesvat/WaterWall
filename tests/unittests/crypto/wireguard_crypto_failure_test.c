@@ -7,7 +7,8 @@
  * testHandshakeResponseFailureClearsPendingState, testInitiationConstructionFailureClearsPendingState,
  * testResponseConstructionFailureInvalidatesHandshake, testCookieMacFailureDoesNotPublishState,
  * testClearHandshakeStateErasesActiveAndPendingState, testDeviceDestroyErasesSecrets,
- * testConfiguredKeysRejectMalformedBase64, testConfiguredKeysAcceptCanonicalBase64
+ * testAllowedRangeErrors, testConfiguredKeysRejectMalformedBase64,
+ * testConfiguredKeysAcceptCanonicalBase64
  * Checks: Assertion labels include: WireGuard construction-hash failure was not propagated; WireGuard
  * accepted a failed session KDF; failed session KDF retained handshake secrets; failed session KDF
  * retained pending handshake packet
@@ -371,6 +372,47 @@ static void testDeviceDestroyErasesSecrets(void)
 static const char private_key_base64[] = "0MHoX6RogAEFxKF7c5E84tA1Qy3l9u8IzJfgcVt4B2Y=";
 static const char public_key_base64[]  = "GnRcOavdc180YrXak138cZxWlMoEUZL0Mg/ZyWhLBgo=";
 
+static void testAllowedRangeErrors(void)
+{
+    wireguard_device_t device;
+    require(wireguardCommonInit(&device, private_key_base64, NULL, (wireguard_callbacks_t) {0}),
+            "range test device initialization failed");
+    wireguard_peer_init_data_t peer;
+    wireguardifPeerInit(&peer);
+    peer.public_key = (const uint8_t *) public_key_base64;
+    IP_ADDR4(&peer.allowed_ip, 192, 0, 2, 0);
+    ip_addr_t invalid_masks[2];
+    IP_ADDR4(&invalid_masks[0], 255, 0, 255, 0);
+    ipAddrSetAny(true, &invalid_masks[1]);
+    size_t id;
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_masks); ++i)
+    {
+        peer.allowed_mask = invalid_masks[i];
+        require(wireguardifAddPeer(&device, &peer, &id) == ERR_ARG && id == WIREGUARDIF_INVALID_INDEX &&
+                    device.peer_count == 0 && wireguardCommonPeerForIp(&device, &peer.allowed_ip) == NULL,
+                "invalid first range did not reject and roll back peer creation");
+    }
+    IP_ADDR4(&peer.allowed_mask, 255, 255, 255, 255);
+    require(wireguardifAddPeer(&device, &peer, &id) == ERR_OK, "valid first range failed");
+    for (size_t i = 0; i < ARRAY_SIZE(invalid_masks); ++i)
+        require(wireguardifAddAllowedIp(&device, id, &peer.allowed_ip, &invalid_masks[i]) == ERR_ARG,
+                "invalid additional range reported capacity exhaustion");
+    ip_addr_t address;
+    for (unsigned i = 1; i < WIREGUARD_MAX_SRC_IPS; ++i)
+    {
+        IP_ADDR4(&address, 192, 0, 2, i);
+        require(wireguardifAddAllowedIp(&device, id, &address, &peer.allowed_mask) == ERR_OK,
+                "valid range failed before per-peer capacity");
+    }
+    IP_ADDR4(&address, 192, 0, 2, WIREGUARD_MAX_SRC_IPS);
+    require(wireguardifAddAllowedIp(&device, id, &address, &peer.allowed_mask) == ERR_MEM &&
+                wireguardifAddAllowedIp(&device, id, &address, &invalid_masks[0]) == ERR_ARG &&
+                wireguardifAddAllowedIp(&device, id, &peer.allowed_ip, &peer.allowed_mask) == ERR_OK &&
+                wireguardCommonPeerForIp(&device, &address) == NULL,
+            "full range table lost error or duplicate semantics");
+    wireguardDeviceDestroy(&device);
+}
+
 static cJSON *configuredPeer(const char *public_key, const char *preshared_key)
 {
     cJSON *settings = cJSON_CreateObject();
@@ -478,6 +520,7 @@ int main(void)
     testCookieMacFailureDoesNotPublishState();
     testClearHandshakeStateErasesActiveAndPendingState();
     testDeviceDestroyErasesSecrets();
+    testAllowedRangeErrors();
     testConfiguredKeysRejectMalformedBase64();
     testConfiguredKeysAcceptCanonicalBase64();
 

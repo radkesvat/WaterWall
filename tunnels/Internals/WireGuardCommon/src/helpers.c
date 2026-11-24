@@ -1,5 +1,6 @@
 #include "peer_store.h"
 
+#include "WireGuardCommon/prefix.h"
 #include "loggers/network_logger.h"
 
 static bool wireguardCommonAllowedIpMatches(const wireguard_allowed_ip_t *allowed, const ip_addr_t *ipaddr)
@@ -82,7 +83,7 @@ err_t wireguardifDeviceOutput(wireguard_device_t *device, sbuf_t *packet, const 
     return device->callbacks.output(device->context, packet, NULL, ip, port) ? ERR_OK : ERR_CONN;
 }
 
-static bool peerAddIp(wireguard_peer_t *peer, ip_addr_t ip, ip_addr_t mask)
+static err_t peerAddIp(wireguard_peer_t *peer, ip_addr_t ip, ip_addr_t mask)
 {
     for (size_t i = 0; i < WIREGUARD_MAX_SRC_IPS; ++i)
     {
@@ -90,14 +91,14 @@ static bool peerAddIp(wireguard_peer_t *peer, ip_addr_t ip, ip_addr_t mask)
         if (! allowed->valid)
         {
             if (! wireguardPeerIndexRange(peer, &ip, &mask))
-                return false;
+                return ERR_ARG;
             *allowed = (wireguard_allowed_ip_t) {.valid = true, .ip = ip, .mask = mask};
-            return true;
+            return ERR_OK;
         }
         if (ipAddrCmp(&allowed->ip, &ip) && ipAddrCmp(&allowed->mask, &mask))
-            return true;
+            return ERR_OK;
     }
-    return false;
+    return wireguardPrefixLength(&ip, &mask) >= 0 ? ERR_MEM : ERR_ARG;
 }
 
 static err_t wireguardifLookupPeer(wireguard_device_t *device, size_t peer_index, wireguard_peer_t **out);
@@ -106,7 +107,7 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
 {
     assert(p != NULL);
 
-    err_t             result;
+    err_t             result                               = ERR_OK;
     uint8_t           public_key[WIREGUARD_PUBLIC_KEY_LEN] = {0};
     size_t            public_key_len                       = sizeof(public_key);
     wireguard_peer_t *peer                                 = NULL;
@@ -129,18 +130,9 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
     peer = peerLookupByPubkey(device, public_key);
     if (! peer)
     {
-        peer = wireguardPeerCreate(device, public_key, p->preshared_key);
-        if (peer == NULL)
-        {
-            result = ERR_ARG;
-        }
-        else if (! peerAddIp(peer, p->allowed_ip, p->allowed_mask))
-        {
-            discard wireguardifRemovePeer(device, peer->id);
-            peer   = NULL;
-            result = ERR_MEM;
-        }
-        else
+        peer   = wireguardPeerCreate(device, public_key, p->preshared_key);
+        result = peer != NULL ? peerAddIp(peer, p->allowed_ip, p->allowed_mask) : ERR_ARG;
+        if (result == ERR_OK)
         {
             peer->connect_ip   = p->endpoint_ip;
             peer->connect_port = p->endpoint_port;
@@ -149,12 +141,12 @@ err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t 
             peer->keepalive_interval =
                 p->keep_alive == WIREGUARDIF_KEEPALIVE_DEFAULT ? KEEPALIVE_TIMEOUT : p->keep_alive;
             memoryCopy(peer->greatest_timestamp, p->greatest_timestamp, sizeof(peer->greatest_timestamp));
-            result = ERR_OK;
         }
-    }
-    else
-    {
-        result = ERR_OK;
+        else if (peer != NULL)
+        {
+            discard wireguardifRemovePeer(device, peer->id);
+            peer = NULL;
+        }
     }
 
     if (peer_index != NULL)
@@ -178,7 +170,7 @@ err_t wireguardifAddAllowedIp(wireguard_device_t *device, size_t peer_index, con
         return ERR_ARG;
     }
 
-    return peerAddIp(peer, *ip, *mask) ? ERR_OK : ERR_MEM;
+    return peerAddIp(peer, *ip, *mask);
 }
 
 err_t wireguardifSendKeepalive(wireguard_device_t *device, wireguard_peer_t *peer)

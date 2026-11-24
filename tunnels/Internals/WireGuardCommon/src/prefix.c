@@ -34,19 +34,19 @@ static unsigned commonBits(const uint8_t *a, const uint8_t *b, unsigned start, u
     return start;
 }
 
-static bool prefixLength(const ip_addr_t *ip, const ip_addr_t *mask, unsigned *length)
+int wireguardPrefixLength(const ip_addr_t *ip, const ip_addr_t *mask)
 {
     if (ip->type != mask->type || (! IP_IS_V4(ip) && ! IP_IS_V6(ip)))
-        return false;
+        return -1;
     const unsigned width = IP_IS_V4(ip) ? 32 : 128;
     const uint8_t *bytes = addressBytes(mask);
     unsigned       bit   = 0;
     while (bit < width && addressBit(bytes, bit) != 0)
         ++bit;
-    *length = bit;
+    const int length = (int) bit;
     while (bit < width && addressBit(bytes, bit) == 0)
         ++bit;
-    return bit == width;
+    return bit == width ? length : -1;
 }
 
 static wireguard_prefix_node_t *newNode(const uint8_t *address, unsigned bits)
@@ -73,9 +73,10 @@ bool wireguardPrefixInsert(wireguard_prefix_table_t *table, const ip_addr_t *ip,
                            void *value, bool exclusive)
 {
     assert(value != NULL);
-    unsigned bits;
-    if (! prefixLength(ip, mask, &bits))
+    const int length = wireguardPrefixLength(ip, mask);
+    if (length < 0)
         return false;
+    const unsigned            bits    = (unsigned) length;
     const uint8_t            *address = addressBytes(ip);
     wireguard_prefix_node_t **link    = &table->roots[IP_IS_V4(ip) ? 0 : 1];
     unsigned                  known   = 0;
@@ -168,9 +169,9 @@ static void removeRoute(wireguard_prefix_node_t **link, const uint8_t *address, 
 
 void wireguardPrefixRemove(wireguard_prefix_table_t *table, const ip_addr_t *ip, const ip_addr_t *mask, size_t id)
 {
-    unsigned bits;
-    if (prefixLength(ip, mask, &bits))
-        removeRoute(&table->roots[IP_IS_V4(ip) ? 0 : 1], addressBytes(ip), 0, bits, id);
+    const int length = wireguardPrefixLength(ip, mask);
+    if (length >= 0)
+        removeRoute(&table->roots[IP_IS_V4(ip) ? 0 : 1], addressBytes(ip), 0, (unsigned) length, id);
 }
 
 static void freeTree(wireguard_prefix_node_t *node)

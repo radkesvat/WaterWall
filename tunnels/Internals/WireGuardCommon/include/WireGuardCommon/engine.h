@@ -45,6 +45,8 @@ void wireguardifPeerInit(wireguard_peer_init_data_t *peer);
 // Add a new peer to the specified interface.
 // On success the peer_index can be used to reference this peer in future function calls
 err_t wireguardifAddPeer(wireguard_device_t *device, wireguard_peer_init_data_t *peer, size_t *peer_index);
+/* Adding a range (including a new peer's first range) returns ERR_ARG for an
+ * invalid address/mask pair and ERR_MEM when a new valid range cannot fit. */
 err_t wireguardifAddAllowedIp(wireguard_device_t *device, size_t peer_index, const ip_addr_t *ip,
                               const ip_addr_t *mask);
 
