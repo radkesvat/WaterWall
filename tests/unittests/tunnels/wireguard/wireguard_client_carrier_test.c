@@ -1,9 +1,10 @@
 /* Real client carrier ownership, endpoint-before-Init, handshake before Est,
  * retry throttling and reentrant replacement. The carrier fixture is synchronous.
  * CTest: waterwall.wireguard_client_carrier_unit */
-#include "../../../../../tunnels/WireGuardClient/client.c"
+#include "WireGuardClient/structure.h"
 #include "fixtures/failure/tunnel_line_failure_harness.h"
 #include "fixtures/user_runtime.h"
+#include "loggers/network_logger.h"
 
 static unsigned carrier_inits, carrier_sends;
 static bool     refuse_init, pause_init, replace_on_send;
@@ -47,10 +48,10 @@ static void carrierInit(tunnel_t *t, line_t *line)
         addresscontextSetOnlyProtocol(selected, IP_PROTO_TCP);
         if (pause_init)
         {
-            pause_init      = false;
-            client_t *state = tunnelGetState(t->prev);
-            sbuf_t   *early = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
-            twfRequire(! output(state, early, NULL, NULL, 0) && carrier_sends == 0,
+            pause_init                      = false;
+            wireguardclient_tstate_t *state = tunnelGetState(t->prev);
+            sbuf_t                   *early = bufferpoolGetSmallBuffer(lineGetBufferPool(line));
+            twfRequire(! state->engine.callbacks.output(state, early, NULL, NULL, 0) && carrier_sends == 0,
                        "WireGuard output reentered an unfinished carrier Init");
             tunnelPrevDownStreamPause(t, line);
         }
@@ -71,9 +72,9 @@ static void carrierPayload(tunnel_t *t, line_t *line, sbuf_t *packet)
     {
         replace_on_send = false;
         tunnelPrevDownStreamFinish(t, line);
-        client_t *state = tunnelGetState(t->prev);
+        wireguardclient_tstate_t *state = tunnelGetState(t->prev);
         now_millis += 400;
-        twfRequire(ensureCarrier(state) != NULL, "reentrant replacement was refused");
+        twfRequire(wireguardclientEnsureCarrier(state) != NULL, "reentrant replacement was refused");
     }
 }
 static void carrierFinish(tunnel_t *t, line_t *line)
@@ -98,9 +99,9 @@ static void testClientMtu(node_t *node)
         twfRequire((client != NULL) == (cases[i].expected != 0), "client MTU range or type validation failed");
         if (client != NULL)
         {
-            const client_t *state = tunnelGetState(client);
+            const wireguardclient_tstate_t *state = tunnelGetState(client);
             twfRequireEqualU32(state->engine.padding_mtu, cases[i].expected, "client padding MTU");
-            destroy(client, wwLifecycleStartupRollback());
+            client->onDestroy(client, wwLifecycleStartupRollback());
         }
         cJSON_DeleteItemFromObjectCaseSensitive(node->node_settings_json, "mtu");
     }
@@ -121,7 +122,7 @@ int main(void)
     CORE_DEFAULT_MTU = 1500;
     tunnel_t *client = node.createHandle(&node);
     twfRequire(client != NULL, "client construction failed");
-    client_t *state = tunnelGetState(client);
+    wireguardclient_tstate_t *state = tunnelGetState(client);
     twfRequireEqualU32(state->engine.padding_mtu, 1420, "client default padding MTU");
     tunnel_t *sink   = tunnelCreate(NULL, 0, 0);
     sink->fnInitU    = carrierInit;
@@ -137,22 +138,24 @@ int main(void)
     /* The worker sampled its clock before a long callback in the same batch. */
     getCurrentWorkerLoop()->cur_hrtime = 1000000;
     now_millis                         = 1500;
-    twfRequire(ensureCarrier(state) == NULL && state->carrier == NULL && carrier_inits == 1,
+    twfRequire(wireguardclientEnsureCarrier(state) == NULL && state->carrier == NULL && carrier_inits == 1,
                "synchronous rejection leaked its owned normal line");
     now_millis                         = 1899;
     getCurrentWorkerLoop()->cur_hrtime = (uint64_t) now_millis * 1000U;
-    twfRequire(ensureCarrier(state) == NULL && carrier_inits == 1, "loop clock refresh shortened the 400 ms retry gap");
+    twfRequire(wireguardclientEnsureCarrier(state) == NULL && carrier_inits == 1,
+               "loop clock refresh shortened the 400 ms retry gap");
     refuse_init   = false;
     pause_init    = true;
     now_millis    = 1900;
-    line_t *first = ensureCarrier(state);
+    line_t *first = wireguardclientEnsureCarrier(state);
     twfRequire(first != NULL, "carrier did not recover after rejection");
     const uint64_t first_carrier_id = state->carrier_id;
     twfRequire(first_carrier_id != 0, "carrier cookie identity is absent");
-    sendInner(client, bufferpoolGetSmallBuffer(environment.pool), NULL);
+    wireguardclientSendInner(client, bufferpoolGetSmallBuffer(environment.pool), NULL);
     twfRequire(state->pending_count == 1 && carrier_sends == 0, "inner packets escaped before the WireGuard handshake");
 
-    twfRequire(! output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) && carrier_sends == 0,
+    twfRequire(! state->engine.callbacks.output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) &&
+                   carrier_sends == 0,
                "Pause during Init did not suppress carrier output");
     tunnelPrevDownStreamResume(sink, first);
     state->engine.first_peer->active = true;
@@ -160,39 +163,42 @@ int main(void)
     twfRequire(carrier_sends == 1, "WireGuard handshake did not start before Est");
     twfRequire(carrier_receives == 1 && received_carrier_id == first_carrier_id,
                "handshake reply before Est failed on the exact carrier with a nonnumeric endpoint");
-    twfRequire(state->pending_count == 1 && ! sessionReady(state), "carrier output bypassed the WireGuard key gate");
+    twfRequire(state->pending_count == 1 && ! wireguardCommonPeerCanSend(state->engine.first_peer),
+               "carrier output bypassed the WireGuard key gate");
 
     lineRef(first);
     tunnelPrevDownStreamPause(sink, first);
     tunnelPrevDownStreamEst(sink, first);
     tunnelPrevDownStreamEst(sink, first);
-    twfRequire(! output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) && carrier_sends == 1,
+    twfRequire(! state->engine.callbacks.output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) &&
+                   carrier_sends == 1,
                "late or repeated Est admitted writes on a paused carrier");
     tunnelPrevDownStreamResume(sink, first);
     replace_on_send = true;
-    twfRequire(output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) && carrier_sends == 2 &&
-                   state->carrier != NULL && state->carrier != first,
+    twfRequire(state->engine.callbacks.output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) &&
+                   carrier_sends == 2 && state->carrier != NULL && state->carrier != first,
                "old carrier completion cleared its reentrant replacement");
     twfRequire(state->carrier_id != first_carrier_id && state->carrier_id != 0,
                "replacement carrier reused a cookie identity");
-    payloadDown(client, first, bufferpoolGetSmallBuffer(environment.pool));
+    tunnelDownStreamPayload(client, first, bufferpoolGetSmallBuffer(environment.pool));
     twfRequire(carrier_receives == 1, "stale carrier delivered a datagram to the current protocol engine");
     lineUnref(first);
     line_t *replacement = state->carrier;
-    payloadDown(client, replacement, bufferpoolGetSmallBuffer(environment.pool));
+    tunnelDownStreamPayload(client, replacement, bufferpoolGetSmallBuffer(environment.pool));
     twfRequire(carrier_receives == 2 && received_carrier_id == state->carrier_id,
                "replacement carrier did not use its own cookie identity");
-    quiesceRequest(client, wwLifecycleProcessShutdown());
-    twfRequire(! output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) && carrier_sends == 2,
+    client->onQuiesceRequest(client, wwLifecycleProcessShutdown());
+    twfRequire(! state->engine.callbacks.output(state, bufferpoolGetSmallBuffer(environment.pool), NULL, NULL, 0) &&
+                   carrier_sends == 2,
                "quiesced carrier admitted a new write");
-    payloadDown(client, replacement, bufferpoolGetSmallBuffer(environment.pool));
+    tunnelDownStreamPayload(client, replacement, bufferpoolGetSmallBuffer(environment.pool));
     twfRequire(carrier_receives == 2, "quiesced carrier admitted new input");
     lineRef(replacement);
-    finishDown(client, replacement);
+    tunnelDownStreamFin(client, replacement);
     twfRequire(! lineIsAlive(replacement) && state->carrier == NULL, "owner Finish retained a live normal line");
     lineUnref(replacement);
-    stopWorker(client, 0, wwLifecycleProcessShutdown());
-    destroy(client, wwLifecycleProcessShutdown());
+    client->onWorkerStop(client, 0, wwLifecycleProcessShutdown());
+    client->onDestroy(client, wwLifecycleProcessShutdown());
     tunnelDestroy(sink);
     tunnelchainDestroy(chain);
     cJSON_Delete(node.node_settings_json);

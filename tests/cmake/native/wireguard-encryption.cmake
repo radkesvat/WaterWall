@@ -169,8 +169,7 @@ endif()
 if(LINUX AND TARGET WireGuardClient)
   waterwall_add_native_executable(wireguard_client_carrier_test SUPPORT SOURCES
     ${WATERWALL_UNIT_SOURCE_ROOT}/tunnels/wireguard/wireguard_client_carrier_test.c)
-  target_link_libraries(wireguard_client_carrier_test PRIVATE ww_test_support WireGuardCommon)
-  target_include_directories(wireguard_client_carrier_test PRIVATE ${CMAKE_SOURCE_DIR}/tunnels/WireGuardClient/include)
+  target_link_libraries(wireguard_client_carrier_test PRIVATE ww_test_support WireGuardClient)
   target_link_options(wireguard_client_carrier_test PRIVATE
     "-Wl,--wrap=getTickMS" "-Wl,--wrap=wireguardCommonReceiveOnCarrier"
     "-Wl,--wrap=abortProgramNow" "-Wl,--wrap=requestProgramShutdown"

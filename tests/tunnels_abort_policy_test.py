@@ -61,9 +61,9 @@ _REQUEST_SHUTDOWN_RE = _call_re("requestProgramShutdown")
 MANIFEST = [
     ("tunnels/Internals/WireGuardCommon/src/input.c", "wireguardCommonDecrypt", 1,
      ("WireGuard: best-fit decryption buffer has",), "runtime decryption buffer geometry invariant"),
-    ("tunnels/WireGuardClient/client.c", "finishDown", 1,
+    ("tunnels/WireGuardClient/downstream/fin.c", "wireguardclientTunnelDownStreamFinish", 1,
      ("WireGuardClient: Finish reached a normal line outside its carrier inventory",), "owned carrier inventory invariant"),
-    ("tunnels/WireGuardClient/client.c", "finishUp", 1,
+    ("tunnels/WireGuardClient/upstream/fin.c", "wireguardclientTunnelUpStreamFinish", 1,
      ("WireGuardClient: unexpected Finish on packet input",), "persistent packet line invariant"),
     ("tunnels/WireGuardServer/server.c", "createBinding", 1,
      ("WireGuardServer: binding epoch exhausted",), "non-reusable authorization epoch invariant"),
