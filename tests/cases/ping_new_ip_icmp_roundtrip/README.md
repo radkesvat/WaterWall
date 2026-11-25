@@ -24,13 +24,7 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.ping_new_ip
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
-Contract exercised: Verifies a direct `TesterClient -> PingClient -> PingServer -> TesterServer` packet chain in both directions,
-  including fresh IPv4/ICMP Echo Requests and one-time inner-packet delivery with `send-replies` omitted at both
-  endpoints, exercising the default without generated replies.
-
-The carrier reuses the actual IPv4 header and inserts Echo framing plus a final
-saved-protocol byte, for nine bytes of overhead. A complete 1491-byte native
-packet produces a 1500-byte carrier; 1492 bytes is refused. Both codec entry
-points reject fragments, so real adapters explicitly reassemble before these
-nodes. Address rewriting/restoration belongs to the chain; direct codec pairs
-preserve their native tuple. These are fixture expectations, not MTU discovery.
+The direct packet chain carries complete native IPv4 packets in both
+directions. The client sends ICMP type 253/code 7 and the server sends
+type 254/code 12. Each endpoint recovers the native payload and protocol
+from the carrier and preserves the original IPv4 addresses.

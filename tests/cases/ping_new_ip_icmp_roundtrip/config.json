@@ -20,8 +20,8 @@
       "name": "ping-client",
       "type": "PingClient",
       "settings": {
-        "identifier": 4660,
-        "sequence-start": 10
+        "icmp-type": "experiment-1",
+        "icmp-code": 7
       },
       "next": "ping-server"
     },
@@ -43,8 +43,8 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "identifier": 4661,
-        "sequence-start": 1
+        "icmp-type": 254,
+        "icmp-code": 12
       },
       "next": "tester-server"
     }

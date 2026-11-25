@@ -1,6 +1,9 @@
 add_library(PingCommon STATIC
     src/ping_wire.c
     src/ping6_wire.c
+    src/ping_ipv4.c
+    src/ping_ipv4_config.c
+    src/ping_ipv4_node.c
 )
 
 target_include_directories(PingCommon PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

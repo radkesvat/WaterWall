@@ -17,8 +17,8 @@
       "name": "ping-client",
       "type": "PingClient",
       "settings": {
-        "identifier": 4662,
-        "sequence-start": 30
+        "icmp-type": "echo-request",
+        "icmp-code": "no-code"
       },
       "next": "receiver"
     },

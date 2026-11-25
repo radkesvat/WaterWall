@@ -7,184 +7,122 @@ Sync note: Keep aligned with WaterWall-Docs/docs/02-noderefs/PingServer.mdx and 
 
 ## Overview
 
-`PingServer` is a pure IPv4 packet transform paired with `PingClient`.
-
-Only complete native **IPv4** packets are supported. At the 1,500-byte
-carrier ceiling, the native packet limit is 1,491 bytes,
-including IP and transport headers. Account for any other chain overhead and
-smaller path MTUs. Reassemble fragments at the packet adapters before these nodes;
-keep the real peer reachable outside the TUN route.
+`PingServer` is a layer-3 transform paired with `PingClient`. Each peer
+sends independent ICMPv4 data packets using the existing IPv4 header. The
+receiver accepts the peer's independently configured ICMP type and code.
 
 ## Typical placement
-
-Both endpoints carry their local data as new ICMP Echo Requests.
-Optional Echo Replies acknowledge requests; reverse data uses independent new
-requests and never waits for an acknowledgement.
 
 ### Deployment scenarios
 
 ```text
-client: TunDevice -> PingClient -> IpOverrider -> RawSocket
-server: RawSocket -> IpOverrider -> PingServer -> TunDevice
+client: TunDevice -> PingClient -> RawSocket
+server: RawSocket -> PingServer -> TunDevice
 ```
 
-Users own address rewriting/restoration and routing. Capture the peer's network
-address and protocol `1` with RawSocket. With IpOverrider between capture and
-the decoder, choose `"opaque-flow-mode": "peer"` explicitly because `auto` only
-recognizes a directly adjacent decoder. These are packet chains; ordinary
-UdpListener/UdpConnector normal-line compositions are unsupported.
+A direct pair uses the source and destination already on the packet. For
+different native and carrier addresses, put `IpOverrider` between Ping and
+RawSocket on each side. Configure both directions to write the appropriate
+native or carrier address pair. Keep the carrier peer reachable through the
+physical network.
 
-The trailer is not a signature. Ordinary Echo payloads can satisfy this layout,
-especially for opaque native protocols. The chain/capture configuration must
-select a dedicated carrier stream, with one logical carrier peer per node.
-There is no encryption, peer authentication or automatic distinction from
-ordinary pings. Valid unrelated IPv4 protocols pass through unchanged, preserving
-pending checksum intent, subject to fragment rejection below.
+Configure RawSocket to capture the peer's wire source address and IPv4
+protocol `1`. An unrelated ICMP message can match the frame layout, so select
+only the intended peer traffic at capture. With an intervening `IpOverrider`,
+set `"opaque-flow-mode": "peer"` explicitly if you want peer-based worker
+placement. Set `"fragment-policy": "reassemble"` on the packet adapters.
 
+For a fixed TCP service, a connection bridge can supply the packet side of
+each chain. Ordinary UdpListener or UdpConnector normal lines do not supply
+the packet lines these nodes require.
 
 ## Minimal practical example
 
-This is a **node fragment** for the packet chain above. `next-node` is a
-placeholder for the next configured node; the packet adapters, peer, capture,
-address restoration, routes, and MTU must also be configured.
+Replace `next-node` with the next configured node in the chain. Both settings
+are optional and the entire `settings` object may be omitted.
 
 ```json
 {
   "name": "pingserver",
   "type": "PingServer",
-  "settings": {"identifier": "random", "sequence-start": 1, "send-replies": false},
+  "settings": {
+    "icmp-type": "echo-request",
+    "icmp-code": "no-code"
+  },
   "next": "next-node"
 }
 ```
 
 ## Configuration
 
-### Settings
-
-Settings may be omitted or an empty object.
-
-
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `identifier` | `"random"` | Stable random nonzero local identifier, or integer `0..65535`. Replies mirror the request identifier. |
-| `sequence-start` | `1` | Integer `0..65535`; sequence wraps normally. |
-| `send-replies` | `false` | Boolean enabling exact replies to received requests. |
+| `icmp-type` | `"echo-request"` (8) | Outbound type. Accepts an integer from 0 to 255 or a supported type name. |
+| `icmp-code` | `0` | Outbound code. Accepts an integer from 0 to 255 or a supported code name for the selected type. |
 
-Only these settings are accepted. `local-ipv4`, `peer-ipv4`, `ttl` and `tos`
-are rejected as unknown settings. Data addresses and header policy belong to
-the surrounding chain.
+Unknown settings, including `local-ipv4` and `peer-ipv4`, are rejected.
+Type and code names are lowercase and hyphenated. Type `"echo"` aliases
+`"echo-request"`, and `"seamoby"` names type 41. The code name `"no-code"`
+applies to types such as Echo Request and Echo Reply. See the
+[IANA ICMPv4 registry](https://www.iana.org/assignments/icmp-parameters) for
+assigned values.
+
+Each peer can choose an independent type and code. For example,
+`"experiment-1"` and `"experiment-2"` resolve to types 253 and 254 for
+explicitly configured experiments. `"port-unreachable"` resolves to code 3
+with `"destination-unreachable"` (type 3). Numeric settings can express
+unassigned values. All numeric pairs use the same frame layout. Network
+devices may handle ICMP types and codes differently.
 
 ## Usage and troubleshooting
 
 ### MTU and reassembly
 
-The user is responsible for configuring a native MTU that leaves room for all
-chain overhead and the actual network path. Ordinary Ping and direct-mode Ping6 add nine bytes and drop
-native packets exceeding the 1,500-byte carrier ceiling after encoding. They do
-not discover or negotiate MTU, adjust MSS, segment, or fragment packets. Both
-entry points reject IP fragments; configure packet adapters to reassemble
-fragments before these nodes. Setting `preserve-fragments` does not make fragments
-acceptable.
+The encoder adds 10 bytes. A 1,500-byte carrier can therefore hold at most a
+1,490-byte native IPv4 packet, including IP options and transport headers. Use
+a smaller native MTU if the path has a lower MTU or the chain adds other
+headers. Set applicable bridge `mtu`, TunDevice `device-mtu`, and core
+`misc.mtu` for both directions. Reassemble fragmented native packets and
+carriers at the packet adapters. DF alone is valid.
 
-At this ceiling, 1,491 bytes is the maximum **complete native IPv4 packet**,
-including its IP and transport headers. A 1,492-byte native packet is dropped.
-Configure TunDevice `device-mtu`, applicable ConnectionToPackets and
-PacketsToConnection `mtu`, and core `misc.mtu` for all chain overhead in both
-directions. A larger core/device MTU never waives the carrier ceiling. A smaller
-network path requires a smaller native MTU. Keep the real peer reachable outside
-the TUN route. Set `"fragment-policy": "reassemble"` on packet adapters.
-
-MF or nonzero fragment offset is refused at encode and decode before native
-parsing, checksum repair or mutation, including with repair intent. DF alone
-is accepted and preserved. Reassemble native fragments before encoding and
-transit-fragmented carriers before decoding.
-
-Drops use `ERROR` diagnostics naming geometry, fragmentation/reassembly,
-checksum, size, headroom or tracking failures. Messages include packet length,
-native/carrier limits, overhead and available/required headroom. One shared
-five-second rate limiter covers all reasons, directions and workers per node.
+The decoder validates IPv4 protocol `1`, exact packet length, IPv4 and ICMP
+checksums, the opposite sender role, and the native payload's shape. The role
+check rejects reflections of the node's own frames. The tunnel carries
+plaintext IPv4 data.
 
 ## Advanced behavior
 
-### Packet representation
-
-For an actual IPv4 header length `H = 20..60`, original protocol `P = 0..255`
-and native body `B`, including any native transport header:
-
 ```text
-native: [existing IPv4, protocol=P ][native body B]
-carrier:[same IPv4, protocol=1][Echo Request 8][native body B][P 1]
+[existing IPv4 header and options][ICMP header, 8 bytes][native payload][saved protocol, 1 byte][sender role, 1 byte]
 ```
 
-The saved protocol is the **last byte of the declared IP packet**, inside the
-Echo checksum coverage. There is exactly one IPv4 header. Encoding adds nine
-bytes; decoding removes the Echo header and final byte. IPv4 options are supported.
-The buffer length must equal IPv4 total length. TCP data offset, UDP datagram
-length and generic ICMP geometry are checked against the native span, excluding
-framing. UDP padding remains accepted; other protocols are opaque and may have
-an empty body. A present protocol byte of zero is valid.
+The ICMP header starts with the configured type and code and the ICMP
+checksum. Its last four bytes are zero on transmit. The checksum covers the
+entire ICMP message, including the saved IPv4 protocol in the penultimate byte
+and sender role in the final byte (client `1`, server `2`). The decoder restores
+the native protocol and length. The decoded header reflects the received
+addresses, TTL, DSCP/ECN, ID, DF, and options.
 
-The transform preserves current source/destination, options, ID, DF, TTL and
-TOS/DSCP/ECN locally. Only protocol, total length and IPv4 checksum change as
-framing. Transit changes such as TTL decrement, option processing and deliberate
-address rewrites remain visible after decode; no saved original header exists.
+The encoder removes the address contribution from TCP and UDP checksums.
+The decoder adds the contribution of the received addresses. A zero IPv4 UDP
+checksum stays zero during ordinary framing and address rewriting. If the native
+packet explicitly requests checksum repair, Ping performs it before encoding.
+For UDP, this computes and enables the checksum even if it was zero.
+A repair request on the ICMP carrier affects only its IPv4 and ICMP checksums.
+An invalid native transport checksum remains invalid without native repair.
 
-For TCP/UDP, encoding incrementally changes the native checksum's address
-contributions from actual addresses to zero/zero. Decode restores contributions
-from zero/zero to the current IPv4 addresses. Disabled UDP checksum zero and
-invalid native checksum residuals survive unless native repair was explicitly
-requested before encoding. Carrier repair affects only visible IPv4/Echo
-checksums and never repairs hidden native corruption. ICMP and opaque bodies
-receive no address normalization. Protocols that protect addresses or other IP
-fields need those fields preserved/restored or a protocol-aware transform.
-
-### Directions, replies and tracking
-
-| Input to PingServer | Action |
-| --- | --- |
-| downstream native packet | Emit a fresh type-8, code-0 request toward `prev`. |
-| upstream request | Optionally send an independent reply toward `prev`, then deliver the decoded original toward `next` once. |
-| upstream matching reply | Consume the reply. |
-| upstream valid unmatched reply | Forward the complete carrier unchanged toward `next`. |
-
-Both endpoints always encode local data as new requests. `send-replies` is
-independent at each endpoint and defaults to false. When enabled, the receiver
-clones the validated request before decapsulation. A generated type-0, code-0
-reply preserves identifier, sequence and exact normalized Echo payload including
-the trailer; it reverses received IPv4 addresses, copies TOS, uses TTL 64,
-generates an IPv4 ID and clears fragmentation flags. Data delivery never waits
-for a reply. The original and reply have independent buffer ownership.
-
-Each node has synchronized 1,024-entry outstanding and replay rings. Matching
-uses type/code, identifier, sequence, payload length and a locally keyed digest
-of the exact native body plus trailer; addresses and worker IDs are excluded.
-Matching replies clear the outstanding entry. Valid unmatched replies can have
-arbitrary or empty payloads and are never decoded as native packets. Requests
-are marked before outward callbacks, including reentrant callbacks. Remembered
-duplicates deliver data once and may receive another optional reply. Bounded
-replacement can allow an evicted old identity to be accepted again. These rings
-are bookkeeping, not authentication, retransmission or reliability.
+`PingServer` encodes downstream and decodes upstream. Each accepted
+packet continues in the same callback direction. Per-node state holds
+configuration and drop diagnostics. Packet lines belong to the chain, and the
+node has no per-line state.
 
 ## Implementation details
 
-### Worker and line behavior
-
-The node uses
-chain-owned worker packet lines, zero per-line state and bounded node-wide Echo
-correlation. Decoding, replay checks and optional replies stay on the arrival
-worker; a later stateful consumer establishes its own transport-flow affinity.
-
-### Node metadata
-
 | Property | Value |
 | --- | --- |
-| `version` | `2` |
-| flags | `kNodeFlagNone` |
-| `can_have_prev` / `can_have_next` | `true` / `true` |
-| node / previous / next layer | `kNodeLayer3` |
-| `required_padding_left` | `9` bytes |
-| line state | none |
+| Node and neighboring layers | `kNodeLayer3` |
+| Previous and next edges | Both supported |
+| `required_padding_left` | `10` bytes |
+| Line state | None |
 
-Lifecycle Init/Est/Finish/Pause/Resume callbacks retain same-direction forwarding.
-These nodes create or destroy no normal lines, never destroy packet lines, and
-start no private readers or timers.
+Lifecycle callbacks pass through in the same direction.

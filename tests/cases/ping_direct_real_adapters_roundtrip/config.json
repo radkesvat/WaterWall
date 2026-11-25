@@ -46,9 +46,8 @@
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "send-replies": true,
-        "identifier": 4661,
-        "sequence-start": 1
+        "icmp-type": "experiment-2",
+        "icmp-code": 66
       },
       "next": "server-tun"
     },
@@ -59,7 +58,7 @@
         "fragment-policy": "reassemble",
         "device-name": "wwpingdirect0",
         "device-ip": "10.252.30.1/24",
-        "device-mtu": 1491,
+        "device-mtu": 1490,
         "route-table": "off"
       }
     }

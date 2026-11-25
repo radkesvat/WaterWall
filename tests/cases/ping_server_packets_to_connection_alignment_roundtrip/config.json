@@ -71,19 +71,14 @@
     {
       "name": "ping-client",
       "type": "PingClient",
-      "settings": {
-        "identifier": 4660,
-        "sequence-start": 1
-      },
       "next": "ping-server"
     },
     {
       "name": "ping-server",
       "type": "PingServer",
       "settings": {
-        "send-replies": true,
-        "identifier": 4661,
-        "sequence-start": 1
+        "icmp-type": "experiment-2",
+        "icmp-code": 12
       },
       "next": "packets-to-connection"
     },

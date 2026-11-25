@@ -23,13 +23,6 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.packet_anal
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
-Contract exercised: Verifies PingClient's one-way fresh IPv4/ICMP Echo Request encoding over the packet analysis path.
-
-The carrier reuses the actual IPv4 header and inserts Echo framing plus a final
-saved-protocol byte, for nine bytes of overhead. A complete 1491-byte native
-packet produces a 1500-byte carrier; 1492 bytes is refused. Both codec entry
-points reject fragments, so real adapters explicitly reassemble before these
-nodes. Address rewriting/restoration belongs to the chain; direct codec pairs
-preserve their native tuple. These are fixture expectations, not MTU discovery.
-
-The report keeps both original `198.51.100.0/31` source addresses, three packets per source.
+The report contains three ICMPv4 carriers from each original source in
+`198.51.100.0/31`. PingClient reuses each packet's IPv4 header and sends
+type 8/code 0.

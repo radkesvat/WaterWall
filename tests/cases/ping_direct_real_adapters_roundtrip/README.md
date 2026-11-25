@@ -10,7 +10,9 @@ Configured nodes and onward edges (`next`; listeners/connectors form the OS tran
 - `ping-server`: `PingServer` → `server-tun`
 - `server-tun`: `TunDevice` (terminal or independently bound endpoint)
 
-Scenario choices: `server-tun.device-mtu=1491`. These values define the workload/edge case and are not tuning advice.
+The fixture sets `server-tun.device-mtu` to 1,490. IpOverrider translates
+incoming wire addresses to the native pair and outgoing carrier addresses back
+to the wire pair.
 
 The [probe](probe.py) describes the exchange and its byte/order/exit assertions. It runs against the private copy made by the probe runner.
 
@@ -26,20 +28,12 @@ Discover properties with `ctest --preset linux -N -V -R '^waterwall\.ping_direct
 
 Generated core settings, logs and mutable inputs belong to the private run directory. Failures/skips retain initialized artifacts; `WATERWALL_TEST_KEEP_RUN_DIR=1` also retains success. See the [test workflow](../../README.md).
 
-Contract exercised: On privileged Linux hosts, injects a wrapped ICMP request through the real
-  `RawSocket -> IpOverrider -> PingServer -> TunDevice` server topology with `send-replies: true`, verifies the immediate exact
-  Echo Reply, then verifies the kernel-generated response returns in a separate Echo Request followed by a
-  matching acknowledgement.
-
-The carrier reuses the actual IPv4 header and inserts Echo framing plus a final
-saved-protocol byte, for nine bytes of overhead. A complete 1491-byte native
-packet produces a 1500-byte carrier; 1492 bytes is refused. Both codec entry
-points reject fragments, so real adapters explicitly reassemble before these
-nodes. Address rewriting/restoration belongs to the chain; direct codec pairs
-preserve their native tuple. These are fixture expectations, not MTU discovery.
-
-The real-adapter probe checks the 1491/1492-byte native boundary, generated
-reply TTL 64/copied TOS, exact Echo body plus trailer, duplicate suppression and
-independent data requests. IpOverrider restores the point-to-point TUN addresses
-on receive and rewrites loopback carrier addresses on send. RawSocket uses
-explicit peer grouping because the decoder is no longer directly adjacent.
+The probe injects a type 253/code 17 carrier through RawSocket, IpOverrider
+and PingServer into TunDevice. The kernel's native Echo Reply returns as an
+independent type 254/code 66 carrier. The probe checks the carrier addresses,
+both visible checksums, the exact native Echo Reply bytes and the final
+saved-protocol and sender-role bytes. It also verifies the 1,500-byte carrier
+boundary and rejection of a reflected server-role frame. Linux capture can
+discard the 1,501-byte datagram before it reaches PingServer. The
+[Ping wire unit](../../unittests/tunnels/ping/ping_wire_test.c) checks the
+decoder's own size limit directly.

@@ -1,13 +1,7 @@
 add_library(PingClient STATIC
                     instance/create.c
-                    instance/destroy.c
                     instance/api.c
                     instance/node.c
-                    instance/prepair.c
-                    instance/start.c
-                    common/helpers.c
-                    upstream/payload.c
-                    downstream/payload.c
 )
 
 target_include_directories(PingClient PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise RawSocket -> IpOverrider -> PingServer -> TunDevice with real ICMP adapters.
-
-The privileged namespace runner starts the adjacent multiworker configuration;
-this probe waits for its TUN interface and sends crafted loopback IPv4/ICMP
-packets. It checks exact inner Echo payloads, checksums, reply ordering, TOS/TTL
-and fragmentation policy, duplicate acknowledgements without duplicate inner
-delivery, advancing reply IDs, and server request sequences. Raw-socket and TUN
-privileges are required; the case uses no external network and measures no speed.
-CTest: waterwall.ping_direct_real_adapters_roundtrip.
-"""
+"""Verify PingServer through RawSocket and TunDevice on namespace loopback."""
 
 import ipaddress
 import socket
@@ -17,53 +8,55 @@ import time
 
 
 TUN_NAME = "wwpingdirect0"
-PEER_IDENTIFIER = 4660
-SERVER_IDENTIFIER = 4661
-INNER_IDENTIFIER = 0x2A2A
-INNER_SEQUENCE = 7
-INNER_SOURCE = "10.252.30.2"
-INNER_DESTINATION = "10.252.30.1"
-OUTER_SOURCE = "127.0.0.2"
-OUTER_DESTINATION = "127.0.0.1"
-PAYLOAD = b"waterwall-ping-direct-real-adapters"
-REQUEST_TOS = 0x2E
-SERVER_TTL = 64
-IP_DF = 0x4000
+WIRE_PEER = "127.0.0.2"
+WIRE_SERVER = "127.0.0.1"
+ECHO_IDENTIFIER = 0x2A2A
+IPV4_HEADER_LENGTH = 20
+ICMP_HEADER_LENGTH = 8
+TRAILER_LENGTH = 2
+CARRIER_OVERHEAD = ICMP_HEADER_LENGTH + TRAILER_LENGTH
+MAX_CARRIER = 1500
+MAX_NATIVE = MAX_CARRIER - CARRIER_OVERHEAD
+CLIENT_ROLE = 1
+SERVER_ROLE = 2
 
 
 def checksum(data):
     if len(data) % 2:
         data += b"\x00"
+    total = sum(struct.unpack(f"!{len(data) // 2}H", data))
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
 
-    value = sum(struct.unpack(f"!{len(data) // 2}H", data))
-    while value >> 16:
-        value = (value & 0xFFFF) + (value >> 16)
-    return (~value) & 0xFFFF
 
-
-def ipv4_packet(source, destination, protocol, payload, identification, tos=0, ttl=64, flags_offset=0):
-    source_bytes = ipaddress.IPv4Address(source).packed
-    destination_bytes = ipaddress.IPv4Address(destination).packed
+def ipv4_packet(source, destination, icmp, identification, ttl):
     header = struct.pack(
         "!BBHHHBBH4s4s",
         0x45,
-        tos,
-        20 + len(payload),
+        0x2E,
+        IPV4_HEADER_LENGTH + len(icmp),
         identification,
-        flags_offset,
+        0x4000,
         ttl,
-        protocol,
+        socket.IPPROTO_ICMP,
         0,
-        source_bytes,
-        destination_bytes,
+        ipaddress.IPv4Address(source).packed,
+        ipaddress.IPv4Address(destination).packed,
     )
-    header = header[:10] + struct.pack("!H", checksum(header)) + header[12:]
-    return header + payload
+    return header[:10] + struct.pack("!H", checksum(header)) + header[12:] + icmp
 
 
-def icmp_echo(icmp_type, identifier, sequence, payload):
-    frame = struct.pack("!BBHHH", icmp_type, 0, 0, identifier, sequence) + payload
-    return frame[:2] + struct.pack("!H", checksum(frame)) + frame[4:]
+def icmp_packet(type_number, code, payload, identifier=0, sequence=0):
+    message = struct.pack("!BBHHH", type_number, code, 0, identifier, sequence) + payload
+    return message[:2] + struct.pack("!H", checksum(message)) + message[4:]
+
+
+def peer_carrier(payload, sequence, role=CLIENT_ROLE, type_number=253, code=17):
+    native_echo = icmp_packet(8, 0, payload, ECHO_IDENTIFIER, sequence)
+    trailer = bytes([socket.IPPROTO_ICMP, role])
+    carrier = icmp_packet(type_number, code, native_echo + trailer)
+    return ipv4_packet(WIRE_PEER, WIRE_SERVER, carrier, 0x42A0 + sequence, 63)
 
 
 def wait_for_tun():
@@ -79,283 +72,100 @@ def wait_for_tun():
 
 
 def parse_ipv4(packet):
-    if len(packet) < 20 or packet[0] >> 4 != 4:
-        return None
-
+    if len(packet) < IPV4_HEADER_LENGTH or packet[0] >> 4 != 4:
+        raise RuntimeError("invalid IPv4 packet")
     header_len = (packet[0] & 0x0F) * 4
     total_len = struct.unpack_from("!H", packet, 2)[0]
-    if not 20 <= header_len <= 60 or total_len != len(packet) or total_len < header_len:
-        return None
-    if checksum(packet[:header_len]) != 0:
-        return None
-
-    flags_offset = struct.unpack_from("!H", packet, 6)[0]
-    return {
-        "source": str(ipaddress.IPv4Address(packet[12:16])),
-        "destination": str(ipaddress.IPv4Address(packet[16:20])),
-        "tos": packet[1],
-        "identification": struct.unpack_from("!H", packet, 4)[0],
-        "flags_offset": flags_offset,
-        "ttl": packet[8],
-        "protocol": packet[9],
-        "payload": packet[header_len:total_len],
-    }
+    if not IPV4_HEADER_LENGTH <= header_len <= 60 or total_len != len(packet) or total_len < header_len:
+        raise RuntimeError("invalid IPv4 packet length")
+    if checksum(packet[:header_len]) != 0 or packet[9] != socket.IPPROTO_ICMP:
+        raise RuntimeError("invalid IPv4 checksum or packet protocol")
+    if struct.unpack_from("!H", packet, 6)[0] & 0x3FFF:
+        raise RuntimeError("unexpected fragmentation")
+    return packet[header_len:]
 
 
-def parse_icmp(payload):
-    if len(payload) < 8 or checksum(payload) != 0:
+def server_carrier(packet):
+    if len(packet) < IPV4_HEADER_LENGTH:
         return None
-    icmp_type, code, _, identifier, sequence = struct.unpack_from("!BBHHH", payload)
-    return {
-        "type": icmp_type,
-        "code": code,
-        "identifier": identifier,
-        "sequence": sequence,
-        "payload": payload[8:],
-    }
-
-
-def parse_immediate_reply(packet, expected_request_icmp):
-    outer = parse_ipv4(packet)
-    if outer is None:
-        return None
-    if outer["source"] != OUTER_DESTINATION or outer["destination"] != OUTER_SOURCE:
-        return None
-    if outer["protocol"] != socket.IPPROTO_ICMP:
+    if (
+        packet[12:16] != ipaddress.IPv4Address(WIRE_SERVER).packed
+        or packet[16:20] != ipaddress.IPv4Address(WIRE_PEER).packed
+    ):
         return None
 
-    icmp = parse_icmp(outer["payload"])
-    if icmp is None or icmp["type"] != 0 or icmp["code"] != 0:
-        return None
-
-    expected = parse_icmp(expected_request_icmp)
-    if expected is None:
-        raise RuntimeError("test built an invalid Echo Request")
-    if icmp["identifier"] != expected["identifier"] or icmp["sequence"] != expected["sequence"]:
-        return None
-
-    if icmp["payload"] != expected_request_icmp[8:]:
-        raise RuntimeError("Echo Reply payload does not exactly mirror the Echo Request")
-    if outer["tos"] != REQUEST_TOS or outer["ttl"] != SERVER_TTL:
-        raise RuntimeError("Echo Reply TOS/TTL policy is wrong")
-    if outer["flags_offset"] != 0:
-        raise RuntimeError("Echo Reply must clear DF/MF/fragment offset")
-    return outer, icmp
+    message = parse_ipv4(packet)
+    if len(packet) > MAX_CARRIER or len(message) < CARRIER_OVERHEAD:
+        raise RuntimeError("server carrier has invalid length")
+    if message[:2] != bytes([254, 66]) or checksum(message) != 0:
+        raise RuntimeError("server carrier lost configured type/code or ICMP checksum")
+    if message[4:ICMP_HEADER_LENGTH] != bytes(4):
+        raise RuntimeError("server carrier has nonzero ICMP header bytes 4 through 7")
+    if message[-TRAILER_LENGTH:] != bytes([socket.IPPROTO_ICMP, SERVER_ROLE]):
+        raise RuntimeError("server carrier has the wrong saved protocol or sender role")
+    return len(packet), message[ICMP_HEADER_LENGTH:-TRAILER_LENGTH]
 
 
-def parse_server_request(packet):
-    outer = parse_ipv4(packet)
-    if outer is None:
-        return None
-    if outer["source"] != OUTER_DESTINATION or outer["destination"] != OUTER_SOURCE:
-        return None
-    if outer["protocol"] != socket.IPPROTO_ICMP:
-        return None
-
-    icmp = parse_icmp(outer["payload"])
-    if icmp is None or icmp["type"] != 8 or icmp["code"] != 0:
-        return None
-    if icmp["identifier"] != SERVER_IDENTIFIER:
-        return None
-    if outer["tos"] != REQUEST_TOS or outer["ttl"] != SERVER_TTL:
-        raise RuntimeError("server-originated Echo Request has wrong TOS/TTL")
-    if outer["flags_offset"] & 0x3FFF:
-        raise RuntimeError("server data carrier is fragmented")
-    # There is one IPv4 header. The exact native ICMP body is followed by its
-    # original protocol number; address restoration is the chain's policy.
-    if not icmp["payload"] or icmp["payload"][-1] != socket.IPPROTO_ICMP:
-        raise RuntimeError("server carrier lacks its final native-protocol trailer")
-    native_body = icmp["payload"][:-1]
-    if len(packet) != 20 + 8 + len(native_body) + 1 or len(packet) > 1500:
-        raise RuntimeError("server carrier has wrong nine-byte expansion")
-    inner_icmp = parse_icmp(native_body)
-    if inner_icmp is None or inner_icmp["type"] != 0 or inner_icmp["code"] != 0:
-        raise RuntimeError("inner Echo Reply was not preserved")
-    return outer, icmp, inner_icmp
+def receive_carrier(receiver, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            packet, _ = receiver.recvfrom(65535)
+        except socket.timeout:
+            continue
+        carrier = server_carrier(packet)
+        if carrier is not None:
+            return carrier
+    return None
 
 
-def make_peer_request(outer_sequence, inner_sequence, payload, identification):
-    inner_icmp = icmp_echo(8, INNER_IDENTIFIER, inner_sequence, payload)
-    request_icmp = icmp_echo(8, PEER_IDENTIFIER, outer_sequence, inner_icmp + bytes([socket.IPPROTO_ICMP]))
-    request = ipv4_packet(
-        OUTER_SOURCE,
-        OUTER_DESTINATION,
-        socket.IPPROTO_ICMP,
-        request_icmp,
-        identification,
-        tos=REQUEST_TOS,
-    )
-    return request_icmp, request
-
-
-def send_acknowledgement(sender, server_icmp, identification):
-    acknowledgement_icmp = icmp_echo(
-        0,
-        server_icmp["identifier"],
-        server_icmp["sequence"],
-        server_icmp["payload"],
-    )
-    acknowledgement = ipv4_packet(
-        OUTER_SOURCE,
-        OUTER_DESTINATION,
-        socket.IPPROTO_ICMP,
-        acknowledgement_icmp,
-        identification,
-    )
-    sender.sendto(acknowledgement, (OUTER_DESTINATION, 0))
+def require_echo_reply(carrier, sequence, payload):
+    if carrier is None:
+        raise RuntimeError(f"server did not return native Echo Reply {sequence}")
+    wire_length, message = carrier
+    expected = icmp_packet(0, 0, payload, ECHO_IDENTIFIER, sequence)
+    if wire_length != IPV4_HEADER_LENGTH + len(expected) + CARRIER_OVERHEAD:
+        raise RuntimeError("server carrier has wrong encapsulation overhead")
+    if message != expected:
+        raise RuntimeError("PingServer changed the returned native Echo Reply")
 
 
 def main():
     wait_for_tun()
+    payload = b"waterwall-ping-direct-real-adapters"
+    maximum = bytes(i & 0xFF for i in range(MAX_NATIVE - IPV4_HEADER_LENGTH - ICMP_HEADER_LENGTH))
 
-    request1_icmp, request1 = make_peer_request(1, INNER_SEQUENCE, PAYLOAD, 0x4101)
-    second_payload = PAYLOAD + b"-second"
-    request2_icmp, request2 = make_peer_request(2, INNER_SEQUENCE + 1, second_payload, 0x4102)
+    with socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP) as receiver, socket.socket(
+        socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW
+    ) as sender:
+        receiver.bind((WIRE_PEER, 0))
+        receiver.settimeout(0.15)
+        sender.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+        peer = (WIRE_SERVER, 0)
 
-    receiver = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
-    receiver.bind((OUTER_SOURCE, 0))
-    receiver.settimeout(0.25)
+        sender.sendto(peer_carrier(payload, 7), peer)
+        require_echo_reply(receive_carrier(receiver, 3), 7, payload)
 
-    sender = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
-    sender.setsockopt(socket.IPPROTO_IP, socket.IP_HDRINCL, 1)
+        at_limit = peer_carrier(maximum, 8)
+        if len(at_limit) != MAX_CARRIER:
+            raise RuntimeError("maximum fixture has the wrong size")
+        sender.sendto(at_limit, peer)
+        require_echo_reply(receive_carrier(receiver, 3), 8, maximum)
 
-    try:
-        sender.sendto(request1, (OUTER_DESTINATION, 0))
+        sender.sendto(peer_carrier(payload, 9, role=SERVER_ROLE, type_number=0, code=0), peer)
+        if receive_carrier(receiver, 0.35) is not None:
+            raise RuntimeError("reflected server-role frame reached the native interface")
+        sender.sendto(peer_carrier(payload, 9, type_number=0, code=0), peer)
+        require_echo_reply(receive_carrier(receiver, 3), 9, payload)
 
-        deadline = time.monotonic() + 10
-        immediate_replies = []
-        server_sequences = []
-        duplicate_sent = False
-        while time.monotonic() < deadline:
-            try:
-                packet, _ = receiver.recvfrom(65535)
-            except socket.timeout:
-                continue
+        oversized = peer_carrier(maximum + b"x", 10)
+        if len(oversized) != MAX_CARRIER + 1:
+            raise RuntimeError("oversized fixture has the wrong size")
+        sender.sendto(oversized, peer)
+        if receive_carrier(receiver, 0.35) is not None:
+            raise RuntimeError("oversized native packet escaped the carrier ceiling")
 
-            reply = parse_immediate_reply(packet, request1_icmp)
-            if reply is not None:
-                immediate_replies.append(reply)
-                if not duplicate_sent:
-                    sender.sendto(request1, (OUTER_DESTINATION, 0))
-                    duplicate_sent = True
-                if len(immediate_replies) > 2:
-                    raise RuntimeError("peer request received more replies than requests sent")
-            else:
-                server_request = parse_server_request(packet)
-                if server_request is None:
-                    continue
-                if not immediate_replies:
-                    raise RuntimeError("observed server data request before the immediate Echo Reply")
-
-                _, server_icmp, inner_icmp = server_request
-                if inner_icmp["identifier"] != INNER_IDENTIFIER or inner_icmp["sequence"] != INNER_SEQUENCE:
-                    raise RuntimeError("first server request did not carry the expected inner Echo Reply")
-                if inner_icmp["payload"] != PAYLOAD:
-                    raise RuntimeError("first server request altered the inner Echo Reply payload")
-                server_sequences.append(server_icmp["sequence"])
-                if len(server_sequences) > 1:
-                    raise RuntimeError("duplicate peer request delivered its inner packet more than once")
-                send_acknowledgement(sender, server_icmp, 0x4201)
-
-            if len(immediate_replies) == 2 and len(server_sequences) == 1:
-                break
-        else:
-            raise RuntimeError("timed out waiting for duplicate acknowledgements and first server request")
-
-        first_reply_id = immediate_replies[0][0]["identification"]
-        second_reply_id = immediate_replies[1][0]["identification"]
-        if second_reply_id != ((first_reply_id + 1) & 0xFFFF):
-            raise RuntimeError("duplicate peer request replies did not advance IPv4 ID monotonically")
-
-        duplicate_quiet_deadline = time.monotonic() + 0.5
-        while time.monotonic() < duplicate_quiet_deadline:
-            try:
-                packet, _ = receiver.recvfrom(65535)
-            except socket.timeout:
-                continue
-            server_request = parse_server_request(packet)
-            if server_request is not None:
-                raise RuntimeError("duplicate peer request caused a second inner delivery")
-
-        sender.sendto(request2, (OUTER_DESTINATION, 0))
-        saw_second_reply = False
-        saw_second_server_request = False
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not (saw_second_reply and saw_second_server_request):
-            try:
-                packet, _ = receiver.recvfrom(65535)
-            except socket.timeout:
-                continue
-
-            if parse_immediate_reply(packet, request2_icmp) is not None:
-                saw_second_reply = True
-                continue
-
-            server_request = parse_server_request(packet)
-            if server_request is None:
-                continue
-            _, server_icmp, inner_icmp = server_request
-            if inner_icmp["identifier"] != INNER_IDENTIFIER or inner_icmp["sequence"] != INNER_SEQUENCE + 1:
-                raise RuntimeError("second server request carried the wrong inner Echo Reply")
-            if inner_icmp["payload"] != second_payload:
-                raise RuntimeError("second server request altered the inner Echo Reply payload")
-            server_sequences.append(server_icmp["sequence"])
-            send_acknowledgement(sender, server_icmp, 0x4202)
-            saw_second_server_request = True
-
-        if not saw_second_reply or not saw_second_server_request:
-            raise RuntimeError("timed out waiting for the second Echo exchange")
-        if server_sequences != [1, 2]:
-            raise RuntimeError(f"server-originated request sequences were not ascending: {server_sequences}")
-
-        # Native size includes IPv4 (20) and native ICMP (8), then nine
-        # carrier bytes. Loopback has ample path MTU; the codec ceiling is fixed.
-        maximum_payload = bytes((i & 0xFF) for i in range(1491 - 20 - 8))
-        maximum_icmp, maximum_packet = make_peer_request(3, INNER_SEQUENCE + 2, maximum_payload, 0x4103)
-        if len(maximum_packet) != 1500:
-            raise RuntimeError("maximum fixture does not have nine-byte expansion")
-        sender.sendto(maximum_packet, (OUTER_DESTINATION, 0))
-        saw_max_reply = saw_max_data = False
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline and not (saw_max_reply and saw_max_data):
-            try:
-                packet, _ = receiver.recvfrom(65535)
-            except socket.timeout:
-                continue
-            if parse_immediate_reply(packet, maximum_icmp) is not None:
-                saw_max_reply = True
-                continue
-            result = parse_server_request(packet)
-            if result is not None:
-                _, carrier_icmp, native_icmp = result
-                if native_icmp["sequence"] != INNER_SEQUENCE + 2 or native_icmp["payload"] != maximum_payload:
-                    raise RuntimeError("maximum native packet was changed")
-                if carrier_icmp["sequence"] != 3 or len(packet) != 1500:
-                    raise RuntimeError("maximum data carrier sequence or size is wrong")
-                send_acknowledgement(sender, carrier_icmp, 0x4203)
-                saw_max_data = True
-        if not (saw_max_reply and saw_max_data):
-            raise RuntimeError("1491-byte native packet did not complete")
-        oversized_icmp, oversized_packet = make_peer_request(4, INNER_SEQUENCE + 3, maximum_payload + b"x", 0x4104)
-        if len(oversized_packet) != 1501:
-            raise RuntimeError("oversized fixture has wrong geometry")
-        sender.sendto(oversized_packet, (OUTER_DESTINATION, 0))
-        deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline:
-            try:
-                packet, _ = receiver.recvfrom(65535)
-            except socket.timeout:
-                continue
-            if parse_immediate_reply(packet, oversized_icmp) is not None or parse_server_request(packet) is not None:
-                raise RuntimeError("1492-byte native packet escaped the codec size ceiling")
-
-        print("RawSocket -> IpOverrider -> PingServer -> TunDevice multi-worker Echo flow verified")
-        return
-    finally:
-        sender.close()
-        receiver.close()
-
-    raise RuntimeError("PingServer Echo flow did not complete")
+    print("RawSocket -> IpOverrider -> PingServer -> TunDevice ICMPv4 roundtrip verified")
 
 
 if __name__ == "__main__":

@@ -1,482 +1,474 @@
 /*
- * Covers: single IPv4 Echo framing, final protocol trailer, actual IHL, checksum
- * parity and address normalization, exact capacity, fragment/geometry refusal,
- * visible repair, arbitrary unmatched replies and bounded request identities.
- * Setup: ordinary in-memory packets; independent RFC 1071 checksum expectations.
- * CTest: waterwall.ping_wire_unit. These sources require Debug and Release execution.
+ * Covers the Ping IPv4 carrier independently of node dispatch and configuration.
+ * CTest: waterwall.ping_wire_unit.
  */
-#include "PingCommon/ping_wire.h"
+#include "PingCommon/ping_ipv4.h"
 #include "test_assert.h"
+
 #define require(condition, message) TEST_REQUIRE(TEST_FAILURE_EXIT, condition, message)
 
-static uint32_t ipv4Address(const char *text)
+enum
 {
-    ip4_addr_t address = {0};
-    require(ip4AddrAddressToNetwork(text, &address) != 0, "IPv4 fixture parse failed");
-    return ip4AddrGetU32(&address);
-}
+    kCanaryLength = 16,
+    kIcmpHeader   = 8,
+};
 
-static uint32_t sumBytes(const uint8_t *bytes, size_t length, uint32_t sum)
+static uint32_t sumWords(const uint8_t *data, size_t length, uint32_t sum)
 {
-    while (length >= 2)
+    for (; length >= 2; length -= 2, data += 2)
     {
-        sum += ((uint32_t) bytes[0] << 8U) | bytes[1];
-        bytes += 2;
-        length -= 2;
+        sum += ((uint32_t) data[0] << 8U) | data[1];
     }
-    if (length != 0)
-        sum += (uint32_t) bytes[0] << 8U;
+    if (length == 1)
+    {
+        sum += (uint32_t) data[0] << 8U;
+    }
     return sum;
 }
 
-static uint16_t foldChecksum(uint32_t sum)
+static uint16_t checksum(const uint8_t *bytes, size_t length, uint32_t seed)
 {
-    while (sum >> 16U)
-        sum = (sum & 65535U) + (sum >> 16U);
+    uint32_t sum = sumWords(bytes, length, seed);
+    while (sum > UINT16_MAX)
+    {
+        sum = (sum & UINT16_MAX) + (sum >> 16U);
+    }
     return (uint16_t) ~sum;
 }
 
-static void checksumAt(uint8_t *bytes, size_t length, uint32_t seed, size_t field)
+static void setChecksum(uint8_t *bytes, size_t length, size_t offset, uint32_t seed)
 {
-    bytes[field] = bytes[field + 1] = 0;
-    PUT_BE16(bytes + field, foldChecksum(sumBytes(bytes, length, seed)));
+    PUT_BE16(bytes + offset, 0);
+    PUT_BE16(bytes + offset, checksum(bytes, length, seed));
 }
 
-static ping_wire_config_t config(void)
+static ping_ipv4_config_t clientConfig(void)
 {
-    ping_wire_config_t result = {.identifier = 0x1234};
-    return result;
+    return (ping_ipv4_config_t) {
+        .type = 253,
+        .code = 7,
+        .role = kPingIpv4Client,
+    };
 }
 
-static uint32_t carrierSeed(const ping_wire_config_t *cfg, size_t length)
+static ping_ipv4_config_t serverConfig(void)
 {
-    discard cfg;
-    discard length;
-    return 0;
+    return (ping_ipv4_config_t) {
+        .type = 8,
+        .code = 0,
+        .role = kPingIpv4Server,
+    };
 }
 
-static void repairCarrier(sbuf_t *buf, const ping_wire_config_t *cfg)
+static sbuf_t *newNative(size_t length, uint8_t ihl, uint8_t protocol, size_t headroom, size_t tailroom)
 {
-    uint8_t     *bytes  = sbufGetMutablePtr(buf);
-    const size_t header = (bytes[0] & 15U) * 4U;
-    checksumAt(bytes + header, sbufGetLength(buf) - header, carrierSeed(cfg, sbufGetLength(buf) - header), 2);
-    checksumAt(bytes, header, 0, 10);
-}
-
-static void requireCarrier(const sbuf_t *buf, const ping_wire_config_t *cfg)
-{
-    const uint8_t *bytes  = sbufGetRawPtr(buf);
-    const size_t   header = (bytes[0] & 15U) * 4U;
-    require(GET_BE16(bytes + 2) == sbufGetLength(buf), "carrier declared length mismatch");
-    require(bytes[9] == 1 && foldChecksum(sumBytes(bytes, header, 0)) == 0,
-            "carrier protocol or IPv4 checksum invalid");
-    require(foldChecksum(sumBytes(
-                bytes + header, sbufGetLength(buf) - header, carrierSeed(cfg, sbufGetLength(buf) - header))) == 0,
-            "Echo checksum invalid");
-}
-
-static uint32_t transportSeed(const uint8_t *packet, uint8_t protocol, uint16_t length)
-{
-    return sumBytes(packet + 12, 8, (uint32_t) protocol + length);
-}
-
-static sbuf_t *nativePacket(uint8_t protocol, uint16_t header, uint16_t body)
-{
-    sbuf_t *buf = sbufCreateWithPadding(header + body + 25U, 0);
-    /* Exercise exactly nine bytes of headroom, unaligned storage and no tailroom.
-     * The allocator may round capacity; restrict the test's accessible geometry. */
-    buf->data = buf->head + 9;
-    memorySet(buf->head + 9U + header + body, 0xa5, 16);
-    buf->capacity = (size_t) 9 + header + body;
-    sbufSetLength(buf, header + body);
-    uint8_t *p = sbufGetMutablePtr(buf);
-    memoryZero(p, header + body);
-    p[0] = (uint8_t) (0x40U | header / 4U);
-    p[1] = 0x2e;
-    PUT_BE16(p + 2, header + body);
-    PUT_BE16(p + 4, 0x8877);
-    PUT_BE16(p + 6, IP_DF);
-    p[8]                      = 55;
-    p[9]                      = protocol;
+    const size_t capacity = length + headroom + tailroom;
+    sbuf_t      *buf      = sbufCreateWithPadding(capacity + kCanaryLength, 0);
+    /* Keep exact accessible geometry independent of allocator over-allocation. */
+    buf->capacity = capacity;
+    buf->data     = buf->head + headroom;
+    memorySet(buf->head, 0xa5, capacity + kCanaryLength);
+    sbufSetLength(buf, length);
+    uint8_t *packet = sbufGetMutablePtr(buf);
+    memoryZero(packet, length);
+    packet[0] = (uint8_t) (0x40U | ihl / 4U);
+    packet[1] = 0x2e;
+    PUT_BE16(packet + 2, length);
+    PUT_BE16(packet + 4, 0x8877);
+    PUT_BE16(packet + 6, IP_DF);
+    packet[8]                 = 55;
+    packet[9]                 = protocol;
     const uint8_t addresses[] = {10, 10, 0, 1, 10, 10, 0, 2};
-    memoryCopy(p + 12, addresses, 8);
-    for (uint16_t i = 20; i < header; ++i)
-        p[i] = 1; /* IPv4 NOP options */
-    for (uint16_t i = 0; i < body; ++i)
-        p[header + i] = (uint8_t) (i * 13U + 9U);
-    if (protocol == IP_PROTO_TCP && body >= 20)
+    memoryCopy(packet + 12, addresses, sizeof(addresses));
+    memorySet(packet + IP_HLEN, 1, ihl - IP_HLEN); /* IPv4 NOP options. */
+    for (size_t i = ihl; i < length; ++i)
     {
-        p[header + 12] = 0x50;
-        checksumAt(p + header, body, transportSeed(p, protocol, body), 16);
+        packet[i] = (uint8_t) (i * 13U + 9U);
     }
-    if (protocol == IP_PROTO_UDP && body >= 8)
-    {
-        PUT_BE16(p + header + 4, body);
-        checksumAt(p + header, body, transportSeed(p, protocol, body), 6);
-        if (GET_BE16(p + header + 6) == 0)
-            PUT_BE16(p + header + 6, 65535);
-    }
-    if (protocol == IP_PROTO_ICMP && body >= 4)
-        checksumAt(p + header, body, 0, 2);
-    checksumAt(p, header, 0, 10);
+    setChecksum(packet, ihl, 10, 0);
     return buf;
 }
 
 static void requireCanary(const sbuf_t *buf)
 {
-    for (size_t i = 0; i < 16; ++i)
+    for (size_t i = 0; i < kCanaryLength; ++i)
+    {
         require(buf->head[buf->capacity + i] == 0xa5, "codec wrote beyond the declared allocation boundary");
+    }
 }
 
-static void testExactWireVector(void)
+static void repairCarrier(sbuf_t *buf)
 {
-    ping_wire_config_t cfg     = config();
-    sbuf_t            *buf     = nativePacket(49, 20, 2);
-    sbufGetMutablePtr(buf)[20] = 0x11;
-    sbufGetMutablePtr(buf)[21] = 0x22;
-    const uint8_t expected[]   = {0x45, 0x2e, 0x00, 0x1f, 0x88, 0x77, 0x40, 0x00, 0x37, 0x01, 0xa7,
-                                  0x22, 10,   10,   0,    1,    10,   10,   0,    2,    0x08, 0,
-                                  0xf7, 0xdb, 0x12, 0x34, 0xab, 0xcd, 0x11, 0x22, 49};
-    require(pingwireBuildEchoRequest(buf, &cfg, 0xabcd), "known-vector encode refused");
-    require(sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
-            "exact carrier bytes differ: framing, trailer or checksum parity");
-    requireCarrier(buf, &cfg);
-    sbufDestroy(buf);
+    uint8_t     *bytes = sbufGetMutablePtr(buf);
+    const size_t ihl   = (bytes[0] & 15U) * 4U;
+    setChecksum(bytes + ihl, sbufGetLength(buf) - ihl, 2, 0);
+    setChecksum(bytes, ihl, 10, 0);
 }
 
-static void testArithmeticZeroChecksum(void)
+static sbuf_t *newCarrier(size_t length, uint8_t protocol, uint8_t role)
 {
-    ping_wire_config_t cfg = config();
-    sbuf_t            *buf = nativePacket(49, 24, 2);
-    /* 0x0800 (type), 0x1234 (ID), 0 (sequence), 0xb4cb (body) and 0x3100 (trailer)
-     * sum to 0xffff: the transmitted Echo checksum must be zero, not UDP's all-ones. */
-    PUT_BE16(sbufGetMutablePtr(buf) + 24, 0xb4cb);
-    require(pingwireBuildEchoRequest(buf, &cfg, 0), "zero-checksum vector encode refused");
-    uint8_t *echo = sbufGetMutablePtr(buf) + 24;
-    require(GET_BE16(echo + 2) == 0, "encoded arithmetic-zero Echo checksum was replaced");
-    requireCarrier(buf, &cfg);
+    sbuf_t  *buf   = newNative(length, IP_HLEN, IP_PROTO_ICMP, 0, 0);
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    memoryZero(bytes + IP_HLEN, kIcmpHeader);
+    bytes[IP_HLEN]     = 8;
+    bytes[length - 2U] = protocol;
+    bytes[length - 1U] = role;
+    repairCarrier(buf);
+    return buf;
+}
 
-    PUT_BE16(echo + 2, 0x1234);
-    require(pingwireRecalculateCarrierChecksums(buf), "zero-checksum carrier repair failed");
-    require(GET_BE16(echo + 2) == 0, "repaired arithmetic-zero Echo checksum was replaced");
-    requireCarrier(buf, &cfg);
-    ping_wire_envelope_t view = {0};
-    require(pingwireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest,
-            "zero-checksum request was rejected");
+static void requireRefusal(sbuf_t *buf, const ping_ipv4_config_t *config, bool encode)
+{
+    uint8_t        expected[1501 + kPingIpv4Overhead];
+    const size_t   capacity = buf->capacity;
+    const size_t   length   = sbufGetLength(buf);
+    const uint8_t *cursor   = sbufGetRawPtr(buf);
+    const bool     repair   = sbufGetRecalculateChecksum(buf);
+    require(capacity <= sizeof(expected), "refusal fixture capacity exceeds capture");
+    memoryCopy(expected, buf->head, capacity);
+    require((encode ? pingipv4Encode(buf, config) : pingipv4Decode(buf, config)) != NULL, "invalid packet accepted");
+    require(sbufGetRawPtr(buf) == cursor && sbufGetLength(buf) == length && buf->capacity == capacity &&
+                sbufGetRecalculateChecksum(buf) == repair && memoryEqual(buf->head, expected, capacity),
+            "refusal changed caller-owned storage, cursor, length or repair request");
+    requireCanary(buf);
+}
+
+static void requireCarrierChecksums(const sbuf_t *buf)
+{
+    const uint8_t *bytes = sbufGetRawPtr(buf);
+    const size_t   ihl   = (bytes[0] & 15U) * 4U;
+    require(checksum(bytes, ihl, 0) == 0, "outer IPv4 checksum invalid");
+    require(checksum(bytes + ihl, sbufGetLength(buf) - ihl, 0) == 0, "outer ICMP checksum invalid");
+}
+
+static void testAllPairs(void)
+{
+    testCaseSet("Ping IPv4 all type/code pairs");
+    ping_ipv4_config_t       sender   = clientConfig();
+    const ping_ipv4_config_t receiver = serverConfig();
+    uint8_t                  native[25];
+    sbuf_t                  *buf = newNative(sizeof(native), IP_HLEN, 49, kPingIpv4Overhead, 0);
+    memoryCopy(native, sbufGetRawPtr(buf), sizeof(native));
+    for (unsigned int type = 0; type <= UINT8_MAX; ++type)
+    {
+        for (unsigned int code = 0; code <= UINT8_MAX; ++code)
+        {
+            sender.type = (uint8_t) type;
+            sender.code = (uint8_t) code;
+            require(pingipv4Encode(buf, &sender) == NULL, "ICMP type/code bytes refused at transmit");
+            const uint8_t *bytes = sbufGetRawPtr(buf);
+            require(bytes[20] == type && bytes[21] == code, "configured type/code missing from the wire");
+            requireCarrierChecksums(buf);
+            require(pingipv4Decode(buf, &receiver) == NULL, "receive unexpectedly depends on the type/code bytes");
+            require(sbufGetLength(buf) == sizeof(native) && memoryEqual(sbufGetRawPtr(buf), native, sizeof(native)),
+                    "round trip changed the native IPv4 packet");
+        }
+    }
     requireCanary(buf);
     sbufDestroy(buf);
 }
 
-static void testProtocolOptionsAndParityMatrix(void)
+static void testWireLayout(void)
 {
-    ping_wire_config_t cfg       = config();
-    const uint16_t     headers[] = {20, 24, 60};
-    for (unsigned protocol = 0; protocol <= 255; ++protocol)
-        for (size_t h = 0; h < ARRAY_SIZE(headers); ++h)
-            for (unsigned odd = 0; odd < 2; ++odd)
-            {
-                const uint16_t body = (uint16_t) ((protocol == 6    ? 20
-                                                   : protocol == 17 ? 8
-                                                   : protocol == 1  ? sizeof(struct icmp_hdr)
-                                                                    : 0) +
-                                                  odd);
-                sbuf_t        *buf  = nativePacket((uint8_t) protocol, headers[h], body);
-                uint8_t        original[100];
-                const size_t   native_length = sbufGetLength(buf);
-                memoryCopy(original, sbufGetRawPtr(buf), native_length);
-                require(sbufGetHeadroom(buf) == 9 && sbufGetTailroom(buf) == 0,
-                        "exact buffer fixture geometry changed");
-                require(pingwireBuildEchoRequest(buf, &cfg, (uint16_t) protocol), "matrix encode refused");
-                require(sbufGetHeadroom(buf) == 0 && sbufGetTailroom(buf) == 0, "encode used unadvertised space");
-                require(sbufGetLength(buf) == native_length + 9 && sbufGetRawPtr(buf)[native_length + 8] == protocol,
-                        "matrix trailer or overhead mismatch");
-                requireCarrier(buf, &cfg);
-                requireCanary(buf);
-                ping_wire_envelope_t view = {0};
-                require(pingwireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) ==
-                            kPingWireInboundEchoRequest,
-                        "matrix request did not parse");
-                require(view.native_protocol == protocol && view.native_body_length == body &&
-                            view.ip_header_length == headers[h],
-                        "request geometry includes framing in native span");
-                sbuf_t *reply = sbufDuplicate(buf);
-                require(pingwireBuildEchoReply(reply, &cfg, &view, 0x4321), "optional reply clone refused");
-                const uint8_t *r = sbufGetRawPtr(reply);
-                require(r[8] == 64 && r[1] == original[1] && GET_BE16(r + 6) == 0 && GET_BE16(r + 4) == 0x4321,
-                        "generated reply header policy mismatch");
-                require(memoryEqual(r + 12, original + 16, 4) && memoryEqual(r + 16, original + 12, 4),
-                        "reply addresses not reversed");
-                require(memoryEqual(r + headers[h] + 4, sbufGetRawPtr(buf) + headers[h] + 4, body + 5),
-                        "reply changed identifier/sequence or exact body+trailer");
-                requireCarrier(reply, &cfg);
-                sbufDestroy(reply);
-                require(pingwireStripEchoRequest(buf, &view), "matrix strip refused");
-                require(sbufGetLength(buf) == native_length && sbufGetHeadroom(buf) == 9 &&
-                            memoryEqual(sbufGetRawPtr(buf), original, native_length),
-                        "roundtrip changed native header/options/body");
-                requireCanary(buf);
-                sbufDestroy(buf);
-            }
-}
-
-static void testShortNativeIcmpRejected(void)
-{
-    ping_wire_config_t cfg = config();
-    for (uint16_t body = 0; body < sizeof(struct icmp_hdr); ++body)
+    testCaseSet("Ping IPv4 exact wire bytes and header preservation");
+    const struct
     {
-        sbuf_t      *buf    = nativePacket(IP_PROTO_ICMP, 20, body);
-        uint8_t     *packet = sbufGetMutablePtr(buf);
-        uint8_t      original[20 + sizeof(struct icmp_hdr)];
-        const size_t length = sbufGetLength(buf);
-        memoryCopy(original, packet, length);
-        require(! pingwireBuildEchoRequest(buf, &cfg, 0) && sbufGetRawPtr(buf) == packet &&
-                    sbufGetLength(buf) == length && memoryEqual(packet, original, length),
-                "undersized native ICMP body was accepted or mutated");
+        uint8_t ihl;
+        uint8_t protocol;
+        uint8_t payload_length;
+        bool    server;
+    } cases[] = {
+        {20, 0, 0, false},
+        {60, 49, 1, true},
+        {20, 253, 4, false},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        const size_t             ihl      = cases[i].ihl;
+        const size_t             body     = cases[i].payload_length;
+        const size_t             length   = ihl + body;
+        const ping_ipv4_config_t sender   = cases[i].server ? serverConfig() : clientConfig();
+        const ping_ipv4_config_t receiver = cases[i].server ? clientConfig() : serverConfig();
+        uint8_t                  native[64];
+        sbuf_t                  *buf   = newNative(length, cases[i].ihl, cases[i].protocol, kPingIpv4Overhead + 1, 0);
+        uint8_t                 *bytes = sbufGetMutablePtr(buf);
+        if (body == 1)
+        {
+            bytes[ihl] = 0xa6; /* Distinct from the saved protocol and both roles. */
+        }
+        memoryCopy(native, bytes, length);
+        require((uintptr_t) bytes % 2U == 1, "fixture needs an unaligned native cursor");
+
+        require(pingipv4Encode(buf, &sender) == NULL, "carrier encode refused");
+        bytes = sbufGetMutablePtr(buf);
+        require((uintptr_t) bytes % 2U == 1 && sbufGetHeadroom(buf) == 1 && sbufGetTailroom(buf) == 0,
+                "encode unexpectedly changed alignment or geometry");
+        require(sbufGetLength(buf) == length + 10 && GET_BE16(bytes + 2) == length + 10 && bytes[9] == IP_PROTO_ICMP,
+                "wrong IPv4 protocol or carrier length");
+        require(memoryEqual(bytes, native, 2) && memoryEqual(bytes + 4, native + 4, 5) &&
+                    memoryEqual(bytes + 12, native + 12, ihl - 12),
+                "encode changed an inherited IPv4 header field");
+        const uint8_t *icmp      = bytes + ihl;
+        const uint8_t  zeroes[4] = {0};
+        require(icmp[0] == sender.type && icmp[1] == sender.code && memoryEqual(icmp + 4, zeroes, sizeof(zeroes)),
+                "wrong transmit type/code or reserved bytes");
+        uint8_t data[6];
+        memoryCopy(data, native + ihl, body);
+        data[body]      = cases[i].protocol;
+        data[body + 1U] = (uint8_t) sender.role;
+        require(memoryEqual(icmp + 8, data, body + 2U), "ICMP data must be exactly payload, protocol, then role");
+        requireCarrierChecksums(buf);
+
+        require(pingipv4Decode(buf, &receiver) == NULL, "carrier decode refused");
+        require(sbufGetHeadroom(buf) == kPingIpv4Overhead + 1 && sbufGetTailroom(buf) == 0 &&
+                    sbufGetLength(buf) == length && memoryEqual(sbufGetRawPtr(buf), native, length),
+                "decode did not restore the original geometry and bytes");
         requireCanary(buf);
         sbufDestroy(buf);
     }
 }
 
-static void testRefusalsAndVisibleRepair(void)
+static void testTransitChanges(void)
 {
-    ping_wire_config_t cfg     = config();
-    sbuf_t            *maximum = nativePacket(49, 20, 1471);
-    require(pingwireBuildEchoRequest(maximum, &cfg, 1) && sbufGetLength(maximum) == 1500,
-            "1491-byte native limit refused");
-    sbufDestroy(maximum);
-    const uint16_t fragments[] = {IP_MF, 1, (uint16_t) (IP_MF | 2)};
-    for (unsigned repair = 0; repair < 2; ++repair)
-        for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
-            for (unsigned proto = 0; proto < 3; ++proto)
-            {
-                const uint8_t protocols[] = {6, 17, 49};
-                sbuf_t       *buf         = nativePacket(protocols[proto], 20, 1); /* too short for transport parsing */
-                uint8_t      *p           = sbufGetMutablePtr(buf);
-                PUT_BE16(p + 6, fragments[f]);
-                sbufSetRecalculateChecksum(buf, repair != 0);
-                uint8_t original[21];
-                memoryCopy(original, p, sizeof(original));
-                require(! pingwireBuildEchoRequest(buf, &cfg, 2) && sbufGetRawPtr(buf) == p &&
-                            sbufGetLength(buf) == 21 && memoryEqual(p, original, sizeof(original)) &&
-                            sbufGetRecalculateChecksum(buf) == (repair != 0),
-                        "fragment refusal mutated native geometry/bytes/intent");
-                sbufDestroy(buf);
-            }
-    for (unsigned failure = 0; failure < 7; ++failure)
+    testCaseSet("Ping IPv4 receives transit changes and arbitrary ICMP prefix bytes");
+    const ping_ipv4_config_t sender   = serverConfig();
+    const ping_ipv4_config_t receiver = clientConfig();
+    sbuf_t                  *buf      = newNative(26, 24, 49, kPingIpv4Overhead, 0);
+    uint8_t                  expected[26];
+    memoryCopy(expected, sbufGetRawPtr(buf), sizeof(expected));
+    require(pingipv4Encode(buf, &sender) == NULL, "carrier encode refused");
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    bytes[1] = expected[1] = 0x2f;
+    bytes[8] = expected[8] = 53;
+    bytes[15] = expected[15] = 44;
+    bytes[19] = expected[19] = 81;
+    bytes[23] = expected[23] = 0; /* Replace the final NOP with EOL. */
+    PUT_BE16(bytes + 4, 0x3412);
+    PUT_BE16(expected + 4, 0x3412);
+    PUT_BE16(bytes + 6, 0);
+    PUT_BE16(expected + 6, 0);
+    memorySet(bytes + 24 + 4, 0x5c, 4);
+    repairCarrier(buf);
+    setChecksum(expected, 24, 10, 0);
+    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == sizeof(expected) &&
+                memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
+            "decode did not expose the received IPv4 header and preserve its native payload");
+    requireCanary(buf);
+    sbufDestroy(buf);
+}
+
+static void testSizeHeadroomAndFragments(void)
+{
+    testCaseSet("Ping IPv4 size, headroom and fragment boundaries");
+    const ping_ipv4_config_t sender   = clientConfig();
+    const ping_ipv4_config_t receiver = serverConfig();
+    sbuf_t                  *buf      = newNative(1490, 60, 49, 10, 0);
+    require(kPingIpv4Overhead == 10 && kPingIpv4MaxInnerLength == 1490 && pingipv4Encode(buf, &sender) == NULL &&
+                sbufGetLength(buf) == 1500 && sbufGetHeadroom(buf) == 0 && sbufGetTailroom(buf) == 0,
+            "exact-ceiling packet failed with ten bytes of headroom and no tailroom");
+    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == 1490, "exact-ceiling decode failed");
+    requireCanary(buf);
+    sbufDestroy(buf);
+
+    buf = newNative(1491, IP_HLEN, 49, 10, 0);
+    sbufSetRecalculateChecksum(buf, true);
+    requireRefusal(buf, &sender, true);
+    sbufDestroy(buf);
+
+    buf = newCarrier(1500, 49, 1);
+    requireCarrierChecksums(buf);
+    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == 1490,
+            "standalone 1500-byte carrier was refused");
+    requireCanary(buf);
+    sbufDestroy(buf);
+
+    /* Independently frame the maximum plus one, which the encoder cannot produce. */
+    buf = newCarrier(1501, 49, 1);
+    requireCarrierChecksums(buf);
+    sbufSetRecalculateChecksum(buf, true);
+    requireRefusal(buf, &receiver, false);
+    sbufDestroy(buf);
+
+    buf = newNative(21, IP_HLEN, 49, 9, 0);
+    sbufSetRecalculateChecksum(buf, true);
+    requireRefusal(buf, &sender, true);
+    sbufDestroy(buf);
+
+    for (size_t i = 0; i < 2; ++i)
     {
-        sbuf_t  *buf = nativePacket(49, 20, failure == 0 ? 1472 : 16);
-        uint8_t *p   = sbufGetMutablePtr(buf);
-        if (failure == 1)
-        {
-            buf->data -= 1;
-            memmove(buf->data, p, sbufGetLength(buf));
-            p = buf->data;
-        }
-        if (failure == 2)
-            PUT_BE16(p + 2, 35);
-        if (failure == 3)
-            p[0] = 0x4f;
-        if (failure == 4)
-            p[9] = 6; /* short TCP */
-        if (failure == 5)
-        {
-            p[9] = 17;
-            PUT_BE16(p + 24, 17);
-        }
-        if (failure == 6)
-        {
-            p[9] = 1;
-            PUT_BE16(p + 2, 22);
-            sbufSetLength(buf, 22);
-        }
-        uint8_t      before[1600];
-        const size_t n = sbufGetLength(buf);
-        memoryCopy(before, buf->head, buf->capacity + 16U);
+        const uint16_t fragment = i == 0 ? IP_MF : 1;
+        buf                     = newNative(28, IP_HLEN, 49, 10, 0);
+        PUT_BE16(sbufGetMutablePtr(buf) + 6, fragment);
         sbufSetRecalculateChecksum(buf, true);
-        require(! pingwireBuildEchoRequest(buf, &cfg, 3) && sbufGetRawPtr(buf) == p && sbufGetLength(buf) == n &&
-                    memoryEqual(before, buf->head, buf->capacity + 16U) && sbufGetRecalculateChecksum(buf),
-                "expected refusal changed input");
+        requireRefusal(buf, &sender, true);
+        sbufDestroy(buf);
+
+        buf = newCarrier(38, 49, 1);
+        PUT_BE16(sbufGetMutablePtr(buf) + 6, fragment);
+        repairCarrier(buf);
+        requireRefusal(buf, &receiver, false);
         sbufDestroy(buf);
     }
-    sbuf_t *buf = nativePacket(49, 60, 3);
-    require(pingwireBuildEchoRequest(buf, &cfg, 4), "repair fixture encode failed");
-    uint8_t             *p    = sbufGetMutablePtr(buf);
-    ping_wire_envelope_t view = {0};
-    p[sbufGetLength(buf) - 1] ^= 1;
-    require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
-            "corrupt trailer passed checksum");
-    require(pingwireRecalculateCarrierChecksums(buf), "carrier repair failed");
-    require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest,
-            "repaired carrier rejected");
-    for (size_t f = 0; f < ARRAY_SIZE(fragments); ++f)
+}
+
+static void testCarrierRefusals(void)
+{
+    testCaseSet("Ping IPv4 incomplete geometry, checksums and sender roles");
+    const ping_ipv4_config_t receiver  = serverConfig();
+    const uint8_t            offsets[] = {0, 3, 9, 10, IP_HLEN + 2};
+    for (size_t i = 0; i < ARRAY_SIZE(offsets); ++i)
     {
-        PUT_BE16(p + 6, fragments[f]);
-        uint8_t before[80];
-        memoryCopy(before, p, sbufGetLength(buf));
-        require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
-                "fragment carrier admitted");
-        require(! (pingwireRecalculateCarrierChecksums(buf)) && memoryEqual(before, p, sbufGetLength(buf)),
-                "fragment carrier partially repaired");
+        sbuf_t  *buf   = newCarrier(35, 49, 1);
+        uint8_t *bytes = sbufGetMutablePtr(buf);
+        bytes[offsets[i]] ^= 1U;
+        if (offsets[i] == 9)
+        {
+            repairCarrier(buf);
+        }
+        requireRefusal(buf, &receiver, false);
+        sbufDestroy(buf);
     }
-    PUT_BE16(p + 6, IP_DF);
-    repairCarrier(buf, &cfg);
-    p[9] = 132;
-    checksumAt(p, 60, 0, 10);
-    require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundUnrelated,
-            "unrelated protocol rejected");
-    sbufDestroy(buf);
-    /* A present zero trailer with empty opaque body is valid; no trailer is not. */
-    for (unsigned length = 0; length < 3; ++length)
-        for (unsigned reply = 0; reply < 2; ++reply)
+
+    for (size_t length = 0; length < 10; ++length)
+    {
+        sbuf_t *buf = newNative(IP_HLEN + length, IP_HLEN, IP_PROTO_ICMP, 0, 0);
+        if (length >= 4)
         {
-            buf  = nativePacket(49, 20, 8 + length);
-            p    = sbufGetMutablePtr(buf);
-            p[9] = 1;
-            memoryZero(p + 20, 8 + length);
-            p[20] = reply ? 0 : 8;
-            if (reply && length)
-                p[28 + length - 1U] = 6; /* invalid native TCP framing is legal in an unmatched reply */
-            repairCarrier(buf, &cfg);
-            const ping_wire_inbound_kind_t expected = reply         ? kPingWireInboundEchoReply
-                                                      : length == 0 ? kPingWireInboundInvalidCarrier
-                                                                    : kPingWireInboundEchoRequest;
-            require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == expected,
-                    "empty reply or missing/zero trailer misclassified");
-            sbufDestroy(buf);
+            repairCarrier(buf);
         }
-}
-
-static void testCarrierGeometryAndUdpPadding(void)
-{
-    ping_wire_config_t   cfg              = config();
-    ping_wire_envelope_t view             = {0};
-    uint8_t              short_header[19] = {0x45};
-    require(pingwireParseInbound(short_header, sizeof(short_header), &cfg, &view) == kPingWireInboundMalformed,
-            "short IPv4 header admitted");
-    require(pingwireParseInbound(short_header, sizeof(short_header), NULL, &view) == kPingWireInboundMalformed,
-            "null parser config admitted");
-    sbuf_t *buf = nativePacket(49, 20, 3);
-    require(pingwireBuildEchoRequest(buf, &cfg, 10), "geometry fixture encode failed");
-    uint8_t *packet = sbufGetMutablePtr(buf);
-    PUT_BE16(packet + 2, (uint16_t) (sbufGetLength(buf) - 1U));
-    require(pingwireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundMalformed,
-            "trailing bytes beyond declared IPv4 length admitted");
-    PUT_BE16(packet + 2, (uint16_t) (sbufGetLength(buf) + 1U));
-    require(pingwireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundMalformed,
-            "truncated declared packet admitted");
-    sbufDestroy(buf);
-    buf       = nativePacket(49, 20, 1481); /* valid candidate geometry, final carrier 1501 */
-    packet    = sbufGetMutablePtr(buf);
-    packet[9] = 1;
-    memoryZero(packet + 20, 1481);
-    packet[20]   = 8;
-    packet[1500] = 49;
-    repairCarrier(buf, &cfg);
-    require(pingwireParseInbound(packet, sbufGetLength(buf), &cfg, &view) == kPingWireInboundInvalidCarrier,
-            "1501-byte candidate admitted");
-    sbufDestroy(buf);
-    buf    = nativePacket(17, 60, 13);
-    packet = sbufGetMutablePtr(buf);
-    PUT_BE16(packet + 64, 8); /* five bytes of permitted IP padding */
-    checksumAt(packet + 60, 8, transportSeed(packet, 17, 8), 6);
-    if (GET_BE16(packet + 66) == 0)
-        PUT_BE16(packet + 66, 65535);
-    uint8_t expected[73];
-    memoryCopy(expected, packet, sizeof(expected));
-    require(pingwireBuildEchoRequest(buf, &cfg, 11) &&
-                pingwireParseInbound(sbufGetRawPtr(buf), sbufGetLength(buf), &cfg, &view) ==
-                    kPingWireInboundEchoRequest &&
-                pingwireStripEchoRequest(buf, &view) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
-            "UDP padding semantics or checksum length changed");
-    sbufDestroy(buf);
-}
-
-static void testIdentifierAndReplyIds(void)
-{
-    uint16_t identifier = 0;
-    require(pingwireSelectIdentifier(false, 0, 5, &identifier) && identifier == 0, "explicit identifier zero lost");
-    require(! pingwireSelectIdentifier(true, 0, 0, &identifier), "random identifier accepted zero");
-    require(pingwireSelectIdentifier(true, 0, 42, &identifier) && identifier == 42, "random candidate lost");
-    ping_wire_reply_id_generator_t ids;
-    pingwireReplyIdGeneratorInitialize(&ids, 0xfffe, 100);
-    require(pingwireReplyIdGeneratorNextAt(&ids, 101, 0) == 0xffff && pingwireReplyIdGeneratorNextAt(&ids, 102, 0) == 0,
-            "reply ID wrap lost");
-    require(pingwireReplyIdGeneratorNextAt(&ids, 1202, 0) == 2, "idle reply ID perturbation lost");
-    pingwireReplyIdGeneratorInitialize(&ids, 10, 100);
-    require(pingwireReplyIdGeneratorNextAt(&ids, 1200, kPingWireReplyPerturbationMaximum) == 43,
-            "reply ID perturbation bounds changed");
-}
-
-static void testNativeChecksumResiduals(void)
-{
-    ping_wire_config_t cfg = config();
-    for (unsigned proto = 0; proto < 2; ++proto)
-        for (unsigned mode = 0; mode < 4; ++mode)
+        requireRefusal(buf, &receiver, false);
+        if (length < 4)
         {
-            const uint8_t  protocol = proto ? 17 : 6;
-            const uint16_t body     = proto ? 13 : 25;
-            sbuf_t        *buf      = nativePacket(protocol, 24, body);
-            uint8_t       *p        = sbufGetMutablePtr(buf);
-            const size_t   field    = 24 + (proto ? 6 : 16);
-            if (mode == 1)
-                p[24 + body - 1] ^= 0x80; /* invalid hidden residual */
-            if (mode == 2 && proto)
-                PUT_BE16(p + field, 0); /* disabled UDP */
-            if (mode == 3)
-            {
-                p[24 + body - 1] ^= 0x80;
-                sbufSetRecalculateChecksum(buf, true);
-            }
-            const uint16_t residual = foldChecksum(sumBytes(p + 24, body, transportSeed(p, protocol, body)));
-            require(pingwireBuildEchoRequest(buf, &cfg, (uint16_t) mode), "checksum fixture encode failed");
-            p = sbufGetMutablePtr(buf);
-            /* Independent address edit during carriage; real IpOverrider is covered by flow units. */
-            const uint8_t changed[] = {192, 0, 2, 10, 198, 51, 100, 10};
-            memoryCopy(p + 12, changed, 8);
-            repairCarrier(buf, &cfg);
-            ping_wire_envelope_t view = {0};
-            require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest &&
-                        pingwireStripEchoRequest(buf, &view),
-                    "rewritten carrier did not decode");
-            p = sbufGetMutablePtr(buf);
-            if (mode == 2 && proto)
-                require(GET_BE16(p + field) == 0, "disabled UDP checksum became enabled");
-            else
-                require(foldChecksum(sumBytes(p + 24, body, transportSeed(p, protocol, body))) ==
-                            (mode == 3 ? 0 : residual),
-                        "normalization lost native checksum residual or native repair intent");
-            sbufDestroy(buf);
+            sbufSetRecalculateChecksum(buf, true);
+            requireRefusal(buf, &receiver, false);
         }
-    sbuf_t *buf = nativePacket(6, 20, 25);
-    require(pingwireBuildEchoRequest(buf, &cfg, 9), "hidden corruption fixture encode failed");
-    uint8_t *p = sbufGetMutablePtr(buf);
-    p[28 + 24] ^= 0x80;
-    require(pingwireRecalculateCarrierChecksums(buf), "visible repair of corrupt payload failed");
-    ping_wire_envelope_t view = {0};
-    require(pingwireParseInbound(p, sbufGetLength(buf), &cfg, &view) == kPingWireInboundEchoRequest &&
-                pingwireStripEchoRequest(buf, &view),
-            "visible repaired request failed to decode");
-    p = sbufGetMutablePtr(buf);
-    require(foldChecksum(sumBytes(p + 20, 25, transportSeed(p, 6, 25))) != 0,
-            "carrier repair silently repaired hidden TCP");
+        sbufDestroy(buf);
+    }
+
+    const uint8_t rejected_roles[] = {0, 2, 3, 255};
+    for (size_t i = 0; i < ARRAY_SIZE(rejected_roles); ++i)
+    {
+        sbuf_t *buf = newCarrier(35, 49, rejected_roles[i]);
+        requireRefusal(buf, &receiver, false);
+        sbufDestroy(buf);
+    }
+
+    const ping_ipv4_config_t client = clientConfig();
+    sbuf_t                  *buf    = newCarrier(35, 49, 1);
+    sbufGetMutablePtr(buf)[IP_HLEN] = 0; /* Echo Reply retaining the sender's data. */
+    repairCarrier(buf);
+    requireRefusal(buf, &client, false);
+    sbufDestroy(buf);
+}
+
+static void testTransportGeometry(void)
+{
+    testCaseSet("Ping IPv4 native transport checks exclude the frame trailer");
+    const ping_ipv4_config_t sender   = clientConfig();
+    const ping_ipv4_config_t receiver = serverConfig();
+    const struct
+    {
+        uint8_t protocol;
+        uint8_t length;
+        uint8_t field;
+    } cases[] = {
+        {IP_PROTO_TCP, 19, 0x50},
+        {IP_PROTO_TCP, 20, 0x40},
+        {IP_PROTO_TCP, 22, 0x60},
+        {IP_PROTO_UDP, 7, 8},
+        {IP_PROTO_UDP, 8, 7},
+        {IP_PROTO_UDP, 8, 9},
+        {IP_PROTO_ICMP, 7, 0},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        const size_t  length   = cases[i].length;
+        const uint8_t protocol = cases[i].protocol;
+        sbuf_t       *native   = newNative(IP_HLEN + length, IP_HLEN, protocol, 10, 0);
+        uint8_t      *body     = sbufGetMutablePtr(native) + IP_HLEN;
+        if (protocol == IP_PROTO_TCP)
+        {
+            body[12] = cases[i].field;
+        }
+        if (protocol == IP_PROTO_UDP)
+        {
+            PUT_BE16(body + 4, cases[i].field);
+        }
+        sbufSetRecalculateChecksum(native, true);
+        requireRefusal(native, &sender, true);
+
+        sbuf_t *carrier = newCarrier(IP_HLEN + length + 10, protocol, 1);
+        memoryCopy(sbufGetMutablePtr(carrier) + IP_HLEN + kIcmpHeader, body, length);
+        repairCarrier(carrier);
+        sbufSetRecalculateChecksum(carrier, true);
+        requireRefusal(carrier, &receiver, false);
+        sbufDestroy(carrier);
+        sbufDestroy(native);
+    }
+
+    sbuf_t  *buf   = newNative(IP_HLEN + 11, IP_HLEN, IP_PROTO_UDP, 10, 0);
+    uint8_t *bytes = sbufGetMutablePtr(buf);
+    PUT_BE16(bytes + IP_HLEN + 4, 8);
+    PUT_BE16(bytes + IP_HLEN + 6, 0);
+    uint8_t expected[IP_HLEN + 11];
+    memoryCopy(expected, bytes, sizeof(expected));
+    require(pingipv4Encode(buf, &sender) == NULL && pingipv4Decode(buf, &receiver) == NULL &&
+                sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
+            "UDP length with IPv4 padding lost data or enabled the disabled checksum");
+    requireCanary(buf);
+    sbufDestroy(buf);
+}
+
+static void testChecksumRepairBoundaries(void)
+{
+    testCaseSet("Ping IPv4 checksum repair boundaries");
+    const ping_ipv4_config_t sender   = clientConfig();
+    const ping_ipv4_config_t receiver = serverConfig();
+    const size_t             ihl      = 24;
+    const size_t             udp_len  = 9;
+    uint8_t                  expected[33];
+    sbuf_t                  *buf    = newNative(sizeof(expected), (uint8_t) ihl, IP_PROTO_UDP, kPingIpv4Overhead, 0);
+    uint8_t                 *native = sbufGetMutablePtr(buf);
+    PUT_BE16(native + ihl + 4, udp_len);
+    uint32_t seed = sumWords(native + 12, 8, IP_PROTO_UDP + udp_len);
+    setChecksum(native + ihl, udp_len, 6, seed);
+    require(GET_BE16(native + ihl + 6) != 0, "fixture needs a nonzero UDP checksum");
+    memoryCopy(expected, native, sizeof(expected));
+    native[10] ^= 0x80;
+    native[ihl + 6] ^= 0x80;
+    sbufSetRecalculateChecksum(buf, true);
+    require(pingipv4Encode(buf, &sender) == NULL && ! sbufGetRecalculateChecksum(buf),
+            "native pending repair was not consumed");
+    requireCarrierChecksums(buf);
+    uint8_t *carrier   = sbufGetMutablePtr(buf);
+    uint8_t *transport = carrier + ihl + kIcmpHeader;
+    require(checksum(transport, udp_len, IP_PROTO_UDP + udp_len) == 0,
+            "native UDP repair or address neutralization failed");
+
+    /* Outer repair must not affect even a deliberately corrupt native checksum. */
+    carrier[10] ^= 0x80;
+    carrier[ihl + 2] ^= 0x80;
+    transport[udp_len - 1U] ^= 0x80;
+    expected[sizeof(expected) - 1U] ^= 0x80;
+    sbufSetRecalculateChecksum(buf, true);
+    require(pingipv4Decode(buf, &receiver) == NULL && ! sbufGetRecalculateChecksum(buf),
+            "pending carrier repair was not consumed");
+    require(sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
+            "carrier repair modified hidden native checksum bytes");
+    requireCanary(buf);
     sbufDestroy(buf);
 }
 
 int main(void)
 {
-    testCaseSet("ping_wire");
     initWLibc();
     checkSumInit();
-    require(wCryptoGlobalInit() == kWCryptoOk, "crypto initialization failed");
-    testExactWireVector();
-    testArithmeticZeroChecksum();
-    testProtocolOptionsAndParityMatrix();
-    testShortNativeIcmpRejected();
-    testRefusalsAndVisibleRepair();
-    testNativeChecksumResiduals();
-    testCarrierGeometryAndUdpPadding();
-    testIdentifierAndReplyIds();
-
-    wCryptoGlobalCleanup();
+    testAllPairs();
+    testWireLayout();
+    testTransitChanges();
+    testSizeHeadroomAndFragments();
+    testCarrierRefusals();
+    testTransportGeometry();
+    testChecksumRepairBoundaries();
     return 0;
 }

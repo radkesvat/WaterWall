@@ -11,15 +11,20 @@ Sync note: Any change to this file must also be applied to WaterWall/WaterWall-D
 
 This node is a layer-3 adapter rather than a connection-oriented tunnel.
 
-For Ping/Ping6 paths that rewrite addresses, place IpOverrider between RawSocket
-and the decoder and select `"opaque-flow-mode": "peer"` explicitly; `auto`
-recognizes only direct decoder neighbours. All Ping modes reuse the IPv4 header.
-Ordinary Ping and direct Ping6 add nine bytes and accept at most 1491 complete
-native bytes; `ipv6-in-ipv4` Ping6 adds 49 and accepts at most 1451. Both entry
-points reject fragments. Configure `"fragment-policy": "reassemble"` on adapters
-and budget device/bridge MTUs for the actual path. Capture the peer's network
-address with protocol 1 for Ping, 58 for direct Ping6 or 41 for IPv6-in-IPv4 Ping6. Ordinary Echo traffic may
-satisfy the layout; dedicated capture selection supplies no authentication.
+Ping reuses the IPv4 header and adds 10 bytes, leaving room for a 1,490-byte
+native packet at the 1,500-byte carrier ceiling. Use IpOverrider if the
+native and carrier addresses differ. Capture the intended peer's wire source
+address with `capture-protocols: [1]`. Unrelated ICMP can match Ping framing.
+
+Ping6 direct mode adds 9 bytes and accepts 1,491 native bytes. Ping6
+`ipv6-in-ipv4` adds 49 bytes and accepts 1,451. Capture the peer's source
+address with protocol 58 or 41 respectively for Ping6.
+
+With IpOverrider between RawSocket and either decoder, set
+`"opaque-flow-mode": "peer"` explicitly if you want peer-based worker
+placement. The `auto` mode recognizes direct decoder neighbors. Configure
+`"fragment-policy": "reassemble"` on packet adapters and budget the device
+or bridge MTU for the actual path.
 
 ### What It Does
 
@@ -40,22 +45,16 @@ satisfy the layout; dedicated capture selection supplies no authentication.
 
 Payload reaching `RawSocket` from upstream or downstream is treated as an IP packet and injected through the raw device.
 
-With PingClient/PingServer packet disguise, use these edge orders:
+Use these chain orders for PingClient and PingServer.
 
 ```text
-TunDevice -> PingClient -> IpOverrider -> RawSocket
-RawSocket -> IpOverrider -> PingServer -> TunDevice
+TunDevice -> PingClient -> RawSocket
+RawSocket -> PingServer -> TunDevice
 ```
 
-Ping6Client/Ping6Server use the same edge orders with outer IPv4 Protocol `58` in direct mode or `41` in `ipv6-in-ipv4` mode. Select `capture-protocols: [58]` or `[41]` respectively with the peer's outer source range. New-mode TunDevice MTU is at most 1451 at a 1500-byte path, before any other expansion; reassemble native/outer IPv4 fragments before Ping6. Inner IPv6 Fragment headers are rejected by Ping6.
-
-In first position, RawSocket forwards captured carrier packets upstream into
-PingServer. PingServer restores the inner packet toward TunDevice; only with
-its `send-replies: true` setting does it first send an exact type-0 Echo Reply
-back toward RawSocket. Reply generation defaults to false on both Ping nodes
-and can be enabled independently. Plain packets from TunDevice return downstream
-as fresh type-8 Echo Requests for raw injection; they are not inserted into an
-unrelated Echo Reply.
+In first position, RawSocket forwards captured carriers upstream into
+PingServer. PingServer delivers the complete native packet toward TunDevice
+and puts the return traffic in independent carriers.
 
 ## Minimal practical example
 
@@ -283,9 +282,12 @@ RawSocket -> PingServer -> TunDevice
 
 The resolved mode is fixed per device generation, including single-queue fallback
 and restart; readers do not inspect traffic or reevaluate topology per packet.
-Ping and Ping6 pass unrelated packets through, so automatic `peer` groups unrelated
-opaque traffic as well; mixed traffic may require an explicit setting. Startup
-logs requested mode, effective mode, selection reason and effective queue count.
+The IPv4 Ping decoder drops packets that fail its carrier checks. Ping6 forwards
+valid, unfragmented IPv4 packets with a protocol other than its configured
+carrier protocol. With Ping6, automatic `peer` mode groups this unrelated
+opaque traffic by address pair and protocol. For mixed traffic, select an
+explicit mode if a different distribution is needed. Startup logs the requested
+mode, effective mode, selection reason and effective queue count.
 
 #### `fragment-policy` (optional, default: `reassemble`)
 
