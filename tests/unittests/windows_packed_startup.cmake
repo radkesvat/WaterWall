@@ -1,7 +1,7 @@
-# Registers waterwall.windows_packed_startup_unit and
-# waterwall.windows_launcher_arguments_unit for native and standalone Windows
-# projects. Startup/launcher sources retain their independent runtime boundary;
-# private test support is imported without registering extra tests.
+# Registers the packed startup, launcher argument and kill-switch rule tests
+# for native and standalone Windows projects. Startup and launcher sources
+# retain their independent runtime boundary. Private test support is imported
+# without registering extra tests.
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/TestHelpers.cmake")
 if(NOT TARGET ww_test_support)
   add_subdirectory("${WATERWALL_SOURCE_DIR}/tests/support/c" "${CMAKE_BINARY_DIR}/ww-test-support" EXCLUDE_FROM_ALL)
@@ -35,4 +35,15 @@ waterwall_register_native_test(waterwall.windows_launcher_arguments_unit windows
   "unit;core;launcher;windows" TIMEOUT 30 SOURCE_DIR "${WATERWALL_SOURCE_DIR}")
 if(TARGET waterwall_platform_unit_tests)
   waterwall_native_aggregate(windows_launcher_arguments_test waterwall_platform_unit_tests)
+endif()
+
+waterwall_add_native_executable(windows_kill_switch_rules_test SUPPORT SOURCES
+  "${WATERWALL_SOURCE_DIR}/tests/unittests/core/windows_kill_switch_rules_test.c")
+target_compile_definitions(windows_kill_switch_rules_test PRIVATE _WIN32_WINNT=0x0600)
+target_link_libraries(windows_kill_switch_rules_test PRIVATE fwpuclnt advapi32 iphlpapi ws2_32 rpcrt4)
+set_target_properties(windows_kill_switch_rules_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+waterwall_register_native_test(waterwall.windows_kill_switch_rules_unit windows_kill_switch_rules_test
+  "unit;core;launcher;windows" TIMEOUT 30 SOURCE_DIR "${WATERWALL_SOURCE_DIR}")
+if(TARGET waterwall_platform_unit_tests)
+  waterwall_native_aggregate(windows_kill_switch_rules_test waterwall_platform_unit_tests)
 endif()
