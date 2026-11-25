@@ -1,0 +1,83 @@
+# Backport the Winpthreads rwlock fixes to the MSYS2 source snapshot used by
+# mingw-w64-winpthreads 14.0.0.r598.ge3d18511f-1.
+_source_revision=e3d18511f9759d455cae20c34703eea4a0723cf3
+_lock_fixes=(
+  fcc67d0d78970c7c670e3094026c048ad732b769
+  882d95697301879ac8849f26d06e0e1c8c9c133d
+  1c806b5837cf56a7c3804203b5a2a574d50d1e63
+)
+_source_dir="mingw-w64-${_source_revision}/mingw-w64-libraries/winpthreads"
+
+pkgbase=mingw-w64-winpthreads
+pkgname=("${MINGW_PACKAGE_PREFIX}-winpthreads" "${MINGW_PACKAGE_PREFIX}-libwinpthread")
+pkgver=14.0.0.r598.ge3d18511f
+pkgrel=1.1
+pkgdesc='Winpthreads with upstream fixes for concurrent first use of a static rwlock'
+arch=('any')
+mingw_arch=('mingw32' 'mingw64' 'ucrt64' 'clang64')
+url='https://www.mingw-w64.org/'
+license=('spdx:MIT AND BSD-3-Clause')
+makedepends=("${MINGW_PACKAGE_PREFIX}-cc" "${MINGW_PACKAGE_PREFIX}-crt" "${MINGW_PACKAGE_PREFIX}-headers")
+options=('!emptydirs' '!debug' 'staticlibs')
+source=("mingw-w64-${_source_revision}.tar.gz::https://codeload.github.com/mingw-w64/mingw-w64/tar.gz/${_source_revision}")
+for _fix in "${_lock_fixes[@]}"; do
+  source+=("${_fix}.patch::https://github.com/mingw-w64/mingw-w64/commit/${_fix}.patch")
+done
+sha256sums=(
+  '9e2d1d654361813cf4f88ef133fe6f2b997f383272beac2d9fb08de79018b2cc'
+  '2a14ea9feafd1dfa76c82a5e51f33ca7bcb1d43d40fb282ab426c3ae83144ea1'
+  'd45d0ce80b0cfbc61743cf033afe63d432ad34306c9e9cce0ca0decbdaed4fa1'
+  '76f8b4598220367e8379c714d79b2156ec9bbe652144d20e20e2693f8ba4facc'
+)
+
+prepare() {
+  cd "${srcdir}/mingw-w64-${_source_revision}"
+  local fix
+  for fix in "${_lock_fixes[@]}"; do
+    patch -Np1 --fuzz=0 -i "${srcdir}/${fix}.patch"
+  done
+}
+
+build() {
+  mkdir -p "build-${MSYSTEM}"
+  cd "build-${MSYSTEM}"
+
+  # Match the MSYS2 recipe's flags for Winpthreads.
+  CFLAGS="${CFLAGS//-Wp,-D__USE_MINGW_ANSI_STDIO=1/}"
+  if [[ ${MSYSTEM} == MINGW32 ]]; then
+    LDFLAGS="${LDFLAGS//-Wl,--no-seh/}"
+  fi
+
+  # Autotools uses MSYS paths, which need the MSYS make from base-devel.
+  MAKE=/usr/bin/make "${srcdir}/${_source_dir}/configure" --prefix="${MINGW_PREFIX}" \
+    --enable-static --enable-shared
+  /usr/bin/make
+  /usr/bin/make DESTDIR="${srcdir}/stage-${MSYSTEM}" install
+}
+
+package_winpthreads() {
+  depends=("${MINGW_PACKAGE_PREFIX}-crt" "${MINGW_PACKAGE_PREFIX}-libwinpthread=${pkgver}")
+  provides=("${MINGW_PACKAGE_PREFIX}-winpthreads-git")
+  conflicts=("${MINGW_PACKAGE_PREFIX}-winpthreads-git")
+  local stage="${srcdir}/stage-${MSYSTEM}${MINGW_PREFIX}"
+
+  install -d "${pkgdir}${MINGW_PREFIX}"
+  cp -a "${stage}/include" "${stage}/lib" "${pkgdir}${MINGW_PREFIX}/"
+  install -Dm644 "${srcdir}/${_source_dir}/COPYING" "${pkgdir}${MINGW_PREFIX}/share/licenses/winpthreads/COPYING"
+}
+
+package_libwinpthread() {
+  provides=("${MINGW_PACKAGE_PREFIX}-libwinpthread-git")
+  conflicts=("${MINGW_PACKAGE_PREFIX}-libwinpthread-git")
+  local stage="${srcdir}/stage-${MSYSTEM}${MINGW_PREFIX}"
+
+  install -Dm755 "${stage}/bin/libwinpthread-1.dll" "${pkgdir}${MINGW_PREFIX}/bin/libwinpthread-1.dll"
+  install -Dm644 "${srcdir}/${_source_dir}/COPYING" "${pkgdir}${MINGW_PREFIX}/share/licenses/libwinpthread/COPYING"
+}
+
+# Bind each split package to the packaging function for the active MSYS2 lane.
+for _name in "${pkgname[@]}"; do
+  _function="package_${_name#${MINGW_PACKAGE_PREFIX}-}"
+  _definition="$(declare -f "${_function}")"
+  eval "${_definition/#${_function}/package_${_name}}"
+done

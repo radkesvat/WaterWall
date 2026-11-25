@@ -3,6 +3,9 @@
 *.in linguist-language=C
 *.inc linguist-language=C
 
+# Keep the Bash package recipe runnable after Windows checkout.
+.github/msys2/winpthreads/PKGBUILD text eol=lf
+
 # Vendored code
 *.asm linguist-vendored
 *.s linguist-vendored

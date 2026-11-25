@@ -727,6 +727,7 @@ jobs:
         with:
           msystem: ${{ matrix.msys }}
           update: false
+          install: base-devel
           pacboy: >-
             ccache:p
             cmake:p
@@ -759,6 +760,7 @@ jobs:
         with:
           msystem: ${{ matrix.msys }}
           update: false
+          install: base-devel
           pacboy: >-
             ccache:p
             cmake:p
@@ -789,6 +791,7 @@ jobs:
         with:
           msystem: ${{ matrix.msys }}
           update: false
+          install: base-devel
           pacboy: >-
             ccache:p
             cmake:p
@@ -805,6 +808,18 @@ jobs:
       - name: Install native protoc compiler
         if: matrix.msys == 'MINGW32'
         run: pacman -S --needed --noconfirm mingw-w64-x86_64-gcc
+
+      - name: Install Winpthreads with the first-use lock fix
+        run: |
+          set -euo pipefail
+          package_dir="$(mktemp -d)"
+          cp .github/msys2/winpthreads/PKGBUILD "$package_dir/"
+          cd "$package_dir"
+          MINGW_ARCH="${MSYSTEM,,}" PKGDEST="$package_dir" makepkg-mingw --noconfirm --syncdeps
+          pacman -U --noconfirm \
+            "${MINGW_PACKAGE_PREFIX}-libwinpthread-"*.pkg.tar.zst \
+            "${MINGW_PACKAGE_PREFIX}-winpthreads-"*.pkg.tar.zst
+          pacman -Qo "$MINGW_PREFIX/lib/libpthread.a"
 
       - name: Configure CMake
         shell: msys2 {0}
@@ -847,7 +862,6 @@ jobs:
           } 2>&1 | tee ../../../build/ci-diagnostics/bootstrap.log
 
       - name: Validate packed application
-        if: ${{ false }} # Temporarily disabled.
         id: packed_application
         env:
           WW_WINDOWS_TEST_DIAGNOSTICS: ${{ github.workspace }}/build/ci-diagnostics/packed-application
@@ -975,7 +989,7 @@ jobs:
         run: cmake --build --preset ${{ matrix.preset }} --parallel
 
       - name: Validate packed application
-        if: ${{ false && matrix.pack_runtime == 'ON' }} # Temporarily disabled.
+        if: matrix.pack_runtime == 'ON'
         run: >
           ctest --test-dir build/${{ matrix.preset }} -C Release --no-tests=error --output-on-failure
           -R '^waterwall.windows_packed_application$'
