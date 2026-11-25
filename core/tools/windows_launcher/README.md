@@ -7,6 +7,19 @@ The smoke case checks companions beside the executable, executable-directory
 precedence over CWD, and CWD-only deployment through the native loader.
 It is not a second loader implementation or a full runtime replacement.
 
+The packed smoke case uses a fake WFP backend for protected launches. It checks
+the image grant and child identity, TUN registration, automatic cleanup,
+recovery after crash residue, and serialized replacement and unlock. It observes
+each simulated policy transition during handoff. The fixture also checks
+cancellation with a queued TUN registration, early pipe closure, and the child's
+exit code after a protection failure. Delayed runtime and helper exits exercise
+the stop deadline. Recorded adapter identities exercise the final unlock and
+handoff checks. On native Windows the fixture also closes a visible console.
+`waterwall.windows_kill_switch_rules_unit` checks the production IPv4 forwarding
+and error rules, unlock with a retained sublayer, sublayer permissions, and
+per-run grant identities in memory.
+These tests leave host filtering rules untouched.
+
 On Linux with MinGW x64 and Wine, from this directory:
 
 ```sh

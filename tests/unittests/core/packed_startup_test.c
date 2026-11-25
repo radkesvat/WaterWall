@@ -2,7 +2,8 @@
  * Covers: packed startup; the explicit inputs, callbacks and expected results below define this suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: realSnapshotExec, resetSimulation, runLauncherWithStdin, runLauncherInput, testRestrictedKeyValidation
+ * Cases: Snapshot execution, launcher startup and option rejection, restricted key validation,
+ * and rejection of Windows kill-switch arming before execution.
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -530,7 +531,10 @@ int main(int argc, char **argv)
         "{",         /* syntax error */
         "[1, 2]",    /* non-object root */
         "\"hello\"", /* string root */
-        "123"        /* number root */
+        "123",       /* number root */
+        "{\"configs\":[\"nodes.json\"],\"windows-kill-switch\":{\"config\":\"nodes.json\"}}",
+        "{\"configs\":[\"nodes.json\"],\"windows-kill-switch\":null}",
+        "{\"configs\":[\"nodes.json\"],\"windows-kill-switch\":true}",
     };
     for (size_t i = 0; i < sizeof(basic_failures) / sizeof(basic_failures[0]); ++i)
     {
@@ -545,6 +549,7 @@ int main(int argc, char **argv)
 
     /* 4b. Basic validation successes: restoration and exec attempted */
     const char *basic_successes[] = {
+        "{\"configs\":[\"nodes.json\"],\"windows-kill-switch\":false}",
         "{}",
         "{\"configs\":[]}",
         "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":1.5}}",

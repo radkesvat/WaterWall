@@ -1,6 +1,10 @@
 #pragma once
 
 #include "lwip/capacity.h"
+#ifdef WATERWALL_CORE_SETTINGS_PREFLIGHT
+#include "net/async_dns_options.h"
+#include "net/domain_strategy.h"
+#else
 #include "net/address_context.h"
 #include "net/async_dns.h"
 #include "wlibc.h"
@@ -8,10 +12,11 @@
 #define i_type vec_config_path_t // NOLINT
 #define i_key  char *            // NOLINT
 #include "stc/vec.h"
+#endif
 
 struct core_settings_s
 {
-
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     char *log_path;
 
     char *internal_log_file;
@@ -33,26 +38,31 @@ struct core_settings_s
     char *dns_log_level;
     bool  dns_log_console;
     char *dns_log_file_fullpath;
+#endif
 
-    unsigned int workers_count;
-    unsigned int ram_profile;
-    asyncdns_options_t dns_options;
+    unsigned int         workers_count;
+    unsigned int         ram_profile;
+    asyncdns_options_t   dns_options;
     enum domain_strategy domain_strategy;
-    char        *libs_path;
+    char                *libs_path;
 
-    bool              try_enabling_bbr;
-    bool              tcp_tune_enabled;
-    bool              splice_enabled;
-    uint16_t          mtu_size;
-    uint32_t          tcp_stack_receive_budget;
+    bool                      try_enabling_bbr;
+    bool                      tcp_tune_enabled;
+    bool                      splice_enabled;
+    uint16_t                  mtu_size;
+    uint32_t                  tcp_stack_receive_budget;
     ww_lwip_capacity_config_t lwip_capacity;
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     vec_config_path_t config_paths;
+#endif
 };
 
-bool                    parseCoreSettings(const char *data_json, size_t length);
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
+bool                    parseCoreSettings(const char *data_json, size_t length, bool windows_kill_switch_connected);
 struct core_settings_s *getCoreSettings(void);
 
 /* Apply after a successful parse and before runtime initialization. */
 void enableCoreSettingsVerboseLogging(void);
 
 void destroyCoreSettings(void);
+#endif

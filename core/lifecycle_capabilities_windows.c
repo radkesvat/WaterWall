@@ -5,11 +5,12 @@
 #include <wchar.h>
 #include <winternl.h>
 
-bool waterwallCapabilityValidate(HANDLE handle, const wchar_t *type, ACCESS_MASK access)
+typedef NTSTATUS(NTAPI *nt_query_object_fn)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+
+static nt_query_object_fn objectQuery(void)
 {
-    typedef NTSTATUS(NTAPI * query_fn)(HANDLE, OBJECT_INFORMATION_CLASS, PVOID, ULONG, PULONG);
     static void *volatile cached_query;
-    query_fn query = (query_fn) (uintptr_t) cached_query;
+    nt_query_object_fn query = (nt_query_object_fn) (uintptr_t) cached_query;
     if (query == NULL)
     {
         char    dll_abuf[sizeof(transf_ntdll) + 1];
@@ -37,10 +38,16 @@ bool waterwallCapabilityValidate(HANDLE handle, const wchar_t *type, ACCESS_MASK
             if (addr != NULL)
             {
                 InterlockedCompareExchangePointer(&cached_query, (void *) (uintptr_t) addr, NULL);
-                query = (query_fn) (uintptr_t) addr;
+                query = (nt_query_object_fn) (uintptr_t) addr;
             }
         }
     }
+    return query;
+}
+
+bool waterwallCapabilityValidate(HANDLE handle, const wchar_t *type, ACCESS_MASK access)
+{
+    nt_query_object_fn query = objectQuery();
     DWORD flags;
     if (query == NULL || handle == NULL || (intptr_t) handle < 0 || ! GetHandleInformation(handle, &flags))
         return false;
@@ -59,4 +66,23 @@ bool waterwallCapabilityValidate(HANDLE handle, const wchar_t *type, ACCESS_MASK
     size_t                          expected = wcslen(type) * sizeof(wchar_t);
     return info->TypeName.Length == expected && info->TypeName.Buffer != NULL &&
            memcmp(info->TypeName.Buffer, type, expected) == 0;
+}
+
+bool waterwallCapabilityNameMatches(HANDLE handle, const wchar_t *name)
+{
+    nt_query_object_fn query = objectQuery();
+    union {
+        void         *alignment;
+        unsigned char bytes[4096];
+    } buffer;
+    ULONG length;
+    /* ObjectNameInformation is value 1, omitted from some SDK headers. */
+    if (query == NULL || query(handle, (OBJECT_INFORMATION_CLASS) 1, buffer.bytes, sizeof(buffer.bytes), &length) < 0)
+        return false;
+    const UNICODE_STRING *actual = (const void *) buffer.bytes;
+    size_t                count  = actual->Length / sizeof(wchar_t);
+    size_t                suffix = wcslen(name);
+    /* Local Win32 objects have a native, session-specific namespace prefix. */
+    return actual->Buffer != NULL && count > suffix && actual->Buffer[count - suffix - 1] == L'\\' &&
+           wmemcmp(actual->Buffer + count - suffix, name, suffix) == 0;
 }

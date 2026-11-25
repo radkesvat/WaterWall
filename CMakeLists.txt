@@ -407,6 +407,7 @@ add_executable(${WATERWALL_APPLICATION_TARGET}
   ${WATERWALL_INNER_MAIN_SOURCE}
   core/core_settings.c
   core/imported_tunnels.c
+  core/kill_switch_config.c
   core/os_helpers.c
   core/startup_options.c
   # core/tests/bench_memcpy.c
@@ -414,6 +415,9 @@ add_executable(${WATERWALL_APPLICATION_TARGET}
 
 if(WIN32)
   target_sources(${WATERWALL_APPLICATION_TARGET} PRIVATE core/lifecycle_windows.c core/lifecycle_capabilities_windows.c)
+  if(WW_PACK_RUNTIME)
+    target_compile_definitions(${WATERWALL_APPLICATION_TARGET} PRIVATE WW_WINDOWS_PACKED_APP=1)
+  endif()
 endif()
 
 # Runtime consumers share code-generation and link flags through ww. Keep this

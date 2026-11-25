@@ -1,6 +1,7 @@
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
 #endif
+#include "kill_switch_windows.h"
 #include "launcher.h"
 #include "lazy_loader.h"
 #include "packed_payload.h"
@@ -18,8 +19,6 @@ static lazy_dll_t lazy_kernel32 = {transf_kernel32, sizeof(transf_kernel32), NUL
 static lazy_dll_t lazy_advapi32 = {transf_advapi32, sizeof(transf_advapi32), NULL};
 static lazy_dll_t lazy_ntdll    = {transf_ntdll, sizeof(transf_ntdll), NULL};
 
-LAZY_WRAPPER(BOOL, FALSE, lazy_kernel32, SetConsoleCtrlHandler, (PHANDLER_ROUTINE HandlerRoutine, BOOL Add),
-             (HandlerRoutine, Add))
 LAZY_WRAPPER_VOID(lazy_kernel32, Sleep, (DWORD dwMilliseconds), (dwMilliseconds))
 LAZY_WRAPPER(DWORD, 0, lazy_kernel32, GetModuleFileNameW, (HMODULE hModule, LPWSTR lpFilename, DWORD nSize),
              (hModule, lpFilename, nSize))
@@ -138,7 +137,6 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
               PULONG SecurityDescriptorSize),
              (StringSecurityDescriptor, StringSDRevision, SecurityDescriptor, SecurityDescriptorSize))
 
-#define SetConsoleCtrlHandler             lazy_SetConsoleCtrlHandler
 #define Sleep                             lazy_Sleep
 #define GetModuleFileNameW                lazy_GetModuleFileNameW
 #define CreateFileMappingW                lazy_CreateFileMappingW
@@ -187,47 +185,14 @@ LAZY_WRAPPER(BOOL, FALSE, lazy_advapi32, ConvertStringSecurityDescriptorToSecuri
 #define ConvertSidToStringSidW                               lazy_ConvertSidToStringSidW
 #define ConvertStringSecurityDescriptorToSecurityDescriptorW lazy_ConvertStringSecurityDescriptorToSecurityDescriptorW
 
-/* Process-lifetime storage: the handler never borrows cleanup-owned handles.
- * 0 = bootstrap, 1 = child running, 2 = exiting. */
-static volatile LONG console_phase;
-static volatile LONG console_cancel;
-
 /* Lifecycle stop events are manual-reset capabilities. Never reset cancellation;
  * the runtime checks this same event before committing startup. */
 static int bootstrapContinue(HANDLE stop)
 {
-    if (InterlockedCompareExchange(&console_cancel, 0, 0))
-    {
+    DWORD result = WaitForSingleObject(stop, 0);
+    if (result == WAIT_OBJECT_0)
         SetLastError(ERROR_CANCELLED);
-        return 0;
-    }
-    if (stop != NULL)
-    {
-        DWORD result = WaitForSingleObject(stop, 0);
-        if (result == WAIT_OBJECT_0)
-        {
-            SetLastError(ERROR_CANCELLED);
-            return 0;
-        }
-        if (result != WAIT_TIMEOUT)
-            return 0;
-    }
-    return 1;
-}
-
-static BOOL WINAPI launcherConsoleHandler(DWORD event)
-{
-    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT && event != CTRL_CLOSE_EVENT && event != CTRL_LOGOFF_EVENT &&
-        event != CTRL_SHUTDOWN_EVENT)
-        return FALSE;
-    InterlockedExchange(&console_cancel, 1);
-    launcherSessionCancel();
-    if (event == CTRL_C_EVENT || event == CTRL_BREAK_EVENT)
-        return TRUE; /* The attached child receives the original event directly. */
-    /* Windows imposes its own close deadline. Give the main owner bounded time. */
-    for (unsigned i = 0; i < 40 && InterlockedCompareExchange(&console_phase, 0, 0) != 2; ++i)
-        Sleep(100);
-    return TRUE;
+    return result == WAIT_TIMEOUT;
 }
 
 static wchar_t *modulePath(void)
@@ -501,6 +466,8 @@ static int pinTemporaryRoot(HANDLE root_handle, wchar_t *root, HANDLE **locks, s
 
 static void reportOwnedPath(const lazy_str_t *kind, const wchar_t *path, DWORD error)
 {
+    if (! launcherSessionDiagnosticsAvailable())
+        return;
     /* stderr is byte-oriented. Emit UTF-8 rather than mixing fwprintf with it. */
     char utf8[32768 * 4];
     if (WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path, -1, utf8, sizeof(utf8), NULL, NULL) == 0)
@@ -683,18 +650,28 @@ done:
     return result;
 }
 
+/* The inherited file handle owns the run from process creation. Before resume,
+ * replace that handle in the suspended child with a non-inheritable duplicate.
+ * The child keeps it through process exit, independent of WFP and the Job. */
+static bool retainChildOwnership(HANDLE child, HANDLE inherited)
+{
+    HANDLE retained;
+    return DuplicateHandle(child, inherited, child, &retained, SYNCHRONIZE, FALSE, DUPLICATE_CLOSE_SOURCE) != FALSE;
+}
+
 int launcherExecute(char *input, size_t length, const char *source, int argc, char *const argv[],
                     const waterwall_startup_options_t *options)
 {
-    DWORD                status            = 1;
-    int                  started           = 0;
-    bool                 creation_admitted = false;
-    bool                 runtime_resumed   = false;
-    DWORD                failure_error     = ERROR_SUCCESS;
-    HANDLE               snapshot = NULL, root_lock = INVALID_HANDLE_VALUE, directory_lock = INVALID_HANDLE_VALUE;
-    HANDLE               file = INVALID_HANDLE_VALUE, image_lock = INVALID_HANDLE_VALUE;
-    HANDLE               inherited[9] = {0};
-    HANDLE               standard[3]  = {0};
+    DWORD                  runtime_status     = 1;
+    bool                   launch_succeeded   = false;
+    bool                   creation_admitted  = false;
+    bool                   runtime_resumed    = false;
+    DWORD                  failure_error      = ERROR_SUCCESS;
+    const char            *protection_failure = NULL;
+    HANDLE                 snapshot = NULL, root_lock = INVALID_HANDLE_VALUE, directory_lock = INVALID_HANDLE_VALUE;
+    HANDLE                 file = INVALID_HANDLE_VALUE, image_lock = INVALID_HANDLE_VALUE;
+    HANDLE                 inherited[12] = {0};
+    HANDLE                 standard[3]   = {0};
     HANDLE               stop = NULL, ready = NULL, complete = NULL, effects = NULL, controller = NULL;
     HANDLE               original_stop    = (HANDLE) options->stop_event;
     HANDLE               original_ready   = (HANDLE) options->ready_event;
@@ -711,10 +688,8 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     HANDLE              *ancestor_locks = NULL;
     size_t               ancestor_count = 0;
     companion_file_t    *companions     = NULL;
-    lazy_str_t           operation      = LAZY_STR(op_installing_console_handler);
-    if (! SetConsoleCtrlHandler(launcherConsoleHandler, TRUE))
-        goto done;
-    operation = (lazy_str_t) LAZY_STR(op_preparing_inherited_handles);
+    launcher_kill_switch_t protection     = {0};
+    lazy_str_t             operation      = LAZY_STR(op_preparing_inherited_handles);
     if (! DuplicateHandle(GetCurrentProcess(), original_stop, GetCurrentProcess(), &stop, SYNCHRONIZE, TRUE, 0) ||
         ! DuplicateHandle(
             GetCurrentProcess(), original_ready, GetCurrentProcess(), &ready, EVENT_MODIFY_STATE, TRUE, 0) ||
@@ -742,6 +717,9 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                                                               0))
         goto done;
     if (! bootstrapContinue(stop))
+        goto done;
+    security = waterwallLauncherPrivateSecurity();
+    if (security == NULL)
         goto done;
     operation = (lazy_str_t) LAZY_STR(op_capturing_executable_path_and_input);
     original  = modulePath();
@@ -784,9 +762,6 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     if (! pinTemporaryRoot(root_lock, root, &ancestor_locks, &ancestor_count))
         goto done;
     if (! bootstrapContinue(stop))
-        goto done;
-    security = waterwallLauncherPrivateSecurity();
-    if (security == NULL)
         goto done;
     SECURITY_ATTRIBUTES sa = {sizeof(sa), security, FALSE};
     wchar_t             dir_fmt[64];
@@ -926,6 +901,46 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
              (unsigned long long) (uintptr_t) effects);
     if (! appendNarrow(command, &used, complete_argument))
         goto done;
+    operation          = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
+    wchar_t *separator = wcsrchr(original, L'\\');
+    if (separator == NULL)
+        goto done;
+    if (separator == original + 2 && original[1] == L':')
+        separator[1] = 0;
+    else
+        *separator = 0;
+    if (! copyCompanions(original, directory, &sa, &companions, stop) || ! bootstrapContinue(stop))
+        goto done;
+    fflush(stdout);
+    fflush(stderr);
+    if (options->windows_kill_switch)
+    {
+        DWORD error = launcherKillSwitchPrepare(&protection, security, stop);
+        if (error != ERROR_SUCCESS)
+        {
+            protection_failure = "protected startup";
+            SetLastError(error);
+            goto done;
+        }
+    }
+    if (protection.child_pipe != NULL)
+    {
+        snprintf(complete_argument,
+                 sizeof(complete_argument),
+                 "--ww-internal-kill-switch=%llu",
+                 (unsigned long long) (uintptr_t) protection.child_pipe);
+        if (! appendNarrow(command, &used, complete_argument))
+            goto done;
+        inherited[inherited_count++] = protection.child_pipe;
+        snprintf(complete_argument,
+                 sizeof(complete_argument),
+                 "--ww-internal-kill-switch-retired=%llu",
+                 (unsigned long long) (uintptr_t) protection.child_retired);
+        if (! appendNarrow(command, &used, complete_argument))
+            goto done;
+        inherited[inherited_count++] = protection.child_retired;
+        inherited[inherited_count++] = protection.child_ownership;
+    }
     if (controller != NULL)
     {
         snprintf(complete_argument,
@@ -980,21 +995,9 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
     startup.StartupInfo.hStdInput  = standard[0];
     startup.StartupInfo.hStdOutput = standard[1];
     startup.StartupInfo.hStdError  = standard[2];
-    operation                      = (lazy_str_t) LAZY_STR(op_restoring_companion_dlls);
-    wchar_t *separator             = wcsrchr(original, L'\\');
-    if (separator == NULL)
-        goto done;
-    if (separator == original + 2 && original[1] == L':')
-        separator[1] = 0;
-    else
-        *separator = 0;
-    if (! copyCompanions(original, directory, &sa, &companions, stop))
-        goto done;
     operation = (lazy_str_t) LAZY_STR(op_starting_native_child);
     if (! bootstrapContinue(stop))
         goto done;
-    fflush(stdout);
-    fflush(stderr);
     launcherSessionChildStarted();
     creation_admitted = true;
 #ifdef WATERWALL_LAUNCHER_TEST_HOOKS
@@ -1016,24 +1019,99 @@ int launcherExecute(char *input, size_t length, const char *source, int argc, ch
                          &startup.StartupInfo,
                          &process))
         goto done;
+    if (protection.child_pipe != NULL)
+    {
+        if (! retainChildOwnership(process.hProcess, protection.child_ownership))
+            goto done;
+        CloseHandle(protection.child_ownership);
+        protection.child_ownership = NULL;
+        CloseHandle(protection.child_pipe);
+        protection.child_pipe = NULL;
+        CloseHandle(protection.child_retired);
+        protection.child_retired = NULL;
+        DWORD error              = launcherKillSwitchAuthorize(&protection, executable);
+        if (error != ERROR_SUCCESS)
+        {
+            protection_failure = "runtime grant";
+            SetLastError(error);
+            goto done;
+        }
+#ifdef WATERWALL_LAUNCHER_TEST_HOOKS
+        if (getenv("WW_FIXTURE_FAIL_BEFORE_RESUME") != NULL)
+        {
+            protection_failure = "child resume";
+            SetLastError(ERROR_ACCESS_DENIED);
+            goto done;
+        }
+#endif
+    }
     if (! bootstrapContinue(stop))
         goto done;
-    InterlockedExchange(&console_phase, 1);
     if (ResumeThread(process.hThread) == (DWORD) -1)
         goto done;
     runtime_resumed = true;
-    started         = 1;
     operation       = (lazy_str_t) LAZY_STR(op_waiting_for_child_exit);
-    if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0 ||
-        ! GetExitCodeProcess(process.hProcess, &status))
+    if (options->windows_kill_switch)
     {
-        started = 0;
-        goto done;
+        DWORD error = launcherKillSwitchWait(&protection, process.hProcess, stop);
+        if (error != ERROR_SUCCESS)
+        {
+            protection_failure = "protected run";
+            SetLastError(error);
+            goto done;
+        }
     }
+    else if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0)
+        goto done;
+    if (! GetExitCodeProcess(process.hProcess, &runtime_status))
+        goto done;
+    launch_succeeded = true;
 done:
     failure_error = GetLastError();
-    launcherSessionChildExited(started ? status : 1, started != 0);
-    if (! started)
+    if (runtime_resumed && ! launch_succeeded && options->windows_kill_switch)
+        launcherSessionProtectionFailed();
+    launcherSessionSettleChild();
+    if (options->windows_kill_switch)
+        launcherKillSwitchCloseRun(&protection);
+    bool runtime_status_known = launch_succeeded;
+    if (process.hProcess != NULL && ! launch_succeeded)
+    {
+        if (! runtime_resumed || ! options->windows_kill_switch)
+            TerminateProcess(process.hProcess, 1);
+        if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0)
+            ExitProcess(0xe0570001U);
+        if (runtime_resumed)
+            runtime_status_known = GetExitCodeProcess(process.hProcess, &runtime_status) != FALSE;
+    }
+    launcherSessionChildExited(runtime_status, runtime_status_known);
+    if (creation_admitted && ! runtime_resumed)
+        launcherSessionChildAborted();
+    for (size_t i = 0; i < 3; ++i)
+        if (standard[i] != NULL)
+            CloseHandle(standard[i]);
+    bool  sublayer_retained = false;
+    DWORD cleanup_error =
+        options->windows_kill_switch ? launcherKillSwitchFinish(&protection, &sublayer_retained) : ERROR_SUCCESS;
+    if (launcherSessionDiagnosticsAvailable() && protection_failure != NULL)
+    {
+        if (failure_error == ERROR_INVALID_OWNER)
+            fputs("Windows kill switch: the active owner could not be verified. Stop it directly, then retry or "
+                  "unlock.\n",
+                  stderr);
+        else if (failure_error == ERROR_BUSY)
+            fputs("Windows kill switch: another protected launch is replacing this run. Retry after it settles.\n",
+                  stderr);
+        else if (failure_error == ERROR_TIMEOUT)
+            fputs("Windows kill switch: the protected startup or handoff timed out. Check kill-switch status before "
+                  "retrying.\n",
+                  stderr);
+        else
+            fprintf(stderr,
+                    "Windows kill switch: %s failed (0x%08lx).\n",
+                    protection_failure,
+                    (unsigned long) failure_error);
+    }
+    else if (! launch_succeeded && launcherSessionDiagnosticsAvailable())
     {
         char op_buf[128];
         char fmt_buf[128];
@@ -1043,14 +1121,14 @@ done:
         SecureZeroMemory(op_buf, sizeof(op_buf));
         SecureZeroMemory(fmt_buf, sizeof(fmt_buf));
     }
-    if (process.hProcess != NULL && ! started)
-    {
-        TerminateProcess(process.hProcess, 1);
-        if (WaitForSingleObject(process.hProcess, INFINITE) != WAIT_OBJECT_0)
-            ExitProcess(0xe0570001U);
-    }
-    if (creation_admitted && ! runtime_resumed)
-        launcherSessionChildAborted();
+    if (launcherSessionDiagnosticsAvailable() && cleanup_error != ERROR_SUCCESS)
+        fprintf(stderr,
+                "Windows kill switch: cleanup failed (0x%08lx). Check status before unlocking.\n",
+                (unsigned long) cleanup_error);
+    if (launcherSessionDiagnosticsAvailable() && sublayer_retained)
+        fputs("Windows kill switch: cleanup incomplete. Conflicting WFP policy remains at or references the WaterWall "
+              "sublayer.\n",
+              stderr);
     if (process.hThread != NULL)
         CloseHandle(process.hThread);
     if (process.hProcess != NULL)
@@ -1059,9 +1137,6 @@ done:
     if (attributes_ready)
         DeleteProcThreadAttributeList(startup.lpAttributeList);
     free(startup.lpAttributeList);
-    for (size_t i = 0; i < 3; ++i)
-        if (standard[i] != NULL)
-            CloseHandle(standard[i]);
     if (stop != NULL)
         CloseHandle(stop);
     if (ready != NULL)
@@ -1108,9 +1183,10 @@ done:
     free(exe_argument);
     free(src_argument);
     /* Preserve all 32 bits, including exception statuses. */
-    launcherSessionFinish(started ? status : 1, cleanup_residue);
-    InterlockedExchange(&console_phase, 2);
-    ExitProcess(started ? status : 1);
+    DWORD public_status =
+        launch_succeeded && cleanup_error == ERROR_SUCCESS && ! sublayer_retained ? runtime_status : 1;
+    launcherSessionFinish(public_status, cleanup_residue);
+    ExitProcess(public_status);
     return 1;
 }
 

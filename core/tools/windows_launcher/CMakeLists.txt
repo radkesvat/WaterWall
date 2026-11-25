@@ -48,6 +48,7 @@ else()
   target_include_directories(waterwall_resources PRIVATE "${WATERWALL_SOURCE_DIR}/core/rc")
   target_sources(WaterwallApplication PRIVATE $<TARGET_OBJECTS:waterwall_resources>)
 endif()
+set(WW_LAUNCHER_FIXTURE ON)
 add_subdirectory("${WATERWALL_SOURCE_DIR}/core/launcher" launcher)
 target_compile_definitions(Waterwall PRIVATE WATERWALL_LAUNCHER_TEST_HOOKS=1)
 find_program(PYTHON_EXECUTABLE NAMES python3 python REQUIRED)
@@ -55,7 +56,7 @@ add_test(NAME waterwall.windows_packed_fixture
   COMMAND "${PYTHON_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/smoke.py"
     --launcher "$<TARGET_FILE:Waterwall>" --application "$<TARGET_FILE:WaterwallApplication>"
     ${WW_FIXTURE_RUNNER_ARGS})
-set_tests_properties(waterwall.windows_packed_fixture PROPERTIES TIMEOUT 120)
+set_tests_properties(waterwall.windows_packed_fixture PROPERTIES TIMEOUT 165)
 add_executable(windows_lifecycle_launcher_test lifecycle.c)
 add_dependencies(windows_lifecycle_launcher_test Waterwall)
 target_include_directories(windows_lifecycle_launcher_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")

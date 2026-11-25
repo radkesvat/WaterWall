@@ -2,6 +2,7 @@
 waterwall_add_native_executable(core_configuration_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/core_configuration_test.c
   ${CMAKE_SOURCE_DIR}/core/core_settings.c
   ${CMAKE_SOURCE_DIR}/core/imported_tunnels.c
+  ${CMAKE_SOURCE_DIR}/core/kill_switch_config.c
   ${CMAKE_SOURCE_DIR}/core/os_helpers.c
   ${CMAKE_SOURCE_DIR}/core/startup_options.c)
   target_link_libraries(core_configuration_test PRIVATE ww_test_support)
@@ -22,6 +23,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING AND
   waterwall_add_native_executable(packed_startup_test SUPPORT SOURCES ${WATERWALL_UNIT_SOURCE_ROOT}/core/packed_startup_test.c
     ${CMAKE_SOURCE_DIR}/core/launcher/main.c
     ${CMAKE_SOURCE_DIR}/core/launcher/launcher_linux.c
+    ${CMAKE_SOURCE_DIR}/core/kill_switch_config.c
     ${CMAKE_SOURCE_DIR}/core/startup_options.c
     ${CMAKE_SOURCE_DIR}/ww/node_builder/config_lexical.c
     ${CMAKE_SOURCE_DIR}/ww/vendor/cjson/cJSON.c)

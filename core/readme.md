@@ -154,6 +154,7 @@ them. The defaults are intentionally conservative for ordinary deployments.
 | `log` | object | no | Logger paths, files, levels, and console output settings. |
 | `misc` | object | no | Runtime worker, memory, MTU, and tunnel library settings. |
 | `dns` | object | no | Shared async DNS resolver options and default domain strategy. |
+| `windows-kill-switch` | boolean | no | Set to `true` to arm the machine lock before the packed Windows runtime starts. Defaults to `false`. |
 
 `domain-strategy` is not valid as a top-level option. Configure it as
 `dns.domain-strategy`.
@@ -176,6 +177,43 @@ Example:
 
 The paths are passed to the config loader as written. In normal deployments they
 are relative to the process working directory.
+
+### `windows-kill-switch`
+
+This Windows lab feature requires a packed launcher built with
+`WW_ENABLE_WINDOWS_KILL_SWITCH=ON`. Set the Boolean in the core configuration.
+
+```json
+{
+  "configs": ["reality.json"],
+  "windows-kill-switch": true
+}
+```
+
+The runtime looks across all files in `configs` for an owned `TunDevice` whose
+configured routes cover all of IPv4. With one eligible device, selection is
+automatic. If several qualify, set `"windows-kill-switch-owner": true` inside
+the `settings` of exactly one of them. All nodes in the runtime share its
+approved physical IPv4 uplink permission. [TunDevice settings](https://github.com/radkesvat/WaterWall-Docs/blob/main/docs/02-noderefs/TunDevice.mdx)
+
+With `true`, the launcher arms the host-wide lock before the runtime reads
+the node files. A protected launch automatically replaces a verified protected
+run. Physical traffic remains blocked during the handoff, and tunnel traffic
+can pause while the new run starts. Omitting the setting or using `false` starts
+an ordinary run with the firewall policy already in effect.
+
+On normal close, WaterWall removes its rules after its runtime and helpers exit
+and its recorded adapters disappear. A handled startup failure, including a
+missing or ambiguous TUN owner, also clears the lock once the launcher confirms
+cleanup of the run it owns. Other firewall policies retain their effect. A crash or an unverified
+shutdown can leave WaterWall's lock in place. The next protected launch
+reconciles it. You can also use `Waterwall.exe --kill-switch-unlock` from a local
+elevated console after the protected run has stopped.
+
+Use `Waterwall.exe --kill-switch-status` to query the lock without reading
+configuration. If another filter still uses WaterWall's sublayer after cleanup,
+WaterWall preserves that filter and reports `incomplete` with a failure exit.
+[Windows lifecycle and qualification](tools/windows_launcher/LIFECYCLE.md#windows-kill-switch)
 
 ### `log`
 

@@ -17,6 +17,9 @@ target_include_directories(windows_packed_startup_test PRIVATE
   "${WATERWALL_SOURCE_DIR}/core" "${WATERWALL_SOURCE_DIR}/ww/node_builder"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson")
 set_target_properties(windows_packed_startup_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
+if(MINGW)
+  target_link_options(windows_packed_startup_test PRIVATE -static)
+endif()
 waterwall_register_native_test(waterwall.windows_packed_startup_unit windows_packed_startup_test
   "unit;core;launcher;windows" TIMEOUT 30 SOURCE_DIR "${WATERWALL_SOURCE_DIR}")
 if(TARGET waterwall_platform_unit_tests)
@@ -26,10 +29,14 @@ endif()
 waterwall_add_native_executable(windows_launcher_arguments_test SUPPORT SOURCES
   "${WATERWALL_SOURCE_DIR}/tests/unittests/core/windows_launcher_arguments_test.c"
   "${WATERWALL_SOURCE_DIR}/core/launcher/session_windows.c"
+  "${WATERWALL_SOURCE_DIR}/core/launcher/kill_switch_windows.c"
+  "${WATERWALL_SOURCE_DIR}/core/launcher/kill_switch_ownership.c"
+  "${WATERWALL_SOURCE_DIR}/core/tools/windows_launcher/kill_switch_fixture.c"
   "${WATERWALL_SOURCE_DIR}/core/lifecycle_capabilities_windows.c")
-target_compile_definitions(windows_launcher_arguments_test PRIVATE _WIN32_WINNT=0x0600)
-target_include_directories(windows_launcher_arguments_test PRIVATE "${WATERWALL_SOURCE_DIR}/core")
-target_link_libraries(windows_launcher_arguments_test PRIVATE WaterWall::XZDecoder shell32 iphlpapi)
+target_compile_definitions(windows_launcher_arguments_test PRIVATE _WIN32_WINNT=0x0600 WATERWALL_LAUNCHER_TEST_HOOKS=1)
+target_include_directories(windows_launcher_arguments_test PRIVATE "${WATERWALL_SOURCE_DIR}/core"
+  "${WATERWALL_SOURCE_DIR}/ww/devices")
+target_link_libraries(windows_launcher_arguments_test PRIVATE WaterWall::XZDecoder shell32 iphlpapi rpcrt4)
 set_target_properties(windows_launcher_arguments_test PROPERTIES DISABLE_PRECOMPILE_HEADERS ON UNITY_BUILD OFF)
 waterwall_register_native_test(waterwall.windows_launcher_arguments_unit windows_launcher_arguments_test
   "unit;core;launcher;windows" TIMEOUT 30 SOURCE_DIR "${WATERWALL_SOURCE_DIR}")

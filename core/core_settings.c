@@ -1,8 +1,70 @@
 #include "core_settings.h"
 #include "lwip/engine.h"
+#ifdef WATERWALL_CORE_SETTINGS_PREFLIGHT
+#include "core_settings_preflight.h"
+#include "utils/json_primitive.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <windows.h>
+
+/* The standalone launcher shares the parser without linking the runtime.
+ * Its temporary parsed settings use the same CRT as its cJSON object tree. */
+static bool validation_failed;
+
+static void *preflightAllocate(size_t size, bool zeroed)
+{
+    void *value = zeroed ? calloc(1, size) : malloc(size);
+    if (value == NULL)
+        abort();
+    return value;
+}
+
+static char *preflightDuplicate(const char *value)
+{
+    size_t size = strlen(value) + 1;
+    char  *copy = preflightAllocate(size, false);
+    memcpy(copy, value, size);
+    return copy;
+}
+
+static int getNCPU(void)
+{
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return (int) info.dwNumberOfProcessors;
+}
+
+#define memoryAllocate(size)         preflightAllocate(size, false)
+#define memoryAllocateZero(size)     preflightAllocate(size, true)
+#define memoryFree                   free
+#define memoryCopy                   memcpy
+#define memoryZero(ptr, size)        memset(ptr, 0, size)
+#define stringCompare                strcmp
+#define stringDuplicate              preflightDuplicate
+#define stringLength                 strlen
+#define printError(...)              fprintf(stderr, __VA_ARGS__)
+#define startupFailureRecord(status) (validation_failed = true)
+#define startupFailurePending()      validation_failed
+#define ARRAY_SIZE(a)                (sizeof(a) / sizeof(*(a)))
+
+/* These values are only used as valid nonzero parse destinations here. The
+ * runtime parser uses the actual values from its pool configuration. */
+enum
+{
+    kRamProfileS1Memory = 1,
+    kRamProfileS2Memory,
+    kRamProfileM1Memory,
+    kRamProfileM2Memory,
+    kRamProfileL1Memory,
+    kRamProfileL2Memory
+};
+#else
+#include "kill_switch_config.h"
 #include "node_builder/config_policy.h"
 #include "wplatform.h"
 #include "wwapi.h"
+#endif
 
 // Default logging configurations
 #define DEFAULT_INTERNAL_LOG_LEVEL      "INFO"
@@ -96,7 +158,9 @@ static void initCoreSettings(void)
                    .rx_wrappers   = WW_LWIP_DEFAULT_RX_WRAPPERS,
     };
 
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     settings->config_paths = vec_config_path_t_with_capacity(2);
+#endif
 }
 
 static void dnsJsonError(const char *key, const char *message)
@@ -290,6 +354,33 @@ static void dnsJsonValidateLookups(const char *lookups)
     }
 }
 
+/* The numeric JSON form uses c-ares' public flag bitmask. Check its ABI
+ * when building against c-ares and keep the standalone launcher independent. */
+enum
+{
+    kCoreDnsFlagUsevc           = 1 << 0,
+    kCoreDnsFlagPrimary         = 1 << 1,
+    kCoreDnsFlagIgntc           = 1 << 2,
+    kCoreDnsFlagNoRecurse       = 1 << 3,
+    kCoreDnsFlagStayOpen        = 1 << 4,
+    kCoreDnsFlagNoSearch        = 1 << 5,
+    kCoreDnsFlagNoAliases       = 1 << 6,
+    kCoreDnsFlagNoCheckResponse = 1 << 7,
+    kCoreDnsFlagEdns            = 1 << 8,
+    kCoreDnsFlagNoDefaultServer = 1 << 9,
+    kCoreDnsFlagDns0x20         = 1 << 10
+};
+
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
+_Static_assert(kCoreDnsFlagUsevc == ARES_FLAG_USEVC && kCoreDnsFlagPrimary == ARES_FLAG_PRIMARY &&
+                   kCoreDnsFlagIgntc == ARES_FLAG_IGNTC && kCoreDnsFlagNoRecurse == ARES_FLAG_NORECURSE &&
+                   kCoreDnsFlagStayOpen == ARES_FLAG_STAYOPEN && kCoreDnsFlagNoSearch == ARES_FLAG_NOSEARCH &&
+                   kCoreDnsFlagNoAliases == ARES_FLAG_NOALIASES &&
+                   kCoreDnsFlagNoCheckResponse == ARES_FLAG_NOCHECKRESP && kCoreDnsFlagEdns == ARES_FLAG_EDNS &&
+                   kCoreDnsFlagNoDefaultServer == ARES_FLAG_NO_DFLT_SVR && kCoreDnsFlagDns0x20 == ARES_FLAG_DNS0x20,
+               "c-ares flag bitmask has changed");
+#endif
+
 typedef struct dns_flag_name_s
 {
     const char *name;
@@ -299,24 +390,24 @@ typedef struct dns_flag_name_s
 static bool dnsJsonFlagFromName(const char *name, int *flag)
 {
     static const dns_flag_name_t flag_names[] = {
-        {.name = "usevc", .flag = ARES_FLAG_USEVC},
-        {.name = "use-vc", .flag = ARES_FLAG_USEVC},
-        {.name = "tcp", .flag = ARES_FLAG_USEVC},
-        {.name = "primary", .flag = ARES_FLAG_PRIMARY},
-        {.name = "igntc", .flag = ARES_FLAG_IGNTC},
-        {.name = "ignore-truncated", .flag = ARES_FLAG_IGNTC},
-        {.name = "norecurse", .flag = ARES_FLAG_NORECURSE},
-        {.name = "no-recurse", .flag = ARES_FLAG_NORECURSE},
-        {.name = "stayopen", .flag = ARES_FLAG_STAYOPEN},
-        {.name = "stay-open", .flag = ARES_FLAG_STAYOPEN},
-        {.name = "no-search", .flag = ARES_FLAG_NOSEARCH},
-        {.name = "no-aliases", .flag = ARES_FLAG_NOALIASES},
-        {.name = "nocheckresp", .flag = ARES_FLAG_NOCHECKRESP},
-        {.name = "no-check-response", .flag = ARES_FLAG_NOCHECKRESP},
-        {.name = "edns", .flag = ARES_FLAG_EDNS},
-        {.name = "no-default-server", .flag = ARES_FLAG_NO_DFLT_SVR},
-        {.name = "no-dflt-svr", .flag = ARES_FLAG_NO_DFLT_SVR},
-        {.name = "dns0x20", .flag = ARES_FLAG_DNS0x20},
+        {.name = "usevc", .flag = kCoreDnsFlagUsevc},
+        {.name = "use-vc", .flag = kCoreDnsFlagUsevc},
+        {.name = "tcp", .flag = kCoreDnsFlagUsevc},
+        {.name = "primary", .flag = kCoreDnsFlagPrimary},
+        {.name = "igntc", .flag = kCoreDnsFlagIgntc},
+        {.name = "ignore-truncated", .flag = kCoreDnsFlagIgntc},
+        {.name = "norecurse", .flag = kCoreDnsFlagNoRecurse},
+        {.name = "no-recurse", .flag = kCoreDnsFlagNoRecurse},
+        {.name = "stayopen", .flag = kCoreDnsFlagStayOpen},
+        {.name = "stay-open", .flag = kCoreDnsFlagStayOpen},
+        {.name = "no-search", .flag = kCoreDnsFlagNoSearch},
+        {.name = "no-aliases", .flag = kCoreDnsFlagNoAliases},
+        {.name = "nocheckresp", .flag = kCoreDnsFlagNoCheckResponse},
+        {.name = "no-check-response", .flag = kCoreDnsFlagNoCheckResponse},
+        {.name = "edns", .flag = kCoreDnsFlagEdns},
+        {.name = "no-default-server", .flag = kCoreDnsFlagNoDefaultServer},
+        {.name = "no-dflt-svr", .flag = kCoreDnsFlagNoDefaultServer},
+        {.name = "dns0x20", .flag = kCoreDnsFlagDns0x20},
     };
 
     for (size_t i = 0; i < sizeof(flag_names) / sizeof(flag_names[0]); ++i)
@@ -335,9 +426,10 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
 {
     enum
     {
-        kSupportedDnsFlags = ARES_FLAG_USEVC | ARES_FLAG_PRIMARY | ARES_FLAG_IGNTC | ARES_FLAG_NORECURSE |
-                             ARES_FLAG_STAYOPEN | ARES_FLAG_NOSEARCH | ARES_FLAG_NOALIASES | ARES_FLAG_NOCHECKRESP |
-                             ARES_FLAG_EDNS | ARES_FLAG_NO_DFLT_SVR | ARES_FLAG_DNS0x20
+        kSupportedDnsFlags = kCoreDnsFlagUsevc | kCoreDnsFlagPrimary | kCoreDnsFlagIgntc | kCoreDnsFlagNoRecurse |
+                             kCoreDnsFlagStayOpen | kCoreDnsFlagNoSearch | kCoreDnsFlagNoAliases |
+                             kCoreDnsFlagNoCheckResponse | kCoreDnsFlagEdns | kCoreDnsFlagNoDefaultServer |
+                             kCoreDnsFlagDns0x20
     };
 
     const cJSON *flags_json = cJSON_GetObjectItemCaseSensitive(dns_obj, "flags");
@@ -420,7 +512,9 @@ static void dnsJsonParseFlags(const cJSON *dns_obj, asyncdns_options_t *options)
 
 static void parseDnsPartOfJson(const cJSON *dns_obj)
 {
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     asyncdnsOptionsSetDefaults(&settings->dns_options);
+#endif
     settings->domain_strategy = kDsPreferIpV4;
 
     if (dns_obj == NULL)
@@ -573,9 +667,9 @@ static void parseDnsPartOfJson(const cJSON *dns_obj)
     {
         dnsJsonValidateLookups(options->lookups);
     }
-    discard dnsJsonGetOptionalString(dns_obj, "resolvconf-path", &options->resolvconf_path);
-    discard dnsJsonGetOptionalString(dns_obj, "hosts-path", &options->hosts_path);
-    discard dnsJsonGetOptionalString(dns_obj, "sortlist", &options->sortlist);
+    (void) dnsJsonGetOptionalString(dns_obj, "resolvconf-path", &options->resolvconf_path);
+    (void) dnsJsonGetOptionalString(dns_obj, "hosts-path", &options->hosts_path);
+    (void) dnsJsonGetOptionalString(dns_obj, "sortlist", &options->sortlist);
 
     const cJSON *servers_json = cJSON_GetObjectItemCaseSensitive(dns_obj, "servers");
     if (servers_json != NULL)
@@ -633,6 +727,7 @@ static void destroyDnsOptions(asyncdns_options_t *options)
     memoryZero(options, sizeof(*options));
 }
 
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
 static void parseLogPartOfJsonNoCheck(const cJSON *log_obj)
 {
     getStringFromJsonObjectOrDefault(&(settings->log_path), log_obj, "path", DEFAULT_LOG_PATH);
@@ -731,6 +826,8 @@ static void parseLogPartOfJson(cJSON *log_obj)
     settings->internal_log_file_fullpath = stringConcat(settings->log_path, settings->internal_log_file);
 }
 
+#endif
+
 static void parseConfigPartOfJson(const cJSON *config_array)
 {
     if (! cJSON_IsArray(config_array) || (config_array->child == NULL))
@@ -745,7 +842,8 @@ static void parseConfigPartOfJson(const cJSON *config_array)
     {
         if (cJSON_IsString(path) && path->valuestring != NULL)
         {
-            had_child          = true;
+            had_child = true;
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
             unsigned long size = stringLength(path->valuestring) + 1;
             char         *buf  = memoryAllocate(size);
 #if defined(OS_UNIX)
@@ -754,6 +852,7 @@ static void parseConfigPartOfJson(const cJSON *config_array)
             strcpy_s(buf, size, path->valuestring);
 #endif
             vec_config_path_t_push(&settings->config_paths, buf);
+#endif
         }
     }
 
@@ -817,7 +916,9 @@ static void parseWorkersOfMiscJson(const cJSON *misc_obj)
     if (worker_status == kJsonValueMissing)
     {
         settings->workers_count = (unsigned int) getNCPU();
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
         printf("workers unspecified in json (misc), fallback to cpu cores: %d\n", settings->workers_count);
+#endif
         return;
     }
 
@@ -885,24 +986,23 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
     }
     else if (cJSON_IsString(json_ram_profile))
     {
-        char *string_ram_profile = NULL;
-        int   parsed_ram_profile = 0;
-        getStringFromJsonObject(&string_ram_profile, misc_obj, "ram-profile");
-        stringLowerCase(string_ram_profile);
+        const char *string_ram_profile = json_ram_profile->valuestring;
+        int         parsed_ram_profile = 0;
 
-        if (0 == strcmp(string_ram_profile, "server"))
+        if (0 == jsonCompareCaseInsensitive(string_ram_profile, "server"))
         {
             parsed_ram_profile = kRamProfileServer;
         }
-        else if (0 == strcmp(string_ram_profile, "client"))
+        else if (0 == jsonCompareCaseInsensitive(string_ram_profile, "client"))
         {
             parsed_ram_profile = kRamProfileClientGeneric;
         }
-        else if (0 == strcmp(string_ram_profile, "client-larger"))
+        else if (0 == jsonCompareCaseInsensitive(string_ram_profile, "client-larger"))
         {
             parsed_ram_profile = kRamProfileClientLarger;
         }
-        else if (0 == strcmp(string_ram_profile, "ultralow") || 0 == strcmp(string_ram_profile, "minimal"))
+        else if (0 == jsonCompareCaseInsensitive(string_ram_profile, "ultralow") ||
+                 0 == jsonCompareCaseInsensitive(string_ram_profile, "minimal"))
         {
             parsed_ram_profile = kRamProfileMinimal;
         }
@@ -912,12 +1012,10 @@ static void parseRamProfileOfMiscJson(const cJSON *misc_obj)
             printError("CoreSettings: ram-profile can hold \"server\" or \"client\" "
                        "or \"client-larger\" or \"minimal\" or \"ultralow\" \n");
 
-            memoryFree(string_ram_profile);
             startupFailureRecord(1);
             return;
         }
         settings->ram_profile = (unsigned int) parsed_ram_profile;
-        memoryFree(string_ram_profile);
     }
     else if (json_ram_profile == NULL)
     {
@@ -1059,7 +1157,9 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
             startupFailureRecord(1);
             return;
         }
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
         getStringFromJsonObjectOrDefault(&(settings->libs_path), misc_obj, "libs-path", DEFAULT_LIBS_PATH);
+#endif
 
         parseWorkersOfMiscJson(misc_obj);
 
@@ -1070,57 +1170,44 @@ static void parseMiscPartOfJson(cJSON *misc_obj)
         // mtu_size and ram_profile are not repeated here: initCoreSettings()
         // already seeded them, and this branch has no object to override from.
         settings->try_enabling_bbr = DEFAULT_TRY_ENABLING_BBR;
-        settings->libs_path        = stringDuplicate(DEFAULT_LIBS_PATH);
-        settings->workers_count    = (unsigned int) getNCPU();
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
+        settings->libs_path = stringDuplicate(DEFAULT_LIBS_PATH);
+#endif
+        settings->workers_count = (unsigned int) getNCPU();
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
         printf("misc block unspecified in json, using defaults. cpu cores: %d\n", settings->workers_count);
+#endif
     }
 }
 
-bool parseCoreSettings(const char *data_json, size_t length)
+static bool parseCoreObject(const cJSON *json)
 {
-    if (settings == NULL)
-    {
-        initCoreSettings();
-    }
-
-    cJSON *json = configPolicyIsRestricted() ? configPolicyParse(data_json, length) : cJSON_Parse(data_json);
-    if (json == NULL)
-    {
-        const char *error_ptr = cJSON_GetErrorPtr();
-        if (error_ptr != NULL && ! configPolicyIsRestricted())
-        {
-            printError("JSON Error at byte %zu\n", (size_t) (error_ptr - data_json));
-        }
-        startupFailureRecord(1);
-        return false;
-    }
-
     if (cJSON_GetObjectItemCaseSensitive(json, "domain-strategy") != NULL)
     {
         printError("CoreSettings: domain-strategy must be configured inside the dns object as dns.domain-strategy\n");
-        cJSON_Delete(json);
         startupFailureRecord(1);
         return false;
     }
 
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     parseLogPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "log"));
+#endif
     parseConfigPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "configs"));
     parseMiscPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "misc"));
     parseDnsPartOfJson(cJSON_GetObjectItemCaseSensitive(json, "dns"));
     if (startupFailurePending())
     {
-        cJSON_Delete(json);
         return false;
     }
 
-    if (settings->workers_count <= 0)
+    if (settings->workers_count == 0)
     {
         printError("CoreSettings: workers count is invalid (workers=%u, supported_range=1..254)",
                    settings->workers_count);
-        cJSON_Delete(json);
         startupFailureRecord(1);
         return false;
     }
+#ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     if (settings->workers_count > 254)
     {
         printError("CoreSettings: reducing workers count to the supported maximum "
@@ -1128,9 +1215,62 @@ bool parseCoreSettings(const char *data_json, size_t length)
                    settings->workers_count);
         settings->workers_count = 254;
     }
-
-    cJSON_Delete(json);
+#endif
     return true;
+}
+
+#ifdef WATERWALL_CORE_SETTINGS_PREFLIGHT
+bool waterwallValidateProtectedCore(const cJSON *json)
+{
+    assert(cJSON_IsObject(json));
+    validation_failed = false;
+    initCoreSettings();
+    bool valid = parseCoreObject(json);
+    destroyDnsOptions(&settings->dns_options);
+    memoryFree(settings);
+    settings = NULL;
+    return valid;
+}
+#else
+bool parseCoreSettings(const char *data_json, size_t length, bool windows_kill_switch_connected)
+{
+    if (settings == NULL)
+    {
+        initCoreSettings();
+    }
+
+    const bool restricted = configPolicyIsRestricted();
+    cJSON     *json       = restricted ? configPolicyParse(data_json, length) : cJSON_Parse(data_json);
+    if (json == NULL)
+    {
+        const char *error_ptr = cJSON_GetErrorPtr();
+        if (error_ptr != NULL && ! restricted)
+        {
+            printError("JSON Error at byte %zu\n", (size_t) (error_ptr - data_json));
+        }
+        startupFailureRecord(1);
+        return false;
+    }
+
+    bool requested = false;
+    if (! waterwallParseKillSwitch(json, data_json, length, restricted, &requested))
+    {
+        cJSON_Delete(json);
+        startupFailureRecord(1);
+        return false;
+    }
+    if (requested != windows_kill_switch_connected)
+    {
+        printError(requested ? "Windows kill switch: protection requires the packed public Windows executable\n"
+                             : "Windows kill switch: protected launch requires windows-kill-switch to be true\n");
+        cJSON_Delete(json);
+        startupFailureRecord(1);
+        return false;
+    }
+
+    bool valid = parseCoreObject(json);
+    cJSON_Delete(json);
+    return valid;
 }
 
 struct core_settings_s *getCoreSettings(void)
@@ -1193,3 +1333,4 @@ void destroyCoreSettings(void)
     memoryFree(settings);
     settings = NULL;
 }
+#endif

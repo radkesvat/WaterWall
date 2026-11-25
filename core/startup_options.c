@@ -117,7 +117,8 @@ static void printUsage(const char *program_name)
             "  Windows lifecycle capabilities: [--stop-event:HANDLE] [--ready-event:HANDLE] "
             "[--controller-process:HANDLE]\n"
             "  [--console:hidden|--console:visible] [--session-file:NEW_PATH]\n"
-            "  Recovery: --recover:PATH (used alone)\n");
+            "  Recovery: --recover:PATH (used alone)\n"
+            "  Windows kill switch: --kill-switch-status or --kill-switch-unlock (used alone)\n");
 #endif
 }
 
@@ -150,6 +151,24 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
             fprintf(stderr, "Invalid null command-line argument at position %d\n", i);
             printUsage(program_name);
             return kWaterwallStartupArgumentsExitFailure;
+        }
+
+        if (strcmp(arg, "--kill-switch-status") == 0 || strcmp(arg, "--kill-switch-unlock") == 0)
+        {
+#ifdef _WIN32
+            if (argc != 2)
+            {
+                fprintf(stderr, "A Windows kill-switch command must be used alone\n");
+                return kWaterwallStartupArgumentsExitFailure;
+            }
+            *options = (waterwall_startup_options_t) {.kill_switch_command = strcmp(arg, "--kill-switch-status") == 0
+                                                                                 ? kWaterwallKillSwitchCommandStatus
+                                                                                 : kWaterwallKillSwitchCommandUnlock};
+            return kWaterwallStartupArgumentsRun;
+#else
+            fprintf(stderr, "Kill-switch commands require the packed public Windows executable\n");
+            return kWaterwallStartupArgumentsExitFailure;
+#endif
         }
 
         if (isVerboseArgument(arg))
@@ -281,10 +300,6 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         return kWaterwallStartupArgumentsRun;
     }
 
-    options->session_file = session_file;
-    options->recover_file = recover_file;
-    options->console_mode = console_mode;
-
     const char *core_input = cli_core_input;
     if (core_input == NULL)
     {
@@ -302,13 +317,15 @@ waterwall_startup_arguments_result_e waterwallStartupOptionsParse(int argc, char
         core_input = WATERWALL_DEFAULT_CORE_JSON_INPUT;
     }
 
-    options->restricted_config    = restricted_config;
-    options->verbose              = verbose;
-    options->stop_event           = stop_event;
-    options->ready_event          = ready_event;
-    options->controller_process   = controller_process;
-    options->core_json_input      = core_input;
-    options->core_json_from_stdin = (strcmp(core_input, "stdin") == 0);
+    *options = (waterwall_startup_options_t) {.session_file         = session_file,
+                                              .console_mode         = console_mode,
+                                              .restricted_config    = restricted_config,
+                                              .verbose              = verbose,
+                                              .stop_event           = stop_event,
+                                              .ready_event          = ready_event,
+                                              .controller_process   = controller_process,
+                                              .core_json_input      = core_input,
+                                              .core_json_from_stdin = strcmp(core_input, "stdin") == 0};
     return kWaterwallStartupArgumentsRun;
 }
 
@@ -546,6 +563,7 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     const char *exe_str = NULL;
     int         matched = 0;
     uintptr_t   handoff_completion_event = 0, effects_mapping = 0;
+    uintptr_t   kill_switch_control = 0, kill_switch_retired = 0;
 
     for (int i = 1; i < *argc; ++i)
     {
@@ -597,6 +615,19 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
             if (handoff_completion_event != 0 || ! parseLifecycleHandle(arg + 23, &handoff_completion_event))
                 return -1;
         }
+        else if (strncmp(arg, "--ww-internal-kill-switch=", sizeof("--ww-internal-kill-switch=") - 1) == 0)
+        {
+            if (kill_switch_control != 0 ||
+                ! parseLifecycleHandle(arg + sizeof("--ww-internal-kill-switch=") - 1, &kill_switch_control))
+                return -1;
+        }
+        else if (strncmp(arg, "--ww-internal-kill-switch-retired=", sizeof("--ww-internal-kill-switch-retired=") - 1) ==
+                 0)
+        {
+            if (kill_switch_retired != 0 ||
+                ! parseLifecycleHandle(arg + sizeof("--ww-internal-kill-switch-retired=") - 1, &kill_switch_retired))
+                return -1;
+        }
 #endif
         else if (strncmp(arg, "--ww-internal-", 14) == 0)
         {
@@ -606,7 +637,10 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
 
     if (matched == 0)
     {
-        return handoff_completion_event == 0 && effects_mapping == 0 ? 0 : -1;
+        return handoff_completion_event == 0 && effects_mapping == 0 && kill_switch_control == 0 &&
+                       kill_switch_retired == 0
+                   ? 0
+                   : -1;
     }
     if (matched != 4 || fd_str == NULL || len_str == NULL || src_str == NULL || exe_str == NULL)
     {
@@ -632,6 +666,22 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
         fprintf(stderr, "Packed runtime: invalid handoff descriptor\n");
         return -1;
     }
+#ifdef _WIN32
+    if ((kill_switch_control == 0) != (kill_switch_retired == 0))
+    {
+        fprintf(stderr, "Packed runtime: kill-switch control and retirement handles must be paired\n");
+        return -1;
+    }
+    if (kill_switch_control != 0 &&
+        (kill_switch_control == kill_switch_retired || kill_switch_control == (uintptr_t) fd_val ||
+         kill_switch_control == handoff_completion_event || kill_switch_control == effects_mapping ||
+         kill_switch_retired == (uintptr_t) fd_val || kill_switch_retired == handoff_completion_event ||
+         kill_switch_retired == effects_mapping))
+    {
+        fprintf(stderr, "Packed runtime: kill-switch capabilities must use distinct handles\n");
+        return -1;
+    }
+#endif
 
     errno                      = 0;
     unsigned long long len_val = strtoull(len_str, &endptr, 10);
@@ -659,6 +709,8 @@ int waterwallStartupHandoffExtract(int *argc, char **argv, waterwall_handoff_t *
     handoff->has_handoff = true;
     handoff->completion_event = handoff_completion_event;
     handoff->effects_mapping  = effects_mapping;
+    handoff->kill_switch_control = kill_switch_control;
+    handoff->kill_switch_retired = kill_switch_retired;
 #ifdef _WIN32
     handoff->mapping = (uintptr_t) fd_val;
 #else
@@ -859,6 +911,16 @@ void waterwallStartupHandoffCleanup(waterwall_handoff_t *handoff)
     {
         CloseHandle((HANDLE) handoff->mapping);
         handoff->mapping = 0;
+    }
+    if (handoff->kill_switch_control != 0)
+    {
+        CloseHandle((HANDLE) handoff->kill_switch_control);
+        handoff->kill_switch_control = 0;
+    }
+    if (handoff->kill_switch_retired != 0)
+    {
+        CloseHandle((HANDLE) handoff->kill_switch_retired);
+        handoff->kill_switch_retired = 0;
     }
 #endif
     if (handoff->has_handoff && handoff->fd > 2)

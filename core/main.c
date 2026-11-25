@@ -10,6 +10,7 @@
 
 #ifdef OS_WIN
 #include "devices/tun/tun_windows_dns.h"
+#include "devices/windows_kill_switch_control.h"
 #include "devices/windows_session_effects.h"
 #include "global_state_internal.h"
 #include "lifecycle_capabilities_windows.h"
@@ -51,6 +52,7 @@ static void waterwallApplicationFinalize(void)
         applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
     }
     tunWindowsDnsSetStartupStopEvent(NULL);
+    wwWindowsKillSwitchClose();
     waterwallLifecycleDestroy();
 #endif
     destroyCoreSettings();
@@ -115,9 +117,10 @@ int waterwallInnerMain(int argc, char **argv)
 
 #ifdef OS_WIN
     if (startup_options.session_file != NULL || startup_options.recover_file != NULL ||
-        startup_options.console_mode != 0)
+        startup_options.console_mode != 0 || startup_options.kill_switch_command != kWaterwallKillSwitchCommandNone)
     {
-        fprintf(stderr, "Session and console options require the packed public executable\n");
+        fprintf(stderr, "Session, console and kill-switch options require the packed public executable\n");
+        waterwallStartupHandoffCleanup(&handoff);
         return 1;
     }
 #endif
@@ -157,17 +160,46 @@ int waterwallInnerMain(int argc, char **argv)
         }
     }
 
+    bool kill_switch_connected = false;
+#ifdef OS_WIN
+    if (handoff.kill_switch_control != 0)
+    {
+#ifdef WW_WINDOWS_PACKED_APP
+        if (handoff.kill_switch_retired != startup_options.stop_event &&
+            handoff.kill_switch_retired != startup_options.ready_event &&
+            handoff.kill_switch_retired != startup_options.controller_process &&
+            waterwallCapabilityValidate((HANDLE) handoff.kill_switch_retired, L"Event", SYNCHRONIZE))
+        {
+            kill_switch_connected = wwWindowsKillSwitchAttach(handoff.kill_switch_control, handoff.kill_switch_retired);
+            handoff.kill_switch_control = 0;
+            handoff.kill_switch_retired = 0;
+        }
+#endif
+        if (! kill_switch_connected)
+        {
+            fprintf(stderr,
+                    "Startup refused: Windows kill-switch protection requires a packed launcher control channel\n");
+            waterwallStartupOptionsFreeCoreJson(core_file_content);
+            waterwallStartupHandoffCleanup(&handoff);
+            return 1;
+        }
+    }
+#endif
+
     initWLibc();
 
     ww_startup_result_t  startup_result      = wwStartupSuccess();
     ww_startup_context_t core_settings_scope = {0};
     wwStartupContextBegin(&core_settings_scope);
-    const bool core_settings_parsed = parseCoreSettings(core_file_content, core_file_len);
+    const bool core_settings_parsed = parseCoreSettings(core_file_content, core_file_len, kill_switch_connected);
     startup_result                  = wwStartupContextEnd(&core_settings_scope);
     waterwallStartupOptionsFreeCoreJson(core_file_content);
     if (! core_settings_parsed)
     {
         waterwallStartupOptionsReportCoreJsonParseFailure(&startup_options);
+#ifdef OS_WIN
+        wwWindowsKillSwitchClose();
+#endif
         destroyCoreSettings();
         waterwallStartupHandoffCleanup(&handoff);
         return startup_result.exit_code != 0 ? startup_result.exit_code : 1;
@@ -221,6 +253,9 @@ int waterwallInnerMain(int argc, char **argv)
     {
         if (GSTATE.application_shutdown == NULL)
         {
+#ifdef OS_WIN
+            wwWindowsKillSwitchClose();
+#endif
             destroyCoreSettings();
             return startup_result.exit_code;
         }
@@ -256,6 +291,15 @@ int waterwallInnerMain(int argc, char **argv)
         {
             goto startup_failed;
         }
+    }
+    if (kill_switch_connected && ! wwWindowsKillSwitchBegin((HANDLE) waterwallLifecycleStopEvent()))
+    {
+        if (waterwallStartupCheckpoint())
+        {
+            LOGE("Windows kill switch: could not validate the approved uplink or start control monitoring");
+            startup_result = wwStartupFailure(1);
+        }
+        goto startup_failed;
     }
 #endif
 #if defined(WATERWALL_SYSTEM_LOAD_TEST_HOOKS)
@@ -356,10 +400,28 @@ int waterwallInnerMain(int argc, char **argv)
     }
     if (UNLIKELY(! waterwallStartupCheckpoint()))
         goto startup_failed;
+#ifdef OS_WIN
+    if (kill_switch_connected && ! wwWindowsKillSwitchFinishSelection())
+    {
+        LOGE("Windows kill switch: expected one owned full-route IPv4 TunDevice; when several are eligible, "
+             "set windows-kill-switch-owner to true on exactly one");
+        startup_result = wwStartupFailure(1);
+        goto startup_failed;
+    }
+#endif
     startup_result                       = nodemanagerStartConfigs();
     const bool nodes_start_checkpoint_ok = waterwallStartupCheckpoint();
     if (UNLIKELY(! wwStartupSucceeded(startup_result) || ! nodes_start_checkpoint_ok))
         goto startup_failed;
+
+#ifdef OS_WIN
+    if (kill_switch_connected && ! wwWindowsKillSwitchTunRegistered())
+    {
+        LOGE("Windows kill switch: the selected adapter did not complete registration");
+        startup_result = wwStartupFailure(1);
+        goto startup_failed;
+    }
+#endif
 
     LOGD("Core: starting workers ...");
     startup_result                          = socketmanagerStart();

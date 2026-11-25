@@ -1,10 +1,15 @@
 #include "cJSON.h"
 #include "config_lexical.h"
+#include "kill_switch_config.h"
 #include "launcher.h"
 #include "startup_options.h"
 #ifdef _WIN32
+#include "kill_switch_windows.h"
 #include "lazy_loader.h"
 #include "session_windows.h"
+#ifdef WATERWALL_ENABLE_WINDOWS_KILL_SWITCH
+#include "core_settings_preflight.h"
+#endif
 #endif
 
 #include <stdio.h>
@@ -33,6 +38,8 @@ int waterwallInnerMain(int argc, char **argv)
     }
 
 #ifdef _WIN32
+    if (options.kill_switch_command != kWaterwallKillSwitchCommandNone)
+        return launcherKillSwitchCommand(options.kill_switch_command);
     if (options.recover_file != NULL)
         return launcherSessionRecover(options.recover_file);
     if (! launcherSessionStart(&options))
@@ -91,7 +98,26 @@ int waterwallInnerMain(int argc, char **argv)
         waterwallStartupOptionsFreeCoreJson(content);
         return 1;
     }
+    bool valid =
+        waterwallParseKillSwitch(json, content, input_len, options.restricted_config, &options.windows_kill_switch);
+#if defined(_WIN32) && defined(WATERWALL_ENABLE_WINDOWS_KILL_SWITCH)
+    if (valid && options.windows_kill_switch)
+        valid = waterwallValidateProtectedCore(json);
+#endif
     cJSON_Delete(json);
+    if (! valid)
+    {
+        waterwallStartupOptionsFreeCoreJson(content);
+        return 1;
+    }
+#if ! defined(_WIN32) || ! defined(WATERWALL_ENABLE_WINDOWS_KILL_SWITCH)
+    if (options.windows_kill_switch)
+    {
+        fputs("Windows kill switch requires a packed Windows build with kill switch arming enabled.\n", stderr);
+        waterwallStartupOptionsFreeCoreJson(content);
+        return 1;
+    }
+#endif
 
     return launcherExecute(content, input_len, options.core_json_input, argc, argv, &options);
 }

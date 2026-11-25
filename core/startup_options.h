@@ -16,6 +16,13 @@ extern "C"
         kWaterwallStartupArgumentsExitFailure,
     } waterwall_startup_arguments_result_e;
 
+    typedef enum waterwall_kill_switch_command_e
+    {
+        kWaterwallKillSwitchCommandNone,
+        kWaterwallKillSwitchCommandStatus,
+        kWaterwallKillSwitchCommandUnlock,
+    } waterwall_kill_switch_command_e;
+
     typedef struct waterwall_startup_options_s
     {
         const char *core_json_input;
@@ -27,6 +34,8 @@ extern "C"
         uintptr_t   controller_process;
         const char *session_file;
         const char *recover_file;
+        waterwall_kill_switch_command_e kill_switch_command;
+        bool                            windows_kill_switch;
         /* 0 inherits launch presentation, 1 hidden, 2 visible. */
         unsigned console_mode;
     } waterwall_startup_options_t;
@@ -37,6 +46,8 @@ extern "C"
         int         fd;
         uintptr_t   completion_event;
         uintptr_t   effects_mapping;
+        uintptr_t   kill_switch_control; /* Owned until transferred or cleaned up. */
+        uintptr_t   kill_switch_retired; /* Paired with kill_switch_control. */
         uintptr_t   mapping; /* Windows snapshot handle; never a CRT descriptor. */
         size_t      length;
         const char *source_name;
@@ -48,8 +59,9 @@ extern "C"
      *
      * CLI input overrides WW_CORE_JSON_INPUT. With neither set, core.json in the
      * process working directory is selected. Version requests are printed here and
-     * returned as an early successful exit. --verbose requests console output and
-     * all log levels for the runtime's four loggers. Its aliases are --log, -log,
+     * returned as an early successful exit. Windows kill-switch commands select a
+     * standalone action without reading the core input. --verbose requests console
+     * output and all log levels for the runtime's four loggers. Its aliases are --log, -log,
      * -verbose, --showlog, -showlog, and --debug-log.
      *
      * @param argc Process argument count.

@@ -88,7 +88,14 @@ if(WW_USE_STARTUP_GUARD)
   set(launcher_guard_objects $<TARGET_OBJECTS:WaterwallLauncherStartupGuard>)
 endif()
 if(WIN32)
-  set(launcher_backend launcher_windows.c session_windows.c ${WATERWALL_SOURCE_DIR}/core/lifecycle_capabilities_windows.c)
+  option(WW_ENABLE_WINDOWS_KILL_SWITCH "Enable packed Windows kill switch arming for native qualification" OFF)
+  set(launcher_backend launcher_windows.c session_windows.c kill_switch_windows.c kill_switch_ownership.c
+    ${WATERWALL_SOURCE_DIR}/core/lifecycle_capabilities_windows.c)
+  if(WW_LAUNCHER_FIXTURE)
+    list(APPEND launcher_backend "${WATERWALL_SOURCE_DIR}/core/tools/windows_launcher/kill_switch_fixture.c")
+  else()
+    list(APPEND launcher_backend kill_switch_wfp.c)
+  endif()
 else()
   set(launcher_backend launcher_linux.c)
 endif()
@@ -96,6 +103,7 @@ add_executable(Waterwall
   ${launcher_guard_objects}
   main.c
   ${launcher_backend}
+  ${WATERWALL_SOURCE_DIR}/core/kill_switch_config.c
   ${WATERWALL_SOURCE_DIR}/core/startup_options.c
   ${WATERWALL_SOURCE_DIR}/ww/node_builder/config_lexical.c
   ${WATERWALL_SOURCE_DIR}/ww/vendor/cjson/cJSON.c
@@ -124,6 +132,8 @@ target_include_directories(Waterwall PRIVATE
   "${WATERWALL_SOURCE_DIR}/core"
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${WATERWALL_SOURCE_DIR}/ww/node_builder"
+  "${WATERWALL_SOURCE_DIR}/ww/devices"
+  "${WATERWALL_SOURCE_DIR}/ww/devices/tun"
   "${WATERWALL_SOURCE_DIR}/ww/compression/include"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/xz-embedded/include"
   "${WATERWALL_SOURCE_DIR}/ww/vendor/cjson"
@@ -132,7 +142,16 @@ target_include_directories(Waterwall PRIVATE
 
 target_link_libraries(Waterwall PRIVATE ww_launcher_xz_decoder)
 if(WIN32)
-  target_link_libraries(Waterwall PRIVATE advapi32 iphlpapi)
+  target_link_libraries(Waterwall PRIVATE advapi32 iphlpapi rpcrt4)
+  if(NOT WW_LAUNCHER_FIXTURE)
+    target_link_libraries(Waterwall PRIVATE fwpuclnt ws2_32)
+  endif()
+  if(WW_ENABLE_WINDOWS_KILL_SWITCH OR WW_LAUNCHER_FIXTURE)
+    target_compile_definitions(Waterwall PRIVATE WATERWALL_ENABLE_WINDOWS_KILL_SWITCH=1
+      WATERWALL_CORE_SETTINGS_PREFLIGHT=1)
+    target_sources(Waterwall PRIVATE "${WATERWALL_SOURCE_DIR}/core/core_settings.c")
+    target_include_directories(Waterwall PRIVATE "${WATERWALL_SOURCE_DIR}/ww")
+  endif()
   target_compile_definitions(Waterwall PRIVATE _WIN32_WINNT=0x0600)
   if(MSVC)
     target_link_options(Waterwall PRIVATE /DYNAMICBASE /FIXED:NO /NXCOMPAT /INCREMENTAL:NO /DEBUG:NONE

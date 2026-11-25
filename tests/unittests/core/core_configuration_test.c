@@ -3,8 +3,8 @@
  * suite.
  * Setup: Real implementation entry points with the explicit substituted OS/allocation/timer boundary
  * shown below.
- * Cases: testParse, testStartupOptions, testVerboseLogging, testTcpStackReceiveBudget,
- * testLwipCapacity (defaults, independent limits, exact wide values and invalid input).
+ * Cases: Normal and restricted core parsing, kill-switch opt-in, startup options, logging,
+ * TCP receive budget and lwIP capacity.
  * Checks: Exact return/byte/order and resource-count oracles in the explicit case bodies.
  * Limits: Platform/feature branches remain conditional. Component fixtures do not establish host-network
  * or application-throughput behavior.
@@ -53,13 +53,59 @@ long __wrap_sysconf(int name)
         }                                                                                                              \
     } while (0)
 
-static bool testParse(const char *json)
+static bool testParseWithKillSwitch(const char *json, bool connected)
 {
     ww_startup_context_t ctx = {0};
     wwStartupContextBegin(&ctx);
-    bool ok = parseCoreSettings(json, strlen(json));
+    bool ok = parseCoreSettings(json, strlen(json), connected);
     wwStartupContextEnd(&ctx);
     return ok;
+}
+
+static bool testParse(const char *json)
+{
+    return testParseWithKillSwitch(json, false);
+}
+
+static int testKillSwitchSetting(void)
+{
+    const char *enabled  = "{\"configs\":[\"other.json\",\"nodes.json\"],\"windows-kill-switch\":true}";
+    const char *disabled = "{\"configs\":[\"nodes.json\"],\"windows-kill-switch\":false}";
+    const char *absent   = "{\"configs\":[\"nodes.json\"]}";
+
+    CHECK(testParseWithKillSwitch(enabled, true));
+    CHECK(vec_config_path_t_size(&getCoreSettings()->config_paths) == 2);
+    destroyCoreSettings();
+    CHECK(! testParse(enabled));
+    destroyCoreSettings();
+    CHECK(testParse(disabled));
+    destroyCoreSettings();
+    CHECK(! testParseWithKillSwitch(disabled, true));
+    destroyCoreSettings();
+    CHECK(testParse(absent));
+    destroyCoreSettings();
+    CHECK(! testParseWithKillSwitch(absent, true));
+    destroyCoreSettings();
+
+    const char *invalid[] = {
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":null}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":1}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":\"true\"}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":[]}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":{\"config\":\"n\"}}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":false,\"windows-kill-switch\":true}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":true,\"windows-kill-switc\\u0068\":false}",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":true} trailing",
+        "{\"configs\":[\"n\"],\"windows-kill-switch\":false} trailing",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        CHECK(! testParse(invalid[i]));
+        destroyCoreSettings();
+        CHECK(! testParseWithKillSwitch(invalid[i], true));
+        destroyCoreSettings();
+    }
+    return 0;
 }
 
 static int testStartupOptions(void)
@@ -363,6 +409,7 @@ int main(void)
     testCaseSet("core_configuration_test");
     initWLibc();
     CHECK(testStartupOptions() == 0);
+    CHECK(testKillSwitchSetting() == 0);
     CHECK(testVerboseLogging() == 0);
     CHECK(testTcpStackReceiveBudget() == 0);
     CHECK(testLwipCapacity() == 0);
@@ -467,10 +514,11 @@ int main(void)
     CHECK(testParse(valid));
     destroyCoreSettings();
     configPolicyRestrict();
+    CHECK(testKillSwitchSetting() == 0);
     const char           embedded_nul[] = "{}\0hidden";
     ww_startup_context_t ctx            = {0};
     wwStartupContextBegin(&ctx);
-    CHECK(! parseCoreSettings(embedded_nul, sizeof(embedded_nul) - 1));
+    CHECK(! parseCoreSettings(embedded_nul, sizeof(embedded_nul) - 1, false));
     wwStartupContextEnd(&ctx);
     destroyCoreSettings();
     return 0;

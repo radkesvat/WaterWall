@@ -2,6 +2,7 @@
 #include "../../ww/devices/windows_session_effects.h"
 #include "lazy_loader.h"
 #include "lifecycle_capabilities_windows.h"
+#include <aclapi.h>
 #include <fcntl.h>
 #include <io.h>
 #include <sddl.h>
@@ -49,10 +50,8 @@ LAZY_WRAPPER(BOOLEAN, FALSE, lazy_advapi32, SystemFunction036, (PVOID RandomBuff
 #define SESSION_MAGIC UINT64_C(0x575753455353494f)
 enum
 {
-    kStartupMs  = 60000,
-    kStopMs     = 15000,
-    kRecoveryMs = 20000,
-    kPollMs     = 25
+    kStartupMs = 60000,
+    kPollMs    = 25
 };
 enum
 {
@@ -87,13 +86,15 @@ static session_record_t  local_record;
 static session_record_t *record = &local_record;
 static session_record_t *persisted;
 static void *volatile published_record;
-static HANDLE        session_job, stop_event, ready_event, completion_event;
-static HANDLE        supplied_stop, supplied_ready, controller;
-static HANDLE        record_file = INVALID_HANDLE_VALUE, record_mapping;
-static ULONGLONG     started_at;
-static volatile LONG child_exited;
+static HANDLE    session_job, stop_event, ready_event, completion_event;
+static HANDLE    supplied_stop, supplied_ready, controller;
+static HANDLE    record_file = INVALID_HANDLE_VALUE, record_mapping;
+static ULONGLONG started_at;
+static _Alignas(8) volatile LONG64 stop_deadline;
 static volatile LONG finished;
 static bool          session_started;
+static bool          closed_streams[3];
+static bool          members_checked;
 
 static LONG readField(volatile LONG *field)
 {
@@ -121,6 +122,47 @@ void launcherSessionCancel(void)
         SetEvent(stop_event);
 }
 
+bool launcherSessionStopRequested(void)
+{
+    if (stop_event == NULL)
+        return false;
+    if (controller != NULL && WaitForSingleObject(controller, 0) == WAIT_OBJECT_0)
+    {
+        setReason(kReasonController);
+        launcherSessionCancel();
+    }
+    if (supplied_stop != NULL && WaitForSingleObject(supplied_stop, 0) == WAIT_OBJECT_0)
+    {
+        setReason(kReasonStop);
+        launcherSessionCancel();
+    }
+    return WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0;
+}
+
+void launcherSessionProtectionFailed(void)
+{
+    setReason(WaitForSingleObject(ready_event, 0) == WAIT_OBJECT_0 ? kReasonRuntime : kReasonStartup);
+    launcherSessionCancel();
+}
+
+static ULONGLONG startStopDeadline(ULONGLONG now)
+{
+    LONG64 deadline = (LONG64) (now + kLauncherSessionStopMs);
+    LONG64 previous = InterlockedCompareExchange64(&stop_deadline, deadline, 0);
+    return previous == 0 ? (ULONGLONG) deadline : (ULONGLONG) previous;
+}
+
+void launcherSessionSettleChild(void)
+{
+    startStopDeadline(GetTickCount64());
+}
+
+ULONGLONG launcherSessionSettlementDeadline(void)
+{
+    /* Leave one observer poll to report a timeout before the hard stop. */
+    return startStopDeadline(GetTickCount64()) - kPollMs;
+}
+
 static BOOL WINAPI sessionConsoleHandler(DWORD event)
 {
     if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT && event != CTRL_CLOSE_EVENT && event != CTRL_LOGOFF_EVENT &&
@@ -128,15 +170,18 @@ static BOOL WINAPI sessionConsoleHandler(DWORD event)
         return FALSE;
     launcherSessionCancel();
     if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT)
-        Sleep(4000);
+    {
+        /* Returning from a close handler lets Windows terminate the process.
+         * Wait for the main thread to finish cleanup or Windows to enforce its deadline. */
+        WaitForSingleObject(GetCurrentProcess(), INFINITE);
+    }
     return TRUE;
 }
 
 static DWORD WINAPI deadlineMain(void *unused)
 {
     (void) unused;
-    ULONGLONG stop_deadline = 0;
-    bool      published     = false;
+    bool published = false;
     for (;;)
     {
         ULONGLONG now = GetTickCount64();
@@ -174,9 +219,9 @@ static DWORD WINAPI deadlineMain(void *unused)
             stopped = true;
             SetEvent(stop_event);
         }
-        if ((stopped || readField(&child_exited)) && stop_deadline == 0)
-            stop_deadline = now + kStopMs;
-        if (stop_deadline != 0 && now >= stop_deadline)
+        ULONGLONG deadline =
+            stopped ? startStopDeadline(now) : (ULONGLONG) InterlockedCompareExchange64(&stop_deadline, 0, 0);
+        if (deadline != 0 && now >= deadline)
             forceExit();
         Sleep(kPollMs);
     }
@@ -201,6 +246,14 @@ static void normalReturn(void)
 {
     if (session_started && ! readField(&finished))
         launcherSessionFinish(1, false);
+}
+
+void launcherSessionStopName(const wchar_t *job_name, wchar_t stop_name[96])
+{
+    wchar_t format[16];
+    lazyLoadWideString(transf_session_stop_format, sizeof(transf_session_stop_format), format, ARRAYSIZE(format));
+    swprintf(stop_name, 96, format, job_name);
+    SecureZeroMemory(format, sizeof(format));
 }
 
 bool launcherSessionStart(waterwall_startup_options_t *options)
@@ -250,12 +303,13 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
         return false;
     }
     wchar_t stop_name[96];
-    wchar_t stop_fmt[16];
-    lazyLoadWideString(
-        transf_session_stop_format, sizeof(transf_session_stop_format), stop_fmt, sizeof(stop_fmt) / sizeof(wchar_t));
-    swprintf(stop_name, 96, stop_fmt, local_record.job_name);
-    SecureZeroMemory(stop_fmt, sizeof(stop_fmt));
+    launcherSessionStopName(local_record.job_name, stop_name);
     stop_event       = CreateEventW(&sa, TRUE, FALSE, stop_name);
+    if (stop_event == NULL || GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        LocalFree(security);
+        return false;
+    }
     ready_event      = CreateEventW(&sa, TRUE, FALSE, NULL);
     completion_event = CreateEventW(&sa, TRUE, FALSE, NULL);
     if (stop_event == NULL || ready_event == NULL || completion_event == NULL)
@@ -390,16 +444,101 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
     options->stop_event         = (uintptr_t) stop_event;
     options->ready_event        = (uintptr_t) ready_event;
     options->controller_process = (uintptr_t) controller;
-    if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0 ||
-        (controller != NULL && WaitForSingleObject(controller, 0) == WAIT_OBJECT_0) ||
-        (supplied_stop != NULL && WaitForSingleObject(supplied_stop, 0) == WAIT_OBJECT_0))
+    if (launcherSessionStopRequested())
     {
-        setReason(controller != NULL && WaitForSingleObject(controller, 0) == WAIT_OBJECT_0 ? kReasonController
-                                                                                            : kReasonStop);
-        SetEvent(stop_event);
+        setReason(kReasonStop);
+        SetLastError(ERROR_CANCELLED);
         return false;
     }
     return true;
+}
+
+#ifndef WATERWALL_LAUNCHER_TEST_HOOKS
+static DWORD setMachineOwnershipSecurity(HANDLE object, PSECURITY_DESCRIPTOR descriptor)
+{
+    PSID owner = NULL;
+    PACL acl   = NULL;
+    BOOL present, defaulted;
+    if (! GetSecurityDescriptorOwner(descriptor, &owner, &defaulted) ||
+        ! GetSecurityDescriptorDacl(descriptor, &present, &acl, &defaulted))
+        return GetLastError();
+    if (owner == NULL || ! present || acl == NULL)
+        return ERROR_INVALID_SECURITY_DESCR;
+    return SetSecurityInfo(object,
+                           SE_KERNEL_OBJECT,
+                           OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                           owner,
+                           NULL,
+                           acl,
+                           NULL);
+}
+
+static DWORD grantCrossLoginProcessAccess(void)
+{
+    BYTE  administrators[SECURITY_MAX_SID_SIZE];
+    DWORD size = sizeof(administrators);
+    if (! CreateWellKnownSid(WinBuiltinAdministratorsSid, NULL, administrators, &size))
+        return GetLastError();
+    HANDLE               process    = GetCurrentProcess();
+    PSECURITY_DESCRIPTOR descriptor = NULL;
+    PACL                 existing   = NULL;
+    DWORD                error =
+        GetSecurityInfo(process, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, &existing, NULL, &descriptor);
+    if (error != ERROR_SUCCESS)
+        return error;
+    EXPLICIT_ACCESSW entry     = {0};
+    entry.grfAccessPermissions = SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_DUP_HANDLE;
+    entry.grfAccessMode        = GRANT_ACCESS;
+    BuildTrusteeWithSidW(&entry.Trustee, administrators);
+    PACL updated = NULL;
+    error        = existing != NULL ? SetEntriesInAclW(1, &entry, existing, &updated) : ERROR_ACCESS_DENIED;
+    if (error == ERROR_SUCCESS)
+        error = SetSecurityInfo(process, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION, NULL, NULL, updated, NULL);
+    LocalFree(updated);
+    LocalFree(descriptor);
+    return error;
+}
+#endif
+
+DWORD launcherSessionIdentity(launcher_kill_switch_identity_t *identity)
+{
+#ifndef WATERWALL_LAUNCHER_TEST_HOOKS
+    PSECURITY_DESCRIPTOR security = launcherKillSwitchMachineSecurity();
+    if (security == NULL)
+        return GetLastError();
+    DWORD error = setMachineOwnershipSecurity(session_job, security);
+    if (error == ERROR_SUCCESS)
+        error = setMachineOwnershipSecurity(stop_event, security);
+    LocalFree(security);
+    if (error == ERROR_SUCCESS)
+        error = grantCrossLoginProcessAccess();
+    if (error != ERROR_SUCCESS)
+        return error;
+#endif
+    /* Windows kernel handle values fit in 32 bits across WOW64 boundaries. */
+    identity->pid         = local_record.pid;
+    identity->created     = local_record.created;
+    identity->job_handle  = (DWORD) (uintptr_t) session_job;
+    identity->stop_handle = (DWORD) (uintptr_t) stop_event;
+    memcpy(identity->job_name, local_record.job_name, sizeof(identity->job_name));
+    return ERROR_SUCCESS;
+}
+
+ULONGLONG launcherSessionStartupDeadline(void)
+{
+    return started_at + kStartupMs;
+}
+
+bool launcherSessionJobNameMatches(HANDLE job, const launcher_kill_switch_identity_t *identity)
+{
+    return waterwallCapabilityNameMatches(job, identity->job_name + wcslen(L"Local\\"));
+}
+
+bool launcherSessionStopNameMatches(HANDLE stop, const launcher_kill_switch_identity_t *identity)
+{
+    wchar_t name[96];
+    launcherSessionStopName(identity->job_name, name);
+    return waterwallCapabilityNameMatches(stop, name + wcslen(L"Local\\"));
 }
 
 HANDLE launcherSessionEffectsMapping(void)
@@ -429,17 +568,79 @@ void launcherSessionChildExited(DWORD status, bool status_known)
         InterlockedExchange(&record->ready, 1);
     InterlockedExchange(&record->runtime_status, (LONG) status);
     InterlockedExchange(&record->runtime_status_known, status_known);
-    InterlockedExchange(&child_exited, 1);
+    if (status_known)
+    {
+        /* Publish the actual exit code before any later diagnostic can block. */
+        InterlockedExchange(&persisted->runtime_status, (LONG) status);
+        InterlockedExchange(&persisted->runtime_status_known, 1);
+    }
 }
+
+static void closeSessionStreams(bool console_only)
+{
+    FILE *const streams[] = {stdin, stdout, stderr};
+    const DWORD handles[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    for (unsigned i = 0; i < ARRAYSIZE(streams); ++i)
+    {
+        if (closed_streams[i])
+            continue;
+        DWORD mode;
+        if (console_only && ! GetConsoleMode(GetStdHandle(handles[i]), &mode))
+            continue;
+        fclose(streams[i]);
+        closed_streams[i] = true;
+    }
+    FreeConsole();
+}
+
+bool launcherSessionDiagnosticsAvailable(void)
+{
+    return ! closed_streams[2];
+}
+
+static DWORD waitForMembers(ULONGLONG deadline)
+{
+    members_checked = true;
+    bool detached   = false;
+    for (;;)
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
+        if (! QueryInformationJobObject(
+                session_job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), NULL))
+            return GetLastError();
+        if (accounting.ActiveProcesses == 1)
+        {
+            InterlockedExchange(&record->members_settled, 1);
+            return ERROR_SUCCESS;
+        }
+        if (! detached)
+        {
+            /* A console host can retain membership after the runtime exits. */
+            closeSessionStreams(true);
+            detached = true;
+        }
+        ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+            return ERROR_TIMEOUT;
+        Sleep((DWORD) min(deadline - now, kPollMs));
+    }
+}
+
+DWORD launcherSessionWaitForMembers(void)
+{
+    return waitForMembers(launcherSessionSettlementDeadline());
+}
+
 void launcherSessionFinish(DWORD status, bool residue)
 {
-    InterlockedExchange(&child_exited, 1);
+    launcherSessionSettleChild();
     /* A fast runtime can observe controller loss and exit between observer polls. */
     if (controller != NULL && WaitForSingleObject(controller, 0) == WAIT_OBJECT_0)
         setReason(kReasonController);
     if (supplied_stop != NULL && WaitForSingleObject(supplied_stop, 0) == WAIT_OBJECT_0)
         setReason(kReasonStop);
-    InterlockedExchange(&record->runtime_status, (LONG) status);
+    if (! readField(&record->runtime_status_known))
+        InterlockedExchange(&record->runtime_status, (LONG) status);
     if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0)
         setReason(kReasonStop);
     if (readField(&record->reason) == kReasonNone)
@@ -449,24 +650,9 @@ void launcherSessionFinish(DWORD status, bool residue)
     InterlockedExchange(&record->residue, residue);
     // No more launcher I/O follows. Close streams before detaching so CONOUT$
     // references cannot keep the console host alive during Job settlement.
-    fclose(stdin);
-    fclose(stdout);
-    fclose(stderr);
-    FreeConsole();
-    ULONGLONG settlement_deadline = GetTickCount64() + 5000;
-    do
-    {
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
-        if (! QueryInformationJobObject(
-                session_job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), NULL))
-            break;
-        if (accounting.ActiveProcesses == 1)
-        {
-            InterlockedExchange(&record->members_settled, 1);
-            break;
-        }
-        Sleep(kPollMs);
-    } while (GetTickCount64() < settlement_deadline);
+    closeSessionStreams(false);
+    if (! members_checked)
+        waitForMembers(GetTickCount64() + 5000);
     InterlockedExchange(&record->final, 1);
     if (persisted != NULL)
     {
@@ -505,22 +691,40 @@ void launcherSessionFinish(DWORD status, bool residue)
 static DWORD WINAPI recoveryDeadline(void *unused)
 {
     (void) unused;
-    Sleep(kRecoveryMs + 5000);
+    Sleep(kLauncherSessionRecoveryMs + 5000);
     TerminateProcess(GetCurrentProcess(), 0xe0570002U);
     return 0;
 }
 
-static bool sessionRecordValid(const session_record_t *saved)
+static bool sessionJobNameValid(const wchar_t name[80])
 {
     wchar_t job_prefix[40];
     lazyLoadWideString(
         transf_session_job_prefix, sizeof(transf_session_job_prefix), job_prefix, sizeof(job_prefix) / sizeof(wchar_t));
     size_t prefix_len   = wcslen(job_prefix);
-    bool   prefix_match = (wcsncmp(saved->job_name, job_prefix, prefix_len) == 0);
+    bool   prefix_match = wcsncmp(name, job_prefix, prefix_len) == 0;
     SecureZeroMemory(job_prefix, sizeof(job_prefix));
+    if (! prefix_match || wcsnlen(name, 80) != prefix_len + 32)
+        return false;
+    for (size_t i = prefix_len; i < prefix_len + 32; ++i)
+        if (! ((name[i] >= L'0' && name[i] <= L'9') || (name[i] >= L'a' && name[i] <= L'f')))
+            return false;
+    return true;
+}
+
+bool launcherSessionIdentityValid(const launcher_kill_switch_identity_t *identity)
+{
+    return identity->pid != 0 && identity->job_handle != 0 && identity->stop_handle != 0 &&
+           identity->job_handle != identity->stop_handle &&
+           (identity->created.dwLowDateTime != 0 || identity->created.dwHighDateTime != 0) &&
+           sessionJobNameValid(identity->job_name);
+}
+
+static bool sessionRecordValid(const session_record_t *saved)
+{
     if (saved->magic != SESSION_MAGIC || saved->size != sizeof(*saved) || saved->pid == 0 ||
         saved->effects.magic != WW_SESSION_EFFECT_MAGIC || saved->reason < kReasonNone ||
-        saved->reason > kReasonForced || ! prefix_match || wcsnlen(saved->job_name, 80) != 56)
+        saved->reason > kReasonForced || ! sessionJobNameValid(saved->job_name))
         return false;
     const LONG flags[] = {saved->started,
                           saved->ready,
@@ -533,11 +737,38 @@ static bool sessionRecordValid(const session_record_t *saved)
     for (size_t i = 0; i < sizeof(flags) / sizeof(flags[0]); ++i)
         if (flags[i] != 0 && flags[i] != 1)
             return false;
-    for (size_t i = 24; i < 56; ++i)
-        if (! ((saved->job_name[i] >= L'0' && saved->job_name[i] <= L'9') ||
-               (saved->job_name[i] >= L'a' && saved->job_name[i] <= L'f')))
-            return false;
     return true;
+}
+
+DWORD launcherSessionWaitForJob(HANDLE job, HANDLE process, ULONGLONG graceful_deadline, ULONGLONG deadline)
+{
+    if (process != NULL && GetTickCount64() < graceful_deadline)
+    {
+        ULONGLONG now = GetTickCount64();
+        if (now < graceful_deadline && WaitForSingleObject(process, (DWORD) (graceful_deadline - now)) == WAIT_FAILED)
+            return GetLastError();
+    }
+    if (job == NULL)
+        return ERROR_INVALID_HANDLE;
+    bool forced = false;
+    do
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
+        if (! QueryInformationJobObject(
+                job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), NULL))
+            return GetLastError();
+        if (accounting.ActiveProcesses == 0 && (process == NULL || WaitForSingleObject(process, 0) == WAIT_OBJECT_0))
+            return ERROR_SUCCESS;
+        /* Our verification handle delays kill-on-close until it is closed. */
+        if (! forced)
+        {
+            if (accounting.ActiveProcesses != 0 && ! TerminateJobObject(job, 0xe0570001U))
+                return GetLastError();
+            forced = true;
+        }
+        Sleep(kPollMs);
+    } while (GetTickCount64() < deadline);
+    return ERROR_TIMEOUT;
 }
 
 static bool sessionRecordRead(const session_record_t *view, session_record_t *saved)
@@ -549,6 +780,82 @@ static bool sessionRecordRead(const session_record_t *view, session_record_t *sa
     SIZE_T copied;
     return ReadProcessMemory(GetCurrentProcess(), view, saved, sizeof(*saved), &copied) && copied == sizeof(*saved) &&
            sessionRecordValid(saved);
+}
+
+/* All creation attempts have stopped. A missing GUID cannot prove that its
+ * adapter disappeared. Confirmed GUIDs are compared only to live interfaces. */
+static DWORD waitForAdapters(const windows_session_effects_t *effects, ULONGLONG deadline, const char **detail)
+{
+    bool have_adapters = false;
+    for (unsigned i = 0; i < WW_SESSION_ADAPTER_MAX; ++i)
+    {
+        LONG state = effects->adapters[i].state;
+        if (state == 0)
+            continue;
+        if (state != 2)
+        {
+            *detail = "adapter_identity_unverified";
+            return ERROR_INVALID_DATA;
+        }
+        have_adapters = true;
+    }
+    if (! have_adapters)
+        return ERROR_SUCCESS;
+
+    for (;;)
+    {
+        MIB_IF_TABLE2 *interfaces = NULL;
+        DWORD          error      = GetIfTable2(&interfaces);
+        if (error != NO_ERROR)
+        {
+            *detail = "adapter_query_failed";
+            return error;
+        }
+
+        bool present = false;
+        for (unsigned i = 0; i < WW_SESSION_ADAPTER_MAX && ! present; ++i)
+        {
+            if (effects->adapters[i].state != 2)
+                continue;
+            for (ULONG j = 0; j < interfaces->NumEntries; ++j)
+            {
+                if (memcmp(&effects->adapters[i].guid, &interfaces->Table[j].InterfaceGuid, sizeof(GUID)) == 0)
+                {
+                    present = true;
+                    break;
+                }
+            }
+        }
+        FreeMibTable(interfaces);
+        if (! present)
+            return ERROR_SUCCESS;
+        ULONGLONG now = GetTickCount64();
+        if (now >= deadline)
+        {
+            *detail = "adapter_present";
+            return ERROR_TIMEOUT;
+        }
+        Sleep((DWORD) min(deadline - now, kPollMs));
+    }
+}
+
+/* The caller has observed Job settlement and holds this launcher's mapping
+ * across owner exit. Read the same inventory used by standalone recovery. */
+DWORD launcherSessionWaitForOwnerAdapters(HANDLE mapping, const launcher_kill_switch_identity_t *owner,
+                                          ULONGLONG deadline)
+{
+    const session_record_t *view = MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(*view));
+    if (view == NULL)
+        return GetLastError();
+    session_record_t saved;
+    bool             valid = sessionRecordRead(view, &saved) && saved.pid == owner->pid &&
+                 CompareFileTime(&saved.created, &owner->created) == 0 &&
+                 memcmp(saved.job_name, owner->job_name, sizeof(saved.job_name)) == 0;
+    UnmapViewOfFile(view);
+    if (! valid)
+        return ERROR_INVALID_DATA;
+    const char *detail = NULL;
+    return waitForAdapters(&saved.effects, deadline, &detail);
 }
 
 int launcherSessionRecover(const char *path)
@@ -609,41 +916,18 @@ int launcherSessionRecover(const char *path)
         }
     }
     wchar_t stop_name[96];
-    wchar_t stop_fmt[16];
-    lazyLoadWideString(
-        transf_session_stop_format, sizeof(transf_session_stop_format), stop_fmt, sizeof(stop_fmt) / sizeof(wchar_t));
-    swprintf(stop_name, 96, stop_fmt, saved.job_name);
-    SecureZeroMemory(stop_fmt, sizeof(stop_fmt));
+    launcherSessionStopName(saved.job_name, stop_name);
     HANDLE stop = OpenEventW(EVENT_MODIFY_STATE, FALSE, stop_name);
     if (stop != NULL)
     {
         SetEvent(stop);
         CloseHandle(stop);
     }
-    ULONGLONG deadline = GetTickCount64() + kRecoveryMs;
-    if (process != NULL)
-        WaitForSingleObject(process, kStopMs);
-    bool inactive = false;
+    ULONGLONG start    = GetTickCount64();
+    ULONGLONG deadline = start + kLauncherSessionRecoveryMs;
+    bool inactive = launcherSessionWaitForJob(job, process, start + kLauncherSessionStopMs, deadline) == ERROR_SUCCESS;
     if (job != NULL)
-    {
-        /* Opening for recovery temporarily prevents last-handle containment.
-         * Always terminate after graceful wait, then observe active accounting. */
-        TerminateJobObject(job, 0xe0570001U);
-        do
-        {
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
-            if (! QueryInformationJobObject(
-                    job, JobObjectBasicAccountingInformation, &accounting, sizeof(accounting), NULL))
-                break;
-            if (accounting.ActiveProcesses == 0)
-            {
-                inactive = true;
-                break;
-            }
-            Sleep(kPollMs);
-        } while (GetTickCount64() < deadline);
         CloseHandle(job);
-    }
     if (process != NULL)
     {
         public_dead = WaitForSingleObject(process, 0) == WAIT_OBJECT_0;
@@ -673,61 +957,10 @@ int launcherSessionRecover(const char *path)
      * process death can replace live Job accounting. Never infer this from absence. */
     if (receipt_read && ! inactive && public_dead && saved.final && saved.members_settled)
         inactive = true;
-    const char *cleanup_detail    = ! receipt_read ? "record_unverified" : ! inactive ? "processes_unverified" : NULL;
-    bool        adapters_inactive = cleanup_detail == NULL;
-    bool        have_adapters     = false;
-    for (unsigned i = 0; i < WW_SESSION_ADAPTER_MAX && adapters_inactive; ++i)
-    {
-        LONG state = saved.effects.adapters[i].state;
-        if (state == 0)
-            continue;
-        if (state != 2)
-        {
-            adapters_inactive = false;
-            cleanup_detail    = "adapter_identity_unverified";
-            break;
-        }
-        have_adapters = true;
-    }
-    while (adapters_inactive && have_adapters)
-    {
-        MIB_IF_TABLE2 *interfaces = NULL;
-        if (GetIfTable2(&interfaces) != NO_ERROR)
-        {
-            adapters_inactive = false;
-            cleanup_detail    = "adapter_query_failed";
-            break;
-        }
-        bool present = false;
-        for (unsigned i = 0; i < WW_SESSION_ADAPTER_MAX && ! present; ++i)
-        {
-            if (saved.effects.adapters[i].state != 2)
-                continue;
-            for (ULONG j = 0; j < interfaces->NumEntries; ++j)
-            {
-                if (memcmp(&saved.effects.adapters[i].guid, &interfaces->Table[j].InterfaceGuid, sizeof(GUID)) == 0)
-                {
-                    present = true;
-                    break;
-                }
-            }
-        }
-        FreeMibTable(interfaces);
-        if (! present)
-            break;
-        if (GetTickCount64() >= deadline)
-        {
-            adapters_inactive = false;
-            cleanup_detail    = "adapter_present";
-            break;
-        }
-        Sleep(kPollMs);
-    }
-    /* Completion certifies the built-in session's process/interface boundaries.
-     * An orderly receipt describes how it ended, not whether it is still active.
-     * Driver-artifact residue records retained files; after process settlement it
-     * cannot establish a live session and must not veto the interface checks. */
-    bool settled = adapters_inactive;
+    /* Driver-file residue does not imply that a session still owns an interface. */
+    const char *cleanup_detail = ! receipt_read ? "record_unverified" : ! inactive ? "processes_unverified" : NULL;
+    bool        settled =
+        cleanup_detail == NULL && waitForAdapters(&saved.effects, deadline, &cleanup_detail) == ERROR_SUCCESS;
     if (cleanup_detail == NULL)
         cleanup_detail = "settled";
     result = settled ? 0 : 2;
@@ -736,7 +969,7 @@ int launcherSessionRecover(const char *path)
            "\"cleanup_detail\":\"%s\",\"file_residue\":%s}\n",
            saved.reason != kReasonNone ? saved.reason : kReasonForced,
            (unsigned long) (DWORD) saved.runtime_status,
-           saved.final && saved.runtime_status_known ? "true" : "false",
+           receipt_read && saved.runtime_status_known ? "true" : "false",
            saved.final && saved.orderly ? "orderly"
            : inactive                   ? "abrupt"
                                         : "unverified",
