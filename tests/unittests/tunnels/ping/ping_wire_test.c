@@ -233,28 +233,86 @@ static void testTransitChanges(void)
     testCaseSet("Ping IPv4 receives transit changes and arbitrary ICMP prefix bytes");
     const ping_ipv4_config_t sender   = serverConfig();
     const ping_ipv4_config_t receiver = clientConfig();
-    sbuf_t                  *buf      = newNative(26, 24, 49, kPingIpv4Overhead, 0);
-    uint8_t                  expected[26];
-    memoryCopy(expected, sbufGetRawPtr(buf), sizeof(expected));
+    /* The experimental option's data contains both source-route type bytes. */
+    const uint8_t options[] = {30, 4, 131, 137, 7, 7, 8, 192, 0, 2, 1, 1};
+    const uint8_t ihl       = IP_HLEN + sizeof(options);
+    uint8_t       expected[IP_HLEN + sizeof(options) + 2];
+    sbuf_t       *buf   = newNative(sizeof(expected), ihl, 49, kPingIpv4Overhead, 0);
+    uint8_t      *bytes = sbufGetMutablePtr(buf);
+    memoryCopy(bytes + IP_HLEN, options, sizeof(options));
+    setChecksum(bytes, ihl, 10, 0);
+    memoryCopy(expected, bytes, sizeof(expected));
     require(pingipv4Encode(buf, &sender) == NULL, "carrier encode refused");
-    uint8_t *bytes = sbufGetMutablePtr(buf);
+    bytes    = sbufGetMutablePtr(buf);
     bytes[1] = expected[1] = 0x2f;
     bytes[8] = expected[8] = 53;
     bytes[15] = expected[15] = 44;
     bytes[19] = expected[19] = 81;
-    bytes[23] = expected[23] = 0; /* Replace the final NOP with EOL. */
+    bytes[ihl - 1] = expected[ihl - 1] = 0; /* Replace the final NOP with EOL. */
     PUT_BE16(bytes + 4, 0x3412);
     PUT_BE16(expected + 4, 0x3412);
     PUT_BE16(bytes + 6, 0);
     PUT_BE16(expected + 6, 0);
-    memorySet(bytes + 24 + 4, 0x5c, 4);
+    memorySet(bytes + ihl + 4, 0x5c, 4);
     repairCarrier(buf);
-    setChecksum(expected, 24, 10, 0);
+    setChecksum(expected, ihl, 10, 0);
     require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == sizeof(expected) &&
                 memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
             "decode did not expose the received IPv4 header and preserve its native payload");
     requireCanary(buf);
     sbufDestroy(buf);
+}
+
+static void testRefusedIpv4Options(void)
+{
+    testCaseSet("Ping IPv4 source routes and malformed option lists");
+    const ping_ipv4_config_t sender   = clientConfig();
+    const ping_ipv4_config_t receiver = serverConfig();
+    const struct
+    {
+        uint8_t protocol;
+        uint8_t options[12];
+    } cases[] = {
+        {IP_PROTO_TCP, {30, 4, 0, 0, 1, 131, 7, 4, 192, 0, 2, 1}}, /* LSRR after another option and NOP. */
+        {IP_PROTO_UDP, {137, 7, 8, 192, 0, 2, 1}},                 /* Completed SSRR. */
+        {49, {131, 7, 8, 192, 0, 2, 1}},                           /* Completed LSRR, opaque payload. */
+        {IP_PROTO_ICMP, {137, 7, 4, 192, 0, 2, 1}},
+        {49, {30, 0}},
+        {49, {30, 1}},
+        {49, {30, 13}},                                /* Length extends past the IPv4 header. */
+        {49, {30, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30}}, /* Last option has no length byte. */
+    };
+    const uint8_t ihl = IP_HLEN + sizeof(cases[0].options);
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        for (unsigned direction = 0; direction < 2; ++direction)
+        {
+            sbuf_t  *buf   = newNative(ihl + 20, ihl, cases[i].protocol, kPingIpv4Overhead, 0);
+            uint8_t *bytes = sbufGetMutablePtr(buf);
+            if (cases[i].protocol == IP_PROTO_TCP)
+            {
+                bytes[ihl + 12] = 0x50;
+            }
+            if (cases[i].protocol == IP_PROTO_UDP)
+            {
+                PUT_BE16(bytes + ihl + 4, 20);
+            }
+            const bool encode = direction == 0;
+            if (! encode)
+            {
+                require(pingipv4Encode(buf, &sender) == NULL, "cannot construct control carrier");
+                bytes = sbufGetMutablePtr(buf);
+            }
+            memoryCopy(bytes + IP_HLEN, cases[i].options, sizeof(cases[i].options));
+            setChecksum(bytes, ihl, 10, 0);
+            const ping_ipv4_config_t *config = encode ? &sender : &receiver;
+            requireRefusal(buf, config, encode);
+            bytes[10] ^= 0x80;
+            sbufSetRecalculateChecksum(buf, true);
+            requireRefusal(buf, config, encode);
+            sbufDestroy(buf);
+        }
+    }
 }
 
 static void testSizeHeadroomAndFragments(void)
@@ -466,6 +524,7 @@ int main(void)
     testAllPairs();
     testWireLayout();
     testTransitChanges();
+    testRefusedIpv4Options();
     testSizeHeadroomAndFragments();
     testCarrierRefusals();
     testTransportGeometry();

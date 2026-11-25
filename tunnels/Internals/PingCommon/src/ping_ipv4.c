@@ -4,6 +4,45 @@
 
 _Static_assert(kPingIpv4Overhead == 10, "Ping IPv4 transmit padding changed unexpectedly");
 
+static const char *pingipv4PacketError(const uint8_t *packet, uint32_t length, ipv4_packet_view_t *view)
+{
+    const char *error = pingwireIpv4PacketErrorWithView(packet, length, view);
+    if (error != NULL)
+    {
+        return error;
+    }
+
+    for (size_t offset = IP_HLEN; offset < view->ip_header_length;)
+    {
+        const uint8_t kind = packet[offset];
+        if (kind == 0) /* End of options. */
+        {
+            break;
+        }
+        if (kind == 1) /* NOP occupies one byte. */
+        {
+            ++offset;
+            continue;
+        }
+        if (kind == 131 || kind == 137) /* Loose or strict source route. */
+        {
+            return "IPv4 source routing is unsupported by Ping";
+        }
+        const size_t remaining = view->ip_header_length - offset;
+        if (remaining < 2)
+        {
+            return "truncated IPv4 option";
+        }
+        const uint8_t option_length = packet[offset + 1];
+        if (option_length < 2 || option_length > remaining)
+        {
+            return "invalid IPv4 option length";
+        }
+        offset += option_length;
+    }
+    return NULL;
+}
+
 static void pingipv4SetCarrierChecksums(sbuf_t *buf)
 {
     /* Both callers have already built or validated a complete, unfragmented ICMP carrier. */
@@ -24,7 +63,7 @@ const char *pingipv4Encode(sbuf_t *buf, const ping_ipv4_config_t *config)
     }
     uint8_t           *packet = sbufGetMutablePtr(buf);
     ipv4_packet_view_t native = {0};
-    const char        *error  = pingwireIpv4PacketErrorWithView(packet, (uint32_t) native_length, &native);
+    const char        *error  = pingipv4PacketError(packet, (uint32_t) native_length, &native);
     if (error != NULL)
     {
         return error;
@@ -88,7 +127,7 @@ const char *pingipv4Decode(sbuf_t *buf, const ping_ipv4_config_t *config)
     }
     uint8_t           *packet  = sbufGetMutablePtr(buf);
     ipv4_packet_view_t carrier = {0};
-    const char        *error   = pingwireIpv4PacketErrorWithView(packet, (uint32_t) carrier_length, &carrier);
+    const char        *error   = pingipv4PacketError(packet, (uint32_t) carrier_length, &carrier);
     if (error != NULL)
     {
         return error;

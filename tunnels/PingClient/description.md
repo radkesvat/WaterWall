@@ -85,6 +85,10 @@ headers. Set applicable bridge `mtu`, TunDevice `device-mtu`, and core
 `misc.mtu` for both directions. Reassemble fragmented native packets and
 carriers at the packet adapters. DF alone is valid.
 
+Both the encoder and decoder drop packets whose IPv4 header contains Loose
+Source and Record Route (LSRR) or Strict Source and Record Route (SSRR).
+Other well-formed IPv4 options pass through.
+
 The decoder validates IPv4 protocol `1`, exact packet length, IPv4 and ICMP
 checksums, the opposite sender role, and the native payload's shape. The role
 check rejects reflections of the node's own frames. The tunnel carries
