@@ -2,10 +2,17 @@
 
 #include "wevent.h"
 
+// MinGW's Winsock alignment macros define a struct inside offsetof, which Clang flags in C11.
+#if defined(__clang__) && defined(__MINGW32__)
+#define UDP_WIN_CMSG(expression) __extension__(expression)
+#else
+#define UDP_WIN_CMSG(expression) (expression)
+#endif
+
 // Receive operations submitted to IOCP retain this storage until completion.
 typedef union {
     WSACMSGHDR aligned;
-    char       bytes[WSA_CMSG_SPACE(sizeof(IN_PKTINFO)) + WSA_CMSG_SPACE(sizeof(IN6_PKTINFO))];
+    char       bytes[UDP_WIN_CMSG(WSA_CMSG_SPACE(sizeof(IN_PKTINFO)) + WSA_CMSG_SPACE(sizeof(IN6_PKTINFO)))];
 } udp_win_control_t;
 
 typedef struct

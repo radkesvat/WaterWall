@@ -52,7 +52,8 @@ void udpWinReadLocalAddress(wio_t *io, udp_win_receive_t *receive)
     io->udp_reply_address = (sockaddr_u) {0};
     if ((message->dwFlags & (MSG_CTRUNC | MSG_TRUNC)) != 0)
         return;
-    for (WSACMSGHDR *cmsg = WSA_CMSG_FIRSTHDR(message); cmsg != NULL; cmsg = WSA_CMSG_NXTHDR(message, cmsg))
+    for (WSACMSGHDR *cmsg = WSA_CMSG_FIRSTHDR(message); cmsg != NULL;
+         cmsg             = UDP_WIN_CMSG(WSA_CMSG_NXTHDR(message, cmsg)))
     {
         if (cmsg->cmsg_level == IPPROTO_IP && cmsg->cmsg_type == IP_PKTINFO &&
             cmsg->cmsg_len >= WSA_CMSG_LEN(sizeof(IN_PKTINFO)))
@@ -118,7 +119,7 @@ int udpWinSendFrom(int fd, const void *bytes, size_t length, const sockaddr_u *p
         cmsg->cmsg_level    = IPPROTO_IP;
         cmsg->cmsg_type     = IP_PKTINFO;
         cmsg->cmsg_len      = WSA_CMSG_LEN(sizeof(info));
-        message.Control.len = WSA_CMSG_SPACE(sizeof(info));
+        message.Control.len = UDP_WIN_CMSG(WSA_CMSG_SPACE(sizeof(info)));
         memcpy(WSA_CMSG_DATA(cmsg), &info, sizeof(info));
     }
     else
@@ -127,7 +128,7 @@ int udpWinSendFrom(int fd, const void *bytes, size_t length, const sockaddr_u *p
         cmsg->cmsg_level    = IPPROTO_IPV6;
         cmsg->cmsg_type     = IPV6_PKTINFO;
         cmsg->cmsg_len      = WSA_CMSG_LEN(sizeof(info));
-        message.Control.len = WSA_CMSG_SPACE(sizeof(info));
+        message.Control.len = UDP_WIN_CMSG(WSA_CMSG_SPACE(sizeof(info)));
         memcpy(WSA_CMSG_DATA(cmsg), &info, sizeof(info));
     }
     DWORD sent = 0;
