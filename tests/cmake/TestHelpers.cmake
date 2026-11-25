@@ -62,6 +62,9 @@ function(waterwall_register_native_test test_name target_name labels)
       "-DUNIT_TEST_NETWORK_NAMESPACE_WRAPPER=${WATERWALL_TEST_SOURCE_ROOT}/run_in_network_namespace.sh"
       "-DUNIT_TEST_BASH=${BASH_EXECUTABLE}")
   endif()
+  if(CMAKE_CROSSCOMPILING)
+    set(test_emulator "$<TARGET_PROPERTY:${target_name},CROSSCOMPILING_EMULATOR>")
+  endif()
   math(EXPR outer_timeout "${TEST_TIMEOUT} + 95")
   # The runner builds missing executables under its lock. Path components keep CTest 4.5+ from
   # requiring the executable to exist before it can start the runner.
@@ -69,6 +72,7 @@ function(waterwall_register_native_test test_name target_name labels)
     "-DUNIT_TEST_TARGET=${target_name}"
     "-DUNIT_TEST_CONFIG=$<CONFIG>"
     "-DUNIT_TEST_EXECUTABLE=$<TARGET_FILE_DIR:${target_name}>/$<TARGET_FILE_NAME:${target_name}>"
+    "-DUNIT_TEST_EMULATOR=${test_emulator}"
     "-DUNIT_TEST_BUILD_DIR=${CMAKE_BINARY_DIR}"
     "-DUNIT_TEST_NAME=${test_name}"
     "-DUNIT_TEST_SOURCE_DIR=${TEST_SOURCE_DIR}"
