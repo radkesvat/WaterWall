@@ -29,17 +29,24 @@ route. The fallback branch carries a byte stream.
 
 ## Typical placement
 
-Normal Trojan server:
+For a Trojan server that exits to TCP and UDP destinations, use this chain.
 
 ```text
 TcpListener -> TlsServer -> TrojanServer -> TcpUdpConnector
 ```
 
-TCP-only outbound:
+Set `"connect": true` and `"udp": true` on `TrojanServer`. Both commands arrive
+over TCP. `TrojanServer` decodes the request and publishes each destination's
+transport so `TcpUdpConnector` can open the corresponding socket.
+
+For TCP-only outbound, set `"connect": true` and `"udp": false` on `TrojanServer`.
 
 ```text
 TcpListener -> TlsServer -> TrojanServer -> TcpConnector
 ```
+
+For a matching client and complete TLS configuration, see the
+[Trojan TCP and UDP example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies).
 
 Important:
 

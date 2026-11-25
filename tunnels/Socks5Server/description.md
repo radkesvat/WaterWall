@@ -27,13 +27,12 @@ incompatible. A UDP relay also needs an active dynamic endpoint association.
 
 ## Typical placement
 
-TCP-only SOCKS5 server:
-
-- `TcpListener -> Socks5Server -> TcpConnector`
-
-SOCKS5 server with combined `CONNECT` and UDP support:
+**SOCKS5 server with TCP `CONNECT` and `UDP ASSOCIATE`**
 
 - `TcpUdpListener -> [optional middle tunnels] -> Socks5Server -> TcpUdpConnector`
+
+See the [complete TCP/UDP configuration](#complete-socks5-tcpudp-topology-example)
+for the listener, advertised relay address, and destination connector settings.
 
 There is one previous callback path, not separate TCP and UDP chains into one
 `Socks5Server`. `TcpUdpListener` supplies both TCP control ingress and the
@@ -49,6 +48,10 @@ the relay even with `connect: false`.
 > control connection. It is useful only inside a custom fan-in topology that supplies TCP on the same callback path.
 > `Socks5Server` discovers the provider automatically from its finalized preceding path; there is no provider-name or
 > provider-API JSON setting.
+
+**TCP only**
+
+- `TcpListener -> Socks5Server -> TcpConnector`
 
 Important:
 

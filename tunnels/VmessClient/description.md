@@ -19,10 +19,26 @@ their existing transport nodes; VmessClient does not discover or configure them.
 
 ### Placement and examples
 
+**TCP and UDP to a fixed target**
+
+```text
+TcpUdpListener -> VmessClient -> TlsClient -> TcpConnector
+```
+
+Set `address` and `port` on `VmessClient` to a service that accepts both TCP
+and UDP on the same endpoint. Set `"protocol": "dest_context->protocol"` to
+follow each incoming flow.
+`TcpConnector` dials the VMess server for both protocols. VMess frames the
+UDP datagrams inside the TCP/TLS stream.
+
+For applications that choose their own destinations, see the
+[complete VMess over TLS example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies).
+
+**Single-protocol and WebSocket variants**
+
 ```text
 TcpListener    -> VmessClient -> TcpConnector
 UdpListener    -> VmessClient -> TcpConnector
-TcpUdpListener -> VmessClient -> TlsClient -> TcpConnector
 TcpListener    -> VmessClient -> HttpClient (WebSocket) -> TcpConnector
 TcpListener    -> VmessClient -> HttpClient (WebSocket) -> TlsClient -> TcpConnector
 ```
@@ -39,8 +55,8 @@ security and counter settings before choosing a policy.
 
 ## Minimal practical example
 
-This is a **node fragment**. Complete the surrounding chain and replace the
-sample UUID with the matching peer credential.
+This **node fragment** forwards TCP to `example.com:443`. Use it with
+`TcpListener` and replace the sample UUID with the matching peer credential.
 
 ```json
 {
@@ -60,12 +76,8 @@ sample UUID with the matching peer credential.
 }
 ```
 
-Here `example.com:443` is the destination requested from the VMess server, even
-when the following connector dials a different host and port.
-
-
-`tls-client` names your configured TLS transport; its next connector dials the
-VMess server. The node target `example.com:443` is the service requested from it.
+`tls-client` names your configured TLS transport. Its next connector dials the
+VMess server, which opens the connection to `example.com:443`.
 
 ## Configuration
 

@@ -18,13 +18,23 @@ gRPC, or other transport wrappers.
 
 ## Typical placement
 
-TCP VLESS client chain:
+For one local entry that forwards TCP and UDP to a fixed destination, use this chain.
 
-`TcpListener <-> VlessClient <-> TlsClient <-> TcpConnector`
+```text
+TcpUdpListener -> VlessClient -> TlsClient -> TcpConnector
+```
 
-UDP VLESS client chain:
+Set `"protocol": "dest_context->protocol"` on `VlessClient` so each line selects
+the VLESS command for its incoming transport. Both commands travel over TCP/TLS.
+`VlessClient` frames UDP datagrams before sending them over that stream.
+Set a fixed `address` and `port` for a service that accepts both TCP and UDP.
 
-`UdpListener <-> VlessClient <-> TlsClient <-> TcpConnector`
+- For TCP-only forwarding, use `TcpListener` and set `"protocol": "tcp"`.
+- For UDP-only forwarding, use `UdpListener` and set `"protocol": "udp"`.
+
+To let applications choose each destination, put `Socks5Server` with `"udp": true`
+between `TcpUdpListener` and `VlessClient`. Read the address, port, and protocol
+from destination context as shown in the [complete TCP and UDP proxy configurations](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies).
 
 Important:
 

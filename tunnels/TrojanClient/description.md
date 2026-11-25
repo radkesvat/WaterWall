@@ -15,17 +15,31 @@ and creates an internal TCP carrier line for Trojan UDP packets.
 
 ## Typical placement
 
-TCP Trojan client chain:
+For TCP and UDP forwarding to one fixed destination, use this chain.
 
-`TcpListener <-> TrojanClient <-> TlsClient <-> TcpConnector`
+```text
+TcpUdpListener -> TrojanClient -> TlsClient -> TcpConnector
+```
 
-UDP Trojan client chain:
+Set `"protocol": "dest_context->protocol"` on `TrojanClient` so each accepted
+flow uses its incoming protocol. Choose a fixed address and port for a service
+that accepts both protocols. UDP datagrams are framed over a TCP carrier,
+so `TcpConnector` dials the Trojan server for both protocols.
 
-`UdpListener <-> TrojanClient <-> TlsClient <-> TcpConnector`
+For TCP-only forwarding, use `"protocol": "tcp"`.
 
-Mixed TCP/UDP client chain:
+```text
+TcpListener -> TrojanClient -> TlsClient -> TcpConnector
+```
 
-`TcpUdpListener <-> TrojanClient <-> TlsClient <-> TcpConnector`
+For UDP-only forwarding, use `"protocol": "udp"`.
+
+```text
+UdpListener -> TrojanClient -> TlsClient -> TcpConnector
+```
+
+For a local SOCKS5 proxy that forwards application-selected destinations over TLS,
+see the [complete client and server configurations](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies).
 
 Important:
 

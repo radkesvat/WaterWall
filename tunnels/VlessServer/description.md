@@ -28,17 +28,30 @@ route. The fallback branch carries a byte stream.
 
 ## Typical placement
 
-Normal VLESS server:
+For TCP and UDP egress, enable both `"connect": true` and `"udp": true` on
+`VlessServer`.
 
 ```text
 TcpListener -> TlsServer -> VlessServer -> TcpUdpConnector
 ```
 
-TCP-only outbound:
+The listener receives both VLESS commands over TCP/TLS. `TcpUdpConnector` uses
+the requested destination and opens the appropriate TCP or UDP socket.
+
+For TCP-only egress, set `"connect": true` and `"udp": false`.
 
 ```text
 TcpListener -> TlsServer -> VlessServer -> TcpConnector
 ```
+
+For UDP-only egress, set `"connect": false` and `"udp": true`.
+
+```text
+TcpListener -> TlsServer -> VlessServer -> UdpConnector
+```
+
+See the [complete TCP and UDP proxy configurations](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies)
+for a matching client and server.
 
 Important:
 

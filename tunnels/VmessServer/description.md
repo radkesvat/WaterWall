@@ -20,14 +20,25 @@ modes support UDP framing. The fallback branch carries a byte stream.
 
 ### Placement and examples
 
+**TCP and UDP outbound with VMess over TLS**
+
+```text
+TcpListener -> TlsServer -> VmessServer -> TcpUdpConnector
+```
+
+Set `"connect": true` and `"udp": true` on `VmessServer`. The TCP listener
+accepts the TLS stream carrying either kind of traffic. After decoding the
+request, `VmessServer` passes TCP streams or UDP datagrams to
+`TcpUdpConnector`, which connects to the requested destination.
+See the [complete VMess over TLS example](https://radkesvat.github.io/WaterWall-Docs/docs/examples/proxies/protocol-proxies) for both sides.
+
+**Other transports with TCP and UDP outbound**
+
 ```text
 TcpListener -> VmessServer -> TcpUdpConnector
-TcpListener -> TlsServer -> VmessServer -> TcpUdpConnector
 TcpListener -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
 TcpListener -> TlsServer -> HttpServer (WebSocket) -> VmessServer -> TcpUdpConnector
 ```
-
-A local-user node:
 
 
 VMess body protection is a separate choice from TLS. `none` and `zero` leave

@@ -19,13 +19,19 @@ line for relay traffic. The configured carrier path must support both lines.
 
 ## Typical placement
 
-TCP proxy chain:
-
-`TcpListener <-> Socks5Client <-> TcpConnector`
-
-UDP-capable proxy chain:
+**TCP and UDP through the same SOCKS5 server**
 
 `TcpUdpListener <-> Socks5Client <-> TcpUdpConnector`
+
+Set `Socks5Client.settings.protocol` to `"dest_context->protocol"` to follow
+the listener's transport on each line. With this direct listener setup, set
+the client's `address` and `port` to the final service. Configure
+`TcpUdpConnector` with the SOCKS5 proxy's TCP endpoint. For UDP traffic,
+the connector also reaches the UDP relay endpoint returned by `UDP ASSOCIATE`.
+
+**TCP only**
+
+`TcpListener <-> Socks5Client <-> TcpConnector`
 
 Important:
 
@@ -33,8 +39,6 @@ Important:
 - it prepares the final SOCKS target during `Init` and mirrors that result into `lineGetDestinationAddressContext(line)`
 - the actual connection to the SOCKS proxy itself is still made by the next adapter, usually a connector with a constant
   proxy address/port
-- UDP mode creates a TCP control line for `UDP ASSOCIATE` and a UDP relay line for SOCKS UDP datagrams, so the next
-  adapter should be `TcpUdpConnector` when UDP is used
 
 
 ## Minimal practical example
