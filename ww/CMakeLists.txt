@@ -644,6 +644,7 @@ elseif(UNIX AND NOT ANDROID)
 
 elseif(WIN32)
     target_sources(ww PRIVATE devices/windows_driver_artifacts.c
+        devices/windows_kill_switch_control.c
         devices/windows_session_effects.c)
     # WinDivert for x64 systems
     if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -678,7 +679,7 @@ elseif(WIN32)
     endif()
     
     target_sources(ww PRIVATE devices/tun/tun_windows.c devices/tun/tun_windows_dns.c devices/tun/tun_windows_ownership.c)
-    target_link_libraries(ww PUBLIC bcrypt setupapi)
+    target_link_libraries(ww PUBLIC bcrypt setupapi ole32)
 
     target_sources(ww PRIVATE event/udp_pktinfo_win.c)
     # Event backend configuration

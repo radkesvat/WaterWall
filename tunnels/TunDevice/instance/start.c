@@ -1,5 +1,8 @@
 #include "structure.h"
 
+#ifdef OS_WIN
+#include "devices/windows_kill_switch_control.h"
+#endif
 #include "loggers/network_logger.h"
 
 void tundeviceTunnelOnStart(tunnel_t *t)
@@ -26,6 +29,8 @@ void tundeviceTunnelOnStart(tunnel_t *t)
          mode_reason);
 
 #ifdef OS_WIN
+    state->kill_switch_selected =
+        state->kill_switch_candidate != 0 && state->kill_switch_candidate == wwWindowsKillSwitchSelectedTun();
     if (state->gso_requested)
     {
         LOGW("TunDevice: GSO requested but unavailable on this platform; using ordinary TUN framing");
@@ -68,6 +73,15 @@ void tundeviceTunnelOnStart(tunnel_t *t)
         failure = "TunDevice: could not create device";
         goto rollback;
     }
+
+#ifdef OS_WIN
+    if (state->kill_switch_selected && ! tundeviceRegisterKillSwitch(state->tdev))
+    {
+        cancelled = wwWindowsKillSwitchStartupWasStopped();
+        failure   = "TunDevice: could not authorize the owned adapter for the Windows kill switch";
+        goto rollback;
+    }
+#endif
 
     tundeviceConfigureKernelQueue(state->tdev, state->kernel_queue_tune, state->kernel_queue_length);
 
@@ -134,6 +148,13 @@ void tundeviceTunnelOnStart(tunnel_t *t)
     return;
 
 rollback:
+#ifdef OS_WIN
+    if (state->kill_switch_selected && state->tdev != NULL && ! tundeviceRevokeKillSwitch(state->tdev))
+    {
+        LOGW("TunDevice: could not revoke Windows kill-switch permission during startup rollback");
+        state->policy_cleanup_failed = true;
+    }
+#endif
     /* Attempt partial installations too. Failed entries stay owned until a
      * later cleanup succeeds or the
      * exclusively owned adapter is destroyed. */

@@ -1,5 +1,8 @@
 #include "structure.h"
 
+#ifdef OS_WIN
+#include "devices/windows_kill_switch_control.h"
+#endif
 #include "loggers/network_logger.h"
 
 static tunnel_t *tundeviceTunnelCreateFail(tunnel_t *t)
@@ -146,7 +149,13 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
     }
     state->kernel_queue_length = (uint32_t) kernel_queue_length;
 
-    if (! tundeviceLoadRouteSettings(state, settings))
+#ifdef OS_WIN
+    const bool protected_run = wwWindowsKillSwitchActive();
+#else
+    const bool protected_run = false;
+#endif
+    bool full_ipv4_route;
+    if (! tundeviceLoadRouteSettings(state, settings, protected_run ? &full_ipv4_route : NULL))
     {
         return tundeviceTunnelCreateFail(t);
     }
@@ -184,6 +193,28 @@ tunnel_t *tundeviceTunnelCreate(node_t *node)
              GetLastError());
         startupFailureRecord(1);
         return tundeviceTunnelCreateFail(t);
+    }
+    if (protected_run)
+    {
+        bool marked;
+        if (! tundeviceReadWindowsKillSwitchOwner(settings, &marked))
+        {
+            LOGE("TunDevice: windows-kill-switch-owner must be a single Boolean");
+            startupFailureRecord(1);
+            return tundeviceTunnelCreateFail(t);
+        }
+        const bool declared = node->node_manager_config != NULL && strcmp(node->type, "TunDevice") == 0 &&
+                              nodemanagerGetConfigNodeByHash(node->node_manager_config, node->hash_name) == node;
+        const bool eligible = declared && full_ipv4_route;
+        if (! wwWindowsKillSwitchConsiderTun(eligible, marked, &state->kill_switch_candidate))
+        {
+            LOGE(eligible
+                     ? "Windows kill switch: more than one TunDevice sets windows-kill-switch-owner"
+                     : "Windows kill switch: windows-kill-switch-owner requires a declared full-route IPv4 TunDevice");
+            startupFailureRecord(1);
+            return tundeviceTunnelCreateFail(t);
+        }
+        return t;
     }
 #endif
     tundevicePublishEgressPinIfNeeded(state);

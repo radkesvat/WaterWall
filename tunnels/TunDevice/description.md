@@ -180,6 +180,13 @@ See [Configuration](#configuration) for defaults and conditional requirements an
 
   Default: `false`
 
+- `windows-kill-switch-owner` `(boolean, default false)`
+  In a protected Windows run, set this to `true` on one owned, full-route IPv4
+  TunDevice when several qualify across the loaded configuration files. With a
+  single eligible TunDevice, omit the setting for automatic selection. Omitting
+  it or setting it to `false` leaves the device eligible for automatic selection.
+  The core setting `"windows-kill-switch": true` enables protection.
+
 - `route-cidrs` `(array of strings)`
   IPv4 CIDRs to route toward the TUN interface when routing is enabled.
 
@@ -457,6 +464,16 @@ strong-host configurations, set `interface` explicitly instead.
 c-ares DNS resolver sockets are not pinned by this feature. The default
 interface is detected once at startup; if the physical default route changes,
 restart WaterWall or configure explicit interfaces/routes.
+
+In a packed Windows run with the kill switch armed, the launcher chooses the
+physical IPv4 default route with the lowest combined route and interface metric
+among connected physical interfaces. Participating sockets use that
+interface even when `loop-protection` is disabled. An explicit adapter
+`interface` must identify the approved interface. The launcher authorizes the
+owner's live Wintun identity before its address and routes are installed.
+Owner selection controls the firewall grant. Windows still chooses routes
+using the prefixes and metrics of all configured adapters. Restart the
+protected run after changing the physical uplink.
 
 On Windows, automatic loop prevention only selects the interface for participating
 sockets; it does not add physical-interface host routes. The built-in TUN IP,

@@ -1,4 +1,5 @@
 #include "devices/device_pool.h"
+#include "devices/windows_kill_switch_control.h"
 #include "devices/windows_session_effects.h"
 #include "tun.h"
 #include "tun_windows_dns.h"
@@ -72,6 +73,7 @@ struct tun_device_s
     HANDLE                   stop_event; /* Cancels supervised DNS setup, not reader notification. */
     tun_windows_dns_result_e dns_result;
     bool                     dns_cleanup_needed;
+    bool                     kill_switch_registered;
     MIB_UNICASTIPADDRESS_ROW address_row;
 
     void                 *userdata;
@@ -1548,6 +1550,23 @@ tun_device_t *tundeviceCreateOwned(const char *name, bool offload, bool multi_qu
     return tdev;
 }
 
+bool tundeviceRegisterKillSwitch(tun_device_t *tdev)
+{
+    assert(tdev->adapter_handle != NULL && tdev->ownership != NULL && ! tdev->kill_switch_registered);
+    NET_LUID luid = {0};
+    WintunGetAdapterLUID(tdev->adapter_handle, &luid);
+    tdev->kill_switch_registered = wwWindowsKillSwitchRegisterTun(&luid);
+    return tdev->kill_switch_registered;
+}
+
+bool tundeviceRevokeKillSwitch(tun_device_t *tdev)
+{
+    if (! tdev->kill_switch_registered)
+        return true;
+    tdev->kill_switch_registered = false;
+    return wwWindowsKillSwitchRevokeTun();
+}
+
 /**
  * Destroys the TUN device and releases resources
  * @param tdev TUN device handle
@@ -1581,7 +1600,11 @@ void tundeviceDestroy(tun_device_t *tdev)
 
     if (tdev->adapter_handle)
     {
-
+        if (! tundeviceRevokeKillSwitch(tdev))
+        {
+            LOGE("TunDevice: could not revoke Windows kill-switch permission before closing the adapter");
+            applicationShutdownRecordFailure(1, kApplicationShutdownReasonSubsystemFailure);
+        }
         WintunCloseAdapter(tdev->adapter_handle);
         tdev->adapter_handle = NULL;
     }

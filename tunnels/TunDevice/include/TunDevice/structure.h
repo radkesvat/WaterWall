@@ -57,6 +57,8 @@ typedef struct tundevice_tstate_s
     tun_device_t *tdev;
 #ifdef OS_WIN
     tun_windows_ownership_t windows_ownership;
+    size_t                  kill_switch_candidate;
+    bool                    kill_switch_selected;
 #endif
 
 } tundevice_tstate_t;
@@ -78,7 +80,10 @@ void tundeviceTunnelOnQuiesceRequest(tunnel_t *t, const ww_lifecycle_context_t *
 void tundeviceTunnelOnWorkerQuiesce(tunnel_t *t, wid_t wid, const ww_lifecycle_context_t *context);
 void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *context);
 
-bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings);
+bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings, bool *full_ipv4_route);
+#ifdef OS_WIN
+bool tundeviceReadWindowsKillSwitchOwner(const cJSON *settings, bool *marked);
+#endif
 bool tundeviceApplySystemRoutes(tundevice_tstate_t *state);
 void tundeviceCleanupSystemRoutes(tundevice_tstate_t *state);
 void tundeviceFreeRouteSettings(tundevice_tstate_t *state);

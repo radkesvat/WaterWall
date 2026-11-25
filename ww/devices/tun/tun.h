@@ -111,6 +111,10 @@ bool tundeviceDisableReversePathFiltering(const char *ifname);
 tun_device_t *tundeviceCreateOwned(const char *name, bool gso_requested, bool multi_queue_requested, uint16_t mtu,
                                    void *userdata, TunReadEventHandle cb, device_fragment_policy_t fragment_policy,
                                    device_opaque_flow_mode_t opaque_flow_mode, tun_windows_ownership_t *ownership);
+/* The selected adapter authorizes its actual Wintun interface between owned
+ * creation and IP configuration. Revocation is idempotent. */
+bool tundeviceRegisterKillSwitch(tun_device_t *tdev);
+bool tundeviceRevokeKillSwitch(tun_device_t *tdev);
 /* Releases the process-wide Wintun module after every device has stopped. */
 void tundevicePlatformShutdown(void);
 #endif

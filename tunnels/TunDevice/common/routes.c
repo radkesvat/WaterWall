@@ -404,8 +404,37 @@ static bool routeListStoreOnState(tundevice_tstate_t *state, const route_list_t 
     return true;
 }
 
-bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings)
+static int compareIpv4RouteAddresses(const void *a, const void *b)
 {
+    const route_cidr_t *left = a, *right = b;
+    return memcmp(left->addr, right->addr, sizeof(uint32_t));
+}
+
+/* The installation order has already been saved. Sort the parsed IPv4 routes
+ * by network address so one pass finds any gap, including a single missing IP. */
+static bool routeListCoversIpv4(route_list_t *routes)
+{
+    qsort(routes->items, routes->count, sizeof(*routes->items), compareIpv4RouteAddresses);
+    uint64_t covered = 0;
+    for (size_t i = 0; i < routes->count; ++i)
+    {
+        const route_cidr_t *route = &routes->items[i];
+        uint32_t            address_be;
+        memcpy(&address_be, route->addr, sizeof(address_be));
+        const uint32_t first = ntohl(address_be);
+        if (first > covered)
+            return false;
+        const uint64_t end = first + (UINT64_C(1) << (32 - route->prefix));
+        if (end > covered)
+            covered = end;
+    }
+    return covered == (UINT64_C(1) << 32);
+}
+
+bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings, bool *full_ipv4_route)
+{
+    if (full_ipv4_route != NULL)
+        *full_ipv4_route = false;
     bool  system_route = false;
     char *route_table  = NULL;
 
@@ -497,12 +526,34 @@ bool tundeviceLoadRouteSettings(tundevice_tstate_t *state, const cJSON *settings
     }
 
     ok = routeListStoreOnState(state, &routes);
+    if (ok && full_ipv4_route != NULL && (strcmp(route_table, "main") == 0 || strcmp(route_table, "auto") == 0))
+        *full_ipv4_route = routeListCoversIpv4(&routes);
 
 done:
     routeListFree(&routes);
     routeListFree(&excludes);
     return ok;
 }
+
+#ifdef OS_WIN
+bool tundeviceReadWindowsKillSwitchOwner(const cJSON *settings, bool *marked)
+{
+    *marked              = false;
+    const cJSON *setting = cJSON_GetObjectItemCaseSensitive(settings, "windows-kill-switch-owner");
+    if (setting == NULL)
+        return true;
+    if (! cJSON_IsBool(setting) || (setting->type & cJSON_NameHasEmbeddedNul) != 0)
+        return false;
+    for (const cJSON *member = setting->next; member != NULL; member = member->next)
+    {
+        if (strcmp(member->string, "windows-kill-switch-owner") == 0)
+            return false;
+    }
+    *marked = cJSON_IsTrue(setting);
+    return true;
+}
+
+#endif
 
 bool tundeviceApplySystemRoutes(tundevice_tstate_t *state)
 {
@@ -535,7 +586,12 @@ bool tundeviceApplySystemRoutes(tundevice_tstate_t *state)
             }
 #endif
             LOGE("TunDevice: failed to install system route %s", state->system_routes[i]);
-            tundeviceCleanupSystemRoutes(state);
+            /* Protected startup's owner revokes the interface grant before
+             * removing routes, including a partial installation. */
+#ifdef OS_WIN
+            if (! state->kill_switch_selected)
+#endif
+                tundeviceCleanupSystemRoutes(state);
             return false;
         }
 

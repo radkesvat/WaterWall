@@ -1,5 +1,5 @@
 /*
- * Covers: tundevice policy cleanup; the explicit inputs, callbacks and expected results below define
+ * Covers: TunDevice owner selection, startup, and policy cleanup. The explicit inputs and expected results below define
  * this suite.
  * Setup: Real runtime/component code with the explicit worker/line/neighbour fixture and any linker
  * seams shown below. Line and buffer settlement remains the scenario owner's responsibility.
@@ -13,8 +13,10 @@
  * CTest: waterwall.tundevice_policy_cleanup_unit
  */
 /* Exercise actual tunnel policy/start/stop code with inert device operations. */
+#include "devices/windows_kill_switch_owner.h"
 #ifdef OS_WIN
 #include "devices/tun/tun_windows_dns.h"
+#include "devices/windows_kill_switch_control.h"
 #endif
 #include "loggers/network_logger.h"
 
@@ -46,14 +48,24 @@ static bool         last_multi_queue_requested;
 static bool         last_kernel_queue_tune;
 static uint32_t     last_kernel_queue_length;
 static unsigned     kernel_queue_configures;
-static char         route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
-static char         dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
-static char         inert_script[]     = "inert fixture script";
-static char         startup_script[]   = "must not execute after failed startup";
-
+#ifdef OS_WIN
+static bool                   protected_probe;
+static bool                   registration_ok;
+static bool                   registered;
+static unsigned               grants;
+static unsigned               revocations;
+static ww_kill_switch_owner_t runtime_owners;
+#endif
+static char route_values[][16] = {"1.0.0.0/8", "2.0.0.0/8", "3.0.0.0/8"};
+static char dns_values[][8]    = {"1.1.1.1", "2.2.2.2"};
+static char inert_script[]     = "inert fixture script";
+static char startup_script[]   = "must not execute after failed startup";
 
 static bool fakeRemoveRoute(tun_device_t *device, const char *cidr, const char *table)
 {
+#ifdef OS_WIN
+    require(! protected_probe || ! registered, "route was removed before revoking TUN permission");
+#endif
     (void) device;
     (void) table;
     unsigned int index = (unsigned int) (cidr[0] - '1');
@@ -151,6 +163,9 @@ static tun_device_t *fakeCreate(const char *name, bool offload, bool multi_queue
 
 static bool fakeAssignIp(tun_device_t *device, const char *ip, unsigned int subnet)
 {
+#ifdef OS_WIN
+    require(! protected_probe || registered, "IP was assigned before authorizing the actual TUN");
+#endif
     (void) device;
     (void) ip;
     (void) subnet;
@@ -171,6 +186,33 @@ static bool fakeDeviceSuccess(tun_device_t *device)
     (void) device;
     return true;
 }
+
+#ifdef OS_WIN
+static size_t fakeSelectedTun(void)
+{
+    return wwKillSwitchSelectedTun(&runtime_owners);
+}
+
+static bool fakeRegisterKillSwitch(tun_device_t *device)
+{
+    (void) device;
+    require(! registered, "duplicate TUN grant");
+    ++grants;
+    registered = registration_ok;
+    return registered;
+}
+
+static bool fakeRevokeKillSwitch(tun_device_t *device)
+{
+    (void) device;
+    if (registered)
+    {
+        registered = false;
+        ++revocations;
+    }
+    return true;
+}
+#endif
 
 static bool fakeDisableReversePathFiltering(const char *name)
 {
@@ -212,6 +254,11 @@ void tundeviceOnIPPacketReceived(tun_device_t *device, void *userdata, sbuf_t *b
 #define tundeviceCreate                    fakeCreate
 #define tundeviceCreateOwned(name, offload, multi_queue_requested, mtu, userdata, cb, policy, opaque_mode, ownership)  \
     fakeCreate(name, offload, multi_queue_requested, mtu, userdata, cb, policy, opaque_mode)
+#ifdef OS_WIN
+#define tundeviceRegisterKillSwitch    fakeRegisterKillSwitch
+#define tundeviceRevokeKillSwitch      fakeRevokeKillSwitch
+#define wwWindowsKillSwitchSelectedTun fakeSelectedTun
+#endif
 #define tundeviceAssignIP                    fakeAssignIp
 #define tundeviceConfigureKernelQueue        fakeConfigureKernelQueue
 #define tundeviceBringUp                     fakeDeviceSuccess
@@ -238,7 +285,132 @@ static void resetProbe(void)
     last_offload_requested = last_multi_queue_requested = false;
     last_kernel_queue_tune                              = false;
     last_kernel_queue_length = kernel_queue_configures = 0;
+#ifdef OS_WIN
+    protected_probe = registered = false;
+    registration_ok              = true;
+    grants = revocations = 0;
+    runtime_owners       = (ww_kill_switch_owner_t) {0};
+#endif
 }
+
+static void testProtectedOwnerSelection(void)
+{
+    ww_kill_switch_owner_t run = {0};
+    size_t                 first, second, third;
+    require(wwKillSwitchSelectedTun(&run) == 0, "protected run with no TUN selected an owner");
+    require(wwKillSwitchConsiderTun(&run, false, false, &first) && first == 0 && wwKillSwitchSelectedTun(&run) == 0,
+            "ineligible TUN became a candidate");
+    require(wwKillSwitchConsiderTun(&run, true, false, &first) && first != 0 && wwKillSwitchSelectedTun(&run) == first,
+            "single eligible TUN was not automatically selected");
+    require(wwKillSwitchConsiderTun(&run, true, false, &second) && second != 0 && second != first &&
+                wwKillSwitchSelectedTun(&run) == 0,
+            "second unmarked TUN did not make automatic selection ambiguous");
+    require(wwKillSwitchConsiderTun(&run, true, true, &third) && third != first && third != second &&
+                wwKillSwitchSelectedTun(&run) == third,
+            "a later marked TUN did not resolve earlier ambiguity");
+    require(! wwKillSwitchConsiderTun(&run, true, true, &first) && first == 0, "duplicate marked TUN accepted");
+
+    run = (ww_kill_switch_owner_t) {0};
+    require(wwKillSwitchConsiderTun(&run, true, true, &first) && first != 0 &&
+                wwKillSwitchConsiderTun(&run, true, false, &second) && wwKillSwitchSelectedTun(&run) == first,
+            "later unmarked TUN replaced an explicit owner");
+    run = (ww_kill_switch_owner_t) {0};
+    require(! wwKillSwitchConsiderTun(&run, false, true, &second) && second == 0 && wwKillSwitchSelectedTun(&run) == 0,
+            "ineligible explicit owner accepted");
+}
+
+static void testProtectedFullRoute(void)
+{
+    const struct
+    {
+        const char *json;
+        bool        full;
+    } cases[] = {
+        {"{\"system-route\":true}", true},
+        {"{\"route-table\":\"auto\",\"route-cidrs\":[\"192.0.0.0/2\",\"128.0.0.0/2\",\"0.0.0.0/1\",\"0.0.0.0/8\"]}",
+         true},
+        {"{\"system-route\":true,\"route-exclude-cidrs\":[\"192.0.2.1/32\"]}", false},
+        {"{\"route-table\":\"off\"}", false},
+        {"{\"route-table\":\"custom\"}", false},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(cases); ++i)
+    {
+        cJSON *settings = cJSON_Parse(cases[i].json);
+        require(settings != NULL, "route coverage fixture JSON");
+        tundevice_tstate_t state = {0};
+        bool               full  = ! cases[i].full;
+        require(tundeviceLoadRouteSettings(&state, settings, &full) && full == cases[i].full, cases[i].json);
+        tundeviceFreeRouteSettings(&state);
+        cJSON_Delete(settings);
+    }
+}
+
+#ifdef OS_WIN
+static void testProtectedOwnerMarker(void)
+{
+    const struct
+    {
+        const char *json;
+        bool        valid;
+        bool        marked;
+    } inputs[] = {
+        {"{}", true, false},
+        {"{\"windows-kill-switch-owner\":false}", true, false},
+        {"{\"windows-kill-switch-owner\":true}", true, true},
+        {"{\"windows-kill-switch-owne\\u0072\":true}", true, true},
+        {"{\"windows-kill-switch-owner\":\"true\"}", false, false},
+        {"{\"windows-kill-switch-owner\":1}", false, false},
+        {"{\"windows-kill-switch-owner\":null}", false, false},
+        {"{\"windows-kill-switch-owner\":false,\"windows-kill-switch-owner\":true}", false, false},
+        {"{\"windows-kill-switch-owner\\u0000suffix\":true}", false, false},
+        {"{\"windows-kill-switch-owner\":true,\"windows-kill-switch-owner\\u0000suffix\":false}", false, false},
+    };
+    for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); ++i)
+    {
+        bool   marked   = ! inputs[i].marked;
+        cJSON *settings = cJSON_Parse(inputs[i].json);
+        require(settings != NULL, "owner fixture JSON");
+        require(tundeviceReadWindowsKillSwitchOwner(settings, &marked) == inputs[i].valid, inputs[i].json);
+        if (inputs[i].valid)
+            require(marked == inputs[i].marked, inputs[i].json);
+        cJSON_Delete(settings);
+    }
+}
+
+static void testProtectedAdapterLifecycle(bool owner, bool authorize, bool route_ok)
+{
+    resetProbe();
+    protected_probe = owner;
+    registration_ok = authorize;
+    add_failures    = route_ok ? 0 : 2;
+
+    tunnel_t *tunnel = tunnelCreate(NULL, sizeof(tundevice_tstate_t), 0);
+    require(tunnel != NULL, "protected startup tunnel allocation");
+    tundevice_tstate_t *state    = tunnelGetState(tunnel);
+    char               *routes[] = {route_values[0], route_values[1]};
+    size_t              first, second;
+    require(wwKillSwitchConsiderTun(&runtime_owners, true, false, &first) &&
+                wwKillSwitchConsiderTun(&runtime_owners, true, true, &second),
+            "collect TUNs from both configurations");
+    state->kill_switch_candidate = owner ? second : first;
+    state->system_route_enabled  = true;
+    state->system_routes         = routes;
+    state->system_route_count    = 2;
+
+    ww_startup_context_t context = {0};
+    wwStartupContextBegin(&context);
+    tundeviceTunnelOnStart(tunnel);
+    require(wwStartupSucceeded(wwStartupContextEnd(&context)) == ((! owner || authorize) && route_ok),
+            "protected startup result");
+    require(grants == (owner ? 1U : 0U) && adds[0] == (! owner || authorize ? 1U : 0U), "incorrect TUN grant");
+    require(revocations == (owner && authorize && ! route_ok ? 1U : 0U), "startup rollback grant settlement");
+
+    tundeviceTunnelOnQuiesceWait(tunnel, wwLifecycleProcessShutdown());
+    tundeviceTunnelOnQuiesceWait(tunnel, wwLifecycleProcessShutdown());
+    require(! registered && revocations == (owner && authorize ? 1U : 0U), "repeat cleanup changed grant ownership");
+    tunnelDestroy(tunnel);
+}
+#endif
 
 static void testRouteInventory(void)
 {
@@ -453,11 +625,20 @@ int main(void)
     logger_t *logger = loggerCreate();
     require(logger != NULL, "logger allocation");
     setNetworkLogger(logger);
+    testProtectedOwnerSelection();
+    testProtectedFullRoute();
     testRouteInventory();
 #if defined(OS_LINUX) || defined(OS_BSD)
     testUncertainRouteAddIsNotDeleted();
     testUncertainRouteDeleteIsNotRetried();
     testUncertainDeletesDoNotBlockOtherRetries();
+#endif
+#ifdef OS_WIN
+    testProtectedOwnerMarker();
+    testProtectedAdapterLifecycle(true, true, true);
+    testProtectedAdapterLifecycle(true, true, false);
+    testProtectedAdapterLifecycle(true, false, true);
+    testProtectedAdapterLifecycle(false, false, true);
 #endif
     testExistingRouteIsNotDeleted();
     testDnsInventory();

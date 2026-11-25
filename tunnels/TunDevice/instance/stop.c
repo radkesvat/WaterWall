@@ -32,6 +32,14 @@ void tundeviceTunnelOnQuiesceWait(tunnel_t *t, const ww_lifecycle_context_t *con
         return;
     }
 
+#ifdef OS_WIN
+    if (state->kill_switch_selected && ! tundeviceRevokeKillSwitch(tdev))
+    {
+        LOGW("TunDevice: could not revoke Windows kill-switch permission during shutdown");
+        state->policy_cleanup_failed = true;
+    }
+#endif
+
     if (state->pre_down_pending)
     {
         state->pre_down_pending = false;

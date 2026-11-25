@@ -4,6 +4,10 @@
 #include "loggers/internal_logger.h"
 #include "wsocket.h"
 
+#ifdef OS_WIN
+#include "devices/windows_kill_switch_control.h"
+#endif
+
 #if defined(OS_WIN) && ! defined(IP_UNICAST_IF)
 // The MSVC Windows SDK defines both unicast-interface socket options as 31,
 // while mingw-w64 currently exposes only IPV6_UNICAST_IF.
@@ -65,11 +69,41 @@ void egressPinClear(void)
 
 bool egressPinActive(void)
 {
+#ifdef OS_WIN
+    if (wwWindowsKillSwitchActive())
+        return true;
+#endif
     return atomicLoadExplicit(&GSTATE.tun_egress_pin_active, memory_order_acquire);
 }
 
 int egressPinApply(int sockfd, int family, const char *explicit_ifname)
 {
+#ifdef OS_WIN
+    if (wwWindowsKillSwitchActive())
+    {
+        if (family != AF_INET && family != AF_INET6)
+            return 0;
+        uint32_t index;
+        if (! wwWindowsKillSwitchGetApprovedIndex(explicit_ifname, &index))
+        {
+            WSASetLastError(WSAEACCES);
+            return SOCKET_ERROR;
+        }
+        if (family == AF_INET6)
+        {
+            DWORD ipv6_only;
+            int   size = sizeof(ipv6_only);
+            if (getsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &ipv6_only, &size) != 0)
+                return SOCKET_ERROR;
+            /* Native IPv6 uses only the firewall policy. Dual-stack sockets
+             * still need the IPv4 pin when using a mapped destination. */
+            if (ipv6_only != 0)
+                return 0;
+        }
+        DWORD index_be = htonl(index);
+        return setsockopt(sockfd, IPPROTO_IP, IP_UNICAST_IF, (const char *) &index_be, sizeof(index_be));
+    }
+#endif
     if (explicit_ifname != NULL && explicit_ifname[0] != '\0')
     {
         return 0;
