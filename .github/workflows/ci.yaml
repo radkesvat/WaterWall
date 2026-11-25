@@ -843,6 +843,7 @@ jobs:
             2>&1 | tee build/ci-diagnostics/configure.log
 
       - name: Build
+        id: build_application
         run: |
           set -o pipefail
           cmake --build --preset ${{ matrix.preset }} 2>&1 | tee build/ci-diagnostics/build.log
@@ -862,6 +863,7 @@ jobs:
           } 2>&1 | tee ../../../build/ci-diagnostics/bootstrap.log
 
       - name: Validate packed application
+        if: ${{ !cancelled() && steps.build_application.outcome == 'success' }}
         id: packed_application
         env:
           WW_WINDOWS_TEST_DIAGNOSTICS: ${{ github.workspace }}/build/ci-diagnostics/packed-application
