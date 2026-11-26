@@ -10,6 +10,15 @@
 #include "fixtures/failure/tunnel_orderly_shutdown_harness.h"
 #include "loggers/network_logger.h"
 
+sbuf_t *__real_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer);
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer);
+
+sbuf_t *__wrap_sbufDuplicateByPool(buffer_pool_t *pool, const sbuf_t *buffer)
+{
+    /* The duplicate helper uses pool getters from its own translation unit. */
+    return twfTrackAcquired(__real_sbufDuplicateByPool(pool, buffer));
+}
+
 enum
 {
     kWorkers      = 2,
@@ -247,6 +256,13 @@ static void requireCarrier(const packet_t *packet, const packet_t *native, bool 
                "carrier changed native payload outside the transport checksum");
 }
 
+static void requireIdentity(const packet_t *packet, uint16_t identifier, uint16_t sequence)
+{
+    const uint8_t *icmp = packet->bytes + kNativeHeader;
+    twfRequireEqualU32(GET_BE16(icmp + 4), identifier, "wrong outgoing ICMP identifier");
+    twfRequireEqualU32(GET_BE16(icmp + 6), sequence, "wrong outgoing ICMP sequence");
+}
+
 static packet_t exchange(fixture_t *fixture, bool server, const packet_t *native, uint8_t type, uint8_t code)
 {
     endpoint_t    *sending       = server ? &fixture->server : &fixture->client;
@@ -351,17 +367,110 @@ static void caseChecksumsAndSize(fixture_t *fixture, const packet_t *original, c
 static void caseDefaultSettings(void)
 {
     twfSetCase("Ping default settings on both endpoints");
-    static const char *const settings[] = {
-        NULL, "{}", "{\"icmp-type\":8,\"icmp-code\":0}", "{\"icmp-type\":\"echo-request\",\"icmp-code\":\"no-code\"}"};
-    const packet_t native = nativePacket(73, IP_PROTO_UDP);
+    static const char *const settings[] = {NULL,
+                                           "{}",
+                                           "{\"icmp-type\":8,\"icmp-code\":0}",
+                                           "{\"icmp-type\":\"echo-request\",\"icmp-code\":\"no-code\"}",
+                                           "{\"send-replies\":false}"};
+    const packet_t           native     = nativePacket(73, IP_PROTO_UDP);
     for (size_t i = 0; i < ARRAY_SIZE(settings); ++i)
     {
         fixture_t fixture = {0};
         setupFixture(&fixture, settings[i], settings[i]);
-        discard exchange(&fixture, false, &native, 8, 0);
-        discard exchange(&fixture, true, &native, 8, 0);
+        const packet_t client = exchange(&fixture, false, &native, 8, 0);
+        const packet_t server = exchange(&fixture, true, &native, 8, 0);
+        requireIdentity(&client, 0, 0);
+        requireIdentity(&server, 0, 0);
         teardownFixture(&fixture);
     }
+}
+
+static void caseOptionalIdentity(void)
+{
+    twfSetCase("Ping optional identity and sequence wrapping across workers");
+    fixture_t fixture = {0};
+    setupFixture(&fixture,
+                 "{\"icmp-type\":3,\"icmp-code\":3,\"identifier\":4660,\"sequence-start\":65535}",
+                 "{\"icmp-type\":254,\"icmp-code\":255,\"sequence-start\":41}");
+    const packet_t native       = nativePacket(73, IP_PROTO_UDP);
+    const packet_t client_first = exchange(&fixture, false, &native, 3, 3);
+    const packet_t server_first = exchange(&fixture, true, &native, 254, 255);
+    const uint16_t identifier   = GET_BE16(server_first.bytes + kNativeHeader + 4);
+    requireIdentity(&client_first, 4660, UINT16_MAX);
+    twfRequire(identifier != 0, "omitted optional identifier did not generate a nonzero value");
+    requireIdentity(&server_first, identifier, 41);
+
+    const sink_t  *client_wire = tunnelGetState(fixture.client.wire);
+    const sink_t  *server_wire = tunnelGetState(fixture.server.wire);
+    const unsigned before      = client_wire->count;
+    const packet_t oversized   = nativePacket(kMaxInner + 1, IP_PROTO_UDP);
+    dispatch(&fixture, fixture.client.native, 1, true, &oversized, false);
+    twfRequireEqualU32(client_wire->count, before, "oversized native packet escaped to the wire");
+    dispatch(&fixture, fixture.client.native, 1, true, &native, false);
+    twfRequireEqualU32(client_wire->count, before + 1, "client did not encode on the second worker");
+    requireCarrier(&client_wire->last, &native, false, 3, 3);
+    requireIdentity(&client_wire->last, 4660, 0);
+    dispatch(&fixture, fixture.server.native, 1, false, &native, false);
+    requireCarrier(&server_wire->last, &native, true, 254, 255);
+    requireIdentity(&server_wire->last, identifier, 42);
+    teardownFixture(&fixture);
+}
+
+static void caseEchoReplies(void)
+{
+    twfSetCase("Ping optional Echo Replies preserve the message and return toward the sender");
+    fixture_t fixture = {0};
+    setupFixture(
+        &fixture, "{\"identifier\":\"random\",\"send-replies\":true}", "{\"identifier\":0,\"send-replies\":true}");
+    const packet_t native = nativePacket(73, IP_PROTO_UDP);
+    for (unsigned direction = 0; direction < 2; ++direction)
+    {
+        const bool     server        = direction != 0;
+        endpoint_t    *sending       = server ? &fixture.server : &fixture.client;
+        endpoint_t    *receiving     = server ? &fixture.client : &fixture.server;
+        const sink_t  *sending_wire  = tunnelGetState(sending->wire);
+        const sink_t  *reply_wire    = tunnelGetState(receiving->wire);
+        const sink_t  *native_sink   = tunnelGetState(receiving->native);
+        const unsigned reply_before  = reply_wire->count;
+        const unsigned native_before = native_sink->count;
+
+        dispatch(&fixture, sending->native, 0, ! server, &native, false);
+        packet_t       request    = sending_wire->last;
+        const uint16_t identifier = GET_BE16(request.bytes + kNativeHeader + 4);
+        requireCarrier(&request, &native, server, 8, 0);
+        twfRequire(server ? identifier == 0 : identifier != 0, "explicit Ping identifier setting was not honored");
+        requireIdentity(&request, identifier, 1);
+
+        dispatch(&fixture, receiving->wire, 1, ! server, &request, false);
+        twfRequireEqualU32(native_sink->count, native_before + 1, "Echo Request did not deliver native data");
+        requirePacket(&native_sink->last, &native);
+        twfRequireEqualU32(reply_wire->count, reply_before + 1, "Echo Reply did not return toward the sender");
+        twfRequire(reply_wire->line == tunnelchainGetWorkerPacketLine(fixture.chain, 1), "Echo Reply changed workers");
+        const packet_t reply = reply_wire->last;
+        twfRequireEqualU32(reply.length, request.length, "Echo Reply changed the carrier length");
+        twfRequire(reply.bytes[8] == 64 && reply.bytes[kNativeHeader] == 0 && reply.bytes[kNativeHeader + 1] == 0,
+                   "Echo Reply has the wrong type, code or TTL");
+        twfRequire(memoryEqual(reply.bytes + 12, request.bytes + 16, 4) &&
+                       memoryEqual(reply.bytes + 16, request.bytes + 12, 4),
+                   "Echo Reply did not reverse the address pair");
+        twfRequire(memoryEqual(reply.bytes + kNativeHeader + 4,
+                               request.bytes + kNativeHeader + 4,
+                               reply.length - kNativeHeader - 4),
+                   "Echo Reply changed the identifier, sequence or payload");
+        twfRequire(calcGenericChecksum(reply.bytes, kNativeHeader, 0) == 0 &&
+                       calcGenericChecksum(reply.bytes + kNativeHeader, reply.length - kNativeHeader, 0) == 0,
+                   "Echo Reply has an invalid checksum");
+        requireInboundDrop(&fixture, sending, server, &reply);
+
+        request.bytes[kNativeHeader + 2] ^= 1U;
+        requireInboundDrop(&fixture, receiving, ! server, &request);
+        request.bytes[kNativeHeader + 1] = 1; /* Valid carrier, but only code zero is eligible for a reply. */
+        recomputeCarrier(&request);
+        dispatch(&fixture, receiving->wire, 1, ! server, &request, false);
+        twfRequireEqualU32(native_sink->count, native_before + 2, "nonzero Echo code did not deliver native data");
+        twfRequireEqualU32(reply_wire->count, reply_before + 1, "nonzero Echo code generated a reply");
+    }
+    teardownFixture(&fixture);
 }
 
 static void caseInvalidSettings(void)
@@ -382,7 +491,12 @@ static void caseInvalidSettings(void)
         "{\"icmp-type\":8,\"icmp-code\":\"port-unreachable\"}",
         "{\"icmp-type\":8,\"icmp-type\":8}",
         "{\"icmp-code\":0,\"icmp-code\":0}",
-        "{\"send-replies\":true}",
+        "{\"identifier\":65536}",
+        "{\"identifier\":-1}",
+        "{\"identifier\":\"random\\u0000ignored\"}",
+        "{\"sequence-start\":65536}",
+        "{\"sequence-start\":1.5}",
+        "{\"send-replies\":\"true\"}",
     };
     twfSetCase("Ping rejects invalid and legacy settings");
     node_t client = nodePingClientGet();
@@ -405,9 +519,6 @@ static void caseInvalidSettings(void)
 static void caseIpOverriderComposition(fixture_t *fixture)
 {
     twfSetCase("real IpOverrider on the native and carrier sides of Ping");
-    twfRequire(globalstateInitializeSecureRandom(), "the operating-system random source is unavailable");
-    twfRequire(frandGlobalInit(), "fast random initialization failed");
-    frandInit();
 
     node_t native_node  = nodeIpOverriderGet();
     node_t carrier_node = nodeIpOverriderGet();
@@ -513,10 +624,6 @@ static void caseIpOverriderComposition(fixture_t *fixture)
     cJSON_Delete(carrier_node.node_settings_json);
     memoryFree(native_node.type);
     memoryFree(carrier_node.type);
-
-    frandThreadCleanup();
-    frandGlobalCleanup();
-    globalstateDestroySecureRandom();
 }
 #endif
 
@@ -527,8 +634,13 @@ int main(void)
     logger_t *logger = loggerCreate();
     twfRequire(logger != NULL, "failed to initialize Ping logger");
     setNetworkLogger(logger);
+    twfRequire(globalstateInitializeSecureRandom(), "the operating-system random source is unavailable");
+    twfRequire(frandGlobalInit(), "fast random initialization failed");
+    frandInit();
     caseInvalidSettings();
     caseDefaultSettings();
+    caseOptionalIdentity();
+    caseEchoReplies();
 
     twfSetCase("Ping asymmetric transmit settings and independent data directions");
     fixture_t fixture = {0};
@@ -552,6 +664,9 @@ int main(void)
     caseIpOverriderComposition(&fixture);
 #endif
     teardownFixture(&fixture);
+    frandThreadCleanup();
+    frandGlobalCleanup();
+    globalstateDestroySecureRandom();
     networkloggerDestroy();
     puts("ping_flow_test: all cases passed");
     return 0;

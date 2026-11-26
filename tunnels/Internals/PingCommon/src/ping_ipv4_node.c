@@ -5,7 +5,10 @@
 typedef struct ping_ipv4_node_state_s
 {
     ping_ipv4_config_t        wire;
+    atomic_u32_t              next_sequence;
     atomic_log_rate_limiter_t drop_log;
+    bool                      sequence_enabled;
+    bool                      send_replies;
 } ping_ipv4_node_state_t;
 
 static bool pingipv4Transform(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream)
@@ -20,9 +23,30 @@ static bool pingipv4Transform(tunnel_t *t, line_t *l, sbuf_t *buf, bool upstream
 
     ping_ipv4_node_state_t *state  = tunnelGetState(t);
     const bool              encode = upstream == (state->wire.role == kPingIpv4Client);
-    const char             *reason = encode ? pingipv4Encode(buf, &state->wire) : pingipv4Decode(buf, &state->wire);
+    sbuf_t                 *reply  = NULL;
+    const char             *reason =
+        encode ? pingipv4Encode(buf, &state->wire, state->sequence_enabled ? &state->next_sequence : NULL)
+                           : pingipv4Decode(buf, &state->wire, state->send_replies ? lineGetBufferPool(l) : NULL, &reply);
     if (reason == NULL)
     {
+        if (reply != NULL)
+        {
+            lineRef(l);
+            if (upstream)
+            {
+                tunnelPrevDownStreamPayload(t, l, reply);
+            }
+            else
+            {
+                tunnelNextUpStreamPayload(t, l, reply);
+            }
+            if (UNLIKELY(! lineIsAlive(l)))
+            {
+                LOGF("%s: worker packet line died during generated Echo Reply callback", name);
+                abortProgramNow(1);
+            }
+            lineUnref(l);
+        }
         return true;
     }
 
@@ -72,8 +96,8 @@ static void pingipv4Downstream(tunnel_t *t, line_t *l, sbuf_t *buf)
 
 tunnel_t *pingipv4NodeCreate(node_t *node, ping_ipv4_role_t role)
 {
-    ping_ipv4_config_t wire = {.role = role};
-    if (! pingipv4ReadSettings(node, &wire))
+    ping_ipv4_settings_t settings = {.wire = {.role = role}};
+    if (! pingipv4ReadSettings(node, &settings))
     {
         return NULL;
     }
@@ -85,7 +109,14 @@ tunnel_t *pingipv4NodeCreate(node_t *node, ping_ipv4_role_t role)
     }
 
     ping_ipv4_node_state_t *state = tunnelGetState(t);
-    state->wire                   = wire;
+    state->wire                   = settings.wire;
+    if (settings.random_identifier)
+    {
+        state->wire.identifier = (uint16_t) fastRandRange32(1, UINT16_MAX);
+    }
+    atomicStoreU32Relaxed(&state->next_sequence, settings.sequence_start);
+    state->sequence_enabled = settings.sequence_enabled;
+    state->send_replies     = settings.send_replies;
     atomicLogRateLimiterInitialize(&state->drop_log);
     t->fnPayloadU = &pingipv4Upstream;
     t->fnPayloadD = &pingipv4Downstream;

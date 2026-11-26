@@ -107,12 +107,18 @@ typedef enum ping_ipv4_setting_e
 {
     kPingIpv4Type,
     kPingIpv4Code,
+    kPingIpv4Identifier,
+    kPingIpv4SequenceStart,
+    kPingIpv4SendReplies,
     kPingIpv4SettingCount
 } ping_ipv4_setting_t;
 
 static const char *const kSettingNames[kPingIpv4SettingCount] = {
-    [kPingIpv4Type] = "icmp-type",
-    [kPingIpv4Code] = "icmp-code",
+    [kPingIpv4Type]          = "icmp-type",
+    [kPingIpv4Code]          = "icmp-code",
+    [kPingIpv4Identifier]    = "identifier",
+    [kPingIpv4SequenceStart] = "sequence-start",
+    [kPingIpv4SendReplies]   = "send-replies",
 };
 
 static bool pingipv4ReadType(const cJSON *item, uint8_t *type)
@@ -169,7 +175,7 @@ static bool pingipv4ReadCode(const cJSON *item, uint8_t type, uint8_t *code)
     return false;
 }
 
-bool pingipv4ReadSettings(const node_t *node, ping_ipv4_config_t *config)
+bool pingipv4ReadSettings(const node_t *node, ping_ipv4_settings_t *config)
 {
     const cJSON *settings = node->node_settings_json;
     const char  *name     = node->type;
@@ -201,16 +207,45 @@ bool pingipv4ReadSettings(const node_t *node, ping_ipv4_config_t *config)
         fields[setting] = item;
     }
 
-    if (! pingipv4ReadType(fields[kPingIpv4Type], &config->type))
+    if (! pingipv4ReadType(fields[kPingIpv4Type], &config->wire.type))
     {
         LOGF("%s: icmp-type must be an integer from 0 to 255 or a recognized ICMPv4 type name", name);
         return false;
     }
-    if (! pingipv4ReadCode(fields[kPingIpv4Code], config->type, &config->code))
+    if (! pingipv4ReadCode(fields[kPingIpv4Code], config->wire.type, &config->wire.code))
     {
         LOGF("%s: icmp-code must be an integer from 0 to 255 or a recognized code name for ICMPv4 type %u",
              name,
-             (unsigned int) config->type);
+             (unsigned int) config->wire.type);
+        return false;
+    }
+
+    const cJSON *identifier  = fields[kPingIpv4Identifier];
+    const cJSON *sequence    = fields[kPingIpv4SequenceStart];
+    config->sequence_enabled = identifier != NULL || sequence != NULL;
+    config->random_identifier =
+        config->sequence_enabled &&
+        (identifier == NULL || (cJSON_IsString(identifier) && strcmp(identifier->valuestring, "random") == 0));
+    int64_t value;
+    if (identifier != NULL && ! config->random_identifier)
+    {
+        if (! jsonGetIntegerInRange(identifier, 0, UINT16_MAX, &value))
+        {
+            LOGF("%s: identifier must be 'random' or an integer from 0 to 65535", name);
+            return false;
+        }
+        config->wire.identifier = (uint16_t) value;
+    }
+    value = 1;
+    if (sequence != NULL && ! jsonGetIntegerInRange(sequence, 0, UINT16_MAX, &value))
+    {
+        LOGF("%s: sequence-start must be an integer from 0 to 65535", name);
+        return false;
+    }
+    config->sequence_start = (uint16_t) value;
+    if (jsonGetObjectBoolean(settings, kSettingNames[kPingIpv4SendReplies], &config->send_replies) == kJsonValueInvalid)
+    {
+        LOGF("%s: send-replies must be a boolean", name);
         return false;
     }
     return true;

@@ -38,7 +38,7 @@ the packet lines these nodes require.
 
 ## Minimal practical example
 
-Replace `next-node` with the next configured node in the chain. Both settings
+Replace `next-node` with the next configured node in the chain. All settings
 are optional and the entire `settings` object may be omitted.
 
 ```json
@@ -59,6 +59,9 @@ are optional and the entire `settings` object may be omitted.
 | --- | --- | --- |
 | `icmp-type` | `"echo-request"` (`8`) | Outbound ICMPv4 type. Use a [type name](#icmp-type-names) or a JSON integer from `0` to `255`. |
 | `icmp-code` | `0` | Outbound ICMPv4 code. Use a [code name](#icmp-code-names) for the selected type or a JSON integer from `0` to `255`. |
+| `identifier` | `"random"` when `sequence-start` is set | Stable nonzero random identifier, or a JSON integer from `0` to `65535`. |
+| `sequence-start` | `1` when `identifier` is set | Starting sequence as a JSON integer from `0` to `65535`. |
+| `send-replies` | `false` | Boolean enabling Echo Replies to accepted Echo Requests (type `8`, code `0`). |
 
 Unknown settings, including `local-ipv4` and `peer-ipv4`, are rejected.
 Use the lowercase, hyphenated strings shown in the tables. Code names
@@ -194,11 +197,22 @@ plaintext IPv4 data.
 ```
 
 The ICMP header starts with the configured type and code and the ICMP
-checksum. Its last four bytes are zero on transmit. The checksum covers the
-entire ICMP message, including the saved IPv4 protocol in the penultimate byte
-and sender role in the final byte (client `1`, server `2`). The decoder restores
-the native protocol and length. The decoded header reflects the received
-addresses, TTL, DSCP/ECN, ID, DF, and options.
+checksum. If either `identifier` or `sequence-start` is set, the last four
+header bytes hold the 16-bit identifier and sequence in network byte order.
+The encoder writes these values for any type and code. ICMP Echo defines those
+bytes as the identifier and sequence. A node shares one sequence across its
+workers, advancing it on each successful encode and wrapping to zero after
+`65535`. When both settings are omitted, the encoder writes four zero bytes.
+The checksum covers the entire ICMP message, including the saved IPv4 protocol
+in the penultimate byte and sender role in the final byte (client `1`,
+server `2`). The decoder restores the native protocol and length. The decoded
+header reflects the received addresses, TTL, DSCP/ECN, ID, DF, and options.
+
+With `send-replies` enabled, an accepted Echo Request also produces an Echo
+Reply (type `0`, code `0`) toward the carrier side. The reply copies the
+request's identifier, sequence and entire ICMP payload, including the sender
+role. It swaps the IPv4 addresses, sets TTL to `64` and computes new checksums.
+The original sender's role check excludes the reply from native delivery.
 
 The encoder removes the address contribution from TCP and UDP checksums.
 The decoder adds the contribution of the received addresses. A zero IPv4 UDP
@@ -210,8 +224,8 @@ An invalid native transport checksum remains invalid without native repair.
 
 `PingServer` encodes downstream and decodes upstream. Each accepted
 packet continues in the same callback direction. Per-node state holds
-configuration and drop diagnostics. Packet lines belong to the chain, and the
-node has no per-line state.
+configuration, transmit sequence and drop diagnostics. Packet lines belong to
+the chain, and the node has no per-line state.
 
 ## Implementation details
 

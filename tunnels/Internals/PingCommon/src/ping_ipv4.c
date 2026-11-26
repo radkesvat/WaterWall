@@ -51,7 +51,7 @@ static void pingipv4SetCarrierChecksums(sbuf_t *buf)
     discard checksummed;
 }
 
-const char *pingipv4Encode(sbuf_t *buf, const ping_ipv4_config_t *config)
+const char *pingipv4Encode(sbuf_t *buf, const ping_ipv4_config_t *config, atomic_u32_t *next_sequence)
 {
     assert(buf != NULL && ! sbufIsSplice(buf));
     assert(config != NULL && (config->role == kPingIpv4Client || config->role == kPingIpv4Server));
@@ -101,8 +101,16 @@ const char *pingipv4Encode(sbuf_t *buf, const ping_ipv4_config_t *config)
     memmove(icmp + kPingIpv4IcmpPrefixLength, icmp + kPingIpv4Overhead, native.transport_length);
 
     memoryZero(icmp, kPingIpv4IcmpPrefixLength);
-    icmp[0]                                         = config->type;
-    icmp[1]                                         = config->code;
+    icmp[0] = config->type;
+    icmp[1] = config->code;
+    if (next_sequence != NULL)
+    {
+        const uint16_t sequence = (uint16_t) atomicAddU32Explicit(next_sequence, 1U, memory_order_relaxed);
+        icmp[4]                 = (uint8_t) (config->identifier >> 8);
+        icmp[5]                 = (uint8_t) config->identifier;
+        icmp[6]                 = (uint8_t) (sequence >> 8);
+        icmp[7]                 = (uint8_t) sequence;
+    }
     packet[carrier_length - kPingIpv4TrailerLength] = native.protocol;
     packet[carrier_length - 1U]                     = (uint8_t) config->role;
 
@@ -115,10 +123,11 @@ const char *pingipv4Encode(sbuf_t *buf, const ping_ipv4_config_t *config)
     return NULL;
 }
 
-const char *pingipv4Decode(sbuf_t *buf, const ping_ipv4_config_t *config)
+const char *pingipv4Decode(sbuf_t *buf, const ping_ipv4_config_t *config, buffer_pool_t *reply_pool, sbuf_t **reply_out)
 {
     assert(buf != NULL && ! sbufIsSplice(buf));
     assert(config != NULL && (config->role == kPingIpv4Client || config->role == kPingIpv4Server));
+    assert(reply_pool == NULL || (reply_out != NULL && *reply_out == NULL));
 
     const size_t carrier_length = sbufGetLength(buf);
     if (carrier_length > kMaxAllowedPacketLength)
@@ -174,6 +183,23 @@ const char *pingipv4Decode(sbuf_t *buf, const ping_ipv4_config_t *config)
         {
             return "invalid carrier ICMP checksum";
         }
+    }
+
+    if (reply_pool != NULL && icmp[0] == ICMP_ECHO && icmp[1] == 0)
+    {
+        sbuf_t        *reply        = sbufDuplicateByPool(reply_pool, buf);
+        uint8_t       *reply_packet = sbufGetMutablePtr(reply);
+        struct ip_hdr *reply_ip     = (struct ip_hdr *) reply_packet;
+        reply_ip->src.addr          = carrier.destination_address;
+        reply_ip->dest.addr         = carrier.source_address;
+        IPH_ID_SET(reply_ip, lwip_htons((uint16_t) fastRand32()));
+        IPH_TTL_SET(reply_ip, 64);
+        IPH_OFFSET_SET(reply_ip, 0);
+        /* Keep the request's role trailer so the sender still rejects the reflected payload. */
+        reply_packet[carrier.transport_offset] = ICMP_ER;
+        pingipv4SetCarrierChecksums(reply);
+        sbufSetRecalculateChecksum(reply, false);
+        *reply_out = reply;
     }
 
     const uint16_t native_length = (uint16_t) (carrier_length - kPingIpv4Overhead);

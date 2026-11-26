@@ -126,7 +126,8 @@ static void requireRefusal(sbuf_t *buf, const ping_ipv4_config_t *config, bool e
     const bool     repair   = sbufGetRecalculateChecksum(buf);
     require(capacity <= sizeof(expected), "refusal fixture capacity exceeds capture");
     memoryCopy(expected, buf->head, capacity);
-    require((encode ? pingipv4Encode(buf, config) : pingipv4Decode(buf, config)) != NULL, "invalid packet accepted");
+    require((encode ? pingipv4Encode(buf, config, NULL) : pingipv4Decode(buf, config, NULL, NULL)) != NULL,
+            "invalid packet accepted");
     require(sbufGetRawPtr(buf) == cursor && sbufGetLength(buf) == length && buf->capacity == capacity &&
                 sbufGetRecalculateChecksum(buf) == repair && memoryEqual(buf->head, expected, capacity),
             "refusal changed caller-owned storage, cursor, length or repair request");
@@ -155,11 +156,12 @@ static void testAllPairs(void)
         {
             sender.type = (uint8_t) type;
             sender.code = (uint8_t) code;
-            require(pingipv4Encode(buf, &sender) == NULL, "ICMP type/code bytes refused at transmit");
+            require(pingipv4Encode(buf, &sender, NULL) == NULL, "ICMP type/code bytes refused at transmit");
             const uint8_t *bytes = sbufGetRawPtr(buf);
             require(bytes[20] == type && bytes[21] == code, "configured type/code missing from the wire");
             requireCarrierChecksums(buf);
-            require(pingipv4Decode(buf, &receiver) == NULL, "receive unexpectedly depends on the type/code bytes");
+            require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL,
+                    "receive unexpectedly depends on the type/code bytes");
             require(sbufGetLength(buf) == sizeof(native) && memoryEqual(sbufGetRawPtr(buf), native, sizeof(native)),
                     "round trip changed the native IPv4 packet");
         }
@@ -199,7 +201,7 @@ static void testWireLayout(void)
         memoryCopy(native, bytes, length);
         require((uintptr_t) bytes % 2U == 1, "fixture needs an unaligned native cursor");
 
-        require(pingipv4Encode(buf, &sender) == NULL, "carrier encode refused");
+        require(pingipv4Encode(buf, &sender, NULL) == NULL, "carrier encode refused");
         bytes = sbufGetMutablePtr(buf);
         require((uintptr_t) bytes % 2U == 1 && sbufGetHeadroom(buf) == 1 && sbufGetTailroom(buf) == 0,
                 "encode unexpectedly changed alignment or geometry");
@@ -219,7 +221,7 @@ static void testWireLayout(void)
         require(memoryEqual(icmp + 8, data, body + 2U), "ICMP data must be exactly payload, protocol, then role");
         requireCarrierChecksums(buf);
 
-        require(pingipv4Decode(buf, &receiver) == NULL, "carrier decode refused");
+        require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL, "carrier decode refused");
         require(sbufGetHeadroom(buf) == kPingIpv4Overhead + 1 && sbufGetTailroom(buf) == 0 &&
                     sbufGetLength(buf) == length && memoryEqual(sbufGetRawPtr(buf), native, length),
                 "decode did not restore the original geometry and bytes");
@@ -242,7 +244,7 @@ static void testTransitChanges(void)
     memoryCopy(bytes + IP_HLEN, options, sizeof(options));
     setChecksum(bytes, ihl, 10, 0);
     memoryCopy(expected, bytes, sizeof(expected));
-    require(pingipv4Encode(buf, &sender) == NULL, "carrier encode refused");
+    require(pingipv4Encode(buf, &sender, NULL) == NULL, "carrier encode refused");
     bytes    = sbufGetMutablePtr(buf);
     bytes[1] = expected[1] = 0x2f;
     bytes[8] = expected[8] = 53;
@@ -256,7 +258,7 @@ static void testTransitChanges(void)
     memorySet(bytes + ihl + 4, 0x5c, 4);
     repairCarrier(buf);
     setChecksum(expected, ihl, 10, 0);
-    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == sizeof(expected) &&
+    require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL && sbufGetLength(buf) == sizeof(expected) &&
                 memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
             "decode did not expose the received IPv4 header and preserve its native payload");
     requireCanary(buf);
@@ -300,7 +302,7 @@ static void testRefusedIpv4Options(void)
             const bool encode = direction == 0;
             if (! encode)
             {
-                require(pingipv4Encode(buf, &sender) == NULL, "cannot construct control carrier");
+                require(pingipv4Encode(buf, &sender, NULL) == NULL, "cannot construct control carrier");
                 bytes = sbufGetMutablePtr(buf);
             }
             memoryCopy(bytes + IP_HLEN, cases[i].options, sizeof(cases[i].options));
@@ -321,10 +323,11 @@ static void testSizeHeadroomAndFragments(void)
     const ping_ipv4_config_t sender   = clientConfig();
     const ping_ipv4_config_t receiver = serverConfig();
     sbuf_t                  *buf      = newNative(1490, 60, 49, 10, 0);
-    require(kPingIpv4Overhead == 10 && kPingIpv4MaxInnerLength == 1490 && pingipv4Encode(buf, &sender) == NULL &&
+    require(kPingIpv4Overhead == 10 && kPingIpv4MaxInnerLength == 1490 && pingipv4Encode(buf, &sender, NULL) == NULL &&
                 sbufGetLength(buf) == 1500 && sbufGetHeadroom(buf) == 0 && sbufGetTailroom(buf) == 0,
             "exact-ceiling packet failed with ten bytes of headroom and no tailroom");
-    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == 1490, "exact-ceiling decode failed");
+    require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL && sbufGetLength(buf) == 1490,
+            "exact-ceiling decode failed");
     requireCanary(buf);
     sbufDestroy(buf);
 
@@ -335,7 +338,7 @@ static void testSizeHeadroomAndFragments(void)
 
     buf = newCarrier(1500, 49, 1);
     requireCarrierChecksums(buf);
-    require(pingipv4Decode(buf, &receiver) == NULL && sbufGetLength(buf) == 1490,
+    require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL && sbufGetLength(buf) == 1490,
             "standalone 1500-byte carrier was refused");
     requireCanary(buf);
     sbufDestroy(buf);
@@ -470,7 +473,7 @@ static void testTransportGeometry(void)
     PUT_BE16(bytes + IP_HLEN + 6, 0);
     uint8_t expected[IP_HLEN + 11];
     memoryCopy(expected, bytes, sizeof(expected));
-    require(pingipv4Encode(buf, &sender) == NULL && pingipv4Decode(buf, &receiver) == NULL &&
+    require(pingipv4Encode(buf, &sender, NULL) == NULL && pingipv4Decode(buf, &receiver, NULL, NULL) == NULL &&
                 sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
             "UDP length with IPv4 padding lost data or enabled the disabled checksum");
     requireCanary(buf);
@@ -495,7 +498,7 @@ static void testChecksumRepairBoundaries(void)
     native[10] ^= 0x80;
     native[ihl + 6] ^= 0x80;
     sbufSetRecalculateChecksum(buf, true);
-    require(pingipv4Encode(buf, &sender) == NULL && ! sbufGetRecalculateChecksum(buf),
+    require(pingipv4Encode(buf, &sender, NULL) == NULL && ! sbufGetRecalculateChecksum(buf),
             "native pending repair was not consumed");
     requireCarrierChecksums(buf);
     uint8_t *carrier   = sbufGetMutablePtr(buf);
@@ -509,7 +512,7 @@ static void testChecksumRepairBoundaries(void)
     transport[udp_len - 1U] ^= 0x80;
     expected[sizeof(expected) - 1U] ^= 0x80;
     sbufSetRecalculateChecksum(buf, true);
-    require(pingipv4Decode(buf, &receiver) == NULL && ! sbufGetRecalculateChecksum(buf),
+    require(pingipv4Decode(buf, &receiver, NULL, NULL) == NULL && ! sbufGetRecalculateChecksum(buf),
             "pending carrier repair was not consumed");
     require(sbufGetLength(buf) == sizeof(expected) && memoryEqual(sbufGetRawPtr(buf), expected, sizeof(expected)),
             "carrier repair modified hidden native checksum bytes");
