@@ -51,6 +51,7 @@ struct core_settings_s
     bool                      splice_enabled;
     uint16_t                  mtu_size;
     uint32_t                  tcp_stack_receive_budget;
+    uint32_t                  lwip_ooseq_pbufs;
     ww_lwip_capacity_config_t lwip_capacity;
 #ifndef WATERWALL_CORE_SETTINGS_PREFLIGHT
     vec_config_path_t config_paths;

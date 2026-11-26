@@ -327,7 +327,8 @@ refusals to identify which resource needs attention before changing a limit.
   retain it for out-of-order delivery. Wrapper growth obeys `lwip-max-rx-wrappers`
   and the shared byte budget; retained sbuf storage is charged separately until
   pbuf release or transfer to application receive staging. Per-PCB
-  `TCP_OOSEQ_MAX_PBUFS` and `TCP_OOSEQ_MAX_BYTES` limits still apply. Capacity
+  per-connection out-of-order limits (`misc.lwip-max-ooseq-pbufs`, default 32, and
+  `TCP_OOSEQ_MAX_BYTES`) still apply. Capacity
   refusal drops the packet with a rate-limited warning. Stopping one node does
   not reset process-wide pool accounting
 - packet transforms may leave the buffer cursor at any byte alignment, and lwIP reads typed IP/TCP headers

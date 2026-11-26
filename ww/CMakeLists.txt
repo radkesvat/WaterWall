@@ -1251,10 +1251,14 @@ include("${WW_LWIP_TCP_TIMESTAMPS_RECIPE}")
 set(WW_LWIP_TCP_BOUND_MSS_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/tcp_bound_mss_patch.cmake")
 file(SHA256 "${WW_LWIP_TCP_BOUND_MSS_RECIPE}" WW_LWIP_TCP_BOUND_MSS_RECIPE_SHA256)
 include("${WW_LWIP_TCP_BOUND_MSS_RECIPE}")
+set(WW_LWIP_TCP_RACK_RECIPE "${CMAKE_CURRENT_SOURCE_DIR}/lwip/tcp_rack_patch.cmake")
+file(SHA256 "${WW_LWIP_TCP_RACK_RECIPE}" WW_LWIP_TCP_RACK_RECIPE_SHA256)
+include("${WW_LWIP_TCP_RACK_RECIPE}")
 set(WW_LWIP_EXPECTED_PATCH_STAMP
     "revision=${WW_LWIP_REVISION}\nupstream-tcp-input-sha256=${WW_LWIP_UPSTREAM_TCP_INPUT_RECIPE_SHA256}\nrecipe-sha256=${WW_LWIP_PATCH_RECIPE_SHA256}\nengine-sha256=${WW_LWIP_ENGINE_RECIPE_SHA256}\npools-sha256=${WW_LWIP_POOLS_RECIPE_SHA256}\nports-sha256=${WW_LWIP_PORTS_RECIPE_SHA256}\ntimer-sha256=${WW_LWIP_TIMER_RECIPE_SHA256}\nlifecycle-sha256=${WW_LWIP_LIFECYCLE_RECIPE_SHA256}\nchecksum-sha256=${WW_LWIP_CHECKSUM_RECIPE_SHA256}\nack-batch-sha256=${WW_LWIP_ACK_BATCH_RECIPE_SHA256}\nreceive-budget-sha256=${WW_LWIP_RECEIVE_BUDGET_RECIPE_SHA256}\ntcp-output-tail-sha256=${WW_LWIP_TCP_OUTPUT_TAIL_RECIPE_SHA256}\ntcp-timestamps-sha256=${WW_LWIP_TCP_TIMESTAMPS_RECIPE_SHA256}\n")
 
 string(APPEND WW_LWIP_EXPECTED_PATCH_STAMP "tcp-bound-mss-sha256=${WW_LWIP_TCP_BOUND_MSS_RECIPE_SHA256}\n")
+string(APPEND WW_LWIP_EXPECTED_PATCH_STAMP "tcp-rack-sha256=${WW_LWIP_TCP_RACK_RECIPE_SHA256}\n")
 
 set(WW_LWIP_REBUILD TRUE)
 if(EXISTS "${WW_LWIP_PATCH_STAMP}")
@@ -1284,6 +1288,7 @@ if(WW_LWIP_REBUILD)
     ww_apply_lwip_tcp_output_tail_patch("${LWIP_DIR}")
     ww_apply_lwip_tcp_timestamps_patch("${LWIP_DIR}")
     ww_apply_lwip_tcp_bound_mss_patch("${LWIP_DIR}")
+    ww_apply_lwip_tcp_rack_patch("${LWIP_DIR}")
     file(WRITE "${WW_LWIP_PATCH_STAMP}" "${WW_LWIP_EXPECTED_PATCH_STAMP}")
 endif()
 
@@ -1372,7 +1377,7 @@ target_include_directories(ww_packet_batch PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/ne
 target_link_libraries(ww_packet_batch PUBLIC waterwall_runtime_options waterwall_cpu_options)
 target_link_libraries(ww PUBLIC ww_packet_batch)
 
-add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c)
+add_library(ww_lwip STATIC ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c lwip/tcp_rack.c)
 target_link_libraries(ww_lwip PUBLIC ww_packet_batch)
 target_include_directories(ww_lwip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libc)
 # Source-local engine modules must not merge their private macro namespaces.
@@ -1381,7 +1386,7 @@ set_target_properties(ww_lwip PROPERTIES UNITY_BUILD OFF)
 # Private small-capacity raw build for shared-limit and concurrency regression tests.
 if(WW_BUILD_UNIT_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_library(ww_lwip_engine_test STATIC EXCLUDE_FROM_ALL
-        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c
+        ${lwipnoapps_SRCS} lwip/engine.c lwip/shared_pools.c lwip/port_registry.c lwip/pool_cache.c lwip/capacity.c lwip/tcp_rack.c
         ${LWIP_CONTRIB_DIR}/ports/unix/port/sys_arch.c)
     target_include_directories(ww_lwip_engine_test PUBLIC ${LWIP_INCLUDE_DIRS})
     target_include_directories(ww_lwip_engine_test PRIVATE
