@@ -2,7 +2,8 @@
  * Covers: negotiated receive-side SACK with the production out-of-order retention bound.
  * Setup: a private raw engine, real IPv4/TCP handshakes and a recording MTU-1500 netif.
  * Checks: handshake permission, malformed/no permission, exact gap ranges during ACK batches,
- * sequence wrap, gap closure, queue-cap eviction, queue cleanup and segment-pool refusal.
+ * sequence wrap, gap closure, queue-cap eviction at the default and a configured limit,
+ * queue cleanup and segment-pool refusal.
  * Limits: this checks wire protocol and bounded retention, not sender SACK recovery or throughput.
  * CTest: waterwall.lwip_sack_unit (Debug and Release).
  */
@@ -330,17 +331,17 @@ static void sackAtReceiveWindowEdge(void)
     stop(f);
 }
 
-static void boundedRetention(void)
+static void boundedRetention(unsigned limit)
 {
     fixture_t     *f    = start(100, permission_valid, false);
     const uint32_t base = f->peer_next;
-    CHECK(TCP_OOSEQ_MAX_PBUFS == 32);
+    CHECK(TCP_OOSEQ_PBUFS_LIMIT(f->pcb) == limit);
     begin(f);
-    for (unsigned i = 0; i <= TCP_OOSEQ_MAX_PBUFS; ++i)
+    for (unsigned i = 0; i <= limit; ++i)
     {
         inject(f, base + (i + 1U) * 64U, TCP_ACK, 64, permission_none);
         expectAck(f, i + 1, base, 1);
-        const unsigned retained = LWIP_MIN(i + 1, TCP_OOSEQ_MAX_PBUFS);
+        const unsigned retained = LWIP_MIN(i + 1, limit);
         expectRange(f, 0, base + 64U, base + (retained + 1U) * 64U);
         unsigned pbufs = 0;
         for (const struct tcp_seg *segment = f->pcb->ooseq; segment != NULL; segment = segment->next)
@@ -348,15 +349,15 @@ static void boundedRetention(void)
         CHECK(pbufs == retained);
     }
     inject(f, base, TCP_ACK, 64, permission_none);
-    expectAck(f, 34, base + 33U * 64U, 0);
-    CHECK(f->received == 33U * 64U && f->pcb->ooseq == NULL);
+    expectAck(f, limit + 2U, base + (limit + 1U) * 64U, 0);
+    CHECK(f->received == (limit + 1U) * 64U && f->pcb->ooseq == NULL);
     end(f);
-    CHECK(f->outputs == 34);
+    CHECK(f->outputs == limit + 2U);
     /* The dropped tail was never reported as retained and still needs delivery. */
-    inject(f, base + 33U * 64U, TCP_ACK, 64, permission_none);
+    inject(f, base + (limit + 1U) * 64U, TCP_ACK, 64, permission_none);
     tcp_fasttmr();
-    expectAck(f, 35, base + 34U * 64U, 0);
-    CHECK(f->received == 34U * 64U);
+    expectAck(f, limit + 3U, base + (limit + 2U) * 64U, 0);
+    CHECK(f->received == (limit + 2U) * 64U);
     stop(f);
 }
 
@@ -452,7 +453,16 @@ int main(void)
     testCaseSet("SACK covers only data inside the receive window");
     sackAtReceiveWindowEdge();
     testCaseSet("bounded out-of-order eviction and cumulative recovery");
-    boundedRetention();
+    CHECK(TCP_OOSEQ_MAX_PBUFS == 32 && WW_LWIP_DEFAULT_OOSEQ_PBUFS == 32);
+    boundedRetention(WW_LWIP_DEFAULT_OOSEQ_PBUFS);
+    testCaseSet("the configured out-of-order limit replaces the default");
+    wwLwipEngineSharedCleanup();
+    wwLwipCapacitySetOoseqPbufLimit(64);
+    wwLwipEngineSharedInit();
+    boundedRetention(64);
+    wwLwipEngineSharedCleanup();
+    wwLwipCapacitySetOoseqPbufLimit(WW_LWIP_DEFAULT_OOSEQ_PBUFS);
+    wwLwipEngineSharedInit();
     testCaseSet("four wire SACK ranges retain the most recent gaps");
     rangeCapacity();
     testCaseSet("segment-pool refusal and queue cleanup");

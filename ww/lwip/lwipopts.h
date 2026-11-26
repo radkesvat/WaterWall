@@ -330,12 +330,16 @@ extern "C"
        reserve. The 32-pbuf limit stays independent of the scaled receive window
        and small relative to the shared pool.
 
-       The 32-pbuf limit is the effective production bound. The byte limit is a
-       future-defense guard: at four receive windows it is intentionally
+       The pbuf limit is the effective production bound. It defaults to 32 and is
+       set at startup from misc.lwip-max-ooseq-pbufs: on paths that reorder, the
+       hole behind one late packet is about lateness x rate / MSS segments, and
+       data beyond the limit is discarded although it was already SACKed. The byte
+       limit is a future-defense guard: at four receive windows it is intentionally
        unreachable with today's advertised TCP_WND, but remains explicit to keep
        OOSEQ byte retention bounded if the pbuf limit changes. */
 #define TCP_OOSEQ_MAX_PBUFS  32
 #define TCP_OOSEQ_MAX_BYTES  (4 * TCP_WND)
+#define TCP_OOSEQ_PBUFS_LIMIT(pcb) wwLwipCapacityOoseqPbufLimit()
 
 /* TCP Maximum segment size. */
 #define TCP_MSS              1460        // 1024
@@ -343,6 +347,11 @@ extern "C"
     /* Negotiate timestamps per connection so peers can distinguish ACKs for original sends from
        retransmissions. This helps avoid slow iOS loss recovery on packet tunnels. */
 #define LWIP_TCP_TIMESTAMPS   1
+
+    /* SACK peers use time-based loss detection (RACK, RFC 8985) instead of the
+       three-duplicate-ACK rule, with one congestion response per recovery episode and
+       timestamp undo of spurious recoveries. See ww/lwip/tcp_rack.h. */
+#define WW_LWIP_TCP_RACK      (LWIP_TCP_SACK_OUT && LWIP_TCP_TIMESTAMPS)
 
     /* Per-connection send capacity; payload storage still comes from the bounded
        process-wide pools in lwippools.h and can apply backpressure earlier. */
@@ -401,7 +410,7 @@ extern "C"
 
        The static fixture keeps a flow/reassembly-derived inventory for deterministic
        exhaustion tests. Neither count grants fragment-input support to the bridges.
-       TCP_OOSEQ_MAX_PBUFS independently bounds retention by one peer; ordinary data
+       TCP_OOSEQ_PBUFS_LIMIT independently bounds retention by one peer; ordinary data
        cannot consume the recovery wrapper or byte allowance. */
 #ifndef WW_LWIP_RX_WRAPPER_POOL_SIZE
 #if WW_LWIP_DYNAMIC_POOLS

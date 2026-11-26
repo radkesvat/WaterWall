@@ -18,6 +18,19 @@ static ww_lwip_capacity_config_t   configuration = {WW_LWIP_DEFAULT_MEMORY_BUDGE
                                                     WW_LWIP_DEFAULT_RX_WRAPPERS};
 static ww_lwip_capacity_snapshot_t usage;
 static bool                        initialized;
+static uint16_t                    ooseq_pbuf_limit = WW_LWIP_DEFAULT_OOSEQ_PBUFS;
+
+void wwLwipCapacitySetOoseqPbufLimit(uint32_t limit)
+{
+    assert(! initialized);
+    assert(limit != 0 && limit <= WW_LWIP_MAX_OOSEQ_PBUFS);
+    ooseq_pbuf_limit = (uint16_t) limit;
+}
+
+uint16_t wwLwipCapacityOoseqPbufLimit(void)
+{
+    return ooseq_pbuf_limit;
+}
 
 uint64_t wwLwipCapacityRecoveryHeadroom(void)
 {

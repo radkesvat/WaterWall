@@ -23,6 +23,8 @@
 #endif
 #define WW_LWIP_DEFAULT_TCP_SEGMENTS 1048576U
 #define WW_LWIP_DEFAULT_RX_WRAPPERS  262144U
+#define WW_LWIP_DEFAULT_OOSEQ_PBUFS  32U
+#define WW_LWIP_MAX_OOSEQ_PBUFS      65535U
 
 typedef struct ww_lwip_capacity_config_s
 {
@@ -88,6 +90,13 @@ void wwLwipCapacityReleaseExternal(size_t bytes);
 uint64_t wwLwipCapacityRecoveryHeadroom(void);
 bool     wwLwipCapacityTryReserveExternalRecovery(size_t bytes);
 void     wwLwipCapacityReleaseExternalRecovery(size_t bytes);
+
+/* Per-connection ceiling on out-of-order pbufs a TCP receiver retains. Every retained
+ * pbuf can pin one RX wrapper from the process-wide pool, so this bounds what one
+ * reordering peer can take from it. Exclusive startup, before shared lwIP
+ * initialization; accepts 1 through WW_LWIP_MAX_OOSEQ_PBUFS. */
+void     wwLwipCapacitySetOoseqPbufLimit(uint32_t limit);
+uint16_t wwLwipCapacityOoseqPbufLimit(void);
 
 struct memp_desc;
 /* Explicit RX wrapper fallback. Tagged allocations never enter ordinary worker

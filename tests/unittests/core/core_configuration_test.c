@@ -245,6 +245,40 @@ static int testTcpStackReceiveBudget(void)
     return 0;
 }
 
+static int testLwipOoseqPbufs(void)
+{
+    const struct
+    {
+        const char *json;
+        uint32_t    limit;
+    } valid[] = {
+        {"{\"configs\":[\"nodes.json\"]}", WW_LWIP_DEFAULT_OOSEQ_PBUFS},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{}}", WW_LWIP_DEFAULT_OOSEQ_PBUFS},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-max-ooseq-pbufs\":1}}", 1},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-max-ooseq-pbufs\":256}}", 256},
+        {"{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-max-ooseq-pbufs\":65535}}", 65535},
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(valid); ++i)
+    {
+        CHECK(testParse(valid[i].json));
+        CHECK(getCoreSettings()->lwip_ooseq_pbufs == valid[i].limit);
+        destroyCoreSettings();
+    }
+
+    const char *invalid[] = {"null", "true", "\"32\"", "[]", "{}", "0", "-1", "32.5", "65536", "4294967296", "1e999"};
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); ++i)
+    {
+        char      json[160];
+        const int length = snprintf(
+            json, sizeof(json), "{\"configs\":[\"nodes.json\"],\"misc\":{\"lwip-max-ooseq-pbufs\":%s}}", invalid[i]);
+        CHECK(length > 0 && (size_t) length < sizeof(json));
+        CHECK(! testParse(json));
+        destroyCoreSettings();
+        CHECK(getCoreSettings() == NULL);
+    }
+    return 0;
+}
+
 static int testLwipCapacity(void)
 {
     const char *defaults[] = {
@@ -413,6 +447,7 @@ int main(void)
     CHECK(testVerboseLogging() == 0);
     CHECK(testTcpStackReceiveBudget() == 0);
     CHECK(testLwipCapacity() == 0);
+    CHECK(testLwipOoseqPbufs() == 0);
 
     const char *valid = "{\"configs\":[\"nodes.json\"],\"misc\":{\"workers\":2},"
                         "\"dns\":{\"domains\":[\"example.test\"],\"servers\":\"127.0.0.1\"}}";

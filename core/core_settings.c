@@ -149,6 +149,7 @@ static void initCoreSettings(void)
 
     /* Per-owner target, not a memory reservation; zero disables adaptation. */
     settings->tcp_stack_receive_budget = WW_LWIP_DEFAULT_RECEIVE_BUDGET;
+    settings->lwip_ooseq_pbufs         = WW_LWIP_DEFAULT_OOSEQ_PBUFS;
     settings->lwip_capacity            = (ww_lwip_capacity_config_t) {
                    .memory_budget = WW_LWIP_DEFAULT_MEMORY_BUDGET,
                    .tcp_flows     = WW_LWIP_DEFAULT_TCP_FLOWS,
@@ -1077,6 +1078,21 @@ static bool parseLwipCapacityOfMiscJson(const cJSON *misc_obj)
         {
             *limits[i].value = (uint32_t) value;
         }
+    }
+
+    int64_t                   ooseq_pbufs = 0;
+    const json_value_status_t ooseq_status =
+        jsonGetObjectIntegerInRange(misc_obj, "lwip-max-ooseq-pbufs", 1, WW_LWIP_MAX_OOSEQ_PBUFS, &ooseq_pbufs);
+    if (ooseq_status == kJsonValueInvalid)
+    {
+        printError("CoreSettings: \"misc.lwip-max-ooseq-pbufs\" must be a whole number in range [1, %u]\n",
+                   WW_LWIP_MAX_OOSEQ_PBUFS);
+        startupFailureRecord(1);
+        return false;
+    }
+    if (ooseq_status == kJsonValuePresent)
+    {
+        settings->lwip_ooseq_pbufs = (uint32_t) ooseq_pbufs;
     }
     return true;
 }

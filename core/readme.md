@@ -335,6 +335,7 @@ setting nobody chose. This applies to every field in the table, not only to
 | `lwip-max-tcp-listeners` | integer | `1024` | Process-wide maximum userspace TCP listener objects. |
 | `lwip-max-tcp-segments` | integer | `1048576` | Process-wide maximum TCP segment objects used by send, retransmit and receive queues. |
 | `lwip-max-rx-wrappers` | integer | `262144` | Process-wide maximum wrappers retaining input packet storage. |
+| `lwip-max-ooseq-pbufs` | integer | `32` | Per-connection maximum out-of-order packet buffers a userspace TCP receiver keeps while waiting for a gap to fill. Accepts `1` to `65535`. See below. |
 | `try-enabling-bbr` | boolean | `true` on Linux; `false` otherwise | Linux-only best-effort startup attempt to enable TCP BBR. |
 | `libs-path` | string | `"libs/"` | Directory used when loading external tunnel libraries. |
 
@@ -364,6 +365,7 @@ Recommended example:
     "lwip-max-tcp-listeners": 1024,
     "lwip-max-tcp-segments": 1048576,
     "lwip-max-rx-wrappers": 262144,
+    "lwip-max-ooseq-pbufs": 32,
     "try-enabling-bbr": true,
     "libs-path": "libs/"
   }
@@ -519,6 +521,14 @@ in the reported total reserved bytes, not added to them.
 `held` includes free objects reserved in worker caches; it is not a live-connection
 count. Byte totals and cumulative counters are decimal strings. The node
 references describe the operation and its API limits.
+
+`lwip-max-ooseq-pbufs` matters on paths that reorder packets. When one packet arrives
+late, every packet behind it waits in the out-of-order queue: about lateness x flow rate /
+1460 bytes, e.g. 61 packets for 5 ms at 150 Mbit/s and 245 for 20 ms. Data beyond the
+limit is discarded although the receiver already acknowledged it with SACK, so the sender
+must resend it and slows down. Each retained packet holds one RX wrapper, so the limit
+times the number of connections reordering at the same moment must stay well below
+`lwip-max-rx-wrappers`; at 256, about 1000 such connections fill the default pool.
 
 `tcp-stack-receive-budget` remains a separate per-worker advertised-window target;
 it does not enlarge the allocator budget. `tcp-tune` controls native kernel
