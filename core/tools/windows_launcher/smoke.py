@@ -105,16 +105,20 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
         assert code == 0 and b'Waterwall version' in out, (code, out, err)
 
     protected = b'{"configs":["first.json","second.json"],"windows-kill-switch":true}'
-    marker = root / 'machine-lock'
-    trace = root / 'kill-switch-trace'
-    transitions = root / 'kill-switch-transitions'
-    lease = root / 'run.lock'
+    # The launcher pins the extraction root and its ancestors against write sharing.
+    # Keep simulated machine state in a sibling directory so owner publication can rename its file.
+    switch_state = root / 'kill-switch'
+    switch_state.mkdir()
+    marker = switch_state / 'machine-lock'
+    trace = switch_state / 'kill-switch-trace'
+    transitions = switch_state / 'kill-switch-transitions'
+    lease = switch_state / 'run.lock'
     switch_env = {
         'WW_FIXTURE_KILL_SWITCH_STATE': windows_path(marker),
         'WW_FIXTURE_KILL_SWITCH_LEASE': windows_path(lease),
         'WW_FIXTURE_KILL_SWITCH_TRACE': windows_path(trace),
         'WW_FIXTURE_KILL_SWITCH_TRANSITIONS': windows_path(transitions),
-        'WW_FIXTURE_KILL_SWITCH_IMAGE': windows_path(root / 'kill-switch-image'),
+        'WW_FIXTURE_KILL_SWITCH_IMAGE': windows_path(switch_state / 'kill-switch-image'),
     }
 
     def check_switch_status(expected):
@@ -256,9 +260,14 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
     assert receipt['termination'] == 'orderly' and receipt['cleanup'] == 'settled', receipt
     check_switch_status(b'unlocked')
 
+    crash_extraction = root / 'crash-extraction'
+    crash_extraction.mkdir()
+    crash_env = {'TEMP': windows_path(crash_extraction), 'TMP': windows_path(crash_extraction)}
+
     # The runtime has exited, but the adapter inventory still prevents automatic unlock.
+    # An unsettled adapter can exhaust the stop deadline and leave extraction residue.
     for state in ('pending', 'present'):
-        with start_switch_process('adapter-' + state, WW_FIXTURE_ADAPTER_STATE=state) as owner:
+        with start_switch_process('adapter-' + state, WW_FIXTURE_ADAPTER_STATE=state, **crash_env) as owner:
             await_process(owner, False, timeout=25)
         check_switch_status(b'locked')
         unlock()
@@ -283,9 +292,6 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
     unlock()
     check_switch_status(b'unlocked')
 
-    crash_extraction = root / 'crash-extraction'
-    crash_extraction.mkdir()
-    crash_env = {'TEMP': windows_path(crash_extraction), 'TMP': windows_path(crash_extraction)}
     with start_switch_process('abrupt-A', WW_FIXTURE_KILL_SWITCH_HOLD=windows_path(root / 'crash-ready'),
                               WW_FIXTURE_KILL_SWITCH_FAIL='crash-launcher-after-poll', **crash_env) as abrupt:
         assert await_process(abrupt, False) == (5 if args.wine else 0xc0000005)
@@ -404,7 +410,7 @@ with tempfile.TemporaryDirectory(prefix='Waterwall fixture spaces ') as temporar
         await_file(stale_ready, owner)
         with start_switch_process('stale-B', WW_FIXTURE_HANDOFF_PAUSED=windows_path(stale_pause),
                                   WW_FIXTURE_HANDOFF_CONTINUE=windows_path(stale_continue),
-                                  WW_FIXTURE_HANDOFF_CRASH='1') as successor:
+                                  WW_FIXTURE_HANDOFF_CRASH='1', **crash_env) as successor:
             await_file(stale_pause, successor)
             await_process(owner, True)
             stale_continue.touch()

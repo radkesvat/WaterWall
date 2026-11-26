@@ -389,9 +389,8 @@ static void testProtectedAdapterLifecycle(bool owner, bool authorize, bool route
     tundevice_tstate_t *state    = tunnelGetState(tunnel);
     char               *routes[] = {route_values[0], route_values[1]};
     size_t              first, second;
-    require(wwKillSwitchConsiderTun(&runtime_owners, true, false, &first) &&
-                wwKillSwitchConsiderTun(&runtime_owners, true, true, &second),
-            "collect TUNs from both configurations");
+    require(wwKillSwitchConsiderTun(&runtime_owners, true, false, &first), "collect unmarked TUN");
+    require(wwKillSwitchConsiderTun(&runtime_owners, true, true, &second), "collect marked TUN");
     state->kill_switch_candidate = owner ? second : first;
     state->system_route_enabled  = true;
     state->system_routes         = routes;

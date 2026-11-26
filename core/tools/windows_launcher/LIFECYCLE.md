@@ -59,14 +59,17 @@ output. Internal DNS helpers use no console. Existing generated Internal, Core,
 Network and DNS files retain their independent configuration/redaction behavior.
 Closing the console or pressing Ctrl+C requests the same orderly stop. On window
 close the handler lets cleanup run until the process exits or Windows enforces
-its console-close deadline. An OS-forced close counts as abrupt termination.
+its console-close deadline. Windows releases the console on process exit during
+a pending close. An OS-forced close counts as abrupt termination.
 The client's firewall policy retains its own lifetime.
 
 ## Containment and deadlines
 
-Before creating any descendant, the public process assigns **itself** to its
-private kill-on-close Job, with neither breakaway flag. Descendants inherit that
-membership at creation, including a suspended child whose `CreateProcess` has not
+Before creating the runtime or its helpers, the public process assigns
+**itself** to its private kill-on-close Job, with neither breakaway flag. The
+launcher prepares its visible console before Job admission so the system console
+host stays outside the Job. Runtime descendants inherit Job membership at
+creation, including a suspended child whose `CreateProcess` has not
 returned. There is no create-then-assign child gap. The launcher retains the sole
 ordinary Job handle until process termination. Closing it explicitly during normal
 cleanup would kill the launcher itself, so it is intentionally process-lifetime
@@ -310,8 +313,9 @@ termination. It checks Job active-process accounting, rather than treating a
 successful termination call or wait on a Job as settlement. A missing Job name is not evidence of inactivity: Windows removes a temporary
 object's name at last-handle close even while kernel references can remain.
 Before finalizing a normal receipt, the public process closes its standard
-streams, detaches its console, and records an observed one-member Job barrier.
-Open `CONOUT$` streams can otherwise keep the console host alive after detach.
+streams and records an observed one-member Job barrier. The launcher detaches
+from the console during ordinary cleanup. A pending console close leaves
+detachment to Windows at process exit.
 It creates no descendants afterward.
 Only that barrier plus proof that the exact public process exited can substitute
 for live Job accounting. Otherwise process completion remains unverified. See

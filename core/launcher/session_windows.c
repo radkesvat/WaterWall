@@ -92,6 +92,7 @@ static HANDLE    record_file = INVALID_HANDLE_VALUE, record_mapping;
 static ULONGLONG started_at;
 static _Alignas(8) volatile LONG64 stop_deadline;
 static volatile LONG finished;
+static volatile LONG console_closing;
 static bool          session_started;
 static bool          closed_streams[3];
 static bool          members_checked;
@@ -168,8 +169,11 @@ static BOOL WINAPI sessionConsoleHandler(DWORD event)
     if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT && event != CTRL_CLOSE_EVENT && event != CTRL_LOGOFF_EVENT &&
         event != CTRL_SHUTDOWN_EVENT)
         return FALSE;
+    bool closing = event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT;
+    if (closing)
+        InterlockedExchange(&console_closing, 1);
     launcherSessionCancel();
-    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT)
+    if (closing)
     {
         /* Returning from a close handler lets Windows terminate the process.
          * Wait for the main thread to finish cleanup or Windows to enforce its deadline. */
@@ -256,6 +260,97 @@ void launcherSessionStopName(const wchar_t *job_name, wchar_t stop_name[96])
     SecureZeroMemory(format, sizeof(format));
 }
 
+static bool closeSessionStreams(bool console_only)
+{
+    FILE *const streams[]       = {stdin, stdout, stderr};
+    const DWORD handles[]       = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+    bool        close_stream[3] = {false};
+
+    /* Clear every affected standard-handle slot before closing any stream.
+     * Streams can share a handle, and Windows can reuse a closed handle value. */
+    for (unsigned i = 0; i < ARRAYSIZE(streams); ++i)
+    {
+        DWORD mode;
+        close_stream[i] = ! closed_streams[i] && (! console_only || GetConsoleMode(GetStdHandle(handles[i]), &mode));
+        if (close_stream[i] && ! SetStdHandle(handles[i], NULL))
+            return false;
+    }
+    for (unsigned i = 0; i < ARRAYSIZE(streams); ++i)
+    {
+        if (close_stream[i])
+        {
+            fclose(streams[i]);
+            closed_streams[i] = true;
+        }
+    }
+    /* FreeConsole can wait for the console host while its close event is pending.
+     * Process exit releases the console after the launcher finishes cleanup. */
+    return readField(&console_closing) || FreeConsole();
+}
+
+static bool prepareSessionConsole(unsigned mode)
+{
+    if (mode == 1)
+    {
+        if (! closeSessionStreams(true))
+            return false;
+        /* Keep CRT streams usable after detaching, and retain redirected I/O. */
+        FILE *const streams[] = {stdin, stdout, stderr};
+        const DWORD handles[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
+        for (unsigned i = 0; i < ARRAYSIZE(streams); ++i)
+        {
+            if (! closed_streams[i])
+                continue;
+            if (freopen("NUL", i == 0 ? "r" : "w", streams[i]) == NULL ||
+                ! SetStdHandle(handles[i], (HANDLE) _get_osfhandle(_fileno(streams[i]))))
+                return false;
+            closed_streams[i] = false;
+        }
+    }
+    else if (mode == 2)
+    {
+        // Close CRT streams before detaching. Reopening them first can reuse console
+        // handle values that FreeConsole still closes. Preserve redirected stdin.
+        HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+        DWORD  input_mode;
+        bool   replace_input = input == NULL || input == INVALID_HANDLE_VALUE || GetConsoleMode(input, &input_mode);
+        if (replace_input)
+            fclose(stdin);
+        fclose(stdout);
+        fclose(stderr);
+        /* An explicit visible console must not share the controller's console:
+         * closing it would otherwise deliver close events to the controller too. */
+        if (GetConsoleWindow() != NULL)
+        {
+            DWORD member;
+            DWORD count = GetConsoleProcessList(&member, 1);
+            if (count == 0 || (count > 1 && ! FreeConsole()))
+                return false;
+        }
+        // CREATE_NO_WINDOW can leave a windowless console attached. FreeConsole also
+        // succeeds when the process is already detached.
+        if (GetConsoleWindow() == NULL && (! FreeConsole() || ! AllocConsole()))
+            return false;
+        if (replace_input)
+        {
+            if (freopen("NUL", "r", stdin) == NULL)
+                return false;
+            input = (HANDLE) _get_osfhandle(_fileno(stdin));
+        }
+        /* A detached MSVC process can have _fileno(stdout/stderr) == -2.
+         * Reopen the FILE streams rather than passing those values to _dup2's
+         * invalid-parameter handler. Configuration stdin stays redirected. */
+        if (! SetStdHandle(STD_INPUT_HANDLE, input) || freopen("CONOUT$", "w", stdout) == NULL ||
+            freopen("CONOUT$", "w", stderr) == NULL)
+            return false;
+        if (! SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE) _get_osfhandle(_fileno(stdout))) ||
+            ! SetStdHandle(STD_ERROR_HANDLE, (HANDLE) _get_osfhandle(_fileno(stderr))))
+            return false;
+    }
+    /* Attach/detach resets the OS console handler table. */
+    return SetConsoleCtrlHandler(sessionConsoleHandler, TRUE) != FALSE;
+}
+
 bool launcherSessionStart(waterwall_startup_options_t *options)
 {
     /* Resolve before observer admission: deadline termination must not enter the loader. */
@@ -268,8 +363,6 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
         ! takeCapability(options->ready_event, &supplied_ready, L"Event", EVENT_MODIFY_STATE) ||
         ! takeCapability(options->controller_process, &controller, L"Process", SYNCHRONIZE))
         return false;
-    /* No descendants exist before self-admission. Job inheritance closes the
-     * create-to-assign interval, including on Windows 7. No breakaway flags. */
     PSECURITY_DESCRIPTOR security = waterwallLauncherPrivateSecurity();
     if (security == NULL)
         return false;
@@ -296,8 +389,7 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
     }
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
     limits.BasicLimitInformation.LimitFlags     = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    if (! SetInformationJobObject(session_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
-        ! AssignProcessToJobObject(session_job, GetCurrentProcess()))
+    if (! SetInformationJobObject(session_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
     {
         LocalFree(security);
         return false;
@@ -338,12 +430,18 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
         return false;
     }
     CloseHandle(thread);
-    session_started = true;
-    if (! SetConsoleCtrlHandler(sessionConsoleHandler, TRUE))
+    /* AllocConsole can create a system console host that waits for the launcher
+     * during window close. Prepare it before joining the Job. The runtime and
+     * its helpers inherit the Job at creation, including on Windows 7. */
+    if (! SetConsoleCtrlHandler(sessionConsoleHandler, TRUE) || ! prepareSessionConsole(options->console_mode) ||
+        ! AssignProcessToJobObject(session_job, GetCurrentProcess()))
     {
+        DWORD error = GetLastError();
         LocalFree(security);
+        SetLastError(error);
         return false;
     }
+    session_started = true;
     if (atexit(normalReturn) != 0)
     {
         LocalFree(security);
@@ -392,55 +490,6 @@ bool launcherSessionStart(waterwall_startup_options_t *options)
     InterlockedExchangePointer(&published_record, persisted);
     setReason(readField(&record->reason));
     LocalFree(security);
-    /* Presentation changes apply to this process only. Preserve configuration
-     * stdin when AllocConsole replaces the Win32 standard-handle table. */
-    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    if (options->console_mode == 1)
-    {
-        FreeConsole();
-    }
-    else if (options->console_mode == 2)
-    {
-        // Close CRT streams before detaching. Reopening them first can reuse console
-        // handle values that FreeConsole still closes. Preserve redirected stdin.
-        DWORD input_mode;
-        bool  replace_input = input == NULL || input == INVALID_HANDLE_VALUE || GetConsoleMode(input, &input_mode);
-        if (replace_input)
-            fclose(stdin);
-        fclose(stdout);
-        fclose(stderr);
-        /* An explicit visible console must not share the controller's console:
-         * closing it would otherwise deliver close events to the controller too. */
-        if (GetConsoleWindow() != NULL)
-        {
-            DWORD member;
-            DWORD count = GetConsoleProcessList(&member, 1);
-            if (count == 0 || (count > 1 && ! FreeConsole()))
-                return false;
-        }
-        // CREATE_NO_WINDOW can leave a windowless console attached. FreeConsole also
-        // succeeds when the process is already detached.
-        if (GetConsoleWindow() == NULL && (! FreeConsole() || ! AllocConsole()))
-            return false;
-        if (replace_input)
-        {
-            if (freopen("NUL", "r", stdin) == NULL)
-                return false;
-            input = (HANDLE) _get_osfhandle(_fileno(stdin));
-        }
-        /* A detached MSVC process can have _fileno(stdout/stderr) == -2.
-         * Reopen the FILE streams rather than passing those values to _dup2's
-         * invalid-parameter handler. Configuration stdin stays redirected. */
-        if (! SetStdHandle(STD_INPUT_HANDLE, input) || freopen("CONOUT$", "w", stdout) == NULL ||
-            freopen("CONOUT$", "w", stderr) == NULL)
-            return false;
-        if (! SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE) _get_osfhandle(_fileno(stdout))) ||
-            ! SetStdHandle(STD_ERROR_HANDLE, (HANDLE) _get_osfhandle(_fileno(stderr))))
-            return false;
-    }
-    /* Attach/detach resets the OS console handler table. */
-    if (! SetConsoleCtrlHandler(sessionConsoleHandler, TRUE))
-        return false;
     options->stop_event         = (uintptr_t) stop_event;
     options->ready_event        = (uintptr_t) ready_event;
     options->controller_process = (uintptr_t) controller;
@@ -574,23 +623,6 @@ void launcherSessionChildExited(DWORD status, bool status_known)
         InterlockedExchange(&persisted->runtime_status, (LONG) status);
         InterlockedExchange(&persisted->runtime_status_known, 1);
     }
-}
-
-static void closeSessionStreams(bool console_only)
-{
-    FILE *const streams[] = {stdin, stdout, stderr};
-    const DWORD handles[] = {STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE};
-    for (unsigned i = 0; i < ARRAYSIZE(streams); ++i)
-    {
-        if (closed_streams[i])
-            continue;
-        DWORD mode;
-        if (console_only && ! GetConsoleMode(GetStdHandle(handles[i]), &mode))
-            continue;
-        fclose(streams[i]);
-        closed_streams[i] = true;
-    }
-    FreeConsole();
 }
 
 bool launcherSessionDiagnosticsAvailable(void)
